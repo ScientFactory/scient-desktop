@@ -1218,6 +1218,24 @@ describe("getRenderedThreadsForSidebarProject", () => {
 });
 
 describe("buildProjectThreadTree", () => {
+  it("does not promote a subagent whose parent is absent to a top-level row", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-orphaned-child"),
+          parentThreadId: ThreadId.makeUnsafe("thread-archived-parent"),
+          createdAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-unrelated"),
+          createdAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+    });
+
+    expect(rows.map((row) => row.thread.id)).toEqual([ThreadId.makeUnsafe("thread-unrelated")]);
+  });
+
   it("keeps child threads hidden until their parent is expanded", () => {
     const rows = buildProjectThreadTree({
       threads: [

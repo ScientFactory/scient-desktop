@@ -921,8 +921,14 @@ export function buildProjectThreadTree<
 
   for (const thread of threads) {
     const parentThreadId = thread.parentThreadId ?? null;
-    if (!parentThreadId || !threadById.has(parentThreadId)) {
+    if (!parentThreadId) {
       roots.push(thread);
+      continue;
+    }
+    // A subagent is reachable through its parent. If that parent is archived,
+    // deleted, or absent from this view, keep the child out of the root list
+    // instead of presenting it as an unrelated top-level conversation.
+    if (!threadById.has(parentThreadId)) {
       continue;
     }
     const siblings = childrenByParentId.get(parentThreadId) ?? [];

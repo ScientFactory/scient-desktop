@@ -20,6 +20,10 @@ import { providerSupportsSignOut } from "@synara/shared/providerSignOut";
 import { asProviderSignOutNativeApi } from "@synara/shared/providerSignOutTransport";
 import { pluralize } from "@synara/shared/text";
 import {
+  collectSubagentDescendants,
+  collectSubagentSubtreeRoots,
+} from "@synara/shared/threadHierarchy";
+import {
   type ReactNode,
   type RefObject,
   useCallback,
@@ -124,6 +128,7 @@ import { playAppSnapCaptureSound } from "../lib/appSnapSound";
 import { CentralIcon } from "../lib/central-icons";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import {
+  archivedThreadDeleteConfirmation,
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "../lib/archivedThreadDelete";
@@ -789,7 +794,7 @@ function SettingsRouteView() {
   const projects = useStore((store) => store.projects);
   const threadsHydrated = useStore((store) => store.threadsHydrated);
   const archivedThreads = useMemo(
-    () => threadShells.filter((thread) => thread.archivedAt != null),
+    () => collectSubagentSubtreeRoots(threadShells.filter((thread) => thread.archivedAt != null)),
     [threadShells],
   );
   const shouldOfferRecoveryTools = useMemo(() => {
@@ -1940,8 +1945,13 @@ function SettingsRouteView() {
       const api = readNativeApi();
       if (!api) return;
 
+      const descendantThreadIds = collectSubagentDescendants(threadShells, threadId).map(
+        (thread) => thread.id,
+      );
+      const conversationCount = descendantThreadIds.length + 1;
+
       const confirmed = await api.dialogs.confirm(
-        `Permanently delete "${threadTitle}"?\n\nThis will remove the thread and its conversation history forever.`,
+        archivedThreadDeleteConfirmation(threadTitle, conversationCount),
       );
       if (!confirmed) return;
 
@@ -1950,6 +1960,7 @@ function SettingsRouteView() {
         await deleteArchivedThreadFromClient({
           api,
           threadId,
+          descendantThreadIds: descendantThreadIds.toReversed(),
           removeDeletedThreadFromClientState,
         });
         setArchivedThreadFeedback({
@@ -1963,7 +1974,7 @@ function SettingsRouteView() {
         });
       }
     },
-    [removeDeletedThreadFromClientState],
+    [removeDeletedThreadFromClientState, threadShells],
   );
 
   const handleArchivedThreadContextMenu = useCallback(

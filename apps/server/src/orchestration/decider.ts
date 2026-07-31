@@ -16,6 +16,7 @@ import {
   deriveAssociatedWorktreeMetadata,
   deriveAssociatedWorktreeMetadataPatch,
 } from "@synara/shared/threadWorkspace";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { doThreadMarkerRangesOverlap } from "@synara/shared/threadMarkers";
 import {
   collectTailTurnIds,
@@ -43,6 +44,7 @@ import {
   requireThreadAbsent,
   requireThreadArchived,
   requireThreadNotArchived,
+  requireThreadSubtreeIdle,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -765,6 +767,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
+      if (command.cascadeDescendants === true) {
+        const descendantThreadIds = collectSubagentDescendants(readModel.threads, command.threadId)
+          .filter((thread) => thread.deletedAt === null)
+          .map((thread) => thread.id)
+          .toReversed();
+        return [...descendantThreadIds, command.threadId].map(
+          (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt,
+              commandId: command.commandId,
+            }),
+            type: "thread.deleted",
+            payload: {
+              threadId,
+              deletedAt: occurredAt,
+            },
+          }),
+        );
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -786,21 +809,31 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireThreadSubtreeIdle({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const descendantThreadIds = collectSubagentDescendants(readModel.threads, command.threadId)
+        .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) === null)
+        .map((thread) => thread.id);
+      return [...descendantThreadIds, command.threadId].map(
+        (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.archived",
+          payload: {
+            threadId,
+            archivedAt: occurredAt,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.archived",
-        payload: {
-          threadId: command.threadId,
-          archivedAt: occurredAt,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.unarchive": {
@@ -810,19 +843,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const descendantThreadIds = collectSubagentDescendants(readModel.threads, command.threadId)
+        .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) !== null)
+        .map((thread) => thread.id);
+      return [...descendantThreadIds, command.threadId].map(
+        (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unarchived",
+          payload: {
+            threadId,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.unarchived",
-        payload: {
-          threadId: command.threadId,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.meta.update": {

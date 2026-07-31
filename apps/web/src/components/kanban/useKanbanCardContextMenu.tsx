@@ -8,13 +8,14 @@
 
 import type { ThreadId } from "@synara/contracts";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useCallback, useMemo, useState } from "react";
 
 import { useAppSettings } from "~/appSettings";
 import { RenameThreadDialog } from "~/components/RenameThreadDialog";
 import { copyTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { reconcileDeletedThreadFromClient } from "~/lib/deletedThreadClientReconciliation";
+import { reconcileDeletedThreadsFromClient } from "~/lib/deletedThreadClientReconciliation";
 import { gitRemoveWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { pinActionLabel } from "~/lib/pin";
 import { dispatchThreadRename } from "~/lib/threadRename";
@@ -97,13 +98,19 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       });
       return;
     }
-    const thread = getThreadFromState(useStore.getState(), threadId);
+    const currentThreads = getThreadsFromState(useStore.getState());
+    const thread = currentThreads.find((candidate) => candidate.id === threadId);
     if (!thread) return;
-    if (isThreadRunningTurn(thread)) {
+    const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
+    const runningCount = subtreeThreads.filter(isThreadRunningTurn).length;
+    if (runningCount > 0) {
       setFeedback({
         tone: "error",
         title: "Cannot archive",
-        description: "Stop the running session before archiving this thread.",
+        description:
+          runningCount === 1
+            ? "Stop the running turn in this conversation subtree before archiving it."
+            : `Stop the ${runningCount} running turns in this conversation subtree before archiving it.`,
       });
       return;
     }
@@ -144,9 +151,15 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       const state = useStore.getState();
       const thread = getThreadFromState(state, card.threadId);
       if (!thread) return;
+      const allThreads = getThreadsFromState(state);
+      const subtreeThreads = [thread, ...collectSubagentDescendants(allThreads, card.threadId)];
       const project = state.projects.find((candidate) => candidate.id === thread.projectId) ?? null;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        getThreadsFromState(state),
+        allThreads.filter(
+          (candidate) =>
+            candidate.id === card.threadId ||
+            !subtreeThreads.some((deletedThread) => deletedThread.id === candidate.id),
+        ),
         card.threadId,
       );
       const displayWorktreePath = orphanedWorktreePath
@@ -184,15 +197,18 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         type: "thread.delete",
         commandId: newCommandId(),
         threadId: card.threadId,
+        cascadeDescendants: true,
       });
-      await reconcileDeletedThreadFromClient({
+      await reconcileDeletedThreadsFromClient({
         api,
-        threadId: card.threadId,
+        threadIds: subtreeThreads.map((candidate) => candidate.id),
         removeDeletedThreadFromClientState: useStore.getState().removeDeletedThreadFromClientState,
       });
-      clearDraftThread(card.threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
-      clearTerminalState(card.threadId);
+      for (const deletedThread of subtreeThreads) {
+        clearDraftThread(deletedThread.id);
+        clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
+        clearTerminalState(deletedThread.id);
+      }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !project) {
         return;
@@ -281,7 +297,9 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
               : []),
             ...(isThreadBacked ? [{ id: "copy-thread-id", label: "Copy Thread ID" }] : []),
             ...(isThreadActionCard
-              ? [{ id: "archive", label: "Archive", separatorBefore: true }]
+              ? card.thread?.parentThreadId
+                ? []
+                : [{ id: "archive", label: "Archive", separatorBefore: true }]
               : []),
             {
               id: "delete",
@@ -319,9 +337,14 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         if (clicked === "archive") {
           if (!isThreadActionCard) return;
           if (settings.confirmThreadArchive) {
+            const conversationCount =
+              collectSubagentDescendants(getThreadsFromState(useStore.getState()), card.threadId)
+                .length + 1;
             const confirmed = await api.dialogs.confirm(
               [
-                `Archive thread "${card.title}"?`,
+                conversationCount === 1
+                  ? `Archive thread "${card.title}"?`
+                  : `Archive "${card.title}" with its ${conversationCount - 1} sub-agent conversations?`,
                 "Archived threads are hidden from the sidebar but can be restored later.",
               ].join("\n"),
             );
@@ -332,13 +355,23 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         }
         if (clicked !== "delete") return;
         if (settings.confirmThreadDelete) {
+          const storedThread = getThreadFromState(useStore.getState(), card.threadId);
+          const conversationCount = storedThread
+            ? collectSubagentDescendants(getThreadsFromState(useStore.getState()), card.threadId)
+                .length + 1
+            : 1;
           const confirmed = await api.dialogs.confirm(
             deletesOnlyDraft
               ? `Delete this draft? This removes its unsent prompt.`
-              : [
-                  `Delete thread "${card.title}"?`,
-                  "This permanently clears conversation history for this thread.",
-                ].join("\n"),
+              : conversationCount === 1
+                ? [
+                    `Delete thread "${card.title}"?`,
+                    "This permanently clears conversation history for this thread.",
+                  ].join("\n")
+                : [
+                    `Delete "${card.title}" and its ${conversationCount - 1} sub-agent conversations?`,
+                    `This permanently clears all ${conversationCount} conversation histories.`,
+                  ].join("\n"),
           );
           if (!confirmed) return;
         }

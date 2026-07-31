@@ -127,4 +127,65 @@ describe("thread retention", () => {
       ),
     ).toEqual([ordinaryThread.id]);
   });
+
+  it("selects one root for an entirely inactive subtree", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    const root = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-root"),
+      latestUserMessageAt: oldActivityAt,
+    });
+    const child = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-child"),
+      parentThreadId: root.id,
+      latestUserMessageAt: oldActivityAt,
+    });
+    const grandchild = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-grandchild"),
+      parentThreadId: child.id,
+      latestUserMessageAt: oldActivityAt,
+    });
+
+    expect(
+      getInactiveThreadIdsForRetention(makeReadModel([child, grandchild, root]), nowMs),
+    ).toEqual([root.id]);
+  });
+
+  it.each(["recent", "busy", "pinned", "protected"] as const)(
+    "keeps the whole subtree when a descendant is %s",
+    (protectedState) => {
+      const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+      const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+      const recentActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS + 1).toISOString();
+      const root = makeReadModelThread({
+        id: ThreadId.makeUnsafe(`thread-root-${protectedState}`),
+        latestUserMessageAt: oldActivityAt,
+      });
+      const child = makeReadModelThread({
+        id: ThreadId.makeUnsafe(`thread-child-${protectedState}`),
+        parentThreadId: root.id,
+        latestUserMessageAt: protectedState === "recent" ? recentActivityAt : oldActivityAt,
+        ...(protectedState === "busy" ? { hasPendingApprovals: true } : {}),
+        ...(protectedState === "pinned" ? { isPinned: true } : {}),
+      });
+      const protectedIds =
+        protectedState === "protected" ? new Set<ThreadId>([child.id]) : new Set<ThreadId>();
+
+      expect(
+        getInactiveThreadIdsForRetention(makeReadModel([root, child]), nowMs, protectedIds),
+      ).toEqual([]);
+    },
+  );
+
+  it("treats an inactive legacy orphan as its own safe retention root", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    const orphan = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-orphan"),
+      parentThreadId: ThreadId.makeUnsafe("thread-missing-parent"),
+      latestUserMessageAt: oldActivityAt,
+    });
+
+    expect(getInactiveThreadIdsForRetention(makeReadModel([orphan]), nowMs)).toEqual([orphan.id]);
+  });
 });

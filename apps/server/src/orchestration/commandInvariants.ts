@@ -8,6 +8,7 @@ import type {
   ThreadId,
 } from "@synara/contracts";
 import { THREAD_NOT_ARCHIVED_INVARIANT_MARKER } from "@synara/shared/errorMessages";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { normalizeWorkspaceRootForComparison } from "@synara/shared/threadWorkspace";
 import { Effect } from "effect";
 
@@ -207,6 +208,33 @@ export function requireThreadNotArchived(input: {
               `Thread '${input.threadId}' is already archived and cannot handle command '${input.command.type}'.`,
             ),
           ),
+    ),
+  );
+}
+
+export function requireThreadSubtreeIdle(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const root = findThreadById(input.readModel, input.threadId);
+  const subtree = [
+    ...(root ? [root] : []),
+    ...collectSubagentDescendants(input.readModel.threads, input.threadId),
+  ];
+  const runningThreads = subtree.filter(
+    (thread) =>
+      thread.deletedAt === null &&
+      thread.session?.status === "running" &&
+      thread.session.activeTurnId !== null,
+  );
+  if (runningThreads.length === 0) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Thread subtree '${input.threadId}' has ${runningThreads.length} running turn${runningThreads.length === 1 ? "" : "s"}; stop them before command '${input.command.type}'.`,
     ),
   );
 }

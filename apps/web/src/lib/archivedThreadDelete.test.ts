@@ -10,9 +10,25 @@ import { useBrowserStateStore } from "../browserStateStore";
 import { createMemoryStorage } from "./storage";
 
 import {
+  archivedThreadDeleteConfirmation,
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "./archivedThreadDelete";
+
+describe("archivedThreadDeleteConfirmation", () => {
+  it("states the complete destructive scope for a subtree", () => {
+    expect(archivedThreadDeleteConfirmation("Main analysis", 3)).toBe(
+      'Permanently delete "Main analysis" and its 2 sub-agent conversations?\n\n' +
+        "This will remove all 3 conversations and their histories forever.",
+    );
+  });
+
+  it("keeps the singular copy for a leaf conversation", () => {
+    expect(archivedThreadDeleteConfirmation("Leaf", 1)).toContain(
+      "remove the conversation and its history forever",
+    );
+  });
+});
 
 const originalLocalStorage = globalThis.localStorage;
 
@@ -56,14 +72,17 @@ function archivedDeleteApi(dispatchCommand: ReturnType<typeof vi.fn>) {
 }
 
 describe("deleteArchivedThreadFromClient", () => {
-  it("dispatches delete, then removes the local row", async () => {
+  it("dispatches one server-authoritative subtree delete, then removes every local row", async () => {
     const threadId = ThreadId.makeUnsafe("thread-archived");
+    const childId = ThreadId.makeUnsafe("thread-archived-child");
+    const grandchildId = ThreadId.makeUnsafe("thread-archived-grandchild");
     const dispatchCommand = vi.fn().mockResolvedValue({ sequence: 11 });
     const removeDeletedThreadFromClientState = vi.fn();
 
     await deleteArchivedThreadFromClient({
       api: archivedDeleteApi(dispatchCommand),
       threadId,
+      descendantThreadIds: [grandchildId, childId],
       removeDeletedThreadFromClientState,
     });
 
@@ -71,9 +90,14 @@ describe("deleteArchivedThreadFromClient", () => {
       type: "thread.delete",
       commandId: expect.any(String),
       threadId,
+      cascadeDescendants: true,
     });
-    expect(removeDeletedThreadFromClientState).toHaveBeenCalledOnce();
-    expect(removeDeletedThreadFromClientState).toHaveBeenCalledWith(threadId);
+    expect(dispatchCommand).toHaveBeenCalledOnce();
+    expect(removeDeletedThreadFromClientState.mock.calls).toEqual([
+      [grandchildId],
+      [childId],
+      [threadId],
+    ]);
     const dispatchOrder = dispatchCommand.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
     const removeOrder =
       removeDeletedThreadFromClientState.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;

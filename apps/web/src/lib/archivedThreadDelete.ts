@@ -1,16 +1,29 @@
 // FILE: archivedThreadDelete.ts
 // Purpose: Coordinates archived-thread deletion with immediate local removal.
 // Layer: Web orchestration helper
-// Exports: deleteArchivedThreadFromClient, deleteArchivedThreadsFromClient
+// Exports: archivedThreadDeleteConfirmation, deleteArchivedThreadFromClient,
+// deleteArchivedThreadsFromClient
 
 import type { NativeApi, ThreadId } from "@synara/contracts";
 
 import { reconcileDeletedThreadsFromClient } from "./deletedThreadClientReconciliation";
 import { newCommandId } from "./utils";
 
+export function archivedThreadDeleteConfirmation(threadTitle: string, conversationCount: number) {
+  if (conversationCount <= 1) {
+    return `Permanently delete "${threadTitle}"?\n\nThis will remove the conversation and its history forever.`;
+  }
+  return [
+    `Permanently delete "${threadTitle}" and its ${conversationCount - 1} sub-agent conversations?`,
+    "",
+    `This will remove all ${conversationCount} conversations and their histories forever.`,
+  ].join("\n");
+}
+
 interface DeleteArchivedThreadFromClientInput {
   api: Pick<NativeApi, "browser" | "orchestration" | "projects">;
   threadId: ThreadId;
+  descendantThreadIds?: ReadonlyArray<ThreadId>;
   removeDeletedThreadFromClientState: (threadId: ThreadId) => void;
 }
 
@@ -25,9 +38,15 @@ interface DeleteArchivedThreadsFromClientInput extends Omit<
 export async function deleteArchivedThreadFromClient(
   input: DeleteArchivedThreadFromClientInput,
 ): Promise<void> {
-  await deleteArchivedThreadsFromClient({
+  await input.api.orchestration.dispatchCommand({
+    type: "thread.delete",
+    commandId: newCommandId(),
+    threadId: input.threadId,
+    cascadeDescendants: true,
+  });
+  await reconcileDeletedThreadsFromClient({
     api: input.api,
-    threadIds: [input.threadId],
+    threadIds: [...(input.descendantThreadIds ?? []), input.threadId],
     removeDeletedThreadFromClientState: input.removeDeletedThreadFromClientState,
   });
 }

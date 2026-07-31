@@ -92,6 +92,10 @@ import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { pluralize } from "@synara/shared/text";
 import { localServerAddressLabel, localServerMatchesRun } from "@synara/shared/localServers";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
+import {
+  collectSubagentDescendants,
+  collectSubagentSubtreeRoots,
+} from "@synara/shared/threadHierarchy";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
@@ -106,6 +110,7 @@ import { isMacPlatform, newCommandId, newThreadId, randomUUID } from "../lib/uti
 import {
   cleanupDeletedThreadBrowserState,
   reconcileDeletedThreadFromClient,
+  reconcileDeletedThreadsFromClient,
   removeDeletedThreadsFromClientState,
 } from "../lib/deletedThreadClientReconciliation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
@@ -3130,14 +3135,16 @@ export default function Sidebar() {
       const state = useStore.getState();
       const thread = getThreadFromState(state, threadId);
       if (!thread) return;
-      const threadProject = projectById.get(thread.projectId);
       const allThreads = getThreadsFromState(state);
+      const subtreeThreads = [thread, ...collectSubagentDescendants(allThreads, threadId)];
+      const subtreeThreadIds = new Set(subtreeThreads.map((candidate) => candidate.id));
+      const threadProject = projectById.get(thread.projectId);
       // When bulk-deleting, exclude the other threads being deleted so
       // getOrphanedWorktreePathForThread correctly detects that no surviving
       // threads will reference this worktree.
-      const deletedIds = opts.deletedThreadIds;
+      const deletedIds = new Set([...(opts.deletedThreadIds ?? []), ...subtreeThreadIds]);
       const survivingThreads =
-        deletedIds && deletedIds.size > 0
+        deletedIds.size > 0
           ? allThreads.filter((t) => t.id === threadId || !deletedIds.has(t.id))
           : allThreads;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(survivingThreads, threadId);
@@ -3176,41 +3183,48 @@ export default function Sidebar() {
         // Terminal may already be closed
       }
 
-      const allDeletedIds = deletedIds ?? new Set<ThreadId>();
-      const shouldNavigateToFallback = routeThreadId === threadId;
+      const allDeletedIds = deletedIds;
+      const routeThreadIsDeleted = routeThreadId ? allDeletedIds.has(routeThreadId) : false;
+      const deletedRouteThreadId = routeThreadIsDeleted && routeThreadId ? routeThreadId : threadId;
+      const shouldNavigateToFallback = routeThreadIsDeleted;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
         threads: sidebarThreads,
-        deletedThreadId: threadId,
+        deletedThreadId: deletedRouteThreadId,
         deletedThreadIds: allDeletedIds,
         sortOrder: appSettings.sidebarThreadSortOrder,
       });
       const activeSplitViewId = routeSearch.splitViewId ?? null;
       const deletedPaneInActiveSplit = activeSplitView
-        ? resolveSplitViewPaneIdForThread(activeSplitView, threadId)
+        ? resolveSplitViewPaneIdForThread(activeSplitView, deletedRouteThreadId)
         : null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
         threadId,
+        cascadeDescendants: true,
       });
       if (opts.reconcileDeletedThread ?? true) {
-        await reconcileDeletedThreadFromClient({
+        await reconcileDeletedThreadsFromClient({
           api,
-          threadId,
+          threadIds: [...subtreeThreadIds],
           removeDeletedThreadFromClientState:
             useStore.getState().removeDeletedThreadFromClientState,
         });
       } else {
         // Bulk callers defer row removal, but main-process browser ownership
         // must be closed before this helper can remove an orphaned worktree.
-        await cleanupDeletedThreadBrowserState(api, threadId);
+        for (const deletedThreadId of subtreeThreadIds) {
+          await cleanupDeletedThreadBrowserState(api, deletedThreadId);
+        }
       }
-      unpinThread(threadId);
-      clearComposerDraftForThread(threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
-      clearTerminalState(threadId);
-      removeThreadFromSplitViews(threadId);
-      clearTemporaryThread(threadId);
+      for (const deletedThread of subtreeThreads) {
+        unpinThread(deletedThread.id);
+        clearComposerDraftForThread(deletedThread.id);
+        clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
+        clearTerminalState(deletedThread.id);
+        removeThreadFromSplitViews(deletedThread.id);
+        clearTemporaryThread(deletedThread.id);
+      }
 
       if (activeSplitViewId && deletedPaneInActiveSplit) {
         const nextActiveSplitView =
@@ -3336,13 +3350,20 @@ export default function Sidebar() {
     async (threadId: ThreadId) => {
       const thread = sidebarThreadSummaryById[threadId];
       if (!thread) return;
+      const conversationCount = collectSubagentDescendants(sidebarThreads, threadId).length + 1;
 
       if (appSettings.confirmThreadDelete) {
         const api = readNativeApi();
-        const confirmationMessage = [
-          `Delete thread "${thread.title}"?`,
-          "This permanently clears conversation history for this thread.",
-        ].join("\n");
+        const confirmationMessage =
+          conversationCount === 1
+            ? [
+                `Delete thread "${thread.title}"?`,
+                "This permanently clears conversation history for this thread.",
+              ].join("\n")
+            : [
+                `Delete "${thread.title}" and its ${conversationCount - 1} sub-agent conversations?`,
+                `This permanently clears all ${conversationCount} conversation histories.`,
+              ].join("\n");
         const confirmed = api
           ? await api.dialogs.confirm(confirmationMessage)
           : await showConfirmDialogFallback(confirmationMessage);
@@ -3351,7 +3372,7 @@ export default function Sidebar() {
 
       await deleteThread(threadId);
     },
-    [appSettings.confirmThreadDelete, deleteThread, sidebarThreadSummaryById],
+    [appSettings.confirmThreadDelete, deleteThread, sidebarThreadSummaryById, sidebarThreads],
   );
 
   /**
@@ -3362,14 +3383,19 @@ export default function Sidebar() {
     async (threadId: ThreadId): Promise<boolean> => {
       const api = readNativeApi();
       if (!api) return false;
-      const thread = getThreadFromState(useStore.getState(), threadId);
+      const currentThreads = getThreadsFromState(useStore.getState());
+      const thread = currentThreads.find((candidate) => candidate.id === threadId);
       if (!thread) return false;
 
-      // Cannot archive a running thread
-      if (isThreadRunningTurn(thread)) {
+      const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
+      const runningCount = subtreeThreads.filter(isThreadRunningTurn).length;
+      if (runningCount > 0) {
         showSidebarTransientError({
           title: "Cannot archive",
-          description: "Stop the running session before archiving this thread.",
+          description:
+            runningCount === 1
+              ? "Stop the running turn in this conversation subtree before archiving it."
+              : `Stop the ${runningCount} running turns in this conversation subtree before archiving it.`,
         });
         return false;
       }
@@ -3523,11 +3549,14 @@ export default function Sidebar() {
     async (threadId: ThreadId) => {
       const thread = sidebarThreadSummaryById[threadId];
       if (!thread) return;
+      const conversationCount = collectSubagentDescendants(sidebarThreads, threadId).length + 1;
 
       if (appSettings.confirmThreadArchive) {
         const api = readNativeApi();
         const confirmationMessage = [
-          `Archive thread "${thread.title}"?`,
+          conversationCount === 1
+            ? `Archive thread "${thread.title}"?`
+            : `Archive "${thread.title}" with its ${conversationCount - 1} sub-agent conversations?`,
           "Archived threads are hidden from the sidebar but can be restored later.",
         ].join("\n");
         const confirmed = api
@@ -3538,7 +3567,12 @@ export default function Sidebar() {
 
       await archiveThreadWithUndo(threadId);
     },
-    [appSettings.confirmThreadArchive, archiveThreadWithUndo, sidebarThreadSummaryById],
+    [
+      appSettings.confirmThreadArchive,
+      archiveThreadWithUndo,
+      sidebarThreadSummaryById,
+      sidebarThreads,
+    ],
   );
 
   /**
@@ -3561,16 +3595,26 @@ export default function Sidebar() {
         return;
       }
 
-      const archivableThreads = projectThreads.filter((thread) => !isThreadRunningTurn(thread));
-      const runningCount = projectThreads.length - archivableThreads.length;
+      const projectSubtrees = collectSubagentSubtreeRoots(projectThreads).map((root) => [
+        root,
+        ...collectSubagentDescendants(projectThreads, root.id),
+      ]);
+      const archivableSubtrees = projectSubtrees.filter(
+        (subtree) => subtree.length > 0 && subtree.every((thread) => !isThreadRunningTurn(thread)),
+      );
+      const archivableCount = archivableSubtrees.reduce(
+        (count, subtree) => count + subtree.length,
+        0,
+      );
+      const runningCount = projectThreads.length - archivableCount;
 
-      if (archivableThreads.length === 0) {
+      if (archivableSubtrees.length === 0) {
         showSidebarTransientError({
           title: "Cannot archive threads",
           description:
             runningCount === 1
-              ? "The only thread in this project is running. Stop it before archiving."
-              : `All ${runningCount} threads in this project are running. Stop them before archiving.`,
+              ? "The only conversation in this project belongs to a subtree with a running turn. Stop it before archiving."
+              : `All ${runningCount} conversations in this project belong to subtrees with running turns. Stop them before archiving.`,
         });
         return;
       }
@@ -3579,13 +3623,13 @@ export default function Sidebar() {
       // `appSettings.confirmThreadArchive` (default `false`) is scoped to
       // single-thread archiving where the user explicitly picked one row.
       const archiveLines = [
-        `Archive ${archivableThreads.length} ${pluralize(archivableThreads.length, "thread")} in "${project.name}"?`,
+        `Archive ${archivableCount} ${pluralize(archivableCount, "thread")} in "${project.name}"?`,
         "Archived threads are hidden from the sidebar but can be restored later.",
       ];
       if (runningCount > 0) {
         archiveLines.push(
           "",
-          `${runningCount} running ${pluralize(runningCount, "thread is", "threads are")} currently active and will be skipped.`,
+          `${runningCount} ${pluralize(runningCount, "conversation belongs", "conversations belong")} to an active subtree and will be skipped.`,
         );
       }
       const archiveConfirmed = api
@@ -3595,18 +3639,20 @@ export default function Sidebar() {
 
       let archivedCount = 0;
       let failureCount = 0;
-      for (const thread of archivableThreads) {
+      for (const subtree of archivableSubtrees) {
+        const root = subtree[0];
+        if (!root) continue;
         try {
-          const archived = await archiveThread(thread.id);
+          const archived = await archiveThread(root.id);
           if (archived) {
-            archivedCount += 1;
+            archivedCount += subtree.length;
           } else {
-            failureCount += 1;
+            failureCount += subtree.length;
           }
         } catch (error) {
-          failureCount += 1;
+          failureCount += subtree.length;
           console.error("Failed to archive thread during bulk archive", {
-            threadId: thread.id,
+            threadId: root.id,
             projectId,
             error,
           });
@@ -3614,7 +3660,9 @@ export default function Sidebar() {
       }
 
       // Clear any transient selection that pointed at just-archived rows.
-      removeFromSelection(archivableThreads.map((thread) => thread.id));
+      removeFromSelection(
+        archivableSubtrees.flatMap((subtree) => subtree.map((thread) => thread.id)),
+      );
 
       const activity = createSidebarBulkThreadActivity({
         operation: "archive",
@@ -3657,9 +3705,8 @@ export default function Sidebar() {
 
       // Re-derive at execution time. Project removal may have waited for an admitted
       // project operation to finish, and its thread must join this deletion set.
-      const projectThreads = getThreadsFromState(useStore.getState()).filter(
-        (thread) => thread.projectId === projectId,
-      );
+      const currentThreads = getThreadsFromState(useStore.getState());
+      const projectThreads = currentThreads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length === 0) {
         return {
           deletedCount: 0,
@@ -3669,11 +3716,19 @@ export default function Sidebar() {
         };
       }
 
+      const deletionTargets = collectSubagentSubtreeRoots(projectThreads).map((root) => [
+        root,
+        ...collectSubagentDescendants(currentThreads, root.id),
+      ]);
+      const deletedIds = new Set<ThreadId>(
+        deletionTargets.flatMap((subtree) => subtree.map((thread) => thread.id)),
+      );
+      const totalDeletionCount = deletedIds.size;
       const deleteConfirmationMessage =
         options?.confirmMessage === undefined
           ? [
-              `Delete ${projectThreads.length} ${pluralize(projectThreads.length, "thread")} in "${project.name}"?`,
-              "This permanently clears conversation history for these threads.",
+              `Delete ${totalDeletionCount} ${pluralize(totalDeletionCount, "conversation")} in "${project.name}"?`,
+              "This permanently clears those conversations and their sub-agent histories.",
             ].join("\n")
           : options.confirmMessage;
       if (deleteConfirmationMessage !== null) {
@@ -3682,25 +3737,26 @@ export default function Sidebar() {
         if (!deleteConfirmed) return null;
       }
 
-      const deletedIds = new Set<ThreadId>(projectThreads.map((thread) => thread.id));
       const successfullyDeletedIds: ThreadId[] = [];
       let deletedCount = 0;
       let failureCount = 0;
-      for (const thread of projectThreads) {
+      for (const subtree of deletionTargets) {
+        const root = subtree[0];
+        if (!root) continue;
         try {
-          await deleteThread(thread.id, {
+          await deleteThread(root.id, {
             deletedThreadIds: deletedIds,
             reconcileDeletedThread: false,
             ...(options?.worktreeCleanupMode
               ? { worktreeCleanupMode: options.worktreeCleanupMode }
               : {}),
           });
-          successfullyDeletedIds.push(thread.id);
-          deletedCount += 1;
+          successfullyDeletedIds.push(...subtree.map((thread) => thread.id));
+          deletedCount += subtree.length;
         } catch (error) {
-          failureCount += 1;
+          failureCount += subtree.length;
           console.error("Failed to delete thread during bulk delete", {
-            threadId: thread.id,
+            threadId: root.id,
             projectId,
             error,
           });
@@ -3727,7 +3783,7 @@ export default function Sidebar() {
       return {
         deletedCount,
         failureCount,
-        totalCount: projectThreads.length,
+        totalCount: totalDeletionCount,
         projectName: project.name,
       };
     },
@@ -3814,8 +3870,15 @@ export default function Sidebar() {
             : []),
           { id: "copy-thread-id", label: "Copy Thread ID" },
           ...(options?.extraItems ?? []),
-          { id: "archive", label: "Archive", separatorBefore: true },
-          { id: "delete", label: "Delete", destructive: true },
+          ...(thread.parentThreadId
+            ? []
+            : [{ id: "archive", label: "Archive", separatorBefore: true }]),
+          {
+            id: "delete",
+            label: "Delete",
+            destructive: true,
+            ...(thread.parentThreadId ? { separatorBefore: true } : {}),
+          },
         ],
         position,
       );
@@ -4051,17 +4114,28 @@ export default function Sidebar() {
       }
 
       if (clicked === "archive") {
+        const archiveIds = ids.filter(
+          (id) => (sidebarThreadSummaryById[id]?.parentThreadId ?? null) === null,
+        );
+        if (archiveIds.length === 0) {
+          removeFromSelection(ids);
+          return;
+        }
+        const archiveCount = archiveIds.reduce(
+          (total, id) => total + collectSubagentDescendants(sidebarThreads, id).length + 1,
+          0,
+        );
         if (appSettings.confirmThreadArchive) {
           const confirmed = await api.dialogs.confirm(
             [
-              `Archive ${count} ${pluralize(count, "thread")}?`,
+              `Archive ${archiveCount} ${pluralize(archiveCount, "conversation")}?`,
               "Archived threads are hidden from the sidebar but can be restored later.",
             ].join("\n"),
           );
           if (!confirmed) return;
         }
 
-        for (const id of ids) {
+        for (const id of archiveIds) {
           await archiveThread(id);
         }
         removeFromSelection(ids);
@@ -4070,22 +4144,40 @@ export default function Sidebar() {
 
       if (clicked !== "delete") return;
 
+      const selectedThreads = ids.flatMap((id) => {
+        const thread = sidebarThreadSummaryById[id];
+        return thread ? [thread] : [];
+      });
+      const deletionRoots = collectSubagentSubtreeRoots(selectedThreads);
+      const deletionTargets = deletionRoots.map((root) => [
+        root,
+        ...collectSubagentDescendants(sidebarThreads, root.id),
+      ]);
+      const deletedIds = new Set<ThreadId>(
+        deletionTargets.flatMap((subtree) => subtree.map((thread) => thread.id)),
+      );
+      const deletionCount = deletedIds.size;
+
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
           [
-            `Delete ${count} ${pluralize(count, "thread")}?`,
-            "This permanently clears conversation history for these threads.",
+            `Delete ${deletionCount} ${pluralize(deletionCount, "conversation")}?`,
+            "This permanently clears the selected conversations and their sub-agent histories.",
           ].join("\n"),
         );
         if (!confirmed) return;
       }
 
-      const deletedIds = new Set<ThreadId>(ids);
       const successfullyDeletedIds: ThreadId[] = [];
       try {
-        for (const id of ids) {
-          await deleteThread(id, { deletedThreadIds: deletedIds, reconcileDeletedThread: false });
-          successfullyDeletedIds.push(id);
+        for (const subtree of deletionTargets) {
+          const root = subtree[0];
+          if (!root) continue;
+          await deleteThread(root.id, {
+            deletedThreadIds: deletedIds,
+            reconcileDeletedThread: false,
+          });
+          successfullyDeletedIds.push(...subtree.map((thread) => thread.id));
         }
       } finally {
         if (successfullyDeletedIds.length > 0) {
@@ -4106,6 +4198,7 @@ export default function Sidebar() {
       deleteThread,
       markThreadUnread,
       removeFromSelection,
+      sidebarThreadSummaryById,
       selectedThreadIds,
     ],
   );

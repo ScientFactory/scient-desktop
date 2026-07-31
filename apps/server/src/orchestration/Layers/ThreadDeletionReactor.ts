@@ -1,4 +1,9 @@
-import { ThreadId, type OrchestrationEvent } from "@synara/contracts";
+import {
+  ThreadId,
+  type OrchestrationEvent,
+  type OrchestrationReadModel,
+  type TurnId,
+} from "@synara/contracts";
 import { makeDrainableWorker } from "@synara/shared/DrainableWorker";
 import { Cause, Effect, Layer, Stream } from "effect";
 
@@ -19,6 +24,69 @@ type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }
 const PURGE_STARTUP_SWEEP_DELAY_MS = 60 * 1000;
 
 const MISSING_PROVIDER_BINDING_DETAIL = "no persisted provider binding exists";
+
+export type DeletedThreadProviderCleanup =
+  | {
+      readonly kind: "stop-session";
+      readonly threadId: ThreadId;
+    }
+  | {
+      readonly kind: "interrupt-subagent-turn";
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly providerThreadId: string;
+    };
+
+/**
+ * Resolves provider cleanup before a deleted thread is hard-purged. Subagents
+ * share their highest reachable parent's provider session, so an active child
+ * turn must be interrupted through that owner rather than stopped as though it
+ * had an independent provider binding. Corrupt or incomplete lineage falls
+ * back to the existing per-thread stop path, which is safe to retry.
+ */
+export function resolveDeletedThreadProviderCleanup(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+): DeletedThreadProviderCleanup {
+  const threadById = new Map(readModel.threads.map((thread) => [thread.id, thread] as const));
+  const thread = threadById.get(threadId);
+  const directParentId = thread?.parentThreadId ?? null;
+  const activeTurnId = thread?.session?.activeTurnId ?? null;
+  if (!thread || !directParentId || thread.session?.status !== "running" || activeTurnId === null) {
+    return { kind: "stop-session", threadId };
+  }
+
+  const directParent = threadById.get(directParentId);
+  const providerThreadPrefix = `subagent:${directParentId}:`;
+  const rawThreadId = String(thread.id);
+  if (!directParent || !rawThreadId.startsWith(providerThreadPrefix)) {
+    return { kind: "stop-session", threadId };
+  }
+
+  const providerThreadId = rawThreadId.slice(providerThreadPrefix.length);
+  if (providerThreadId.length === 0) {
+    return { kind: "stop-session", threadId };
+  }
+
+  let providerOwner = directParent;
+  const visitedThreadIds = new Set<ThreadId>([thread.id]);
+  while (providerOwner.parentThreadId) {
+    if (visitedThreadIds.has(providerOwner.id)) {
+      return { kind: "stop-session", threadId };
+    }
+    visitedThreadIds.add(providerOwner.id);
+    const parent = threadById.get(providerOwner.parentThreadId);
+    if (!parent) break;
+    providerOwner = parent;
+  }
+
+  return {
+    kind: "interrupt-subagent-turn",
+    threadId: providerOwner.id,
+    turnId: activeTurnId,
+    providerThreadId,
+  };
+}
 
 export const logCleanupCauseUnlessInterrupted = <R, E>({
   effect,
@@ -92,9 +160,35 @@ const make = Effect.gen(function* () {
       cause: Cause.pretty(cause),
     }).pipe(Effect.as(true));
 
-  const stopProviderSession = Effect.fn(function* (
+  const stopProviderRuntime = Effect.fn(function* (
     threadId: ThreadDeletedEvent["payload"]["threadId"],
   ) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const cleanup = resolveDeletedThreadProviderCleanup(readModel, threadId);
+    if (cleanup.kind === "interrupt-subagent-turn") {
+      return yield* providerService
+        .interruptTurn({
+          threadId: cleanup.threadId,
+          turnId: cleanup.turnId,
+          providerThreadId: cleanup.providerThreadId,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.pretty(cause).includes(MISSING_PROVIDER_BINDING_DETAIL)) {
+              return stopProviderSessionWithoutBinding(threadId, cause);
+            }
+            return Effect.logDebug("thread deletion cleanup skipped subagent turn interrupt", {
+              threadId,
+              providerOwnerThreadId: cleanup.threadId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(false));
+          }),
+        );
+    }
     return yield* providerService.stopSession({ threadId }).pipe(
       Effect.as(true),
       Effect.catchCause((cause) => {
@@ -146,7 +240,7 @@ const make = Effect.gen(function* () {
   const cleanupThreadBeforePurge = Effect.fn(function* (
     threadId: ThreadDeletedEvent["payload"]["threadId"],
   ) {
-    const providerCleanupSucceeded = yield* stopProviderSession(threadId);
+    const providerCleanupSucceeded = yield* stopProviderRuntime(threadId);
     const terminalCleanupSucceeded = yield* closeThreadTerminals(threadId);
     return providerCleanupSucceeded && terminalCleanupSucceeded;
   });

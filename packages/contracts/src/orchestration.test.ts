@@ -461,6 +461,27 @@ it.effect("decodes thread archive and unarchive commands", () =>
   }),
 );
 
+it.effect("decodes explicit descendant cascading for thread deletion", () =>
+  Effect.gen(function* () {
+    const single = yield* decodeOrchestrationCommand({
+      type: "thread.delete",
+      commandId: "cmd-delete-single",
+      threadId: "thread-1",
+    });
+    const subtree = yield* decodeOrchestrationCommand({
+      type: "thread.delete",
+      commandId: "cmd-delete-subtree",
+      threadId: "thread-1",
+      cascadeDescendants: true,
+    });
+
+    assert.strictEqual(single.type, "thread.delete");
+    assert.strictEqual(single.cascadeDescendants, undefined);
+    assert.strictEqual(subtree.type, "thread.delete");
+    assert.strictEqual(subtree.cascadeDescendants, true);
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({
