@@ -21,6 +21,7 @@ import {
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
   MAX_BROWSER_EVIDENCE_REUSE_COUNT,
   SCIENT_OPERATION_BY_BROWSER_EVIDENCE_CLASS,
+  SCIENTIFIC_VERIFICATION_OUTCOMES,
   BrowserEvidenceContractError,
   type BrowserDocumentIdentity,
   type BrowserEvidenceLeaseGrant,
@@ -40,6 +41,7 @@ import {
   browserEvidenceActorBindingHash,
   browserEvidenceDigest,
   browserEvidenceHash,
+  browserEvidencePayloadFingerprint,
   browserEvidenceStructuredIdentity,
   makeBrowserDocumentIdentity,
   makeHostileContentProvenanceEnvelope,
@@ -51,6 +53,37 @@ interface LeaseState {
   readonly usesByOperationId: Map<string, BrowserEvidenceLeaseUseReceipt>;
   revokedAt: number | null;
   revocationReason: "host-revoked" | null;
+}
+
+export const BROWSER_EVIDENCE_KERNEL_EFFECT_KINDS = [
+  "lease.issue",
+  "lease.use",
+  "receipt.source",
+  "receipt.automation-memory",
+  "receipt.annotation",
+  "receipt.proposal",
+  "receipt.verification",
+  "receipt.manual-decision",
+] as const;
+
+export type BrowserEvidenceKernelEffectKind = (typeof BROWSER_EVIDENCE_KERNEL_EFFECT_KINDS)[number];
+
+/**
+ * Canonical domain input for the central operation executor. A future adapter
+ * must fingerprint this exact value before invoking the matching kernel effect.
+ */
+export function browserEvidenceKernelPayloadFingerprint(
+  kind: BrowserEvidenceKernelEffectKind,
+  payload: Readonly<Record<string, unknown>>,
+): string {
+  return browserEvidencePayloadFingerprint({ kind, payload });
+}
+
+interface KernelOperationConsumption {
+  readonly effectKind: BrowserEvidenceKernelEffectKind;
+  readonly payloadFingerprint: string;
+  readonly envelopeBindingHash: string;
+  readonly value: unknown;
 }
 
 export interface IssueBrowserEvidenceLeaseInput {
@@ -312,6 +345,68 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
   const leaseUseReceipts = new Map<string, BrowserEvidenceLeaseUseReceipt>();
   const receipts = new Map<string, ScientificEvidenceReceipt>();
   const lastReceiptHashByScope = new Map<string, string>();
+  const operationConsumptions = new Map<string, KernelOperationConsumption>();
+
+  const operationEnvelopeBindingHash = (envelope: ScientOperationRequestEnvelope) =>
+    browserEvidenceHash("kernel-operation-envelope-binding", {
+      operation: envelope.operation,
+      capability: envelope.capability,
+      projectId: envelope.projectId,
+      authority: envelope.authority,
+      ingress: envelope.ingress,
+      parentOperationId: envelope.parentOperationId,
+      providerAuthorizingTurnId: envelope.providerAuthorizingTurnId,
+      semanticRetryScope: envelope.semanticRetryScope,
+      claimKey: envelope.idempotency.claimKey,
+    });
+
+  const operationReplay = <T>(
+    envelope: ScientOperationRequestEnvelope,
+    effectKind: BrowserEvidenceKernelEffectKind,
+    payload: Readonly<Record<string, unknown>>,
+  ): { readonly payloadFingerprint: string; readonly replay: T | null } => {
+    const operationId = browserEvidenceStructuredIdentity(envelope.operationId, "operationId");
+    const payloadFingerprint = browserEvidenceKernelPayloadFingerprint(effectKind, payload);
+    const envelopeFingerprint = browserEvidenceDigest(
+      envelope.idempotency.payloadFingerprint,
+      "authorizedOperation.idempotency.payloadFingerprint",
+    );
+    if (envelopeFingerprint !== payloadFingerprint) {
+      throw new BrowserEvidenceContractError(
+        "operation_replay_conflict",
+        "The operation payload does not match its host-minted payload fingerprint.",
+      );
+    }
+    const consumed = operationConsumptions.get(operationId);
+    if (consumed === undefined) return { payloadFingerprint, replay: null };
+    const envelopeBindingHash = operationEnvelopeBindingHash(envelope);
+    if (
+      consumed.effectKind !== effectKind ||
+      consumed.payloadFingerprint !== payloadFingerprint ||
+      consumed.envelopeBindingHash !== envelopeBindingHash
+    ) {
+      throw new BrowserEvidenceContractError(
+        "operation_replay_conflict",
+        "Operation identity was already consumed by a different kernel effect or payload.",
+      );
+    }
+    return { payloadFingerprint, replay: consumed.value as T };
+  };
+
+  const consumeOperation = <T>(
+    envelope: ScientOperationRequestEnvelope,
+    effectKind: BrowserEvidenceKernelEffectKind,
+    payloadFingerprint: string,
+    value: T,
+  ): T => {
+    operationConsumptions.set(envelope.operationId, {
+      effectKind,
+      payloadFingerprint,
+      envelopeBindingHash: operationEnvelopeBindingHash(envelope),
+      value,
+    });
+    return value;
+  };
 
   const nextId = (prefix: string, provided?: string): string => {
     const identity = browserEvidenceStructuredIdentity(
@@ -564,6 +659,17 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     }
     const authority = assertActiveAuthority(envelope.authority, projectId, issuedAt);
     assertCapability(authority, expectedCapability);
+    const document = makeBrowserDocumentIdentity(input.document);
+    const usePolicy = ensureUsePolicy(input.operationClass, input.usePolicy);
+    const payload = Object.freeze({
+      leaseId: input.leaseId ?? null,
+      document,
+      operationClass: input.operationClass,
+      usePolicy,
+      ttlMs: input.ttlMs,
+    });
+    const operation = operationReplay<BrowserEvidenceLeaseGrant>(envelope, "lease.issue", payload);
+    if (operation.replay !== null) return operation.replay;
     const requestedExpiresAt = issuedAt + input.ttlMs;
     const expiresAt =
       authority.expiresAt === null
@@ -586,10 +692,10 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       actorKind: authority.actor.kind,
       projectId,
       threadId,
-      document: makeBrowserDocumentIdentity(input.document),
+      document,
       operationClass: input.operationClass,
       authorizingTurnId,
-      usePolicy: ensureUsePolicy(input.operationClass, input.usePolicy),
+      usePolicy,
       issuedAt,
       expiresAt,
     });
@@ -599,7 +705,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       revokedAt: null,
       revocationReason: null,
     });
-    return grant;
+    return consumeOperation(envelope, "lease.issue", operation.payloadFingerprint, grant);
   };
 
   const getLease: BrowserEvidenceAuthorityKernel["getLease"] = (leaseId) => {
@@ -676,10 +782,6 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       envelope.providerAuthorizingTurnId,
       "authorizingTurnId",
     );
-    const payloadFingerprint = browserEvidenceDigest(
-      envelope.idempotency.payloadFingerprint,
-      "payloadFingerprint",
-    );
     const currentTime = now();
     try {
       assertFreshEnvelope(envelope, currentTime);
@@ -704,14 +806,28 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     if (authorizingTurnId !== grant.authorizingTurnId) {
       return denial("authorizing_turn_mismatch", "Authorizing turn changed.");
     }
+    let operation: {
+      readonly payloadFingerprint: string;
+      readonly replay: BrowserEvidenceLeaseUseReceipt | null;
+    };
+    try {
+      operation = operationReplay<BrowserEvidenceLeaseUseReceipt>(
+        envelope,
+        "lease.use",
+        Object.freeze({ leaseId: input.leaseId, document }),
+      );
+    } catch {
+      return denial(
+        "operation_replay_conflict",
+        "Operation identity or payload was already consumed by a different kernel effect.",
+      );
+    }
     let authority: ScientOperationAuthority;
     try {
       authority = assertActiveAuthority(envelope.authority, grant.projectId, currentTime);
     } catch {
       return denial("authority_inactive", "Current authority is not active.");
     }
-    if (state.revokedAt !== null) return denial("lease_revoked", "Lease was revoked.");
-    if (currentTime >= grant.expiresAt) return denial("lease_expired", "Lease has expired.");
     if (
       authority.authorityId !== grant.authorityId ||
       authority.generation !== grant.authorityGeneration
@@ -731,15 +847,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Current authority no longer carries the lease capability.",
       );
     }
-    const replay = state.usesByOperationId.get(operationId);
-    if (replay) {
-      return replay.payloadFingerprint === payloadFingerprint
-        ? Object.freeze({ kind: "replayed", receipt: replay })
-        : denial(
-            "operation_replay_conflict",
-            "Operation identity was reused with a different payload.",
-          );
+    if (operation.replay !== null) {
+      return Object.freeze({ kind: "replayed", receipt: operation.replay });
     }
+    if (state.revokedAt !== null) return denial("lease_revoked", "Lease was revoked.");
+    if (currentTime >= grant.expiresAt) return denial("lease_expired", "Lease has expired.");
     if (state.usesByOperationId.size >= grant.usePolicy.maxUses) {
       return denial("lease_exhausted", "Lease usage limit was reached.");
     }
@@ -748,7 +860,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       leaseId: grant.leaseId,
       operationId,
       operationClass: grant.operationClass,
-      payloadFingerprint,
+      payloadFingerprint: operation.payloadFingerprint,
       actorBindingHash: grant.actorBindingHash,
       projectId: grant.projectId,
       threadId: grant.threadId,
@@ -759,6 +871,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     });
     state.usesByOperationId.set(operationId, receipt);
     leaseUseReceipts.set(receipt.receiptId, receipt);
+    consumeOperation(envelope, "lease.use", operation.payloadFingerprint, receipt);
     return Object.freeze({ kind: "allowed", receipt });
   };
 
@@ -839,8 +952,24 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Source provenance does not match the authorized document.",
       );
     }
+    if (provenance.observedAt !== use.authorizedAt) {
+      throw new BrowserEvidenceContractError(
+        "invalid_time",
+        "Browser provenance observedAt must equal the trusted lease-use time.",
+      );
+    }
+    const operation = operationReplay<ScientificSourceReceipt>(
+      actor.envelope,
+      "receipt.source",
+      Object.freeze({
+        receiptId: input.receiptId ?? null,
+        leaseUseReceiptId: input.leaseUseReceiptId,
+        provenance,
+      }),
+    );
+    if (operation.replay !== null) return operation.replay;
     const receiptId = nextId("scientific-source-receipt", input.receiptId);
-    return appendReceipt<ScientificSourceReceipt>({
+    const receipt = appendReceipt<ScientificSourceReceipt>({
       version: 1,
       receiptId,
       kind: "source",
@@ -852,6 +981,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       leaseUseReceiptId: input.leaseUseReceiptId,
       provenance,
     });
+    return consumeOperation(
+      actor.envelope,
+      "receipt.source",
+      operation.payloadFingerprint,
+      receipt,
+    );
   };
 
   const recordAutomationMemoryContext: BrowserEvidenceAuthorityKernel["recordAutomationMemoryContext"] =
@@ -869,8 +1004,20 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
           "The no-browser-lease context path accepts automation memory only.",
         );
       }
+      if (provenance.observedAt !== actor.createdAt) {
+        throw new BrowserEvidenceContractError(
+          "invalid_time",
+          "Automation-memory observedAt must equal the trusted receipt append time.",
+        );
+      }
+      const operation = operationReplay<ScientificSourceReceipt>(
+        actor.envelope,
+        "receipt.automation-memory",
+        Object.freeze({ receiptId: input.receiptId ?? null, provenance }),
+      );
+      if (operation.replay !== null) return operation.replay;
       const receiptId = nextId("automation-memory-context-receipt", input.receiptId);
-      return appendReceipt<ScientificSourceReceipt>({
+      const receipt = appendReceipt<ScientificSourceReceipt>({
         version: 1,
         receiptId,
         kind: "source",
@@ -882,6 +1029,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         leaseUseReceiptId: null,
         provenance,
       });
+      return consumeOperation(
+        actor.envelope,
+        "receipt.automation-memory",
+        operation.payloadFingerprint,
+        receipt,
+      );
     };
 
   const recordAnnotation: BrowserEvidenceAuthorityKernel["recordAnnotation"] = (input) => {
@@ -890,8 +1043,20 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     receiptInScope(input.sourceReceiptId, "source", use.projectId, use.threadId);
     browserEvidenceDigest(input.targetDigest, "targetDigest");
     browserEvidenceDigest(input.annotationDigest, "annotationDigest");
+    const operation = operationReplay<ScientificAnnotationReceipt>(
+      actor.envelope,
+      "receipt.annotation",
+      Object.freeze({
+        receiptId: input.receiptId ?? null,
+        leaseUseReceiptId: input.leaseUseReceiptId,
+        sourceReceiptId: input.sourceReceiptId,
+        targetDigest: input.targetDigest,
+        annotationDigest: input.annotationDigest,
+      }),
+    );
+    if (operation.replay !== null) return operation.replay;
     const receiptId = nextId("scientific-annotation-receipt", input.receiptId);
-    return appendReceipt<ScientificAnnotationReceipt>({
+    const receipt = appendReceipt<ScientificAnnotationReceipt>({
       version: 1,
       receiptId,
       kind: "annotation",
@@ -906,6 +1071,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       annotationDigest: input.annotationDigest,
       role: "proposal-only",
     });
+    return consumeOperation(
+      actor.envelope,
+      "receipt.annotation",
+      operation.payloadFingerprint,
+      receipt,
+    );
   };
 
   const recordProposal: BrowserEvidenceAuthorityKernel["recordProposal"] = (input) => {
@@ -946,8 +1117,19 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     for (const id of contextReceiptIds) {
       automationContextReference(id, projectId);
     }
+    const operation = operationReplay<ScientificProposalReceipt>(
+      actor.envelope,
+      "receipt.proposal",
+      Object.freeze({
+        receiptId: input.receiptId ?? null,
+        claimDigest: input.claimDigest,
+        evidenceReceiptIds,
+        contextReceiptIds,
+      }),
+    );
+    if (operation.replay !== null) return operation.replay;
     const receiptId = nextId("scientific-proposal-receipt", input.receiptId);
-    return appendReceipt<ScientificProposalReceipt>({
+    const receipt = appendReceipt<ScientificProposalReceipt>({
       version: 1,
       receiptId,
       kind: "proposal",
@@ -961,6 +1143,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       contextReceiptIds,
       status: "proposal-only-not-scientific-truth",
     });
+    return consumeOperation(
+      actor.envelope,
+      "receipt.proposal",
+      operation.payloadFingerprint,
+      receipt,
+    );
   };
 
   const recordVerification: BrowserEvidenceAuthorityKernel["recordVerification"] = (input) => {
@@ -974,6 +1162,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     }
     assertActorMayAppendToThread(actor, proposal.threadId);
     const evidenceReceiptIds = freezeIds(input.evidenceReceiptIds, "evidenceReceiptId");
+    if (!(SCIENTIFIC_VERIFICATION_OUTCOMES as ReadonlyArray<unknown>).includes(input.outcome)) {
+      throw new BrowserEvidenceContractError(
+        "evidence_role_denied",
+        "Verification outcome is not supported.",
+      );
+    }
     if (evidenceReceiptIds.length === 0) {
       throw new BrowserEvidenceContractError(
         "evidence_role_denied",
@@ -988,8 +1182,19 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         );
       }
     }
+    const operation = operationReplay<ScientificVerificationReceipt>(
+      actor.envelope,
+      "receipt.verification",
+      Object.freeze({
+        receiptId: input.receiptId ?? null,
+        proposalReceiptId: input.proposalReceiptId,
+        evidenceReceiptIds,
+        outcome: input.outcome,
+      }),
+    );
+    if (operation.replay !== null) return operation.replay;
     const receiptId = nextId("scientific-verification-receipt", input.receiptId);
-    return appendReceipt<ScientificVerificationReceipt>({
+    const receipt = appendReceipt<ScientificVerificationReceipt>({
       version: 1,
       receiptId,
       kind: "verification",
@@ -1003,6 +1208,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       outcome: input.outcome,
       status: "advisory-only-not-scientific-truth",
     });
+    return consumeOperation(
+      actor.envelope,
+      "receipt.verification",
+      operation.payloadFingerprint,
+      receipt,
+    );
   };
 
   const recordManualDecision: BrowserEvidenceAuthorityKernel["recordManualDecision"] = (input) => {
@@ -1055,8 +1266,19 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         );
       }
     }
+    const operationBinding = operationReplay<ManualScientificDecisionReceipt>(
+      actor.envelope,
+      "receipt.manual-decision",
+      Object.freeze({
+        receiptId: input.receiptId ?? null,
+        proposalReceiptId: input.proposalReceiptId,
+        verificationReceiptIds,
+        decision: input.decision,
+      }),
+    );
+    if (operationBinding.replay !== null) return operationBinding.replay;
     const receiptId = nextId("manual-scientific-decision-receipt", input.receiptId);
-    return appendReceipt<ManualScientificDecisionReceipt>({
+    const receipt = appendReceipt<ManualScientificDecisionReceipt>({
       version: 1,
       receiptId,
       kind: "manual-decision",
@@ -1070,6 +1292,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       decision: input.decision,
       status: "manual-user-decision",
     });
+    return consumeOperation(
+      actor.envelope,
+      "receipt.manual-decision",
+      operationBinding.payloadFingerprint,
+      receipt,
+    );
   };
 
   return Object.freeze({

@@ -139,6 +139,14 @@ export const SCIENTIFIC_SOURCE_CLASSES = [
 
 export type ScientificSourceClass = (typeof SCIENTIFIC_SOURCE_CLASSES)[number];
 
+export const SCIENTIFIC_VERIFICATION_OUTCOMES = [
+  "supports",
+  "contradicts",
+  "inconclusive",
+] as const;
+
+export type ScientificVerificationOutcome = (typeof SCIENTIFIC_VERIFICATION_OUTCOMES)[number];
+
 export interface HostileContentProvenanceEnvelope {
   readonly version: 1;
   readonly provenanceId: string;
@@ -197,7 +205,7 @@ export interface ScientificVerificationReceipt extends ScientificEvidenceReceipt
   readonly kind: "verification";
   readonly proposalReceiptId: string;
   readonly evidenceReceiptIds: ReadonlyArray<string>;
-  readonly outcome: "supports" | "contradicts" | "inconclusive";
+  readonly outcome: ScientificVerificationOutcome;
   readonly status: "advisory-only-not-scientific-truth";
 }
 
@@ -235,6 +243,7 @@ export type BrowserEvidenceContractErrorCode =
   | "receipt_reference_invalid"
   | "receipt_scope_mismatch"
   | "evidence_role_denied"
+  | "operation_replay_conflict"
   | "manual_decision_required"
   | "unsupported_decision";
 
@@ -286,6 +295,15 @@ function canonicalJson(value: unknown): string {
     .toSorted()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
     .join(",")}}`;
+}
+
+/**
+ * Matches the central Scient executor's canonical domain-input fingerprint.
+ * Browser-evidence adapters must submit the same canonical payload to the
+ * executor that they later pass to this kernel.
+ */
+export function browserEvidencePayloadFingerprint(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
 export function browserEvidenceHash(tag: string, value: unknown): string {
@@ -342,6 +360,12 @@ export function makeHostileContentProvenanceEnvelope(
   }
   if (!Number.isSafeInteger(input.observedAt) || input.observedAt < 0) {
     throw new BrowserEvidenceContractError("invalid_time", "observedAt must be a safe timestamp.");
+  }
+  if (!(SCIENTIFIC_SOURCE_CLASSES as ReadonlyArray<unknown>).includes(input.sourceClass)) {
+    throw new BrowserEvidenceContractError(
+      "evidence_role_denied",
+      "sourceClass is not a supported scientific source class.",
+    );
   }
   const automationMemory = input.sourceClass === "automation-memory";
   if (automationMemory !== (input.document === null)) {
