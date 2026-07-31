@@ -16,8 +16,10 @@ import {
 } from "../scientOperations/authority.ts";
 import {
   BROWSER_EVIDENCE_CAPABILITY_BY_OPERATION,
+  MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS,
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
   MAX_BROWSER_EVIDENCE_REUSE_COUNT,
+  SCIENT_OPERATION_BY_BROWSER_EVIDENCE_CLASS,
   BrowserEvidenceContractError,
   type BrowserDocumentIdentity,
   type BrowserEvidenceLeaseGrant,
@@ -66,23 +68,15 @@ export interface IssueBrowserEvidenceLeaseInput {
 
 export interface AuthorizeBrowserEvidenceLeaseUseInput {
   readonly leaseId: string;
-  readonly authority: ScientOperationAuthority;
-  readonly operationId: string;
-  readonly operationClass: BrowserEvidenceOperationClass;
-  readonly payloadFingerprint: string;
-  readonly projectId: string;
-  readonly threadId: string;
+  /** Fresh host-minted envelope for this exact use; no raw authority claims. */
+  readonly authorizedOperation: ScientOperationRequestEnvelope;
   readonly document: BrowserDocumentIdentity;
-  readonly authorizingTurnId: string;
-  readonly now: number;
 }
 
 interface ReceiptActorInput {
-  readonly authority: ScientOperationAuthority;
+  /** Exact host-minted propose/accept/export operation for this append. */
+  readonly authorizedOperation: ScientOperationRequestEnvelope;
   readonly receiptId?: string;
-  readonly projectId: string;
-  readonly threadId: string;
-  readonly createdAt: number;
 }
 
 export interface RecordScientificSourceInput extends ReceiptActorInput {
@@ -122,10 +116,7 @@ export interface RecordManualScientificDecisionInput extends ReceiptActorInput {
 export interface BrowserEvidenceAuthorityKernel {
   readonly issueLease: (input: IssueBrowserEvidenceLeaseInput) => BrowserEvidenceLeaseGrant;
   readonly getLease: (leaseId: string) => BrowserEvidenceLeaseSnapshot | null;
-  readonly revokeLease: (input: {
-    readonly leaseId: string;
-    readonly revokedAt: number;
-  }) => BrowserEvidenceLeaseSnapshot;
+  readonly revokeLease: (input: { readonly leaseId: string }) => BrowserEvidenceLeaseSnapshot;
   readonly authorizeLeaseUse: (
     input: AuthorizeBrowserEvidenceLeaseUseInput,
   ) => BrowserEvidenceLeaseUseDecision;
@@ -148,6 +139,20 @@ export interface BrowserEvidenceAuthorityKernel {
 function assertTimestamp(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new BrowserEvidenceContractError("invalid_time", `${field} must be a safe timestamp.`);
+  }
+}
+
+function assertFreshEnvelope(envelope: ScientOperationRequestEnvelope, now: number): void {
+  assertTimestamp(now, "host clock");
+  assertTimestamp(envelope.receivedAt, "authorizedOperation.receivedAt");
+  if (
+    envelope.receivedAt > now ||
+    now - envelope.receivedAt > MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS
+  ) {
+    throw new BrowserEvidenceContractError(
+      "authority_inactive",
+      "Authorized operation envelope is future-dated or stale.",
+    );
   }
 }
 
@@ -244,8 +249,10 @@ function deepFreezeReceipt<T extends ScientificEvidenceReceipt>(receipt: T): T {
 
 export function makeBrowserEvidenceAuthorityKernel(options?: {
   readonly randomId?: () => string;
+  readonly now?: () => number;
 }): BrowserEvidenceAuthorityKernel {
   const randomId = options?.randomId ?? randomUUID;
+  const now = options?.now ?? Date.now;
   const leases = new Map<string, LeaseState>();
   const leaseUseReceipts = new Map<string, BrowserEvidenceLeaseUseReceipt>();
   const receipts = new Map<string, ScientificEvidenceReceipt>();
@@ -262,23 +269,79 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     return identity;
   };
 
-  const actorForReceipt = (input: ReceiptActorInput, capability: string) => {
-    browserEvidenceStructuredIdentity(input.projectId, "projectId");
-    browserEvidenceStructuredIdentity(input.threadId, "threadId");
-    assertTimestamp(input.createdAt, "createdAt");
-    const authority = assertActiveAuthority(input.authority, input.projectId, input.createdAt);
-    assertCapability(authority, capability as ScientOperationAuthority["capabilities"][number]);
+  const actorForReceipt = (
+    input: ReceiptActorInput,
+    operation: "scientific-record.propose" | "scientific-record.accept" | "export.run",
+    capability: "scientific-record:propose" | "scientific-record:accept" | "export:run",
+  ) => {
+    const envelope = input.authorizedOperation;
+    if (
+      envelope === null ||
+      typeof envelope !== "object" ||
+      !Object.isFrozen(envelope) ||
+      !Object.isFrozen(envelope.authority) ||
+      !Object.isFrozen(envelope.authority.actor) ||
+      !Object.isFrozen(envelope.idempotency) ||
+      (envelope.semanticRetryScope !== null && !Object.isFrozen(envelope.semanticRetryScope)) ||
+      envelope.operation !== operation ||
+      envelope.capability !== capability
+    ) {
+      throw new BrowserEvidenceContractError(
+        "authority_scope_denied",
+        `Receipt append requires an exact host-minted ${operation} envelope.`,
+      );
+    }
+    const projectId = browserEvidenceStructuredIdentity(envelope.projectId, "projectId");
+    const currentTime = now();
+    assertFreshEnvelope(envelope, currentTime);
+    const authority = assertActiveAuthority(envelope.authority, projectId, currentTime);
+    assertCapability(authority, capability);
+    if (authority.actor.kind === "provider-thread") {
+      const turn = envelope.semanticRetryScope;
+      if (
+        envelope.ingress !== "provider-gateway" ||
+        turn?.kind !== "provider-turn" ||
+        envelope.providerAuthorizingTurnId === null ||
+        turn.callerTurnId !== envelope.providerAuthorizingTurnId ||
+        turn.callerThreadId !== authority.actor.threadId ||
+        turn.provider !== authority.actor.provider
+      ) {
+        throw new BrowserEvidenceContractError(
+          "actor_scope_denied",
+          "Provider receipt append requires an exact current provider-turn binding.",
+        );
+      }
+    } else if (authority.actor.kind === "automation-run") {
+      const run = envelope.semanticRetryScope;
+      if (
+        envelope.ingress !== "automation" ||
+        run?.kind !== "automation-run" ||
+        run.automationId !== authority.actor.automationId ||
+        run.runId !== authority.actor.runId
+      ) {
+        throw new BrowserEvidenceContractError(
+          "actor_scope_denied",
+          "Automation receipt append requires an exact current automation-run binding.",
+        );
+      }
+    } else if (envelope.ingress !== "manual-ui" || envelope.semanticRetryScope !== null) {
+      throw new BrowserEvidenceContractError(
+        "actor_scope_denied",
+        "Manual receipt append requires an exact manual host binding.",
+      );
+    }
     return {
+      envelope,
       authority,
+      projectId,
+      createdAt: currentTime,
       actorBindingHash: browserEvidenceActorBindingHash(authority),
     };
   };
 
-  const receiptInScope = <T extends ScientificEvidenceReceipt["kind"]>(
+  const receiptByKind = <T extends ScientificEvidenceReceipt["kind"]>(
     id: string,
     kind: T,
-    projectId: string,
-    threadId: string,
   ): Extract<ScientificEvidenceReceipt, { readonly kind: T }> => {
     browserEvidenceStructuredIdentity(id, `${kind}ReceiptId`);
     const receipt = receipts.get(id);
@@ -288,13 +351,23 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         `Referenced ${kind} receipt does not exist.`,
       );
     }
+    return receipt as Extract<ScientificEvidenceReceipt, { readonly kind: T }>;
+  };
+
+  const receiptInScope = <T extends ScientificEvidenceReceipt["kind"]>(
+    id: string,
+    kind: T,
+    projectId: string,
+    threadId: string,
+  ): Extract<ScientificEvidenceReceipt, { readonly kind: T }> => {
+    const receipt = receiptByKind(id, kind);
     if (receipt.projectId !== projectId || receipt.threadId !== threadId) {
       throw new BrowserEvidenceContractError(
         "receipt_scope_mismatch",
         `Referenced ${kind} receipt is outside the requested scope.`,
       );
     }
-    return receipt as Extract<ScientificEvidenceReceipt, { readonly kind: T }>;
+    return receipt;
   };
 
   const appendReceipt = <T extends ScientificEvidenceReceipt>(
@@ -324,7 +397,8 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     return source.provenance.scientificRole === "eligible-unverified-source";
   };
 
-  const evidenceReference = (id: string, projectId: string, threadId: string) => {
+  const evidenceById = (id: string): ScientificSourceReceipt | ScientificAnnotationReceipt => {
+    browserEvidenceStructuredIdentity(id, "evidenceReceiptId");
     const receipt = receipts.get(id);
     if (!receipt || (receipt.kind !== "source" && receipt.kind !== "annotation")) {
       throw new BrowserEvidenceContractError(
@@ -332,6 +406,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Evidence must reference a source or annotation receipt.",
       );
     }
+    return receipt;
+  };
+
+  const evidenceReference = (id: string, projectId: string, threadId: string) => {
+    const receipt = evidenceById(id);
     if (receipt.projectId !== projectId || receipt.threadId !== threadId) {
       throw new BrowserEvidenceContractError(
         "receipt_scope_mismatch",
@@ -343,13 +422,31 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
 
   const issueLease: BrowserEvidenceAuthorityKernel["issueLease"] = (input) => {
     const envelope = input.authorizingOperation;
+    const expectedOperation = SCIENT_OPERATION_BY_BROWSER_EVIDENCE_CLASS[input.operationClass];
+    const expectedCapability = BROWSER_EVIDENCE_CAPABILITY_BY_OPERATION[input.operationClass];
+    if (
+      envelope === null ||
+      typeof envelope !== "object" ||
+      !Object.isFrozen(envelope) ||
+      envelope.authority === null ||
+      typeof envelope.authority !== "object" ||
+      !Object.isFrozen(envelope.authority) ||
+      !Object.isFrozen(envelope.authority.actor) ||
+      !Object.isFrozen(envelope.idempotency) ||
+      (envelope.semanticRetryScope !== null && !Object.isFrozen(envelope.semanticRetryScope)) ||
+      envelope.operation !== expectedOperation ||
+      envelope.capability !== expectedCapability
+    ) {
+      throw new BrowserEvidenceContractError(
+        "actor_scope_denied",
+        `Browser leases require an exact trusted ${expectedOperation} provider-turn binding.`,
+      );
+    }
     const actor = envelope.authority.actor;
     const semanticTurn = envelope.semanticRetryScope;
     if (
-      !Object.isFrozen(envelope) ||
-      !Object.isFrozen(envelope.authority) ||
-      !Object.isFrozen(envelope.authority.actor) ||
       actor.kind !== "provider-thread" ||
+      envelope.ingress !== "provider-gateway" ||
       semanticTurn?.kind !== "provider-turn" ||
       envelope.providerAuthorizingTurnId === null ||
       semanticTurn.callerTurnId !== envelope.providerAuthorizingTurnId ||
@@ -358,7 +455,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     ) {
       throw new BrowserEvidenceContractError(
         "actor_scope_denied",
-        "Browser leases require an exact trusted provider-turn operation binding.",
+        `Browser leases require an exact trusted ${expectedOperation} provider-turn binding.`,
       );
     }
     const projectId = browserEvidenceStructuredIdentity(envelope.projectId, "projectId");
@@ -367,8 +464,8 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       envelope.providerAuthorizingTurnId,
       "authorizingTurnId",
     );
-    const issuedAt = envelope.receivedAt;
-    assertTimestamp(issuedAt, "authorizingOperation.receivedAt");
+    const issuedAt = now();
+    assertFreshEnvelope(envelope, issuedAt);
     if (
       !Number.isSafeInteger(input.ttlMs) ||
       input.ttlMs < 1 ||
@@ -380,7 +477,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       );
     }
     const authority = assertActiveAuthority(envelope.authority, projectId, issuedAt);
-    assertCapability(authority, BROWSER_EVIDENCE_CAPABILITY_BY_OPERATION[input.operationClass]);
+    assertCapability(authority, expectedCapability);
     const requestedExpiresAt = issuedAt + input.ttlMs;
     const expiresAt =
       authority.expiresAt === null
@@ -396,6 +493,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     const grant: BrowserEvidenceLeaseGrant = Object.freeze({
       version: 1,
       leaseId,
+      issuingOperationId: envelope.operationId,
       authorityId: authority.authorityId,
       authorityGeneration: authority.generation,
       actorBindingHash: browserEvidenceActorBindingHash(authority),
@@ -425,54 +523,109 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
 
   const revokeLease: BrowserEvidenceAuthorityKernel["revokeLease"] = (input) => {
     browserEvidenceStructuredIdentity(input.leaseId, "leaseId");
-    assertTimestamp(input.revokedAt, "revokedAt");
+    const revokedAt = now();
+    assertTimestamp(revokedAt, "host clock");
     const state = leases.get(input.leaseId);
     if (!state) {
       throw new BrowserEvidenceContractError("receipt_reference_invalid", "Lease does not exist.");
     }
-    if (input.revokedAt < state.grant.issuedAt) {
+    if (revokedAt < state.grant.issuedAt) {
       throw new BrowserEvidenceContractError(
         "invalid_time",
         "Lease cannot be revoked before issuance.",
       );
     }
-    state.revokedAt ??= input.revokedAt;
+    state.revokedAt ??= revokedAt;
     state.revocationReason ??= "host-revoked";
     return immutableLeaseSnapshot(state);
   };
 
   const authorizeLeaseUse: BrowserEvidenceAuthorityKernel["authorizeLeaseUse"] = (input) => {
     browserEvidenceStructuredIdentity(input.leaseId, "leaseId");
-    browserEvidenceStructuredIdentity(input.operationId, "operationId");
-    browserEvidenceStructuredIdentity(input.projectId, "projectId");
-    browserEvidenceStructuredIdentity(input.threadId, "threadId");
-    browserEvidenceStructuredIdentity(input.authorizingTurnId, "authorizingTurnId");
-    browserEvidenceDigest(input.payloadFingerprint, "payloadFingerprint");
-    assertTimestamp(input.now, "now");
     const document = makeBrowserDocumentIdentity(input.document);
     const state = leases.get(input.leaseId);
     if (!state) return denial("lease_not_found", "Lease does not exist.");
     const grant = state.grant;
-    if (input.projectId !== grant.projectId) return denial("project_mismatch", "Project changed.");
-    if (input.threadId !== grant.threadId) return denial("thread_mismatch", "Thread changed.");
+    const envelope = input.authorizedOperation;
+    const expectedOperation = SCIENT_OPERATION_BY_BROWSER_EVIDENCE_CLASS[grant.operationClass];
+    const expectedCapability = BROWSER_EVIDENCE_CAPABILITY_BY_OPERATION[grant.operationClass];
+    if (
+      envelope === null ||
+      typeof envelope !== "object" ||
+      !Object.isFrozen(envelope) ||
+      envelope.authority === null ||
+      typeof envelope.authority !== "object" ||
+      !Object.isFrozen(envelope.authority) ||
+      !Object.isFrozen(envelope.authority.actor) ||
+      !Object.isFrozen(envelope.idempotency) ||
+      (envelope.semanticRetryScope !== null && !Object.isFrozen(envelope.semanticRetryScope)) ||
+      envelope.operation !== expectedOperation ||
+      envelope.capability !== expectedCapability
+    ) {
+      return denial(
+        "trusted_operation_required",
+        `Lease use requires a fresh host-minted ${expectedOperation} envelope.`,
+      );
+    }
+    const actor = envelope.authority.actor;
+    const turn = envelope.semanticRetryScope;
+    if (
+      actor.kind !== "provider-thread" ||
+      envelope.ingress !== "provider-gateway" ||
+      turn?.kind !== "provider-turn" ||
+      envelope.providerAuthorizingTurnId === null ||
+      turn.callerTurnId !== envelope.providerAuthorizingTurnId ||
+      turn.callerThreadId !== actor.threadId ||
+      turn.provider !== actor.provider
+    ) {
+      return denial(
+        "trusted_operation_required",
+        "Lease use requires an exact current provider-turn binding.",
+      );
+    }
+    const operationId = browserEvidenceStructuredIdentity(envelope.operationId, "operationId");
+    const projectId = browserEvidenceStructuredIdentity(envelope.projectId, "projectId");
+    const threadId = browserEvidenceStructuredIdentity(actor.threadId, "threadId");
+    const authorizingTurnId = browserEvidenceStructuredIdentity(
+      envelope.providerAuthorizingTurnId,
+      "authorizingTurnId",
+    );
+    const payloadFingerprint = browserEvidenceDigest(
+      envelope.idempotency.payloadFingerprint,
+      "payloadFingerprint",
+    );
+    const currentTime = now();
+    try {
+      assertFreshEnvelope(envelope, currentTime);
+    } catch {
+      return denial(
+        "trusted_operation_required",
+        "Lease use requires a fresh host-minted operation envelope.",
+      );
+    }
+    if (operationId === grant.issuingOperationId || envelope.receivedAt < grant.issuedAt) {
+      return denial(
+        "trusted_operation_required",
+        "The lease-issuing operation cannot be reused as an execution admission.",
+      );
+    }
+    if (projectId !== grant.projectId) return denial("project_mismatch", "Project changed.");
+    if (threadId !== grant.threadId) return denial("thread_mismatch", "Thread changed.");
     if (document.tabId !== grant.document.tabId) return denial("tab_mismatch", "Tab changed.");
     if (!sameBrowserDocument(document, grant.document)) {
       return denial("document_mismatch", "Document identity changed.");
     }
-    if (input.operationClass !== grant.operationClass) {
-      return denial("operation_class_mismatch", "Operation class changed.");
-    }
-    if (input.authorizingTurnId !== grant.authorizingTurnId) {
+    if (authorizingTurnId !== grant.authorizingTurnId) {
       return denial("authorizing_turn_mismatch", "Authorizing turn changed.");
     }
     let authority: ScientOperationAuthority;
     try {
-      authority = assertActiveAuthority(input.authority, grant.projectId, input.now);
+      authority = assertActiveAuthority(envelope.authority, grant.projectId, currentTime);
     } catch {
       return denial("authority_inactive", "Current authority is not active.");
     }
     if (state.revokedAt !== null) return denial("lease_revoked", "Lease was revoked.");
-    if (input.now >= grant.expiresAt) return denial("lease_expired", "Lease has expired.");
+    if (currentTime >= grant.expiresAt) return denial("lease_expired", "Lease has expired.");
     if (
       authority.authorityId !== grant.authorityId ||
       authority.generation !== grant.authorityGeneration
@@ -492,9 +645,9 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Current authority no longer carries the lease capability.",
       );
     }
-    const replay = state.usesByOperationId.get(input.operationId);
+    const replay = state.usesByOperationId.get(operationId);
     if (replay) {
-      return replay.payloadFingerprint === input.payloadFingerprint
+      return replay.payloadFingerprint === payloadFingerprint
         ? Object.freeze({ kind: "replayed", receipt: replay })
         : denial(
             "operation_replay_conflict",
@@ -507,27 +660,26 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     const receipt: BrowserEvidenceLeaseUseReceipt = Object.freeze({
       receiptId: nextId("browser-evidence-use"),
       leaseId: grant.leaseId,
-      operationId: input.operationId,
+      operationId,
       operationClass: grant.operationClass,
-      payloadFingerprint: input.payloadFingerprint,
+      payloadFingerprint,
       actorBindingHash: grant.actorBindingHash,
       projectId: grant.projectId,
       threadId: grant.threadId,
       document: makeBrowserDocumentIdentity(grant.document),
       authorizingTurnId: grant.authorizingTurnId,
       useSequence: state.usesByOperationId.size + 1,
-      authorizedAt: input.now,
+      authorizedAt: currentTime,
     });
-    state.usesByOperationId.set(input.operationId, receipt);
+    state.usesByOperationId.set(operationId, receipt);
     leaseUseReceipts.set(receipt.receiptId, receipt);
     return Object.freeze({ kind: "allowed", receipt });
   };
 
   const useReceiptFor = (
     id: string,
-    input: ReceiptActorInput,
     allowedOperations: ReadonlyArray<BrowserEvidenceOperationClass>,
-    actorBindingHash: string,
+    actor: ReturnType<typeof actorForReceipt>,
   ) => {
     browserEvidenceStructuredIdentity(id, "leaseUseReceiptId");
     const use = leaseUseReceipts.get(id);
@@ -538,9 +690,10 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       );
     }
     if (
-      use.projectId !== input.projectId ||
-      use.threadId !== input.threadId ||
-      use.actorBindingHash !== actorBindingHash
+      use.projectId !== actor.projectId ||
+      use.actorBindingHash !== actor.actorBindingHash ||
+      (actor.authority.actor.kind === "provider-thread" &&
+        use.threadId !== actor.authority.actor.threadId)
     ) {
       throw new BrowserEvidenceContractError(
         "receipt_scope_mismatch",
@@ -550,13 +703,41 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     return use;
   };
 
+  const assertActorMayAppendToThread = (
+    actor: ReturnType<typeof actorForReceipt>,
+    threadId: string,
+  ) => {
+    if (
+      actor.authority.actor.kind === "provider-thread" &&
+      actor.authority.actor.threadId !== threadId
+    ) {
+      throw new BrowserEvidenceContractError(
+        "receipt_scope_mismatch",
+        "Provider operation cannot append outside its exact thread.",
+      );
+    }
+  };
+
+  const automationMemoryThread = (actor: ReturnType<typeof actorForReceipt>): string => {
+    const authorityActor = actor.authority.actor;
+    if (authorityActor.kind !== "automation-run") {
+      throw new BrowserEvidenceContractError(
+        "actor_scope_denied",
+        "Only an exact automation run may append automation-memory context.",
+      );
+    }
+    return `automation-run:${browserEvidenceHash("automation-run-scope", [
+      authorityActor.automationId,
+      authorityActor.runId,
+    ]).slice(0, 48)}`;
+  };
+
   const recordSource: BrowserEvidenceAuthorityKernel["recordSource"] = (input) => {
-    const actor = actorForReceipt(input, "scientific-record:propose");
+    const actor = actorForReceipt(input, "scientific-record.propose", "scientific-record:propose");
     const use = useReceiptFor(
       input.leaseUseReceiptId,
-      input,
       ["document.read", "document.capture"],
-      actor.actorBindingHash,
+      actor,
     );
     const provenance = makeHostileContentProvenanceEnvelope(input.provenance);
     if (provenance.sourceClass === "automation-memory") {
@@ -576,11 +757,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       version: 1,
       receiptId,
       kind: "source",
-      projectId: input.projectId,
-      threadId: input.threadId,
+      projectId: use.projectId,
+      threadId: use.threadId,
       actorKind: actor.authority.actor.kind,
       actorBindingHash: actor.actorBindingHash,
-      createdAt: input.createdAt,
+      createdAt: actor.createdAt,
       leaseUseReceiptId: input.leaseUseReceiptId,
       provenance,
     });
@@ -588,13 +769,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
 
   const recordAutomationMemoryContext: BrowserEvidenceAuthorityKernel["recordAutomationMemoryContext"] =
     (input) => {
-      const actor = actorForReceipt(input, "scientific-record:propose");
-      if (actor.authority.actor.kind !== "automation-run") {
-        throw new BrowserEvidenceContractError(
-          "actor_scope_denied",
-          "Only an exact automation run may append automation-memory context.",
-        );
-      }
+      const actor = actorForReceipt(
+        input,
+        "scientific-record.propose",
+        "scientific-record:propose",
+      );
+      const threadId = automationMemoryThread(actor);
       const provenance = makeHostileContentProvenanceEnvelope(input.provenance);
       if (provenance.sourceClass !== "automation-memory") {
         throw new BrowserEvidenceContractError(
@@ -607,20 +787,20 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         version: 1,
         receiptId,
         kind: "source",
-        projectId: input.projectId,
-        threadId: input.threadId,
+        projectId: actor.projectId,
+        threadId,
         actorKind: "automation-run",
         actorBindingHash: actor.actorBindingHash,
-        createdAt: input.createdAt,
+        createdAt: actor.createdAt,
         leaseUseReceiptId: null,
         provenance,
       });
     };
 
   const recordAnnotation: BrowserEvidenceAuthorityKernel["recordAnnotation"] = (input) => {
-    const actor = actorForReceipt(input, "scientific-record:propose");
-    useReceiptFor(input.leaseUseReceiptId, input, ["annotation.propose"], actor.actorBindingHash);
-    receiptInScope(input.sourceReceiptId, "source", input.projectId, input.threadId);
+    const actor = actorForReceipt(input, "scientific-record.propose", "scientific-record:propose");
+    const use = useReceiptFor(input.leaseUseReceiptId, ["annotation.propose"], actor);
+    receiptInScope(input.sourceReceiptId, "source", use.projectId, use.threadId);
     browserEvidenceDigest(input.targetDigest, "targetDigest");
     browserEvidenceDigest(input.annotationDigest, "annotationDigest");
     const receiptId = nextId("scientific-annotation-receipt", input.receiptId);
@@ -628,11 +808,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       version: 1,
       receiptId,
       kind: "annotation",
-      projectId: input.projectId,
-      threadId: input.threadId,
+      projectId: use.projectId,
+      threadId: use.threadId,
       actorKind: actor.authority.actor.kind,
       actorBindingHash: actor.actorBindingHash,
-      createdAt: input.createdAt,
+      createdAt: actor.createdAt,
       leaseUseReceiptId: input.leaseUseReceiptId,
       sourceReceiptId: input.sourceReceiptId,
       targetDigest: input.targetDigest,
@@ -642,7 +822,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
   };
 
   const recordProposal: BrowserEvidenceAuthorityKernel["recordProposal"] = (input) => {
-    const actor = actorForReceipt(input, "scientific-record:propose");
+    const actor = actorForReceipt(input, "scientific-record.propose", "scientific-record:propose");
     browserEvidenceDigest(input.claimDigest, "claimDigest");
     const evidenceReceiptIds = freezeIds(input.evidenceReceiptIds, "evidenceReceiptId");
     const contextReceiptIds = freezeIds(input.contextReceiptIds ?? [], "contextReceiptId");
@@ -652,8 +832,18 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "A scientific proposal requires at least one eligible evidence receipt.",
       );
     }
+    const firstEvidence = evidenceById(evidenceReceiptIds[0]!);
+    const projectId = firstEvidence.projectId;
+    const threadId = firstEvidence.threadId;
+    if (projectId !== actor.projectId) {
+      throw new BrowserEvidenceContractError(
+        "receipt_scope_mismatch",
+        "Proposal evidence is outside the authorized project.",
+      );
+    }
+    assertActorMayAppendToThread(actor, threadId);
     for (const id of evidenceReceiptIds) {
-      if (!isEligibleEvidence(evidenceReference(id, input.projectId, input.threadId))) {
+      if (!isEligibleEvidence(evidenceReference(id, projectId, threadId))) {
         throw new BrowserEvidenceContractError(
           "evidence_role_denied",
           "Automation memory is context only and cannot become scientific evidence.",
@@ -661,18 +851,18 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       }
     }
     for (const id of contextReceiptIds) {
-      evidenceReference(id, input.projectId, input.threadId);
+      evidenceReference(id, projectId, threadId);
     }
     const receiptId = nextId("scientific-proposal-receipt", input.receiptId);
     return appendReceipt<ScientificProposalReceipt>({
       version: 1,
       receiptId,
       kind: "proposal",
-      projectId: input.projectId,
-      threadId: input.threadId,
+      projectId,
+      threadId,
       actorKind: actor.authority.actor.kind,
       actorBindingHash: actor.actorBindingHash,
-      createdAt: input.createdAt,
+      createdAt: actor.createdAt,
       claimDigest: input.claimDigest,
       evidenceReceiptIds,
       contextReceiptIds,
@@ -681,8 +871,15 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
   };
 
   const recordVerification: BrowserEvidenceAuthorityKernel["recordVerification"] = (input) => {
-    const actor = actorForReceipt(input, "scientific-record:propose");
-    receiptInScope(input.proposalReceiptId, "proposal", input.projectId, input.threadId);
+    const actor = actorForReceipt(input, "scientific-record.propose", "scientific-record:propose");
+    const proposal = receiptByKind(input.proposalReceiptId, "proposal");
+    if (proposal.projectId !== actor.projectId) {
+      throw new BrowserEvidenceContractError(
+        "receipt_scope_mismatch",
+        "Proposal is outside the authorized project.",
+      );
+    }
+    assertActorMayAppendToThread(actor, proposal.threadId);
     const evidenceReceiptIds = freezeIds(input.evidenceReceiptIds, "evidenceReceiptId");
     if (evidenceReceiptIds.length === 0) {
       throw new BrowserEvidenceContractError(
@@ -691,7 +888,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       );
     }
     for (const id of evidenceReceiptIds) {
-      if (!isEligibleEvidence(evidenceReference(id, input.projectId, input.threadId))) {
+      if (!isEligibleEvidence(evidenceReference(id, proposal.projectId, proposal.threadId))) {
         throw new BrowserEvidenceContractError(
           "evidence_role_denied",
           "Automation memory cannot verify scientific truth.",
@@ -703,11 +900,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       version: 1,
       receiptId,
       kind: "verification",
-      projectId: input.projectId,
-      threadId: input.threadId,
+      projectId: proposal.projectId,
+      threadId: proposal.threadId,
       actorKind: actor.authority.actor.kind,
       actorBindingHash: actor.actorBindingHash,
-      createdAt: input.createdAt,
+      createdAt: actor.createdAt,
       proposalReceiptId: input.proposalReceiptId,
       evidenceReceiptIds,
       outcome: input.outcome,
@@ -726,16 +923,24 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Publication authority is not defined in this foundation.",
       );
     }
+    const operation =
+      input.decision === "approve-export" ? "export.run" : "scientific-record.accept";
     const capability =
       input.decision === "approve-export" ? "export:run" : "scientific-record:accept";
-    const actor = actorForReceipt(input, capability);
+    const actor = actorForReceipt(input, operation, capability);
     if (actor.authority.actor.kind !== "manual-user") {
       throw new BrowserEvidenceContractError(
         "manual_decision_required",
         "Only a manual user may accept scientific truth or approve export.",
       );
     }
-    receiptInScope(input.proposalReceiptId, "proposal", input.projectId, input.threadId);
+    const proposal = receiptByKind(input.proposalReceiptId, "proposal");
+    if (proposal.projectId !== actor.projectId) {
+      throw new BrowserEvidenceContractError(
+        "receipt_scope_mismatch",
+        "Proposal is outside the authorized project.",
+      );
+    }
     const verificationReceiptIds = freezeIds(input.verificationReceiptIds, "verificationReceiptId");
     if (input.decision !== "reject-scientific-truth" && verificationReceiptIds.length === 0) {
       throw new BrowserEvidenceContractError(
@@ -744,7 +949,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       );
     }
     for (const id of verificationReceiptIds) {
-      const verification = receiptInScope(id, "verification", input.projectId, input.threadId);
+      const verification = receiptInScope(
+        id,
+        "verification",
+        proposal.projectId,
+        proposal.threadId,
+      );
       if (verification.proposalReceiptId !== input.proposalReceiptId) {
         throw new BrowserEvidenceContractError(
           "receipt_reference_invalid",
@@ -757,11 +967,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       version: 1,
       receiptId,
       kind: "manual-decision",
-      projectId: input.projectId,
-      threadId: input.threadId,
+      projectId: proposal.projectId,
+      threadId: proposal.threadId,
       actorKind: "manual-user",
       actorBindingHash: actor.actorBindingHash,
-      createdAt: input.createdAt,
+      createdAt: actor.createdAt,
       proposalReceiptId: input.proposalReceiptId,
       verificationReceiptIds,
       decision: input.decision,

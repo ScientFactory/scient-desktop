@@ -7,6 +7,7 @@ import {
 } from "../scientOperations/authority.ts";
 import { makeBrowserEvidenceAuthorityKernel } from "./authority.ts";
 import {
+  MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS,
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
   BrowserEvidenceContractError,
   type BrowserDocumentIdentity,
@@ -99,30 +100,72 @@ function documentIdentity(overrides?: Partial<BrowserDocumentIdentity>): Browser
 
 function makeKernel() {
   let nextId = 0;
-  return makeBrowserEvidenceAuthorityKernel({
+  let currentTime = NOW;
+  const kernel = makeBrowserEvidenceAuthorityKernel({
     randomId: () => `generated-${++nextId}`,
+    now: () => currentTime,
   });
+  return {
+    ...kernel,
+    setNow(value: number) {
+      currentTime = value;
+    },
+    advanceTime(milliseconds: number) {
+      currentTime += milliseconds;
+    },
+  };
 }
 
-function trustedTurnOperation(authority: ScientOperationAuthority = providerAuthority()) {
+function trustedOperation(input?: {
+  readonly authority?: ScientOperationAuthority;
+  readonly operation?: keyof typeof SCIENT_OPERATION_DEFINITIONS;
+  readonly operationId?: string;
+  readonly turnId?: string;
+  readonly projectId?: string;
+  readonly receivedAt?: number;
+  readonly payloadFingerprint?: string;
+}) {
+  const authority = input?.authority ?? providerAuthority();
+  const operation = input?.operation ?? "browser.read";
+  const operationId = input?.operationId ?? `${operation}-operation`;
+  const turnId = input?.turnId ?? TURN_ID;
+  const actor = authority.actor;
   const started = beginScientOperation({
     authority,
-    definition: SCIENT_OPERATION_DEFINITIONS["thread.message.send"],
-    projectId: PROJECT_ID,
-    ingress: "provider-gateway",
-    operationId: "turn-binding-operation",
-    semanticIdempotencyIdentity: "turn-binding-request",
-    semanticIdempotencyScope: {
-      kind: "provider-turn",
-      provider: "codex",
-      callerThreadId: THREAD_ID,
-      callerTurnId: TURN_ID,
-    },
-    providerAuthorizingTurnId: TURN_ID,
-    payloadFingerprint: DIGEST_A,
-    receivedAt: NOW,
+    definition: SCIENT_OPERATION_DEFINITIONS[operation],
+    projectId: input?.projectId ?? PROJECT_ID,
+    ingress:
+      actor.kind === "provider-thread"
+        ? "provider-gateway"
+        : actor.kind === "automation-run"
+          ? "automation"
+          : "manual-ui",
+    operationId,
+    ...(actor.kind === "provider-thread"
+      ? {
+          semanticIdempotencyIdentity: `${operationId}-request`,
+          semanticIdempotencyScope: {
+            kind: "provider-turn" as const,
+            provider: actor.provider,
+            callerThreadId: actor.threadId,
+            callerTurnId: turnId,
+          },
+          providerAuthorizingTurnId: turnId,
+        }
+      : actor.kind === "automation-run"
+        ? {
+            semanticIdempotencyIdentity: `${operationId}-request`,
+            semanticIdempotencyScope: {
+              kind: "automation-run" as const,
+              automationId: actor.automationId,
+              runId: actor.runId,
+            },
+          }
+        : {}),
+    payloadFingerprint: input?.payloadFingerprint ?? DIGEST_A,
+    receivedAt: input?.receivedAt ?? NOW,
   });
-  if (!started.allow) throw new Error("trusted turn operation unexpectedly denied");
+  if (!started.allow) throw new Error(`trusted ${operation} operation unexpectedly denied`);
   return started.envelope;
 }
 
@@ -143,7 +186,11 @@ function issueReadLease(
 ) {
   const authority = input?.authority ?? providerAuthority();
   return kernel.issueLease({
-    authorizingOperation: trustedTurnOperation(authority),
+    authorizingOperation: trustedOperation({
+      authority,
+      operation: "browser.read",
+      operationId: `${input?.leaseId ?? "lease-1"}-issuing-operation`,
+    }),
     leaseId: input?.leaseId ?? "lease-1",
     document: input?.document ?? documentIdentity(),
     operationClass: "document.read",
@@ -154,20 +201,34 @@ function issueReadLease(
 
 function authorizeRead(
   kernel: ReturnType<typeof makeKernel>,
-  overrides?: Partial<Parameters<typeof kernel.authorizeLeaseUse>[0]>,
+  overrides?: {
+    readonly authority?: ScientOperationAuthority;
+    readonly operationId?: string;
+    readonly operation?: "browser.read" | "browser.capture";
+    readonly payloadFingerprint?: string;
+    readonly projectId?: string;
+    readonly turnId?: string;
+    readonly receivedAt?: number;
+    readonly document?: BrowserDocumentIdentity;
+    readonly authorizedOperation?: Parameters<
+      typeof kernel.authorizeLeaseUse
+    >[0]["authorizedOperation"];
+  },
 ): BrowserEvidenceLeaseUseDecision {
   return kernel.authorizeLeaseUse({
     leaseId: "lease-1",
-    authority: providerAuthority(),
-    operationId: "operation-1",
-    operationClass: "document.read",
-    payloadFingerprint: DIGEST_B,
-    projectId: PROJECT_ID,
-    threadId: THREAD_ID,
-    document: documentIdentity(),
-    authorizingTurnId: TURN_ID,
-    now: NOW + 1,
-    ...overrides,
+    authorizedOperation:
+      overrides?.authorizedOperation ??
+      trustedOperation({
+        ...(overrides?.authority === undefined ? {} : { authority: overrides.authority }),
+        ...(overrides?.operation === undefined ? {} : { operation: overrides.operation }),
+        operationId: overrides?.operationId ?? "operation-1",
+        payloadFingerprint: overrides?.payloadFingerprint ?? DIGEST_B,
+        ...(overrides?.projectId === undefined ? {} : { projectId: overrides.projectId }),
+        ...(overrides?.turnId === undefined ? {} : { turnId: overrides.turnId }),
+        receivedAt: overrides?.receivedAt ?? NOW,
+      }),
+    document: overrides?.document ?? documentIdentity(),
   });
 }
 
@@ -202,15 +263,17 @@ function authorizeUseFor(
 ) {
   return kernel.authorizeLeaseUse({
     leaseId: input.leaseId,
-    authority: input.authority,
-    operationId: input.operationId,
-    operationClass: input.operationClass,
-    payloadFingerprint: input.payloadFingerprint ?? DIGEST_B,
-    projectId: PROJECT_ID,
-    threadId: THREAD_ID,
+    authorizedOperation: trustedOperation({
+      authority: input.authority,
+      operation:
+        input.operationClass === "annotation.propose"
+          ? "scientific-record.propose"
+          : "browser.read",
+      operationId: input.operationId,
+      payloadFingerprint: input.payloadFingerprint ?? DIGEST_B,
+      receivedAt: NOW,
+    }),
     document: documentIdentity(),
-    authorizingTurnId: TURN_ID,
-    now: NOW + 1,
   });
 }
 
@@ -225,29 +288,35 @@ function buildEligibleProposal(kernel: ReturnType<typeof makeKernel>) {
   });
   if (sourceUse.kind === "denied") throw new Error("source lease unexpectedly denied");
   const source = kernel.recordSource({
-    authority: provider,
+    authorizedOperation: trustedOperation({
+      authority: provider,
+      operation: "scientific-record.propose",
+      operationId: "source-receipt-operation",
+      receivedAt: NOW,
+    }),
     receiptId: "source-receipt-1",
-    projectId: PROJECT_ID,
-    threadId: THREAD_ID,
-    createdAt: NOW + 2,
     leaseUseReceiptId: sourceUse.receipt.receiptId,
     provenance: provenance(),
   });
   const proposal = kernel.recordProposal({
-    authority: provider,
+    authorizedOperation: trustedOperation({
+      authority: provider,
+      operation: "scientific-record.propose",
+      operationId: "proposal-operation",
+      receivedAt: NOW,
+    }),
     receiptId: "proposal-receipt-1",
-    projectId: PROJECT_ID,
-    threadId: THREAD_ID,
-    createdAt: NOW + 3,
     claimDigest: DIGEST_A,
     evidenceReceiptIds: [source.receiptId],
   });
   const verification = kernel.recordVerification({
-    authority: provider,
+    authorizedOperation: trustedOperation({
+      authority: provider,
+      operation: "scientific-record.propose",
+      operationId: "verification-operation",
+      receivedAt: NOW,
+    }),
     receiptId: "verification-receipt-1",
-    projectId: PROJECT_ID,
-    threadId: THREAD_ID,
-    createdAt: NOW + 4,
     proposalReceiptId: proposal.receiptId,
     evidenceReceiptIds: [source.receiptId],
     outcome: "supports",
@@ -306,16 +375,20 @@ describe("BrowserEvidenceAuthorityKernel leases", () => {
         usePolicy: { kind: "single-use", maxUses: 1 },
         ttlMs: 1_000,
       }),
-    ).toThrowError(/trusted provider-turn operation binding/u);
+    ).toThrowError(/trusted browser.read provider-turn binding/u);
   });
 
   it("rejects expired leases and caps issuance at five minutes", () => {
     const kernel = makeKernel();
     issueReadLease(kernel, { ttlMs: 5 });
-    expectDenial(authorizeRead(kernel, { now: NOW + 5 }), "lease_expired");
+    kernel.advanceTime(5);
+    expectDenial(authorizeRead(kernel, { receivedAt: NOW + 5 }), "lease_expired");
     expect(() =>
       makeKernel().issueLease({
-        authorizingOperation: trustedTurnOperation(providerAuthority({ expiresAt: null })),
+        authorizingOperation: trustedOperation({
+          authority: providerAuthority({ expiresAt: null }),
+          operation: "browser.read",
+        }),
         leaseId: "too-long",
         document: documentIdentity(),
         operationClass: "document.read",
@@ -325,24 +398,60 @@ describe("BrowserEvidenceAuthorityKernel leases", () => {
     ).toThrow(BrowserEvidenceContractError);
   });
 
-  it("rejects revoked leases and revoked current authority", () => {
+  it("rejects explicitly revoked leases", () => {
     const kernel = makeKernel();
     issueReadLease(kernel);
-    kernel.revokeLease({ leaseId: "lease-1", revokedAt: NOW + 1 });
-    expectDenial(authorizeRead(kernel, { now: NOW + 2 }), "lease_revoked");
+    kernel.advanceTime(1);
+    kernel.revokeLease({ leaseId: "lease-1" });
+    expectDenial(authorizeRead(kernel, { receivedAt: NOW + 1 }), "lease_revoked");
+  });
 
-    const other = makeKernel();
-    issueReadLease(other);
+  it("rejects raw caller claims and stale or future host envelopes", () => {
+    const kernel = makeKernel();
+    issueReadLease(kernel);
     expectDenial(
-      authorizeRead(other, {
-        authority: providerAuthority({ revokedAt: NOW + 1 }),
-        now: NOW + 2,
+      kernel.authorizeLeaseUse({
+        leaseId: "lease-1",
+        document: documentIdentity(),
+        authority: providerAuthority(),
+        projectId: PROJECT_ID,
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+      } as never),
+      "trusted_operation_required",
+    );
+
+    const oldEnvelope = trustedOperation({ operationId: "old-use", receivedAt: NOW });
+    kernel.advanceTime(MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS + 1);
+    expectDenial(
+      authorizeRead(kernel, { authorizedOperation: oldEnvelope }),
+      "trusted_operation_required",
+    );
+    expectDenial(
+      authorizeRead(kernel, {
+        authorizedOperation: trustedOperation({
+          operationId: "future-use",
+          receivedAt: NOW + MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS + 2,
+        }),
       }),
-      "authority_inactive",
+      "trusted_operation_required",
     );
   });
 
-  it("rejects a replaced actor, authority generation, or narrowed capability", () => {
+  it("requires the exact mapped operation when issuing each lease class", () => {
+    expect(() =>
+      makeKernel().issueLease({
+        authorizingOperation: trustedOperation({ operation: "browser.capture" }),
+        leaseId: "wrong-issue-operation",
+        document: documentIdentity(),
+        operationClass: "document.read",
+        usePolicy: { kind: "single-use", maxUses: 1 },
+        ttlMs: 1_000,
+      }),
+    ).toThrowError(/exact trusted browser.read/u);
+  });
+
+  it("rejects a replaced actor or authority generation", () => {
     const cases: ReadonlyArray<{
       readonly authority: ScientOperationAuthority;
       readonly code: string;
@@ -361,12 +470,6 @@ describe("BrowserEvidenceAuthorityKernel leases", () => {
       {
         authority: providerAuthority({ generation: "generation-2" }),
         code: "authority_mismatch",
-      },
-      {
-        authority: providerAuthority({
-          capabilities: ["thread:drive", "scientific-record:propose"],
-        }),
-        code: "capability_denied",
       },
     ];
     for (const testCase of cases) {
@@ -401,20 +504,38 @@ describe("BrowserEvidenceAuthorityKernel leases", () => {
     );
   });
 
-  it("rejects wrong project, thread, operation class, and authorizing turn", () => {
+  it("rejects wrong project, thread, operation class, and stale authorizing turn", () => {
     const cases: ReadonlyArray<{
       readonly overrides: Partial<Parameters<typeof authorizeRead>[1]>;
       readonly code: string;
     }> = [
-      { overrides: { projectId: "project-2" }, code: "project_mismatch" },
-      { overrides: { threadId: "thread-2" }, code: "thread_mismatch" },
-      { overrides: { operationClass: "document.capture" }, code: "operation_class_mismatch" },
-      { overrides: { authorizingTurnId: "turn-2" }, code: "authorizing_turn_mismatch" },
+      {
+        overrides: {
+          authority: providerAuthority({ projectIds: [PROJECT_ID, "project-2"] }),
+          projectId: "project-2",
+        },
+        code: "project_mismatch",
+      },
+      {
+        overrides: {
+          authority: providerAuthority({
+            actor: {
+              kind: "provider-thread",
+              threadId: "thread-2",
+              provider: "codex",
+              sessionKey: "session-1",
+            },
+          }),
+        },
+        code: "thread_mismatch",
+      },
+      { overrides: { operation: "browser.capture" }, code: "trusted_operation_required" },
+      { overrides: { turnId: "turn-2" }, code: "authorizing_turn_mismatch" },
     ];
     for (const testCase of cases) {
       const kernel = makeKernel();
       issueReadLease(kernel);
-      expectDenial(authorizeRead(kernel, testCase.overrides as never), testCase.code);
+      expectDenial(authorizeRead(kernel, testCase.overrides), testCase.code);
     }
   });
 
@@ -445,7 +566,7 @@ describe("BrowserEvidenceAuthorityKernel leases", () => {
 
     expect(() =>
       makeKernel().issueLease({
-        authorizingOperation: trustedTurnOperation(),
+        authorizingOperation: trustedOperation({ operation: "browser.action" }),
         leaseId: "action-reuse",
         document: documentIdentity(),
         operationClass: "document.action",
@@ -495,17 +616,22 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
     });
     if (sourceUse.kind === "denied") throw new Error("source lease unexpectedly denied");
     const source = kernel.recordSource({
-      authority: provider,
+      authorizedOperation: trustedOperation({
+        authority: provider,
+        operation: "scientific-record.propose",
+        operationId: "record-source",
+      }),
       receiptId: "source-receipt-1",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 2,
       leaseUseReceiptId: sourceUse.receipt.receiptId,
       provenance: provenance(),
     });
 
     kernel.issueLease({
-      authorizingOperation: trustedTurnOperation(provider),
+      authorizingOperation: trustedOperation({
+        authority: provider,
+        operation: "scientific-record.propose",
+        operationId: "annotation-lease-issuing-operation",
+      }),
       leaseId: "annotation-lease",
       document: documentIdentity(),
       operationClass: "annotation.propose",
@@ -520,41 +646,45 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
     });
     if (annotationUse.kind === "denied") throw new Error("annotation lease unexpectedly denied");
     const annotation = kernel.recordAnnotation({
-      authority: provider,
+      authorizedOperation: trustedOperation({
+        authority: provider,
+        operation: "scientific-record.propose",
+        operationId: "record-annotation",
+      }),
       receiptId: "annotation-receipt-1",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 3,
       leaseUseReceiptId: annotationUse.receipt.receiptId,
       sourceReceiptId: source.receiptId,
       targetDigest: DIGEST_B,
       annotationDigest: DIGEST_C,
     });
     const proposal = kernel.recordProposal({
-      authority: provider,
+      authorizedOperation: trustedOperation({
+        authority: provider,
+        operation: "scientific-record.propose",
+        operationId: "record-proposal",
+      }),
       receiptId: "proposal-receipt-1",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 4,
       claimDigest: DIGEST_D,
       evidenceReceiptIds: [source.receiptId, annotation.receiptId],
     });
     const verification = kernel.recordVerification({
-      authority: provider,
+      authorizedOperation: trustedOperation({
+        authority: provider,
+        operation: "scientific-record.propose",
+        operationId: "record-verification",
+      }),
       receiptId: "verification-receipt-1",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 5,
       proposalReceiptId: proposal.receiptId,
       evidenceReceiptIds: [source.receiptId],
       outcome: "supports",
     });
     const decision = kernel.recordManualDecision({
-      authority: manualAuthority(),
+      authorizedOperation: trustedOperation({
+        authority: manualAuthority(),
+        operation: "scientific-record.accept",
+        operationId: "record-manual-decision",
+      }),
       receiptId: "decision-receipt-1",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 6,
       proposalReceiptId: proposal.receiptId,
       verificationReceiptIds: [verification.receiptId],
       decision: "accept-scientific-truth",
@@ -585,33 +715,41 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
     ["provider", providerAuthority()],
     ["automation", automationAuthority()],
   ])("allows %s proposals but never manual acceptance or export", (_label, actor) => {
-    for (const decision of ["accept-scientific-truth", "approve-export"] as const) {
-      const kernel = makeKernel();
-      const { proposal, verification } = buildEligibleProposal(kernel);
-      expect(() =>
-        kernel.recordManualDecision({
+    expect(() =>
+      trustedOperation({
+        authority: actor,
+        operation: "scientific-record.accept",
+        operationId: "forbidden-accept",
+      }),
+    ).toThrowError(/unexpectedly denied/u);
+
+    const kernel = makeKernel();
+    const { proposal, verification } = buildEligibleProposal(kernel);
+    expect(() =>
+      kernel.recordManualDecision({
+        authorizedOperation: trustedOperation({
           authority: actor,
-          receiptId: `forbidden-${decision}`,
-          projectId: PROJECT_ID,
-          threadId: THREAD_ID,
-          createdAt: NOW + 5,
-          proposalReceiptId: proposal.receiptId,
-          verificationReceiptIds: [verification.receiptId],
-          decision,
+          operation: "export.run",
+          operationId: "forbidden-export",
         }),
-      ).toThrowError(/Only a manual user/u);
-    }
+        receiptId: "forbidden-export",
+        proposalReceiptId: proposal.receiptId,
+        verificationReceiptIds: [verification.receiptId],
+        decision: "approve-export",
+      }),
+    ).toThrowError(/Only a manual user/u);
   });
 
   it("keeps automation memory context-only and refuses to promote it into evidence", () => {
     const kernel = makeKernel();
     const automation = automationAuthority();
     const memory = kernel.recordAutomationMemoryContext({
-      authority: automation,
+      authorizedOperation: trustedOperation({
+        authority: automation,
+        operation: "scientific-record.propose",
+        operationId: "record-memory",
+      }),
       receiptId: "memory-source",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 2,
       provenance: provenance("automation-memory"),
     });
     expect(memory.provenance).toMatchObject({
@@ -620,42 +758,77 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
     });
     expect(() =>
       kernel.recordProposal({
-        authority: automation,
+        authorizedOperation: trustedOperation({
+          authority: automation,
+          operation: "scientific-record.propose",
+          operationId: "memory-only-proposal-operation",
+        }),
         receiptId: "memory-only-proposal",
-        projectId: PROJECT_ID,
-        threadId: THREAD_ID,
-        createdAt: NOW + 3,
         claimDigest: DIGEST_A,
         evidenceReceiptIds: [memory.receiptId],
       }),
     ).toThrowError(/Automation memory is context only/u);
   });
 
+  it("rejects raw mutation claims and delayed host envelopes", () => {
+    const kernel = makeKernel();
+    expect(() =>
+      kernel.recordProposal({
+        authority: providerAuthority(),
+        projectId: PROJECT_ID,
+        threadId: THREAD_ID,
+        createdAt: NOW,
+        claimDigest: DIGEST_A,
+        evidenceReceiptIds: [],
+      } as never),
+    ).toThrowError(/exact host-minted scientific-record.propose envelope/u);
+
+    const { source } = buildEligibleProposal(kernel);
+    const delayedEnvelope = trustedOperation({
+      operation: "scientific-record.propose",
+      operationId: "delayed-proposal-operation",
+      receivedAt: NOW,
+    });
+    kernel.advanceTime(MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS + 1);
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: delayedEnvelope,
+        receiptId: "delayed-proposal",
+        claimDigest: DIGEST_B,
+        evidenceReceiptIds: [source.receiptId],
+      }),
+    ).toThrowError(/future-dated or stale/u);
+  });
+
   it("chains receipts only within the exact project and thread scope", () => {
     const kernel = makeKernel();
     const automation = automationAuthority({ projectIds: [PROJECT_ID, "project-2"] });
     const firstProjectOne = kernel.recordAutomationMemoryContext({
-      authority: automation,
+      authorizedOperation: trustedOperation({
+        authority: automation,
+        operation: "scientific-record.propose",
+        operationId: "project-one-context-1-operation",
+      }),
       receiptId: "project-one-context-1",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 1,
       provenance: provenance("automation-memory"),
     });
     const projectTwo = kernel.recordAutomationMemoryContext({
-      authority: automation,
+      authorizedOperation: trustedOperation({
+        authority: automation,
+        operation: "scientific-record.propose",
+        operationId: "project-two-context-operation",
+        projectId: "project-2",
+      }),
       receiptId: "project-two-context",
-      projectId: "project-2",
-      threadId: "thread-2",
-      createdAt: NOW + 2,
       provenance: provenance("automation-memory"),
     });
     const secondProjectOne = kernel.recordAutomationMemoryContext({
-      authority: automation,
+      authorizedOperation: trustedOperation({
+        authority: automation,
+        operation: "scientific-record.propose",
+        operationId: "project-one-context-2-operation",
+      }),
       receiptId: "project-one-context-2",
-      projectId: PROJECT_ID,
-      threadId: THREAD_ID,
-      createdAt: NOW + 3,
       provenance: provenance("automation-memory"),
     });
 
@@ -669,11 +842,12 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
     const { proposal, verification } = buildEligibleProposal(kernel);
     expect(() =>
       kernel.recordManualDecision({
-        authority: manualAuthority(),
+        authorizedOperation: trustedOperation({
+          authority: manualAuthority(),
+          operation: "scientific-record.accept",
+          operationId: "unsupported-publication-operation",
+        }),
         receiptId: "unsupported-publication",
-        projectId: PROJECT_ID,
-        threadId: THREAD_ID,
-        createdAt: NOW + 5,
         proposalReceiptId: proposal.receiptId,
         verificationReceiptIds: [verification.receiptId],
         decision: "approve-publication" as never,
@@ -686,11 +860,12 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
     const { proposal } = buildEligibleProposal(kernel);
     expect(() =>
       kernel.recordManualDecision({
-        authority: manualAuthority(),
+        authorizedOperation: trustedOperation({
+          authority: manualAuthority(),
+          operation: "export.run",
+          operationId: "decision-without-verification-operation",
+        }),
         receiptId: "decision-without-verification",
-        projectId: PROJECT_ID,
-        threadId: THREAD_ID,
-        createdAt: NOW + 5,
         proposalReceiptId: proposal.receiptId,
         verificationReceiptIds: [],
         decision: "approve-export",

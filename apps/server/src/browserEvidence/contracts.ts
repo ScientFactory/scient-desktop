@@ -14,10 +14,12 @@ import { createHash } from "node:crypto";
 import type {
   ScientOperationActorKind,
   ScientOperationAuthority,
+  ScientOperationId,
 } from "../scientOperations/authority.ts";
 
 export const MAX_BROWSER_EVIDENCE_LEASE_TTL_MS = 5 * 60 * 1_000;
 export const MAX_BROWSER_EVIDENCE_REUSE_COUNT = 8;
+export const MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS = 5_000;
 
 export const BROWSER_EVIDENCE_OPERATION_CLASSES = [
   "document.read",
@@ -41,6 +43,13 @@ export const BROWSER_EVIDENCE_CAPABILITY_BY_OPERATION = Object.freeze({
   "annotation.propose": "scientific-record:propose",
 } satisfies Readonly<Record<BrowserEvidenceOperationClass, BrowserEvidenceRequiredCapability>>);
 
+export const SCIENT_OPERATION_BY_BROWSER_EVIDENCE_CLASS = Object.freeze({
+  "document.read": "browser.read",
+  "document.capture": "browser.capture",
+  "document.action": "browser.action",
+  "annotation.propose": "scientific-record.propose",
+} satisfies Readonly<Record<BrowserEvidenceOperationClass, ScientOperationId>>);
+
 export type BrowserEvidenceLeaseUsePolicy =
   | { readonly kind: "single-use"; readonly maxUses: 1 }
   | { readonly kind: "narrow-reuse"; readonly maxUses: number };
@@ -57,6 +66,7 @@ export interface BrowserDocumentIdentity {
 export interface BrowserEvidenceLeaseGrant {
   readonly version: 1;
   readonly leaseId: string;
+  readonly issuingOperationId: string;
   readonly authorityId: string;
   readonly authorityGeneration: string;
   /** Domain-separated digest of the complete actor identity, including runtime identity. */
@@ -95,6 +105,7 @@ export interface BrowserEvidenceLeaseUseReceipt {
 
 export type BrowserEvidenceLeaseUseDenialCode =
   | "lease_not_found"
+  | "trusted_operation_required"
   | "lease_revoked"
   | "lease_expired"
   | "lease_exhausted"
