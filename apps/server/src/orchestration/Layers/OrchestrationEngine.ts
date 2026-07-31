@@ -629,8 +629,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
-          if (Schema.is(OrchestrationCommandTimeoutError)(error)) {
-            const resolvedTimeoutOutcome = yield* resolveStoredCommandOutcome(
+          const timedOut = Schema.is(OrchestrationCommandTimeoutError)(error);
+          const cancelled = Schema.is(OrchestrationCommandCancelledError)(error);
+          if (timedOut || cancelled) {
+            const resolvedAmbiguousOutcome = yield* resolveStoredCommandOutcome(
               envelope.command,
             ).pipe(
               Effect.match({
@@ -638,17 +640,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 onSuccess: (value) => ({ _tag: "Right" as const, right: value }),
               }),
             );
-            if (resolvedTimeoutOutcome._tag === "Right") {
+            if (resolvedAmbiguousOutcome._tag === "Right") {
               if (envelope.protectedCommitResult !== null) {
                 yield* Deferred.succeed(
                   envelope.protectedCommitResult,
-                  resolvedTimeoutOutcome.right,
+                  resolvedAmbiguousOutcome.right,
                 );
               }
-              yield* Deferred.succeed(envelope.result, resolvedTimeoutOutcome.right);
+              yield* Deferred.succeed(envelope.result, resolvedAmbiguousOutcome.right);
               return;
             }
-            error = resolvedTimeoutOutcome.left;
+            // A timeout remains an ambiguous completion even when no receipt
+            // exists, so preserve the resolver's established timeout/rejection
+            // result. Revocation is different: without an accepted durable
+            // receipt, the exact-session cancellation remains authoritative.
+            if (timedOut) {
+              error = resolvedAmbiguousOutcome.left;
+            }
           }
 
           if (Schema.is(OrchestrationCommandInvariantError)(error)) {

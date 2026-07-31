@@ -13,6 +13,7 @@ import {
   type OrchestrationEvent,
 } from "@synara/contracts";
 import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -92,6 +93,39 @@ async function createFileBackedOrchestrationSystem(dbPath: string) {
 function now() {
   return new Date().toISOString();
 }
+
+const makeCommitFinalizerGatePersistence = (
+  enteredFinalizer: Deferred.Deferred<void>,
+  releaseFinalizer: Deferred.Deferred<void>,
+  control: { armed: boolean },
+) =>
+  Layer.effect(
+    SqlClient.SqlClient,
+    Effect.gen(function* () {
+      const delegate = yield* SqlClient.SqlClient;
+      const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) => {
+        const transaction = delegate.withTransaction(effect);
+        if (!control.armed) return transaction;
+        return transaction.pipe(
+          Effect.flatMap((value) =>
+            Deferred.succeed(enteredFinalizer, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFinalizer)),
+              Effect.as(value),
+            ),
+          ),
+          // Model Effect SQL's uninterruptible COMMIT finalizer while holding
+          // the successful result after the delegate has durably committed.
+          Effect.uninterruptible,
+        );
+      };
+      return new Proxy(delegate, {
+        get: (target, property, receiver) =>
+          property === "withTransaction"
+            ? withTransaction
+            : Reflect.get(target, property, receiver),
+      });
+    }),
+  ).pipe(Layer.provide(SqlitePersistenceMemory));
 
 describe("OrchestrationEngine", () => {
   it("returns deterministic read models for repeated reads", async () => {
@@ -1094,6 +1128,63 @@ describe("OrchestrationEngine", () => {
       protectedCommandId,
       CommandId.makeUnsafe("cmd-after-protected-commit"),
     ]);
+    await runtime.dispose();
+  });
+
+  it("reconciles a protected commit when revocation wins during transaction finalization", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(persistence),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-finalizer-race");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-finalizer-race"),
+          title: "Protected finalizer race",
+          workspaceRoot: "/tmp/project-protected-finalizer-race",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).resolves.toEqual({ sequence: 1 });
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([protectedCommandId]);
     await runtime.dispose();
   });
 
