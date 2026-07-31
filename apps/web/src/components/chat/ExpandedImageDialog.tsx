@@ -2,20 +2,25 @@
 // Purpose: Accessible contained chat-image preview using the shared Base UI dialog.
 // Layer: Web chat presentation component
 
-import type { KeyboardEvent } from "react";
+import { type KeyboardEvent, type RefObject, useRef } from "react";
 
 import { ChevronLeftIcon, ChevronRightIcon } from "~/lib/icons";
 
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ChatImageFrame } from "./ChatImageFrame";
-import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { resolveExpandedImageFinalFocus, type ExpandedImagePreview } from "./ExpandedImagePreview";
 
 export function ExpandedImageDialog(props: {
   readonly preview: ExpandedImagePreview | null;
   readonly onOpenChange: (open: boolean) => void;
   readonly onNavigate: (direction: -1 | 1) => void;
+  readonly fallbackFocusRef: RefObject<HTMLElement | null>;
 }) {
+  const lastReturnFocusRef = useRef<HTMLElement | null>(null);
+  if (props.preview) {
+    lastReturnFocusRef.current = props.preview.returnFocus ?? null;
+  }
   const item = props.preview?.images[props.preview.index] ?? null;
   const currentIndex = props.preview?.index ?? 0;
   const imageCount = props.preview?.images.length ?? 0;
@@ -40,6 +45,12 @@ export function ExpandedImageDialog(props: {
         className="max-h-[92vh] max-w-[92vw] bg-background"
         onKeyDown={handleKeyDown}
         showCloseButton
+        finalFocus={() =>
+          resolveExpandedImageFinalFocus({
+            returnFocus: lastReturnFocusRef.current,
+            fallbackFocus: props.fallbackFocusRef.current,
+          })
+        }
       >
         {item ? (
           <>

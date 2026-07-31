@@ -7,6 +7,7 @@ import {
   isLocalImageMarkdownSrc,
   localImageFileName,
 } from "~/lib/localImageUrls";
+import { resolveWsHttpUrl } from "~/lib/wsHttpUrl";
 
 export type SupportedChatImageSource =
   | {
@@ -64,19 +65,31 @@ export function resolveAttachmentChatImageSource(input: {
     return { kind: "unsupported", name: input.name || "Image" };
   }
   const trustedBlob = input.allowTrustedBlob === true && previewUrl.startsWith("blob:");
-  const relativeAttachment = previewUrl.startsWith("/attachments/");
-  let absoluteAttachment = false;
+  let attachmentUrl = false;
   try {
-    const parsed = new URL(previewUrl);
-    absoluteAttachment =
+    const relativePath = previewUrl.startsWith("/") && !previewUrl.startsWith("//");
+    const trustedServer = relativePath
+      ? new URL("https://scient.invalid/")
+      : new URL(resolveWsHttpUrl("/"));
+    const parsed = new URL(previewUrl, trustedServer);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    const attachmentId = decodedPath.slice("/attachments/".length);
+    attachmentUrl =
       (parsed.protocol === "http:" || parsed.protocol === "https:") &&
       !parsed.username &&
       !parsed.password &&
-      parsed.pathname.startsWith("/attachments/");
+      parsed.origin === trustedServer.origin &&
+      parsed.pathname.startsWith("/attachments/") &&
+      decodedPath.startsWith("/attachments/") &&
+      attachmentId.length > 0 &&
+      !attachmentId.includes("/") &&
+      attachmentId !== "." &&
+      attachmentId !== ".." &&
+      !parsed.hash;
   } catch {
-    absoluteAttachment = false;
+    attachmentUrl = false;
   }
-  if (!trustedBlob && !relativeAttachment && !absoluteAttachment) {
+  if (!trustedBlob && !attachmentUrl) {
     return { kind: "unsupported", name: input.name || "Image" };
   }
   // Attachment URLs are opaque, server-issued capabilities. Preserve the

@@ -40,6 +40,19 @@ describe("chat image source policy", () => {
     ).toMatchObject({ kind: "attachment", previewUrl: "blob:https://scient.local/owned" });
   });
 
+  it.each([
+    "https://tracker.example/attachments/capture",
+    "https://user:secret@scient.invalid/attachments/capture",
+    "/attachments/../api/private",
+    "/attachments/%2e%2e/api/private",
+    "/attachments/capture%2F..%2Fapi",
+  ])("rejects attachment URLs outside the exact active-server route: %s", (previewUrl) => {
+    expect(resolveAttachmentChatImageSource({ previewUrl, name: "Unsafe" })).toEqual({
+      kind: "unsupported",
+      name: "Unsafe",
+    });
+  });
+
   it("routes local paths through the existing authenticated resolver", () => {
     expect(
       resolveMarkdownChatImageSource({

@@ -75,6 +75,7 @@ import { Button } from "../ui/button";
 import { AutomationCreatedCard } from "./AutomationCreatedCard";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ChatImageAttachmentGallery } from "./ChatImageAttachmentGallery";
+import { scheduleTimelineImageSettleCorrections } from "./timelineImageSettle";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ToolCallDetailsContent, ToolCallDetailsDialog } from "./ToolCallDetailsDialog";
 import { DiffStatLabel } from "./DiffStatLabel";
@@ -421,6 +422,8 @@ interface MessagesTimelineProps {
   threadMarkers?: readonly ThreadMarker[];
   /** User messages inserted locally by send actions, eligible for the subtle enter affordance. */
   enteringUserMessageIds?: ReadonlySet<MessageId>;
+  /** User rows whose blob previews are still explicitly owned by the app. */
+  ownedBlobUserMessageIds?: ReadonlySet<MessageId>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   forkProvenance?: ForkProvenance | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
@@ -484,6 +487,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onTogglePinMessage,
   threadMarkers = [],
   enteringUserMessageIds = EMPTY_MESSAGE_ID_SET,
+  ownedBlobUserMessageIds = EMPTY_MESSAGE_ID_SET,
   timelineEntries,
   forkProvenance = null,
   turnDiffSummaryByAssistantMessageId,
@@ -827,35 +831,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return null;
   }, [rows]);
-  const tailScrollFrameRef = useRef<number | null>(null);
-  const tailScrollTimeoutsRef = useRef<number[]>([]);
+  const cancelTailImageCorrectionsRef = useRef<() => void>(() => {});
   const isAtEndRef = useRef(true);
   const clearTailExpansionScrollTimers = useCallback(() => {
-    if (tailScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(tailScrollFrameRef.current);
-      tailScrollFrameRef.current = null;
-    }
-    for (const timeoutId of tailScrollTimeoutsRef.current) {
-      window.clearTimeout(timeoutId);
-    }
-    tailScrollTimeoutsRef.current = [];
+    cancelTailImageCorrectionsRef.current();
+    cancelTailImageCorrectionsRef.current = () => {};
   }, []);
   const scrollTailExpansionToEnd = useCallback(() => {
     if (!shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: isAtEndRef.current })) {
       return;
     }
     clearTailExpansionScrollTimers();
-    const scrollToEnd = () => {
-      void resolvedListRef.current?.scrollToEnd?.({ animated: false });
-    };
-    tailScrollFrameRef.current = window.requestAnimationFrame(() => {
-      tailScrollFrameRef.current = null;
-      scrollToEnd();
+    cancelTailImageCorrectionsRef.current = scheduleTimelineImageSettleCorrections({
+      isAtEnd: () => isAtEndRef.current,
+      scrollToEnd: () => {
+        void resolvedListRef.current?.scrollToEnd?.({ animated: false });
+      },
+      requestFrame: window.requestAnimationFrame.bind(window),
+      cancelFrame: window.cancelAnimationFrame.bind(window),
+      setTimer: window.setTimeout.bind(window),
+      clearTimer: window.clearTimeout.bind(window),
     });
-    for (const delay of [80, 180, 260]) {
-      const timeoutId = window.setTimeout(scrollToEnd, delay);
-      tailScrollTimeoutsRef.current.push(timeoutId);
-    }
   }, [clearTailExpansionScrollTimers, resolvedListRef]);
   useEffect(() => clearTailExpansionScrollTimers, [clearTailExpansionScrollTimers]);
   const ignoreTimelineImageLoad = useCallback(() => {}, []);
@@ -914,11 +910,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const state = resolvedListRef.current?.getState?.();
       if (state) {
         isAtEndRef.current = state.isAtEnd;
+        if (!state.isAtEnd) clearTailExpansionScrollTimers();
         onIsAtEndChange?.(state.isAtEnd);
         emitTrailHighlightsForViewport(state.start, state.end);
       }
     },
-    [emitTrailHighlightsForViewport, onIsAtEndChange, onMessagesScroll, resolvedListRef],
+    [
+      clearTailExpansionScrollTimers,
+      emitTrailHighlightsForViewport,
+      onIsAtEndChange,
+      onMessagesScroll,
+      resolvedListRef,
+    ],
   );
   const handleViewableItemsChanged = useCallback<
     NonNullable<ComponentProps<typeof LegendList>["onViewableItemsChanged"]>
@@ -1182,6 +1185,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 {userImages.length > 0 && (
                   <ChatImageAttachmentGallery
                     images={userImages}
+                    trustContext={
+                      ownedBlobUserMessageIds.has(row.message.id) ? "owned-user-preview" : "durable"
+                    }
                     align="end"
                     hasFollowingText={showUserText}
                     onImageExpand={onImageExpand}

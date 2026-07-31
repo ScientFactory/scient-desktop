@@ -32,13 +32,11 @@ describe("ChatImageFrame", () => {
           name: "Capture",
         }}
         accessibleName="Capture"
-        linkedHref="https://example.com/details"
       />,
     );
     expect(markup).toContain('<button type="button"');
     expect(markup).toContain('referrerPolicy="no-referrer"');
     expect(markup).toContain('aria-label="Open source for Capture"');
-    expect(markup).toContain('aria-label="Open link for Capture"');
     const buttonMarkup = markup.match(/<button[\s\S]*?<\/button>/)?.[0];
     expect(buttonMarkup).toBeDefined();
     expect(buttonMarkup).not.toContain("<a");
@@ -51,22 +49,5 @@ describe("ChatImageFrame", () => {
     expect(markup).toContain("This image source is not supported.");
     expect(markup).not.toContain("src=");
     expect(markup).not.toContain("href=");
-  });
-
-  it("drops an unsafe linked-image action at the frame boundary", () => {
-    const markup = renderToStaticMarkup(
-      <ChatImageFrame
-        source={{
-          kind: "attachment",
-          previewUrl: "/attachments/capture",
-          downloadUrl: "/attachments/capture",
-          name: "Capture",
-        }}
-        accessibleName="Capture"
-        linkedHref="javascript:alert(1)"
-      />,
-    );
-    expect(markup).not.toContain("Open link");
-    expect(markup).not.toContain("javascript:");
   });
 });

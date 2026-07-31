@@ -33,4 +33,23 @@ describe("ChatImageAttachmentGallery", () => {
     expect(markup.match(/aria-label="Preview image-/g)).toHaveLength(8);
     expect(markup).toContain("size-15");
   });
+
+  it("accepts app-owned optimistic and handoff blobs only with explicit trust", () => {
+    const trusted = renderToStaticMarkup(
+      <ChatImageAttachmentGallery
+        images={[{ id: "owned", name: "owned.png", previewUrl: "blob:owned-preview" }]}
+        trustContext="owned-user-preview"
+        onImageExpand={() => {}}
+      />,
+    );
+    const unowned = renderToStaticMarkup(
+      <ChatImageAttachmentGallery
+        images={[{ id: "unowned", name: "unowned.png", previewUrl: "blob:unowned-preview" }]}
+        onImageExpand={() => {}}
+      />,
+    );
+    expect(trusted).toContain('src="blob:owned-preview"');
+    expect(unowned).toContain("This image source is not supported.");
+    expect(unowned).not.toContain("blob:unowned-preview");
+  });
 });

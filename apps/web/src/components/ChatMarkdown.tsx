@@ -45,7 +45,10 @@ import {
   type TextDirectionAttribute,
 } from "../lib/textDirection";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { GeneratedMarkdownImage } from "./chat/GeneratedMarkdownImage";
+import {
+  GeneratedMarkdownImage,
+  type GeneratedMarkdownImageProps,
+} from "./chat/GeneratedMarkdownImage";
 import { TerminalContextInlineChip } from "./chat/TerminalContextInlineChip";
 import type { ParsedTerminalContextEntry } from "../lib/terminalContext";
 import { formatInlineTerminalContextLabel } from "./chat/userMessageTerminalContexts";
@@ -223,6 +226,74 @@ type MarkdownHastNode = {
   properties?: Record<string, unknown>;
   children?: MarkdownHastNode[];
 };
+
+type LinkedImageSegment =
+  | {
+      readonly kind: "image";
+      readonly node: ReactNode;
+      readonly label: string;
+      readonly key: string;
+    }
+  | { readonly kind: "content"; readonly node: ReactNode; readonly key: string };
+
+function linkedContentIdentity(node: ReactNode, fallbackPath: string): string {
+  if (isValidElement(node) && node.key !== null) return `element:${String(node.key)}`;
+  const text = nodeToPlainText(node);
+  return text ? `content:${text}` : `content:${fallbackPath}`;
+}
+
+function makeLinkedSegmentKeysUnique(segments: LinkedImageSegment[]): LinkedImageSegment[] {
+  const occurrences = new Map<string, number>();
+  return segments.map((segment) => {
+    const occurrence = occurrences.get(segment.key) ?? 0;
+    occurrences.set(segment.key, occurrence + 1);
+    return { ...segment, key: `${segment.key}:${occurrence}` };
+  });
+}
+
+function splitLinkedImageContent(node: ReactNode, path = "root"): LinkedImageSegment[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) {
+    return node.flatMap((child, childIndex) =>
+      splitLinkedImageContent(child, `${path}.${childIndex}`),
+    );
+  }
+  if (!isValidElement(node)) {
+    return [{ kind: "content", node, key: linkedContentIdentity(node, path) }];
+  }
+  const possibleImageProps = node.props as Partial<GeneratedMarkdownImageProps>;
+  if (
+    node.type === GeneratedMarkdownImage ||
+    (typeof possibleImageProps.src === "string" && typeof possibleImageProps.alt === "string")
+  ) {
+    const imageProps = node.props as GeneratedMarkdownImageProps;
+    return [
+      {
+        kind: "image",
+        node,
+        label: imageProps.alt.trim() || "image",
+        key: `image:${imageProps.src}:${imageProps.alt}:${node.key === null ? "" : String(node.key)}`,
+      },
+    ];
+  }
+  const element = node as React.ReactElement<{ children?: ReactNode }>;
+  if (element.props.children === undefined) {
+    return [{ kind: "content", node, key: linkedContentIdentity(node, path) }];
+  }
+  const childSegments = splitLinkedImageContent(element.props.children, `${path}.children`);
+  if (!childSegments.some((segment) => segment.kind === "image")) {
+    return [{ kind: "content", node, key: linkedContentIdentity(node, path) }];
+  }
+  return childSegments.map((segment) =>
+    segment.kind === "image"
+      ? segment
+      : {
+          kind: "content" as const,
+          node: React.cloneElement(element, { key: segment.key }, segment.node),
+          key: segment.key,
+        },
+  );
+}
 
 const DIRECTIONAL_MARKDOWN_BLOCK_TAGS = new Set([
   "blockquote",
@@ -1257,31 +1328,70 @@ function ChatMarkdown({
   }, []);
   const markdownComponents = useMemo<Components>(
     () => ({
-      a({ node, href, children, ...props }) {
+      a({ node: _node, href, children, ...props }) {
         const restoredHref = href ? restoreLiteralDollarPlaceholders(href) : href;
-        const linkedImageNode =
-          node?.children.length === 1 &&
-          node.children[0]?.type === "element" &&
-          node.children[0].tagName === "img"
-            ? node.children[0]
-            : null;
-        const linkedImageSrc = linkedImageNode?.properties.src;
-        const linkedImageAlt = linkedImageNode?.properties.alt;
-        if (restoredHref && typeof linkedImageSrc === "string") {
-          // Markdown image links must not wrap the image's real button. Pass the
-          // href down so the frame renders it as a sibling action instead.
+        const isExternalHttp = isExternalHttpHref(restoredHref);
+        const renderRegularLink = (linkChildren: ReactNode, accessibleLabel?: string) => {
+          const targetPath = isExternalHttp
+            ? null
+            : resolveMarkdownFileLinkTarget(restoredHref, cwd);
+          if (!targetPath) {
+            return (
+              <a
+                {...props}
+                href={restoredHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={isExternalHttp ? MARKDOWN_EXTERNAL_LINK_CLASS_NAME : props.className}
+                {...(accessibleLabel ? { "aria-label": accessibleLabel } : {})}
+              >
+                {isExternalHttp ? (
+                  <LinkChipIcon
+                    url={restoredHref}
+                    className={MARKDOWN_EXTERNAL_LINK_ICON_CLASS_NAME}
+                  />
+                ) : null}
+                {linkChildren}
+              </a>
+            );
+          }
+
+          const label = nodeToPlainText(linkChildren);
+          const direction = isMachineLikeMarkdownLinkLabel(label, restoredHref ?? "")
+            ? "ltr"
+            : resolveTextDirection(label);
           return (
-            <GeneratedMarkdownImage
-              src={restoreLiteralDollarPlaceholders(linkedImageSrc)}
-              alt={typeof linkedImageAlt === "string" ? linkedImageAlt : ""}
-              cwd={cwd}
-              linkedHref={restoredHref}
-              onImageExpand={onImageExpand}
-              onImageSettled={onImageSettled}
+            <OpenableFileChip
+              targetPath={targetPath}
+              theme={resolvedTheme}
+              label={linkChildren}
+              direction={direction}
+              {...(restoredHref ? { href: restoredHref } : {})}
             />
           );
+        };
+        const linkedSegments = makeLinkedSegmentKeysUnique(splitLinkedImageContent(children));
+        if (restoredHref && linkedSegments.some((segment) => segment.kind === "image")) {
+          // An interactive image frame cannot be nested in an anchor. Split the
+          // rendered inline tree at each image so text, emphasis, and image order
+          // survive while every destination follows normal link policy.
+          return (
+            <>
+              {linkedSegments.map((segment) =>
+                segment.kind === "content" ? (
+                  <React.Fragment key={segment.key}>
+                    {renderRegularLink(segment.node)}
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment key={segment.key}>
+                    {segment.node}
+                    {renderRegularLink("Open link", `Open link for ${segment.label}`)}
+                  </React.Fragment>
+                ),
+              )}
+            </>
+          );
         }
-        const isExternalHttp = isExternalHttpHref(restoredHref);
         if (isUserVariant && isExternalHttp) {
           // GFM autolinks a pasted URL before the chips plugin can see it; when the
           // link text is just the URL itself, render the composer's link chip so a
@@ -1296,43 +1406,7 @@ function ChatMarkdown({
             return <InlineLinkChip url={restoredHref} interactive />;
           }
         }
-        const targetPath = isExternalHttp ? null : resolveMarkdownFileLinkTarget(restoredHref, cwd);
-        if (!targetPath) {
-          return (
-            <a
-              {...props}
-              href={restoredHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={isExternalHttp ? MARKDOWN_EXTERNAL_LINK_CLASS_NAME : props.className}
-            >
-              {isExternalHttp ? (
-                <LinkChipIcon
-                  url={restoredHref}
-                  className={MARKDOWN_EXTERNAL_LINK_ICON_CLASS_NAME}
-                />
-              ) : null}
-              {children}
-            </a>
-          );
-        }
-
-        // Local file links keep their openable behavior but adopt the shared
-        // mention-chip UI (file icon + medium label). The link text is preserved
-        // as the label.
-        const label = nodeToPlainText(children);
-        const direction = isMachineLikeMarkdownLinkLabel(label, restoredHref ?? "")
-          ? "ltr"
-          : resolveTextDirection(label);
-        return (
-          <OpenableFileChip
-            targetPath={targetPath}
-            theme={resolvedTheme}
-            label={label}
-            direction={direction}
-            {...(restoredHref ? { href: restoredHref } : {})}
-          />
-        );
+        return renderRegularLink(children);
       },
       pre({ node: _node, children, ...props }) {
         const codeBlock = extractCodeBlock(children);

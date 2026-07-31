@@ -16,7 +16,6 @@ import { cn } from "~/lib/utils";
 
 import {
   chatImageSourceKey,
-  resolveSafeExternalHttpUrl,
   type ChatImageSource,
   type SupportedChatImageSource,
 } from "./chatImageSource";
@@ -38,9 +37,10 @@ export function reduceChatImageLoadState(
 export function ChatImageFrame(props: {
   readonly source: ChatImageSource;
   readonly accessibleName: string;
-  readonly onActivate?: ((source: SupportedChatImageSource) => void) | undefined;
+  readonly onActivate?:
+    | ((source: SupportedChatImageSource, trigger: HTMLButtonElement) => void)
+    | undefined;
   readonly onSettled?: (() => void) | undefined;
-  readonly linkedHref?: string | undefined;
   readonly display?: "inline" | "thumbnail" | "expanded";
   readonly activationLabel?: string | undefined;
 }) {
@@ -93,11 +93,8 @@ export function ChatImageFrame(props: {
 
   const display = props.display ?? "inline";
   const supported = source.kind !== "unsupported";
-  const linkedHref = props.linkedHref
-    ? (resolveSafeExternalHttpUrl(props.linkedHref) ?? undefined)
-    : undefined;
-  const activate = () => {
-    if (supported && status !== "error") props.onActivate?.(source);
+  const activate = (event: MouseEvent<HTMLButtonElement>) => {
+    if (supported && status !== "error") props.onActivate?.(source, event.currentTarget);
   };
   const sourceAction =
     source.kind === "remote" ? (
@@ -179,22 +176,7 @@ export function ChatImageFrame(props: {
           <span>This image source is not supported.</span>
         </span>
       )}
-      <span className="chat-image-frame__actions">
-        {sourceAction}
-        {linkedHref ? (
-          <a
-            href={linkedHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            referrerPolicy="no-referrer"
-            className="chat-image-frame__action"
-            aria-label={`Open link for ${props.accessibleName}`}
-          >
-            <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
-            <span>Open link</span>
-          </a>
-        ) : null}
-      </span>
+      <span className="chat-image-frame__actions">{sourceAction}</span>
       {actionError ? (
         <span className="chat-image-frame__action-error" role="alert">
           Could not download image: {actionError}

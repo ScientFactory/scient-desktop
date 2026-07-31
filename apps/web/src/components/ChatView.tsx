@@ -173,6 +173,7 @@ import { useComposerDropzone } from "../hooks/useComposerDropzone";
 import { useDiffRouteSearch } from "../hooks/useDiffRouteSearch";
 import {
   buildThreadBreadcrumbs,
+  collectOwnedBlobUserMessageIds,
   derivePromptHistoryFromMessages,
   enrichSubagentWorkEntries,
   hasFileUndoSettled,
@@ -1372,6 +1373,7 @@ export default function ChatView({
   const emptyDraftProjectRequestInFlightRef = useRef<number | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const expandedImageFallbackFocusRef = useRef<HTMLDivElement>(null);
   const optimisticUserMessages = useOptimisticUserMessageStore(
     (store) => store.messagesByThreadId[threadId] ?? EMPTY_OPTIMISTIC_USER_MESSAGES,
   );
@@ -3285,6 +3287,14 @@ export default function ChatView({
           .map((message) => message.id),
       ),
     [optimisticUserMessages, threadId],
+  );
+  const ownedBlobUserMessageIds = useMemo<ReadonlySet<MessageId>>(
+    () =>
+      collectOwnedBlobUserMessageIds({
+        optimisticMessageIds: enteringUserMessageIds,
+        handoffPreviewUrlsByMessageId: attachmentPreviewHandoffByMessageId,
+      }),
+    [attachmentPreviewHandoffByMessageId, enteringUserMessageIds],
   );
   const forkableMessageIds = useMemo(
     () => (activeThread ? resolveThreadForkableMessageIds(activeThread) : new Set<MessageId>()),
@@ -11764,6 +11774,9 @@ export default function ChatView({
 
   return (
     <div
+      ref={expandedImageFallbackFocusRef}
+      tabIndex={-1}
+      data-chat-image-focus-fallback="true"
       className={cn(
         "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
         CHAT_BACKGROUND_CLASS_NAME,
@@ -12070,6 +12083,7 @@ export default function ChatView({
                     onTogglePinMessage={handleTogglePinMessageGuarded}
                     threadMarkers={threadMarkers}
                     enteringUserMessageIds={enteringUserMessageIds}
+                    ownedBlobUserMessageIds={ownedBlobUserMessageIds}
                     timelineEntries={timelineEntries}
                     forkProvenance={forkProvenance}
                     turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
@@ -12277,6 +12291,7 @@ export default function ChatView({
         preview={expandedImage}
         onOpenChange={handleExpandedImageOpenChange}
         onNavigate={navigateExpandedImage}
+        fallbackFocusRef={expandedImageFallbackFocusRef}
       />
     </div>
   );

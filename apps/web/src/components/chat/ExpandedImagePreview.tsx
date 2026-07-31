@@ -10,11 +10,23 @@ export interface ExpandedImageItem {
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
+  /** The exact control that opened the preview, when it still exists. */
+  returnFocus?: HTMLElement | null;
+}
+
+export function resolveExpandedImageFinalFocus(input: {
+  readonly returnFocus?: HTMLElement | null;
+  readonly fallbackFocus?: HTMLElement | null;
+}): HTMLElement | false {
+  if (input.returnFocus?.isConnected) return input.returnFocus;
+  if (input.fallbackFocus?.isConnected) return input.fallbackFocus;
+  return false;
 }
 
 export function buildExpandedImagePreview(
   images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
   selectedImageId: string,
+  options: { readonly returnFocus?: HTMLElement | null } = {},
 ): ExpandedImagePreview | null {
   const previewableImages = images.flatMap((image) => {
     if (!image.previewUrl) return [];
@@ -41,6 +53,7 @@ export function buildExpandedImagePreview(
       name: image.name,
     })),
     index: selectedIndex,
+    ...(options.returnFocus ? { returnFocus: options.returnFocus } : {}),
   };
 }
 

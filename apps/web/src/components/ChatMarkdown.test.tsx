@@ -75,6 +75,57 @@ describe("ChatMarkdown", () => {
     expect(markup).toContain('aria-label="Open link for Diagram"');
     const buttonMarkup = markup.match(/<button[\s\S]*?<\/button>/)?.[0];
     expect(buttonMarkup).not.toContain("<a");
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it("hoists recursively nested linked images while retaining surrounding link text", async () => {
+    const markup = await renderMarkdown(
+      "[*Before ![Nested](https://images.example/nested.png) after*](https://example.com/report)",
+    );
+
+    expect(markup).toContain('aria-label="Preview Nested"');
+    expect(markup).toContain('href="https://example.com/report"');
+    expect(markup).toContain("<em>Before </em>");
+    expect(markup).toContain("<em> after</em>");
+    expect(markup.indexOf("Before ")).toBeLessThan(markup.indexOf('aria-label="Preview Nested"'));
+    expect(markup.indexOf('aria-label="Preview Nested"')).toBeLessThan(markup.indexOf(" after"));
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it("preserves interleaving for multiple images in one link", async () => {
+    const markup = await renderMarkdown(
+      "[Before ![A](https://images.example/a.png) middle ![B](https://images.example/b.png) after](https://example.com/report)",
+    );
+    const positions = [
+      markup.indexOf("Before "),
+      markup.indexOf('aria-label="Preview A"'),
+      markup.indexOf(" middle "),
+      markup.indexOf('aria-label="Preview B"'),
+      markup.indexOf(" after"),
+    ];
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual(positions.toSorted((left, right) => left - right));
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it("routes a linked image's workspace destination through normal file-link policy", async () => {
+    const markup = await renderMarkdown(
+      "[![Diagram](https://images.example/diagram.png)](./reports/result.md)",
+      "/workspace",
+    );
+
+    expect(markup).toContain('aria-label="Preview Diagram"');
+    expect(markup).toContain('href="./reports/result.md"');
+    expect(markup).toContain("Open link");
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
   });
 
   it("uses the same local image frame in sent user markdown", async () => {

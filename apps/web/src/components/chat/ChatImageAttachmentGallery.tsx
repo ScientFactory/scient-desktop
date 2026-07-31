@@ -20,15 +20,20 @@ export const ChatImageAttachmentGallery = memo(function ChatImageAttachmentGalle
   readonly onImageSettled?: (() => void) | undefined;
   readonly align?: "start" | "end";
   readonly hasFollowingText?: boolean;
+  /** Blob URLs are accepted only while an app-owned user preview capability is live. */
+  readonly trustContext?: "durable" | "owned-user-preview";
 }) {
   const previewItems = useMemo(
     () =>
       props.images.map((image) => ({
         id: image.id,
         name: image.name,
-        source: resolveAttachmentChatImageSource(image),
+        source: resolveAttachmentChatImageSource({
+          ...image,
+          allowTrustedBlob: props.trustContext === "owned-user-preview",
+        }),
       })),
-    [props.images],
+    [props.images, props.trustContext],
   );
 
   return (
@@ -43,7 +48,7 @@ export const ChatImageAttachmentGallery = memo(function ChatImageAttachmentGalle
           accessibleName={item.name}
           display="thumbnail"
           onSettled={props.onImageSettled}
-          onActivate={() => {
+          onActivate={(_source, trigger) => {
             if (!isSupportedChatImageSource(item.source)) return;
             const supportedItems = previewItems.flatMap((candidate) =>
               isSupportedChatImageSource(candidate.source)
@@ -61,6 +66,7 @@ export const ChatImageAttachmentGallery = memo(function ChatImageAttachmentGalle
                 name: candidate.name,
               })),
               index: supportedIndex,
+              returnFocus: trigger,
             });
           }}
         />

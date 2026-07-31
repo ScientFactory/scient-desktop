@@ -12,7 +12,6 @@ export interface GeneratedMarkdownImageProps {
   src: string;
   alt: string;
   cwd: string | undefined;
-  linkedHref?: string | undefined;
   onImageSettled?: (() => void) | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }
@@ -32,13 +31,13 @@ export function GeneratedMarkdownImage(props: GeneratedMarkdownImageProps) {
     <ChatImageFrame
       source={source}
       accessibleName={accessibleName}
-      linkedHref={props.linkedHref}
       onSettled={props.onImageSettled}
-      onActivate={() => {
+      onActivate={(_source, trigger) => {
         if (!isSupportedChatImageSource(source)) return;
         props.onImageExpand?.({
           images: [{ src: source.previewUrl, source, name: source.name || accessibleName }],
           index: 0,
+          returnFocus: trigger,
         });
       }}
     />
