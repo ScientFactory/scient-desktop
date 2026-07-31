@@ -82,6 +82,13 @@ gh stack submit --auto
 gh stack view --json
 ```
 
+While Stacked Pull Requests remains in public preview, stop before retrying a
+mutation when extension output contradicts the remote refs or GitHub pull
+request and stack state. The coordinator must verify the intended order,
+bases, heads, and draft state through authoritative Git and GitHub APIs before
+using a documented REST fallback. Never infer success from extension output
+alone or repair an uncertain stack by repeatedly submitting or linking it.
+
 Stacks are submitted as drafts by default. Review and stabilize them from the
 bottom up. Before merging any contiguous portion, confirm that every included
 pull request is non-draft, linear, current with the protected stack base, green
