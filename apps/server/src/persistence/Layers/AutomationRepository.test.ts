@@ -175,40 +175,6 @@ layer("AutomationRepository", (it) => {
     }),
   );
 
-  it.effect("resolves exact automation provenance by message after cancellation", () =>
-    Effect.gen(function* () {
-      const repository = yield* AutomationRepository;
-      yield* runMigrations();
-      const automationId = AutomationId.makeUnsafe("automation-message-provenance");
-      const runId = AutomationRunId.makeUnsafe("run-message-provenance");
-      const messageId = MessageId.makeUnsafe("message-provenance");
-      yield* repository.createDefinition({
-        id: automationId,
-        input: createInputForProject("project-message-provenance"),
-        now: "2026-06-16T10:00:00.000Z",
-      });
-      yield* repository.createRun({
-        id: runId,
-        automationId,
-        projectId: ProjectId.makeUnsafe("project-message-provenance"),
-        threadId: ThreadId.makeUnsafe("thread-message-provenance"),
-        messageId,
-        trigger: { type: "manual" },
-        scheduledFor: "2026-06-16T10:05:00.000Z",
-        permissionSnapshot,
-        now: "2026-06-16T10:00:00.000Z",
-      });
-      yield* repository.cancelRun({ runId, now: "2026-06-16T10:00:01.000Z" });
-
-      const found = yield* repository.getRunByMessageId({ messageId });
-      assert.isTrue(Option.isSome(found));
-      if (Option.isSome(found)) {
-        assert.strictEqual(found.value.id, runId);
-        assert.strictEqual(found.value.status, "cancelled");
-      }
-    }),
-  );
-
   it.effect("lists only enabled due definitions", () =>
     Effect.gen(function* () {
       const repository = yield* AutomationRepository;

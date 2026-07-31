@@ -31,7 +31,6 @@ import {
   DisableAutomationDefinitionIfUnchangedInput,
   GetEarliestAutomationNextRunAtInput,
   GetAutomationDefinitionInput,
-  GetAutomationRunByMessageInput,
   GetAutomationRunByThreadInput,
   GetAutomationRunInput,
   IncrementAutomationIterationInput,
@@ -794,40 +793,6 @@ const makeAutomationRepository = Effect.gen(function* () {
       `,
   });
 
-  const getRunRowByMessage = SqlSchema.findOneOption({
-    Request: GetAutomationRunByMessageInput,
-    Result: AutomationRunDbRow,
-    execute: ({ messageId }) =>
-      sql`
-        SELECT
-          run_id AS "id",
-          automation_id AS "automationId",
-          project_id AS "projectId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          trigger_type AS "triggerType",
-          status,
-          scheduled_for AS "scheduledFor",
-          claimed_by AS "claimedBy",
-          claimed_at AS "claimedAt",
-          lease_expires_at AS "leaseExpiresAt",
-          started_at AS "startedAt",
-          finished_at AS "finishedAt",
-          thread_create_command_id AS "threadCreateCommandId",
-          turn_start_command_id AS "turnStartCommandId",
-          message_id AS "messageId",
-          error,
-          result_json AS "result",
-          permission_snapshot_json AS "permissionSnapshot",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt"
-        FROM automation_runs
-        WHERE message_id = ${messageId}
-        ORDER BY created_at DESC, run_id DESC
-        LIMIT 1
-      `,
-  });
-
   const listRecoverableRunRows = SqlSchema.findAll({
     Request: ListRecoverableAutomationRunsInput,
     Result: AutomationRunDbRow,
@@ -1352,17 +1317,6 @@ const makeAutomationRepository = Effect.gen(function* () {
       ),
     );
 
-  const getRunByMessageId: AutomationRepositoryShape["getRunByMessageId"] = (input) =>
-    getRunRowByMessage(input).pipe(
-      Effect.mapError(toPersistenceSqlError("AutomationRepository.getRunByMessageId:query")),
-      Effect.flatMap((rowOption) =>
-        Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) => toRun(row).pipe(Effect.map(Option.some)),
-        }),
-      ),
-    );
-
   const listRecoverableRuns: AutomationRepositoryShape["listRecoverableRuns"] = (input) =>
     listRecoverableRunRows(input).pipe(
       Effect.mapError(toPersistenceSqlError("AutomationRepository.listRecoverableRuns:query")),
@@ -1506,7 +1460,6 @@ const makeAutomationRepository = Effect.gen(function* () {
     markRunWaitingForApproval,
     cancelRun,
     getRunByThreadId,
-    getRunByMessageId,
     listRecoverableRuns,
     listRunsNeedingCompletionEvaluation,
     countActiveRunsForDefinition,

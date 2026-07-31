@@ -10,13 +10,15 @@
  *
  * @module agentGateway/Layers/AgentGateway
  */
-import { ThreadId } from "@synara/contracts";
+import { ThreadId, type ProviderKind, type TurnId } from "@synara/contracts";
 import { Effect, Layer, Option } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { AutomationRepository } from "../../persistence/Services/AutomationRepository.ts";
+import type { AutomationRepositoryShape } from "../../persistence/Services/AutomationRepository.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import type { ProjectionTurnRepositoryShape } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   resolveAutomationOperationAuthority,
   ScientAutomationOperationAuthorityError,
@@ -29,6 +31,106 @@ import { AgentGatewayCredentials } from "../Services/AgentGatewayCredentials.ts"
 import { makeThreadReadTools } from "../threadReadTools.ts";
 import { makeThreadWriteTools } from "../threadWriteTools.ts";
 import { GatewayToolError } from "../toolRuntime.ts";
+
+const automationAuthorityFailure = (message: string) =>
+  new GatewayToolError("automation_authority_inactive", message);
+
+/**
+ * Resolve automation provenance from the thread-owned active run first.
+ *
+ * Only a positively verified absence of an active run permits the ordinary
+ * provider-authority fallback. Once an active run exists, missing or replaced
+ * turn/message provenance fails closed.
+ */
+export function makeAutomationAuthorityResolver(input: {
+  readonly automationRepository: AutomationRepositoryShape;
+  readonly projectionTurnRepository: ProjectionTurnRepositoryShape;
+}) {
+  return (scope: {
+    readonly threadId: ThreadId;
+    readonly projectId: string;
+    readonly provider: ProviderKind;
+    readonly turnId: TurnId | null;
+    readonly now: number;
+  }) =>
+    Effect.gen(function* () {
+      const runOption = yield* input.automationRepository
+        .getRunByThreadId({ threadId: scope.threadId })
+        .pipe(
+          Effect.mapError(() =>
+            automationAuthorityFailure(
+              "Scient could not verify the active automation run for this thread.",
+            ),
+          ),
+        );
+      if (Option.isNone(runOption)) return null;
+
+      if (scope.turnId === null) {
+        return yield* Effect.fail(
+          automationAuthorityFailure(
+            "An active automation run has no exact projected authorizing turn.",
+          ),
+        );
+      }
+      const turnId = scope.turnId;
+      const turnOption = yield* input.projectionTurnRepository
+        .getByTurnId({ threadId: scope.threadId, turnId })
+        .pipe(
+          Effect.mapError(() =>
+            automationAuthorityFailure(
+              "Scient could not verify this automation turn's persisted origin.",
+            ),
+          ),
+        );
+      if (Option.isNone(turnOption)) {
+        return yield* Effect.fail(
+          automationAuthorityFailure(
+            "An active automation run has no exact projected authorizing turn.",
+          ),
+        );
+      }
+      const run = runOption.value;
+      const pendingMessageId = turnOption.value.pendingMessageId;
+      if (pendingMessageId === null || run.messageId !== pendingMessageId) {
+        return yield* Effect.fail(
+          automationAuthorityFailure(
+            "The active automation run does not own this turn's exact pending message.",
+          ),
+        );
+      }
+      const definitionOption = yield* input.automationRepository
+        .getDefinitionById({ id: run.automationId })
+        .pipe(
+          Effect.mapError(() =>
+            automationAuthorityFailure("Scient could not verify the automation definition."),
+          ),
+        );
+      if (Option.isNone(definitionOption)) {
+        return yield* Effect.fail(
+          automationAuthorityFailure("The automation definition no longer exists."),
+        );
+      }
+      return yield* Effect.try({
+        try: () =>
+          resolveAutomationOperationAuthority({
+            definition: definitionOption.value,
+            run,
+            turn: turnOption.value,
+            caller: {
+              projectId: scope.projectId,
+              threadId: scope.threadId,
+              provider: scope.provider,
+              turnId,
+            },
+            now: scope.now,
+          }),
+        catch: (error) =>
+          error instanceof ScientAutomationOperationAuthorityError
+            ? automationAuthorityFailure(error.message)
+            : automationAuthorityFailure("Scient could not validate automation authority."),
+      });
+    });
+}
 
 export const makeAgentGateway = Effect.gen(function* () {
   const credentials = yield* AgentGatewayCredentials;
@@ -57,91 +159,10 @@ export const makeAgentGateway = Effect.gen(function* () {
     }),
   ];
 
-  const automationAuthorityFailure = (message: string) =>
-    new GatewayToolError("automation_authority_inactive", message);
-
-  const resolveAutomationAuthority = (scope: {
-    readonly threadId: Parameters<typeof projectionTurnRepository.getByTurnId>[0]["threadId"];
-    readonly projectId: string;
-    readonly provider: Parameters<
-      typeof resolveAutomationOperationAuthority
-    >[0]["caller"]["provider"];
-    readonly turnId: Parameters<typeof projectionTurnRepository.getByTurnId>[0]["turnId"];
-    readonly now: number;
-  }) =>
-    Effect.gen(function* () {
-      const turnOption = yield* projectionTurnRepository
-        .getByTurnId({ threadId: scope.threadId, turnId: scope.turnId })
-        .pipe(
-          Effect.mapError(() =>
-            automationAuthorityFailure(
-              "Scient could not verify this automation turn's persisted origin.",
-            ),
-          ),
-        );
-      if (Option.isNone(turnOption)) {
-        const activeRun = yield* automationRepository
-          .getRunByThreadId({ threadId: scope.threadId })
-          .pipe(
-            Effect.mapError(() =>
-              automationAuthorityFailure(
-                "Scient could not verify the active automation run for this thread.",
-              ),
-            ),
-          );
-        if (Option.isSome(activeRun)) {
-          return yield* Effect.fail(
-            automationAuthorityFailure(
-              "An active automation run has no exact projected authorizing turn.",
-            ),
-          );
-        }
-        return null;
-      }
-      const pendingMessageId = turnOption.value.pendingMessageId;
-      if (pendingMessageId === null) return null;
-      const runOption = yield* automationRepository
-        .getRunByMessageId({ messageId: pendingMessageId })
-        .pipe(
-          Effect.mapError(() =>
-            automationAuthorityFailure(
-              "Scient could not verify the automation run for this pending message.",
-            ),
-          ),
-        );
-      if (Option.isNone(runOption)) return null;
-      const definitionOption = yield* automationRepository
-        .getDefinitionById({ id: runOption.value.automationId })
-        .pipe(
-          Effect.mapError(() =>
-            automationAuthorityFailure("Scient could not verify the automation definition."),
-          ),
-        );
-      if (Option.isNone(definitionOption)) {
-        return yield* Effect.fail(
-          automationAuthorityFailure("The automation definition no longer exists."),
-        );
-      }
-      return yield* Effect.try({
-        try: () =>
-          resolveAutomationOperationAuthority({
-            definition: definitionOption.value,
-            run: runOption.value,
-            turn: turnOption.value,
-            caller: {
-              projectId: scope.projectId,
-              threadId: scope.threadId,
-              provider: scope.provider,
-              turnId: scope.turnId,
-            },
-            now: scope.now,
-          }),
-        catch: (error) =>
-          error instanceof ScientAutomationOperationAuthorityError
-            ? automationAuthorityFailure(error.message)
-            : automationAuthorityFailure("Scient could not validate automation authority."),
-      });
-    });
+  const resolveAutomationAuthority = makeAutomationAuthorityResolver({
+    automationRepository,
+    projectionTurnRepository,
+  });
 
   return {
     handleMcpPost: makeAgentGatewayMcpTransport({

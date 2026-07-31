@@ -1859,11 +1859,11 @@ export const AutomationServiceLive = Layer.effect(
               const now = isoNow();
               const operationGrant = run.permissionSnapshot.operationGrant;
               if (
-                operationGrant !== null &&
-                operationGrant !== undefined &&
-                (operationGrant.runtimeEpochHash !==
+                operationGrant === null ||
+                operationGrant === undefined ||
+                operationGrant.runtimeEpochHash !==
                   SCIENT_AUTOMATION_OPERATION_RUNTIME_EPOCH_HASH ||
-                  Date.parse(operationGrant.leaseExpiresAt) <= Date.parse(now))
+                Date.parse(operationGrant.leaseExpiresAt) <= Date.parse(now)
               ) {
                 return interruptRunForRecovery(run, now).pipe(
                   Effect.mapError(

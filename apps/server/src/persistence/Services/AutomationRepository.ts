@@ -147,11 +147,6 @@ export const GetAutomationRunByThreadInput = Schema.Struct({
 });
 export type GetAutomationRunByThreadInput = typeof GetAutomationRunByThreadInput.Type;
 
-export const GetAutomationRunByMessageInput = Schema.Struct({
-  messageId: MessageId,
-});
-export type GetAutomationRunByMessageInput = typeof GetAutomationRunByMessageInput.Type;
-
 export const ListRecoverableAutomationRunsInput = Schema.Struct({
   limit: Schema.Number,
 });
@@ -283,10 +278,6 @@ export interface AutomationRepositoryShape {
   /** Returns the newest active run for a thread; terminal history rows are intentionally ignored. */
   readonly getRunByThreadId: (
     input: GetAutomationRunByThreadInput,
-  ) => Effect.Effect<Option.Option<AutomationRun>, AutomationRepositoryError>;
-  /** Exact automation provenance lookup, including terminal runs, for gateway fail-closed checks. */
-  readonly getRunByMessageId: (
-    input: GetAutomationRunByMessageInput,
   ) => Effect.Effect<Option.Option<AutomationRun>, AutomationRepositoryError>;
   readonly listRecoverableRuns: (
     input: ListRecoverableAutomationRunsInput,

@@ -340,6 +340,36 @@ describe("makeAgentGatewayMcpTransport automation authority", () => {
     expect(resolver).toHaveBeenCalled();
   });
 
+  it("rejects provider fallback when an automation run becomes active after ingress", async () => {
+    let resolutions = 0;
+    const receipts: ScientOperationResultReceipt[] = [];
+    const res = await run(
+      makeTransport({
+        callerShell: Option.some(runningShell()),
+        requireShell: runningShell(),
+        tools: [echoTool],
+        recordOperationReceipt: (receipt) => receipts.push(receipt),
+        resolveAutomationAuthority: () => {
+          resolutions += 1;
+          return Effect.succeed(resolutions === 1 ? null : automationAuthority());
+        },
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_echo", arguments: {} },
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).toContain("automation_authority_inactive");
+    expect(receipts).toEqual([]);
+  });
+
   it("executes through the central automation-run authority and automation ingress", async () => {
     const resolver = vi.fn(() => Effect.succeed(automationAuthority()));
     const res = await run(
@@ -424,6 +454,66 @@ describe("makeAgentGatewayMcpTransport automation authority", () => {
 
     expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).toContain("automation_authority_inactive");
+  });
+
+  it("does not poll repositories during a long read and still withholds after cancellation", async () => {
+    let releaseHandler!: () => void;
+    let markHandlerStarted!: () => void;
+    let revoked = false;
+    const handlerStarted = new Promise<void>((resolve) => {
+      markHandlerStarted = resolve;
+    });
+    const handlerGate = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    const longReadTool: ToolEntry = {
+      ...echoTool,
+      definition: { ...echoTool.definition, name: "scient_long_read" },
+      handler: () =>
+        Effect.promise(async () => {
+          markHandlerStarted();
+          await handlerGate;
+          return mcpToolResultJson({ finished: true });
+        }),
+    };
+    const resolver = vi.fn(() =>
+      revoked
+        ? Effect.fail(
+            new GatewayToolError(
+              "automation_authority_inactive",
+              "The automation run was cancelled before read release.",
+            ),
+          )
+        : Effect.succeed(automationAuthority()),
+    );
+    const response = run(
+      makeTransport({
+        callerShell: Option.some(runningShell()),
+        requireShell: runningShell(),
+        tools: [longReadTool],
+        resolveAutomationAuthority: resolver,
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_long_read", arguments: {} },
+        },
+      },
+    );
+
+    await handlerStarted;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(resolver).toHaveBeenCalledTimes(2);
+    revoked = true;
+    releaseHandler();
+
+    const result = await response;
+    expect(result.status).toBe(200);
+    expect(JSON.stringify(result.body)).toContain("automation_authority_inactive");
+    expect(resolver).toHaveBeenCalledTimes(3);
   });
 
   it("keeps the same exact-turn grant across provider-session replacement", async () => {

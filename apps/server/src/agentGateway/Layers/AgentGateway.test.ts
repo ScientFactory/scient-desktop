@@ -1,0 +1,333 @@
+import { assert, it } from "@effect/vitest";
+import {
+  AutomationId,
+  AutomationRunId,
+  CommandId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+  type AutomationDefinition,
+  type OrchestrationThreadShell,
+} from "@synara/contracts";
+import { Effect, Layer, Option } from "effect";
+
+import type { ProjectionSnapshotQueryShape } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
+import { AutomationRepositoryLive } from "../../persistence/Layers/AutomationRepository.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { AutomationRepository } from "../../persistence/Services/AutomationRepository.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import {
+  automationAllowedCapabilitiesForDefinition,
+  makeAutomationOperationGrantSnapshot,
+} from "../../scientOperations/automationAuthority.ts";
+import type { ScientOperationResultReceipt } from "../../scientOperations/authority.ts";
+import { makeEphemeralScientOperationExecutor } from "../../scientOperations/Layers/ScientOperationExecutor.ts";
+import { makeAgentGatewayMcpTransport } from "../mcpTransport.ts";
+import { mcpToolResultJson } from "../protocol.ts";
+import type { AgentGatewayCredentialsShape } from "../Services/AgentGatewayCredentials.ts";
+import type { ToolEntry } from "../toolRuntime.ts";
+import { makeAutomationAuthorityResolver } from "./AgentGateway.ts";
+
+const layer = it.layer(
+  AutomationRepositoryLive.pipe(
+    Layer.provideMerge(ProjectionTurnRepositoryLive),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  ),
+);
+
+const readTool: ToolEntry = {
+  operation: "project.context.read",
+  decodeInput: () => ({}),
+  definition: {
+    name: "scient_test_read",
+    description: "Test read.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  handler: () => Effect.succeed(mcpToolResultJson({ read: true })),
+};
+
+const writeTool: ToolEntry = {
+  operation: "thread.message.send",
+  decodeInput: () => ({ threadId: "thread-target", message: "test", mode: "queue" }),
+  definition: {
+    name: "scient_test_write",
+    description: "Test write.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  handler: () => Effect.succeed(mcpToolResultJson({ wrote: true })),
+};
+
+function automationInput(projectId: ProjectId, schedule: AutomationDefinition["schedule"]) {
+  return {
+    projectId,
+    name: "Gateway provenance test",
+    prompt: "Run the exact authorized task.",
+    schedule,
+    modelSelection: { provider: "codex" as const, model: "gpt-5-codex" },
+    maxRuntimeSeconds: 3_600,
+  };
+}
+
+function seedActiveRun(input: {
+  readonly key: string;
+  readonly schedule?: AutomationDefinition["schedule"];
+  readonly projectedTurnId: TurnId;
+  readonly projectedPendingMessageId: MessageId | null;
+}) {
+  return Effect.gen(function* () {
+    const automationRepository = yield* AutomationRepository;
+    const projectionTurnRepository = yield* ProjectionTurnRepository;
+    const issuedAt = new Date(Date.now() - 1_000).toISOString();
+    const automationId = AutomationId.makeUnsafe(`automation:${input.key}`);
+    const runId = AutomationRunId.makeUnsafe(`automation-run:${input.key}`);
+    const projectId = ProjectId.makeUnsafe(`project:${input.key}`);
+    const threadId = ThreadId.makeUnsafe(`thread:${input.key}`);
+    const grantedMessageId = MessageId.makeUnsafe(`message:${input.key}:granted`);
+    const definition = yield* automationRepository.createDefinition({
+      id: automationId,
+      input: automationInput(projectId, input.schedule ?? { type: "manual" }),
+      now: issuedAt,
+    });
+    const allowedCapabilities = automationAllowedCapabilitiesForDefinition(definition);
+    const operationGrant = makeAutomationOperationGrantSnapshot({
+      definition,
+      runId,
+      threadId,
+      pendingMessageId: grantedMessageId,
+      allowedCapabilities,
+      issuedAt,
+    });
+    yield* automationRepository.createRun({
+      id: runId,
+      automationId,
+      projectId,
+      threadId,
+      messageId: grantedMessageId,
+      trigger: { type: "scheduled" },
+      scheduledFor: issuedAt,
+      permissionSnapshot: {
+        provider: definition.modelSelection.provider,
+        modelSelection: definition.modelSelection,
+        ...(definition.providerOptions ? { providerOptions: definition.providerOptions } : {}),
+        completionPolicyVersion: definition.completionPolicyVersion,
+        runtimeMode: definition.runtimeMode,
+        interactionMode: definition.interactionMode,
+        worktreeMode: definition.worktreeMode,
+        allowedCapabilities,
+        operationGrant,
+        createdAt: issuedAt,
+      },
+      now: issuedAt,
+    });
+    yield* automationRepository.markRunStarted({
+      id: runId,
+      threadId,
+      messageId: grantedMessageId,
+      threadCreateCommandId: CommandId.makeUnsafe(`command:${input.key}:thread`),
+      turnStartCommandId: CommandId.makeUnsafe(`command:${input.key}:turn`),
+      startedAt: issuedAt,
+    });
+    yield* projectionTurnRepository.upsertByTurnId({
+      threadId,
+      turnId: input.projectedTurnId,
+      pendingMessageId: input.projectedPendingMessageId,
+      sourceProposedPlanThreadId: null,
+      sourceProposedPlanId: null,
+      assistantMessageId: null,
+      state: "running",
+      requestedAt: issuedAt,
+      startedAt: issuedAt,
+      completedAt: null,
+      checkpointTurnCount: null,
+      checkpointRef: null,
+      checkpointStatus: null,
+      checkpointFiles: [],
+    });
+    return { definition, projectId, threadId, grantedMessageId, automationRepository };
+  });
+}
+
+function deniedTransport(input: {
+  readonly shell: OrchestrationThreadShell;
+  readonly resolveAutomationAuthority: ReturnType<typeof makeAutomationAuthorityResolver>;
+  readonly receipts: ScientOperationResultReceipt[];
+}) {
+  const identity = {
+    sessionKey: "gateway-session:production-resolver-test",
+    threadId: input.shell.id,
+    provider: "codex" as const,
+    issuedAt: 0,
+    capabilities: ["project:context:read", "thread:list", "thread:read", "thread:drive"] as const,
+  };
+  const credentials = {
+    verifySession: (token: string) => (token === "valid-token" ? identity : null),
+    bindWriteAuthority: (_token: string, turnId: string) => ({ ...identity, turnId }),
+    verifyWriteAuthority: () => true,
+    acquireWriteLease: () => ({ sessionKey: identity.sessionKey, release: () => undefined }),
+    subscribeSessionRevocations: () => () => undefined,
+  } as unknown as AgentGatewayCredentialsShape;
+  const snapshotQuery = {
+    getThreadShellById: () => Effect.succeed(Option.some(input.shell)),
+  } as unknown as ProjectionSnapshotQueryShape;
+  return makeAgentGatewayMcpTransport({
+    credentials,
+    snapshotQuery,
+    tools: [readTool, writeTool],
+    instructions: "test",
+    requireThreadShell: () => Effect.succeed(input.shell),
+    operationExecutor: makeEphemeralScientOperationExecutor({
+      recordReceipt: (receipt) => input.receipts.push(receipt),
+    }),
+    resolveAutomationAuthority: input.resolveAutomationAuthority,
+  });
+}
+
+function assertReadAndWriteDenied(input: {
+  readonly shell: OrchestrationThreadShell;
+  readonly resolveAutomationAuthority: ReturnType<typeof makeAutomationAuthorityResolver>;
+}) {
+  return Effect.gen(function* () {
+    const receipts: ScientOperationResultReceipt[] = [];
+    const transport = deniedTransport({ ...input, receipts });
+    for (const name of ["scient_test_read", "scient_test_write"]) {
+      const response = yield* transport({
+        authorizationHeader: "Bearer valid-token",
+        body: {
+          jsonrpc: "2.0",
+          id: name,
+          method: "tools/call",
+          params: { name, arguments: {} },
+        },
+      });
+      assert.strictEqual(response.status, 403);
+      assert.match(JSON.stringify(response.body), /automation_authority_inactive/);
+    }
+    assert.strictEqual(receipts.length, 0);
+    assert.isFalse(
+      receipts.some(
+        (receipt) => receipt.authorityGeneration === "gateway-session:production-resolver-test",
+      ),
+    );
+  });
+}
+
+layer("AgentGateway automation provenance", (it) => {
+  it.effect("denies an active run when a replacement turn carries a different message", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      const turnId = TurnId.makeUnsafe("turn:replacement-provenance");
+      const seeded = yield* seedActiveRun({
+        key: "replacement-provenance",
+        projectedTurnId: turnId,
+        projectedPendingMessageId: MessageId.makeUnsafe("message:replacement-provenance:other"),
+      });
+      const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const shell = {
+        id: seeded.threadId,
+        projectId: seeded.projectId,
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        session: { providerName: "codex", status: "running" },
+        latestTurn: { turnId, state: "running" },
+      } as unknown as OrchestrationThreadShell;
+
+      yield* assertReadAndWriteDenied({
+        shell,
+        resolveAutomationAuthority: makeAutomationAuthorityResolver({
+          automationRepository: seeded.automationRepository,
+          projectionTurnRepository,
+        }),
+      });
+    }),
+  );
+
+  it.effect("denies an active run when latest-turn or pending-message proof is absent", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      for (const scenario of ["missing-latest-turn", "null-pending-message"] as const) {
+        const turnId = TurnId.makeUnsafe(`turn:${scenario}`);
+        const seeded = yield* seedActiveRun({
+          key: scenario,
+          projectedTurnId: turnId,
+          projectedPendingMessageId:
+            scenario === "null-pending-message"
+              ? null
+              : MessageId.makeUnsafe(`message:${scenario}`),
+        });
+        const projectionTurnRepository = yield* ProjectionTurnRepository;
+        const shell = {
+          id: seeded.threadId,
+          projectId: seeded.projectId,
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          session: { providerName: "codex", status: "running" },
+          latestTurn:
+            scenario === "missing-latest-turn" ? null : { turnId, state: "running" as const },
+        } as unknown as OrchestrationThreadShell;
+
+        yield* assertReadAndWriteDenied({
+          shell,
+          resolveAutomationAuthority: makeAutomationAuthorityResolver({
+            automationRepository: seeded.automationRepository,
+            projectionTurnRepository,
+          }),
+        });
+      }
+    }),
+  );
+
+  it.effect("keeps a due one-shot grant valid after scheduler disablement only", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      const turnId = TurnId.makeUnsafe("turn:one-shot-policy");
+      const runAt = new Date(Date.now() - 1_000).toISOString();
+      const seeded = yield* seedActiveRun({
+        key: "one-shot-policy",
+        schedule: { type: "once", runAt },
+        projectedTurnId: turnId,
+        projectedPendingMessageId: MessageId.makeUnsafe("message:one-shot-policy:granted"),
+      });
+      const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const resolver = makeAutomationAuthorityResolver({
+        automationRepository: seeded.automationRepository,
+        projectionTurnRepository,
+      });
+
+      yield* seeded.automationRepository.disableDefinition({
+        id: seeded.definition.id,
+        now: new Date().toISOString(),
+      });
+      const authority = yield* resolver({
+        threadId: seeded.threadId,
+        projectId: seeded.projectId,
+        provider: "codex",
+        turnId,
+        now: Date.now(),
+      });
+      assert.strictEqual(authority?.actor.kind, "automation-run");
+
+      const currentDefinition = yield* seeded.automationRepository.getDefinitionById({
+        id: seeded.definition.id,
+      });
+      assert.isTrue(Option.isSome(currentDefinition));
+      if (Option.isSome(currentDefinition)) {
+        yield* seeded.automationRepository.saveDefinition({
+          ...currentDefinition.value,
+          prompt: "A genuinely changed task.",
+          updatedAt: new Date(Date.now() + 1).toISOString(),
+        });
+      }
+      const changed = yield* Effect.option(
+        resolver({
+          threadId: seeded.threadId,
+          projectId: seeded.projectId,
+          provider: "codex",
+          turnId,
+          now: Date.now(),
+        }),
+      );
+      assert.isTrue(Option.isNone(changed));
+    }),
+  );
+});

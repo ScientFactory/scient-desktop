@@ -43,7 +43,11 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-/** Stable policy version; excludes scheduler bookkeeping such as nextRunAt and iterationCount. */
+/**
+ * Stable active-run policy version. Future-dispatch bookkeeping such as
+ * enabled, nextRunAt, and iterationCount cannot revoke a run that was already
+ * issued; run status remains the authoritative cancellation boundary.
+ */
 export function automationOperationPolicyVersion(definition: AutomationDefinition): string {
   return `sha256:${sha256(
     JSON.stringify([
@@ -54,7 +58,6 @@ export function automationOperationPolicyVersion(definition: AutomationDefinitio
       definition.name,
       definition.prompt,
       definition.schedule,
-      definition.enabled,
       definition.modelSelection,
       definition.providerOptions ?? null,
       definition.runtimeMode,

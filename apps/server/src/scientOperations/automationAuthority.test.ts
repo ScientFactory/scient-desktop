@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectionTurnById } from "../persistence/Services/ProjectionTurns.ts";
 import {
   automationAllowedCapabilitiesForDefinition,
+  automationOperationPolicyVersion,
   makeAutomationOperationGrantSnapshot,
   resolveAutomationOperationAuthority,
   SCIENT_AUTOMATION_OPERATION_RUNTIME_EPOCH_HASH,
@@ -164,6 +165,18 @@ function resolve(input?: {
 }
 
 describe("automation operation authority", () => {
+  it("keeps the active-run policy stable across scheduler-owned enablement bookkeeping", () => {
+    const enabled = definition({ enabled: true });
+    const schedulerDisabled = definition({ enabled: false, nextRunAt: null });
+
+    expect(automationOperationPolicyVersion(schedulerDisabled)).toBe(
+      automationOperationPolicyVersion(enabled),
+    );
+    expect(
+      automationOperationPolicyVersion(definition({ prompt: "A genuinely changed instruction." })),
+    ).not.toBe(automationOperationPolicyVersion(enabled));
+  });
+
   it("binds the narrow grant to the exact automation, project, thread, message, and turn", () => {
     const authority = resolve();
 

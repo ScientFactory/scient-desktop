@@ -15,7 +15,7 @@ import {
   type OrchestrationThreadShell,
   type ProviderKind,
 } from "@synara/contracts";
-import { Duration, Effect, Option } from "effect";
+import { Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -95,7 +95,7 @@ export function makeAgentGatewayMcpTransport(input: {
     readonly threadId: ThreadId;
     readonly projectId: string;
     readonly provider: ProviderKind;
-    readonly turnId: TurnId;
+    readonly turnId: TurnId | null;
     readonly now: number;
   }) => Effect.Effect<ScientOperationAuthority | null, GatewayToolError>;
 }): AgentGatewayShape["handleMcpPost"] {
@@ -394,14 +394,14 @@ export function makeAgentGatewayMcpTransport(input: {
         });
       const candidateTurnId = callerThread.value.latestTurn?.turnId ?? null;
       const automationResolution =
-        candidateTurnId === null || input.resolveAutomationAuthority === undefined
+        input.resolveAutomationAuthority === undefined
           ? { ok: true as const, authority: null }
           : yield* input
               .resolveAutomationAuthority({
                 threadId: ThreadId.makeUnsafe(callerThreadId),
                 projectId: callerProjectId,
                 provider: callerSession.provider,
-                turnId: TurnId.makeUnsafe(candidateTurnId),
+                turnId: candidateTurnId === null ? null : TurnId.makeUnsafe(candidateTurnId),
                 now: Date.now(),
               })
               .pipe(
@@ -424,23 +424,24 @@ export function makeAgentGatewayMcpTransport(input: {
       const requireCurrentOperationCaller = () =>
         Effect.gen(function* () {
           const liveCaller = yield* requireCurrentProviderCaller();
-          if (automationResolution.authority === null) return liveCaller;
-          if (input.resolveAutomationAuthority === undefined || candidateTurnId === null) {
-            return yield* Effect.fail(
-              new GatewayToolError(
-                "automation_authority_inactive",
-                "This automation operation grant can no longer be resolved.",
-                { callerThreadId },
-              ),
-            );
-          }
+          if (input.resolveAutomationAuthority === undefined) return liveCaller;
           const liveAuthority = yield* input.resolveAutomationAuthority({
             threadId: ThreadId.makeUnsafe(callerThreadId),
             projectId: callerProjectId,
             provider: callerSession.provider,
-            turnId: TurnId.makeUnsafe(candidateTurnId),
+            turnId: candidateTurnId === null ? null : TurnId.makeUnsafe(candidateTurnId),
             now: Date.now(),
           });
+          if (automationResolution.authority === null) {
+            if (liveAuthority === null) return liveCaller;
+            return yield* Effect.fail(
+              new GatewayToolError(
+                "automation_authority_inactive",
+                "This provider request cannot inherit authority from an automation run that became active after ingress.",
+                { callerThreadId },
+              ),
+            );
+          }
           if (
             liveAuthority === null ||
             liveAuthority.authorityId !== automationResolution.authority.authorityId ||
@@ -548,17 +549,7 @@ export function makeAgentGatewayMcpTransport(input: {
         }
         return Effect.sync(() => unsubscribe?.());
       });
-      const automationRevocationFence: Effect.Effect<never, GatewayToolError> =
-        automationResolution.authority === null
-          ? Effect.never
-          : Effect.gen(function* () {
-              while (true) {
-                yield* Effect.sleep(Duration.millis(100));
-                yield* requireCurrentOperationCaller();
-              }
-              return yield* Effect.never;
-            });
-      const revocationFence = Effect.raceFirst(sessionRevocationFence, automationRevocationFence);
+      const revocationFence = sessionRevocationFence;
       const context: ToolRequestBaseContext = {
         callerThreadId,
         callerProjectId,

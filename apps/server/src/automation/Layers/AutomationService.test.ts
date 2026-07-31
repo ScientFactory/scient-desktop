@@ -3381,7 +3381,7 @@ layer("AutomationService", (it) => {
     }),
   );
 
-  it.effect("recovers standalone pending rows using their persisted thread id", () =>
+  it.effect("interrupts legacy recoverable rows that have no operation grant", () =>
     Effect.gen(function* () {
       resetHarness();
       const service = yield* AutomationService;
@@ -3432,7 +3432,7 @@ layer("AutomationService", (it) => {
 
       const reloaded = yield* service.list({ projectId });
       const recovered = reloaded.runs.find((entry) => entry.automationId === automationId);
-      assert.strictEqual(recovered?.status, "succeeded");
+      assert.strictEqual(recovered?.status, "interrupted");
       assert.strictEqual(recovered?.threadId, threadId);
     }),
   );
