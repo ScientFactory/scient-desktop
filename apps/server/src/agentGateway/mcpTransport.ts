@@ -9,8 +9,13 @@
  *
  * @module agentGateway/mcpTransport
  */
-import { ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
-import { Effect, Option } from "effect";
+import {
+  ThreadId,
+  TurnId,
+  type OrchestrationThreadShell,
+  type ProviderKind,
+} from "@synara/contracts";
+import { Duration, Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -85,6 +90,14 @@ export function makeAgentGatewayMcpTransport(input: {
     threadId: string,
   ) => Effect.Effect<OrchestrationThreadShell, unknown>;
   readonly operationExecutor: ScientOperationExecutorShape;
+  /** Resolve an automation-owned turn; null means this is an ordinary provider turn. */
+  readonly resolveAutomationAuthority?: (scope: {
+    readonly threadId: ThreadId;
+    readonly projectId: string;
+    readonly provider: ProviderKind;
+    readonly turnId: TurnId;
+    readonly now: number;
+  }) => Effect.Effect<ScientOperationAuthority | null, GatewayToolError>;
 }): AgentGatewayShape["handleMcpPost"] {
   const operationExecutor = input.operationExecutor;
   const toolsByName = new Map(input.tools.map((tool) => [tool.definition.name, tool]));
@@ -164,19 +177,30 @@ export function makeAgentGatewayMcpTransport(input: {
             authority: context.operationAuthority,
             operation: tool.operation,
             projectId: context.callerProjectId,
-            ingress: "provider-gateway",
-            ...(context.callerTurnId === null
+            ingress:
+              context.operationAuthority.actor.kind === "automation-run"
+                ? "automation"
+                : "provider-gateway",
+            ...(context.callerTurnId === null ||
+            context.operationAuthority.actor.kind !== "provider-thread"
               ? {}
               : { providerAuthorizingTurnId: context.callerTurnId }),
             ...(context.callerTurnId === null
               ? {}
               : {
-                  semanticIdempotencyScope: {
-                    kind: "provider-turn" as const,
-                    provider: context.callerProvider,
-                    callerThreadId: context.callerThreadId,
-                    callerTurnId: context.callerTurnId,
-                  },
+                  semanticIdempotencyScope:
+                    context.operationAuthority.actor.kind === "automation-run"
+                      ? {
+                          kind: "automation-run" as const,
+                          automationId: context.operationAuthority.actor.automationId,
+                          runId: context.operationAuthority.actor.runId,
+                        }
+                      : {
+                          kind: "provider-turn" as const,
+                          provider: context.callerProvider,
+                          callerThreadId: context.callerThreadId,
+                          callerTurnId: context.callerTurnId,
+                        },
                 }),
             domainInput: decoded.value,
             admit: admissionEffect,
@@ -307,7 +331,7 @@ export function makeAgentGatewayMcpTransport(input: {
         };
       }
       const callerProjectId = callerThread.value.projectId;
-      const operationAuthority: ScientOperationAuthority = makeScientOperationAuthority({
+      const providerOperationAuthority: ScientOperationAuthority = makeScientOperationAuthority({
         authorityId: callerSession.sessionKey,
         generation: callerSession.sessionKey,
         actor: {
@@ -326,12 +350,12 @@ export function makeAgentGatewayMcpTransport(input: {
         callerThread.value.latestTurn?.state === "running"
           ? input.credentials.bindWriteAuthority(token, callerThread.value.latestTurn.turnId)
           : null;
-      const requireCurrentOperationCaller = () =>
+      const requireCurrentProviderCaller = () =>
         Effect.gen(function* () {
           const liveSession = input.credentials.verifySession(token);
           if (
             liveSession === null ||
-            liveSession.sessionKey !== operationAuthority.generation ||
+            liveSession.sessionKey !== providerOperationAuthority.generation ||
             liveSession.threadId !== callerSession.threadId ||
             liveSession.provider !== callerSession.provider
           ) {
@@ -362,6 +386,70 @@ export function makeAgentGatewayMcpTransport(input: {
               new GatewayToolError(
                 "caller_session_inactive",
                 "This Scient operation was rejected because its caller scope or provider ownership changed.",
+                { callerThreadId },
+              ),
+            );
+          }
+          return liveCaller;
+        });
+      const candidateTurnId = callerThread.value.latestTurn?.turnId ?? null;
+      const automationResolution =
+        candidateTurnId === null || input.resolveAutomationAuthority === undefined
+          ? { ok: true as const, authority: null }
+          : yield* input
+              .resolveAutomationAuthority({
+                threadId: ThreadId.makeUnsafe(callerThreadId),
+                projectId: callerProjectId,
+                provider: callerSession.provider,
+                turnId: TurnId.makeUnsafe(candidateTurnId),
+                now: Date.now(),
+              })
+              .pipe(
+                Effect.match({
+                  onFailure: (error) => ({ ok: false as const, error }),
+                  onSuccess: (authority) => ({ ok: true as const, authority }),
+                }),
+              );
+      if (!automationResolution.ok) {
+        return {
+          status: 403,
+          body: jsonRpcError(
+            null,
+            JSON_RPC_INVALID_REQUEST,
+            `${automationResolution.error.code}: ${automationResolution.error.message}`,
+          ),
+        };
+      }
+      const operationAuthority = automationResolution.authority ?? providerOperationAuthority;
+      const requireCurrentOperationCaller = () =>
+        Effect.gen(function* () {
+          const liveCaller = yield* requireCurrentProviderCaller();
+          if (automationResolution.authority === null) return liveCaller;
+          if (input.resolveAutomationAuthority === undefined || candidateTurnId === null) {
+            return yield* Effect.fail(
+              new GatewayToolError(
+                "automation_authority_inactive",
+                "This automation operation grant can no longer be resolved.",
+                { callerThreadId },
+              ),
+            );
+          }
+          const liveAuthority = yield* input.resolveAutomationAuthority({
+            threadId: ThreadId.makeUnsafe(callerThreadId),
+            projectId: callerProjectId,
+            provider: callerSession.provider,
+            turnId: TurnId.makeUnsafe(candidateTurnId),
+            now: Date.now(),
+          });
+          if (
+            liveAuthority === null ||
+            liveAuthority.authorityId !== automationResolution.authority.authorityId ||
+            liveAuthority.generation !== automationResolution.authority.generation
+          ) {
+            return yield* Effect.fail(
+              new GatewayToolError(
+                "automation_authority_inactive",
+                "This automation operation grant was cancelled, replaced, or changed scope.",
                 { callerThreadId },
               ),
             );
@@ -411,9 +499,10 @@ export function makeAgentGatewayMcpTransport(input: {
       const runTransactionalWrite = <A, E>(
         effect: Effect.Effect<A, E>,
       ): Effect.Effect<A, E | GatewayToolError> =>
-        Effect.suspend((): Effect.Effect<A, E | GatewayToolError> => {
+        Effect.gen(function* () {
+          yield* requireCurrentCallerTurn();
           if (callerWriteAuthority === null) {
-            return Effect.fail(
+            return yield* Effect.fail(
               new GatewayToolError(
                 "caller_turn_inactive",
                 "This Scient write was rejected because no caller turn was active when the MCP request arrived.",
@@ -423,7 +512,7 @@ export function makeAgentGatewayMcpTransport(input: {
           }
           const lease = input.credentials.acquireWriteLease(callerWriteAuthority);
           if (lease === null) {
-            return Effect.fail(
+            return yield* Effect.fail(
               new GatewayToolError(
                 "caller_session_inactive",
                 "This Scient write was rejected because its provider-session authority was revoked before the authoritative write began.",
@@ -431,9 +520,11 @@ export function makeAgentGatewayMcpTransport(input: {
               ),
             );
           }
-          return Effect.uninterruptible(effect).pipe(Effect.ensuring(Effect.sync(lease.release)));
+          return yield* Effect.uninterruptible(effect).pipe(
+            Effect.ensuring(Effect.sync(lease.release)),
+          );
         });
-      const revocationFence = Effect.callback<never, GatewayToolError>((resume) => {
+      const sessionRevocationFence = Effect.callback<never, GatewayToolError>((resume) => {
         const cancelled = () =>
           Effect.fail(
             new GatewayToolError(
@@ -457,6 +548,17 @@ export function makeAgentGatewayMcpTransport(input: {
         }
         return Effect.sync(() => unsubscribe?.());
       });
+      const automationRevocationFence: Effect.Effect<never, GatewayToolError> =
+        automationResolution.authority === null
+          ? Effect.never
+          : Effect.gen(function* () {
+              while (true) {
+                yield* Effect.sleep(Duration.millis(100));
+                yield* requireCurrentOperationCaller();
+              }
+              return yield* Effect.never;
+            });
+      const revocationFence = Effect.raceFirst(sessionRevocationFence, automationRevocationFence);
       const context: ToolRequestBaseContext = {
         callerThreadId,
         callerProjectId,

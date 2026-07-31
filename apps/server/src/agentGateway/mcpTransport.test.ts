@@ -7,13 +7,16 @@
  * the read-model snapshot query, and the tool set. No HTTP or Effect layers are
  * involved so each rule is asserted in isolation.
  */
-import { ProjectId, ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
+import { ProjectId, ThreadId, TurnId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { ScientOperationReceiptRepositoryShape } from "../persistence/Services/ScientOperationReceipts.ts";
-import type { ScientOperationResultReceipt } from "../scientOperations/authority.ts";
+import {
+  makeScientOperationAuthority,
+  type ScientOperationResultReceipt,
+} from "../scientOperations/authority.ts";
 import { makeEphemeralScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
@@ -185,6 +188,9 @@ function makeTransport(cfg?: {
   readonly randomId?: () => string;
   readonly recordOperationReceipt?: (receipt: ScientOperationResultReceipt) => void;
   readonly receiptRepository?: ScientOperationReceiptRepositoryShape;
+  readonly resolveAutomationAuthority?: NonNullable<
+    Parameters<typeof makeAgentGatewayMcpTransport>[0]["resolveAutomationAuthority"]
+  >;
 }) {
   const requireShell = cfg?.requireShell ?? makeShell();
   return makeAgentGatewayMcpTransport({
@@ -203,6 +209,9 @@ function makeTransport(cfg?: {
         : { recordReceipt: cfg.recordOperationReceipt }),
       ...(cfg?.receiptRepository === undefined ? {} : { receiptRepository: cfg.receiptRepository }),
     }),
+    ...(cfg?.resolveAutomationAuthority === undefined
+      ? {}
+      : { resolveAutomationAuthority: cfg.resolveAutomationAuthority }),
   });
 }
 
@@ -214,6 +223,27 @@ function run(
 }
 
 const auth = (token: string) => `Bearer ${token}`;
+
+const automationAuthority = () =>
+  makeScientOperationAuthority({
+    authorityId: `automation-grant:${"a".repeat(64)}`,
+    generation: `automation-turn:${"b".repeat(64)}`,
+    actor: {
+      kind: "automation-run",
+      automationId: "automation:a1",
+      runId: "automation-run:a1",
+      grantVersion: 1,
+      automationVersion: `sha256:${"c".repeat(64)}`,
+      threadId: CALLER_THREAD,
+      pendingMessageId: "message:a1",
+      authorizingTurnId: RUNNING_TURN,
+    },
+    projectIds: [CALLER_PROJECT],
+    capabilities: ["project:context:read", "thread:list", "thread:read", "thread:drive"],
+    issuedAt: 0,
+    expiresAt: null,
+    revokedAt: null,
+  });
 
 function toolResultJson(response: unknown): Record<string, unknown> {
   const result = (response as { result: { content: Array<{ text: string }> } }).result;
@@ -276,6 +306,207 @@ describe("makeAgentGatewayMcpTransport ingress auth", () => {
       },
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe("makeAgentGatewayMcpTransport automation authority", () => {
+  const runningShell = () => makeShell({ latestTurn: { turnId: RUNNING_TURN, state: "running" } });
+
+  it("keeps ordinary provider turns on the provider authority fallback", async () => {
+    const resolver = vi.fn(() => Effect.succeed(null));
+    const res = await run(
+      makeTransport({
+        callerShell: Option.some(runningShell()),
+        requireShell: runningShell(),
+        tools: [envelopeTool],
+        resolveAutomationAuthority: resolver,
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_envelope", arguments: {} },
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(toolResultJson(res.body)).toMatchObject({
+      actorKind: "provider-thread",
+      ingress: "provider-gateway",
+    });
+    expect(resolver).toHaveBeenCalled();
+  });
+
+  it("executes through the central automation-run authority and automation ingress", async () => {
+    const resolver = vi.fn(() => Effect.succeed(automationAuthority()));
+    const res = await run(
+      makeTransport({
+        callerShell: Option.some(runningShell()),
+        requireShell: runningShell(),
+        tools: [envelopeTool],
+        resolveAutomationAuthority: resolver,
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_envelope", arguments: {} },
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(toolResultJson(res.body)).toMatchObject({
+      actorKind: "automation-run",
+      ingress: "automation",
+      projectId: CALLER_PROJECT,
+    });
+    expect(resolver).toHaveBeenCalled();
+  });
+
+  it("fails the request closed when a cancelled or prior-runtime grant is resolved", async () => {
+    const res = await run(
+      makeTransport({
+        callerShell: Option.some(runningShell()),
+        requireShell: runningShell(),
+        resolveAutomationAuthority: () =>
+          Effect.fail(
+            new GatewayToolError(
+              "automation_authority_inactive",
+              "The automation run is no longer active.",
+            ),
+          ),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: { jsonrpc: "2.0", id: 1, method: "ping" },
+      },
+    );
+
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toContain("automation_authority_inactive");
+  });
+
+  it("withholds a completed read when cancellation wins before release", async () => {
+    let resolutions = 0;
+    const res = await run(
+      makeTransport({
+        callerShell: Option.some(runningShell()),
+        requireShell: runningShell(),
+        tools: [echoTool],
+        resolveAutomationAuthority: () => {
+          resolutions += 1;
+          return resolutions < 3
+            ? Effect.succeed(automationAuthority())
+            : Effect.fail(
+                new GatewayToolError(
+                  "automation_authority_inactive",
+                  "The automation run was cancelled before read release.",
+                ),
+              );
+        },
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_echo", arguments: {} },
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).toContain("automation_authority_inactive");
+  });
+
+  it("keeps the same exact-turn grant across provider-session replacement", async () => {
+    const generations: string[] = [];
+    for (const sessionKey of ["gateway-session:first", "gateway-session:replacement"]) {
+      const res = await run(
+        makeTransport({
+          credentials: makeCredentials({ session: makeIdentity({ sessionKey }) }),
+          callerShell: Option.some(runningShell()),
+          requireShell: runningShell(),
+          tools: [envelopeTool],
+          resolveAutomationAuthority: () => Effect.succeed(automationAuthority()),
+        }),
+        {
+          authorizationHeader: auth(VALID_TOKEN),
+          body: {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "scient_envelope", arguments: {} },
+          },
+        },
+      );
+      generations.push(String(toolResultJson(res.body).authorityGeneration));
+    }
+    expect(generations[1]).toBe(generations[0]);
+  });
+
+  it("isolates concurrent requests while resolving the same immutable run grant", async () => {
+    const resolver = vi.fn(() => Effect.succeed(automationAuthority()));
+    const transport = makeTransport({
+      callerShell: Option.some(runningShell()),
+      requireShell: runningShell(),
+      tools: [envelopeTool],
+      resolveAutomationAuthority: resolver,
+    });
+    const responses = await Promise.all(
+      [1, 2].map((id) =>
+        run(transport, {
+          authorizationHeader: auth(VALID_TOKEN),
+          body: {
+            jsonrpc: "2.0",
+            id,
+            method: "tools/call",
+            params: { name: "scient_envelope", arguments: { id } },
+          },
+        }),
+      ),
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(responses.map((response) => toolResultJson(response.body).authorityGeneration)).toEqual([
+      automationAuthority().generation,
+      automationAuthority().generation,
+    ]);
+    expect(resolver.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("rejects a later turn instead of rebinding the automation grant", async () => {
+    const replacementTurn = "turn-replacement";
+    const shell = makeShell({ latestTurn: { turnId: replacementTurn, state: "running" } });
+    const res = await run(
+      makeTransport({
+        callerShell: Option.some(shell),
+        requireShell: shell,
+        resolveAutomationAuthority: (scope) =>
+          scope.turnId === TurnId.makeUnsafe(RUNNING_TURN)
+            ? Effect.succeed(automationAuthority())
+            : Effect.fail(
+                new GatewayToolError(
+                  "automation_authority_inactive",
+                  "The automation grant belongs to a different turn.",
+                ),
+              ),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: { jsonrpc: "2.0", id: 1, method: "ping" },
+      },
+    );
+
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toContain("different turn");
   });
 });
 

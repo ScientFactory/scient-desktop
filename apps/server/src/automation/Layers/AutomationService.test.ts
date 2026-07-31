@@ -37,6 +37,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { AutomationRepository } from "../../persistence/Services/AutomationRepository.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeAutomationOperationGrantSnapshot } from "../../scientOperations/automationAuthority.ts";
 import { AutomationService, type AutomationServiceShape } from "../Services/AutomationService.ts";
 import { AutomationServiceLive } from "./AutomationService.ts";
 
@@ -584,6 +585,23 @@ layer("AutomationService", (it) => {
       assert.strictEqual(result.run.messageId, turnStart.message.messageId);
       assert.strictEqual(result.run.threadCreateCommandId, threadCreate.commandId);
       assert.strictEqual(result.run.turnStartCommandId, turnStart.commandId);
+      const operationGrant = result.run.permissionSnapshot.operationGrant;
+      assert.isNotNull(operationGrant);
+      if (operationGrant === null || operationGrant === undefined) {
+        assert.fail("Expected a versioned automation operation grant.");
+      }
+      assert.strictEqual(operationGrant.version, 1);
+      assert.strictEqual(operationGrant.automationId, created.id);
+      assert.strictEqual(operationGrant.runId, result.run.id);
+      assert.strictEqual(operationGrant.projectId, created.projectId);
+      assert.strictEqual(operationGrant.threadId, result.run.threadId);
+      assert.strictEqual(operationGrant.pendingMessageId, result.run.messageId);
+      assert.deepStrictEqual(operationGrant.capabilities, [
+        "project:context:read",
+        "thread:list",
+        "thread:read",
+        "thread:drive",
+      ]);
     }),
   );
 
@@ -3416,6 +3434,61 @@ layer("AutomationService", (it) => {
       const recovered = reloaded.runs.find((entry) => entry.automationId === automationId);
       assert.strictEqual(recovered?.status, "succeeded");
       assert.strictEqual(recovered?.threadId, threadId);
+    }),
+  );
+
+  it.effect("interrupts a recoverable run whose operation grant belongs to a prior runtime", () =>
+    Effect.gen(function* () {
+      resetHarness();
+      const service = yield* AutomationService;
+      const repository = yield* AutomationRepository;
+      const automationId = AutomationId.makeUnsafe("automation-prior-runtime");
+      const runId = AutomationRunId.makeUnsafe("run-prior-runtime");
+      const threadId = ThreadId.makeUnsafe("thread-prior-runtime");
+      const messageId = MessageId.makeUnsafe("message-prior-runtime");
+      const created = yield* repository.createDefinition({
+        id: automationId,
+        input: createInput("local"),
+        now,
+      });
+      const allowedCapabilities = ["send-turn"] as const;
+      yield* repository.createRun({
+        id: runId,
+        automationId,
+        projectId,
+        threadId,
+        messageId,
+        trigger: { type: "manual" },
+        scheduledFor: now,
+        permissionSnapshot: {
+          provider: "codex",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          worktreeMode: "local",
+          allowedCapabilities,
+          operationGrant: makeAutomationOperationGrantSnapshot({
+            definition: created,
+            runId,
+            threadId,
+            pendingMessageId: messageId,
+            allowedCapabilities,
+            issuedAt: now,
+            runtimeEpochHash: `sha256:${"a".repeat(64)}`,
+          }),
+          createdAt: now,
+        },
+        now,
+      });
+
+      yield* service.recoverPendingRuns();
+
+      const recovered = yield* repository.getRunById({ id: runId });
+      assert.isTrue(Option.isSome(recovered));
+      if (Option.isSome(recovered)) {
+        assert.strictEqual(recovered.value.status, "interrupted");
+        assert.strictEqual(recovered.value.finishedAt === null, false);
+      }
     }),
   );
 

@@ -62,6 +62,11 @@ export type ScientOperationActor =
       readonly kind: "automation-run";
       readonly automationId: string;
       readonly runId: string;
+      readonly grantVersion: 1;
+      readonly automationVersion: string;
+      readonly threadId: string;
+      readonly pendingMessageId: string;
+      readonly authorizingTurnId: string;
     };
 
 export type ScientOperationActorKind = ScientOperationActor["kind"];
@@ -430,6 +435,13 @@ function validateActorIdentity(actor: ScientOperationActor): void {
     case "automation-run":
       structuredIdentity(actor.automationId, "actor.automationId");
       structuredIdentity(actor.runId, "actor.runId");
+      if (actor.grantVersion !== 1) {
+        throw new ScientOperationInputError("actor.grantVersion is unsupported.");
+      }
+      structuredIdentity(actor.automationVersion, "actor.automationVersion");
+      structuredIdentity(actor.threadId, "actor.threadId");
+      structuredIdentity(actor.pendingMessageId, "actor.pendingMessageId");
+      structuredIdentity(actor.authorizingTurnId, "actor.authorizingTurnId");
       return;
     case "external-integration":
       structuredIdentity(actor.integrationId, "actor.integrationId");

@@ -30,6 +30,31 @@ function authority(overrides?: Partial<ScientOperationAuthority>): ScientOperati
   });
 }
 
+function automationAuthority(
+  overrides?: Partial<ScientOperationAuthority>,
+): ScientOperationAuthority {
+  return makeScientOperationAuthority({
+    authorityId: `automation-grant:${"a".repeat(64)}`,
+    generation: `automation-turn:${"b".repeat(64)}`,
+    actor: {
+      kind: "automation-run",
+      automationId: "automation-1",
+      runId: "run-1",
+      grantVersion: 1,
+      automationVersion: `sha256:${"c".repeat(64)}`,
+      threadId: "thread-1",
+      pendingMessageId: "message-1",
+      authorizingTurnId: "turn-1",
+    },
+    projectIds: ["project-1"],
+    capabilities: ["project:context:read", "thread:list", "thread:read", "thread:drive"],
+    issuedAt: NOW - 100,
+    expiresAt: NOW + 1_000,
+    revokedAt: null,
+    ...overrides,
+  });
+}
+
 function begin(overrides?: Partial<Parameters<typeof beginScientOperation>[0]>) {
   return beginScientOperation({
     authority: authority(),
@@ -228,6 +253,54 @@ describe("beginScientOperation", () => {
       baseline.envelope.authority.grantHash,
     );
     expect(expiring.envelope.authority.grantHash).not.toBe(baseline.envelope.authority.grantHash);
+  });
+
+  it("keeps automation-run authority on the narrow Scient operation surface", () => {
+    const allowed = begin({
+      authority: automationAuthority(),
+      definition: SCIENT_OPERATION_DEFINITIONS["thread.read"],
+      ingress: "automation",
+      semanticIdempotencyScope: {
+        kind: "automation-run",
+        automationId: "automation-1",
+        runId: "run-1",
+      },
+    });
+    if (!allowed.allow) throw new Error("expected automation authorization");
+    expect(allowed.envelope.authority.actor).toMatchObject({
+      kind: "automation-run",
+      automationId: "automation-1",
+      runId: "run-1",
+      threadId: "thread-1",
+      pendingMessageId: "message-1",
+      authorizingTurnId: "turn-1",
+    });
+    expect(allowed.envelope.providerAuthorizingTurnId).toBeNull();
+
+    for (const operation of [
+      "automation.run",
+      "browser.read",
+      "browser.capture",
+      "browser.action",
+      "project-file.read",
+      "project-file.write",
+      "scientific-record.propose",
+      "scientific-record.accept",
+      "export.run",
+    ] as const) {
+      const denied = begin({
+        authority: automationAuthority(),
+        definition: SCIENT_OPERATION_DEFINITIONS[operation],
+        ingress: "automation",
+        operationId: `denied-${operation}`,
+        semanticIdempotencyIdentity: null,
+        semanticIdempotencyScope: null,
+        providerAuthorizingTurnId: null,
+      });
+      expect(denied.allow, operation).toBe(false);
+      if (denied.allow) continue;
+      expect(["actor_kind_denied", "capability_denied"], operation).toContain(denied.decision.code);
+    }
   });
 });
 

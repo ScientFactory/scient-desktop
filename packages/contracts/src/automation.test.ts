@@ -5,6 +5,7 @@ import {
   AutomationCreateInput,
   AutomationDefinition,
   AutomationCompletionPolicy,
+  AutomationOperationGrantSnapshot,
   AutomationRun,
   AutomationRunResult,
   AutomationSchedule,
@@ -142,7 +143,35 @@ it.effect("accepts automation runs with immutable permission snapshots", () =>
 
     assert.strictEqual(parsed.permissionSnapshot.runtimeMode, "approval-required");
     assert.strictEqual(parsed.permissionSnapshot.completionPolicyVersion, 7);
+    assert.strictEqual(parsed.permissionSnapshot.operationGrant, null);
     assert.strictEqual(parsed.status, "running");
+  }),
+);
+
+it.effect("accepts only narrow versioned automation operation grants", () =>
+  Effect.gen(function* () {
+    const grant = {
+      version: 1,
+      runtimeEpochHash: `sha256:${"a".repeat(64)}`,
+      automationVersion: `sha256:${"b".repeat(64)}`,
+      automationId: "automation-1",
+      runId: "run-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      pendingMessageId: "message-1",
+      capabilities: ["project:context:read", "thread:list", "thread:read"] as const,
+      issuedAt: "2026-06-16T10:00:00.000Z",
+      leaseExpiresAt: "2026-06-16T10:05:00.000Z",
+    };
+    const parsed = yield* decode(AutomationOperationGrantSnapshot, grant);
+    assert.strictEqual(parsed.version, 1);
+    assert.deepStrictEqual(parsed.capabilities, grant.capabilities);
+
+    const dangerousAccepted = yield* decode(AutomationOperationGrantSnapshot, {
+      ...grant,
+      capabilities: ["automation:run"],
+    }).pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+    assert.isFalse(dangerousAccepted);
   }),
 );
 

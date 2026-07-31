@@ -414,6 +414,12 @@ sqlite("ScientOperationReceiptRepository", (it) => {
             kind: "automation-run" as const,
             automationId: "automation-sensitive",
             runId: "automation-run-sensitive",
+            grantVersion: 1 as const,
+            automationVersion:
+              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            threadId: "automation-thread-sensitive",
+            pendingMessageId: "automation-message-sensitive",
+            authorizingTurnId: "automation-turn-sensitive",
           },
         },
         {
