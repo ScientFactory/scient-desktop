@@ -20,6 +20,10 @@
       "types": "./src/gitMutationRpc.ts",
       "import": "./src/gitMutationRpc.ts"
     },
+    "./gitDiffStatsRpc": {
+      "types": "./src/gitDiffStatsRpc.ts",
+      "import": "./src/gitDiffStatsRpc.ts"
+    },
     "./githubAvatar": {
       "types": "./src/githubAvatar.ts",
       "import": "./src/githubAvatar.ts"
@@ -192,6 +196,14 @@
       "types": "./src/providerVersions.ts",
       "import": "./src/providerVersions.ts"
     },
+    "./providerSignOut": {
+      "types": "./src/providerSignOut.ts",
+      "import": "./src/providerSignOut.ts"
+    },
+    "./providerSignOutTransport": {
+      "types": "./src/providerSignOutTransport.ts",
+      "import": "./src/providerSignOutTransport.ts"
+    },
     "./formatBytes": {
       "types": "./src/formatBytes.ts",
       "import": "./src/formatBytes.ts"
@@ -207,6 +219,10 @@
     "./chatGptVoiceAuth": {
       "types": "./src/chatGptVoiceAuth.ts",
       "import": "./src/chatGptVoiceAuth.ts"
+    },
+    "./unifiedPatchStats": {
+      "types": "./src/unifiedPatchStats.ts",
+      "import": "./src/unifiedPatchStats.ts"
     }
   },
   "scripts": {

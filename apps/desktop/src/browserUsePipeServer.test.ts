@@ -5,6 +5,7 @@
 
 import * as Net from "node:net";
 import * as OS from "node:os";
+import { lstatSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -16,6 +17,7 @@ import {
   SYNARA_BROWSER_USE_PIPE_ENV,
   resolveConfiguredBrowserUsePipePath,
   resolveDefaultBrowserUsePipePath,
+  withOwnerOnlyPipeCreation,
 } from "./browserUsePipeServer";
 import type { DesktopBrowserManager } from "./browserManager";
 
@@ -188,6 +190,17 @@ describe("browser-use pipe path resolution", () => {
     expect(basename(pipePath)).toMatch(/^scient-iab-\d+\.sock$/);
   });
 
+  it("uses a short Darwin socket path when an isolated TMPDIR exceeds the kernel limit", () => {
+    const pipePath = resolveDefaultBrowserUsePipePath(
+      "darwin",
+      `/var/folders/${"deep-isolated-release-state/".repeat(6)}`,
+      42,
+    );
+
+    expect(pipePath).toBe("/tmp/scient-iab-42.sock");
+    expect(Buffer.byteLength(pipePath, "utf8")).toBeLessThanOrEqual(103);
+  });
+
   it("prefers an explicit Synara pipe path from the environment", () => {
     expect(
       resolveConfiguredBrowserUsePipePath(
@@ -204,6 +217,30 @@ describe("browser-use pipe path resolution", () => {
       /codex-browser-use\/scient-iab-\d+\.sock$/,
     );
   });
+
+  it("creates POSIX pipe entries under an owner-only umask and always restores it", () => {
+    const originalUmask = process.umask();
+    try {
+      process.umask(0o000);
+      expect(
+        withOwnerOnlyPipeCreation("darwin", () => {
+          expect(process.umask()).toBe(0o177);
+          return "created";
+        }),
+      ).toBe("created");
+      expect(process.umask()).toBe(0o000);
+
+      expect(() =>
+        withOwnerOnlyPipeCreation("darwin", () => {
+          expect(process.umask()).toBe(0o177);
+          throw new Error("listen failed");
+        }),
+      ).toThrow("listen failed");
+      expect(process.umask()).toBe(0o000);
+    } finally {
+      process.umask(originalUmask);
+    }
+  });
 });
 
 describe("browser-use pipe session isolation", () => {
@@ -215,6 +252,9 @@ describe("browser-use pipe session isolation", () => {
     const fake = makeFakeBrowserManager();
     const server = new BrowserUsePipeServer(fake.manager, { pipePath });
     await server.start();
+    if (process.platform !== "win32") {
+      expect(lstatSync(pipePath).mode & 0o777).toBe(0o600);
+    }
     const socketA = await connectToPipe(pipePath);
     const socketB = await connectToPipe(pipePath);
     const readerA = makeFrameReader(socketA);

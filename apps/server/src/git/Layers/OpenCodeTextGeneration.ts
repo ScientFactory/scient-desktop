@@ -3,7 +3,10 @@
 // Layer: Server git/text-generation adapter
 // Depends on: OpenCode SDK runtime, prompt builders, attachment projection, and server config.
 
-import { Effect, Exit, Fiber, Layer, Schema, Scope } from "effect";
+import { createHash, randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+
+import { Effect, Exit, Fiber, FileSystem, Layer, Path, Schema, Scope } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type {
@@ -29,6 +32,7 @@ import {
   type OpenCodeServerProcess,
   openCodeRuntimeErrorDetail,
   parseOpenCodeModelSlug,
+  resolveOpenCodeAuthFilePath,
   toOpenCodeFileParts,
 } from "../../provider/opencodeRuntime.ts";
 import { TextGenerationError } from "../Errors.ts";
@@ -49,13 +53,119 @@ import {
   buildThreadTitlePrompt,
   decodeStructuredTextGenerationOutput,
   type RawTextFallback,
-  sanitizeCommitSubject,
+  sanitizeCommitSubjectForPolicy,
   sanitizeDiffSummary,
   sanitizeThreadRecap,
   sanitizePrTitle,
 } from "../textGenerationShared.ts";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
+const SCM_TEXT_GENERATION_OPERATIONS = new Set<TextGenerationOperation>([
+  "generateCommitMessage",
+  "generatePrContent",
+  "generateDiffSummary",
+  "generateBranchName",
+]);
+
+const STABLE_API_CREDENTIAL_METADATA_KEYS: Readonly<
+  Record<string, ReadonlySet<string> | undefined>
+> = {
+  azure: new Set(["resourceName"]),
+  "cloudflare-workers-ai": new Set(["accountId"]),
+  "cloudflare-ai-gateway": new Set(["accountId", "gatewayId"]),
+  "snowflake-cortex": new Set(["account"]),
+};
+
+function unsupportedApiCredentialMetadata(providerId: string): Error {
+  return new Error(
+    `Automatic isolated writing cannot safely project '${providerId}' API credential metadata. ` +
+      "Rotating OAuth and remote-policy credentials remain with their owning provider runtime.",
+  );
+}
+
+function selectOpenCodeApiCredential(content: string, providerId: string): string | null {
+  const parsed = JSON.parse(content) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const value = (parsed as Record<string, unknown>)[providerId];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const credential = value as Record<string, unknown>;
+  if (credential.type !== "api" || typeof credential.key !== "string") {
+    throw new Error(
+      "Automatic isolated writing supports API credentials only; rotating OAuth and remote-policy credentials remain with their owning provider runtime.",
+    );
+  }
+  if (credential.key.trim().length === 0) {
+    return null;
+  }
+
+  let metadata: Record<string, string> | null = null;
+  if (credential.metadata !== undefined) {
+    if (
+      !credential.metadata ||
+      typeof credential.metadata !== "object" ||
+      Array.isArray(credential.metadata)
+    ) {
+      throw unsupportedApiCredentialMetadata(providerId);
+    }
+    const allowedKeys = STABLE_API_CREDENTIAL_METADATA_KEYS[providerId];
+    const entries = Object.entries(credential.metadata as Record<string, unknown>);
+    if (
+      entries.some(([key, value]) => typeof value !== "string" || allowedKeys?.has(key) !== true)
+    ) {
+      throw unsupportedApiCredentialMetadata(providerId);
+    }
+    if (entries.length > 0) {
+      metadata = Object.fromEntries(entries) as Record<string, string>;
+    }
+  }
+  return JSON.stringify({
+    [providerId]: {
+      type: "api",
+      key: credential.key,
+      ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+    },
+  });
+}
+
+const MANAGED_WRITER_INHERITED_ENV_KEYS = [
+  "PATH",
+  "PATHEXT",
+  "SystemRoot",
+  "WINDIR",
+  "COMSPEC",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+] as const;
+
+function makeManagedWriterBaseEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of MANAGED_WRITER_INHERITED_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
 
 function getOpenCodePromptErrorMessage(error: unknown): string | null {
   if (!error || typeof error !== "object") {
@@ -104,7 +214,12 @@ interface SharedOpenCodeTextGenerationServerState {
   server: OpenCodeServerProcess | null;
   serverScope: Scope.Closeable | null;
   binaryPath: string | null;
+  providerId: string | null;
+  credentialRevision: string | null;
+  isolatedWriter: boolean | null;
   cwd: string | null;
+  clientDirectory: string | null;
+  serverPassword: string | null;
   activeRequests: number;
   idleCloseFiber: Fiber.Fiber<void, never> | null;
 }
@@ -113,6 +228,8 @@ interface AcquiredOpenCodeTextGenerationServer {
   server: OpenCodeServerProcess;
   shared: boolean;
   serverScope: Scope.Closeable | null;
+  clientDirectory: string;
+  serverPassword: string;
 }
 
 type OpenCodeCompatibleTextGenerationProvider = "opencode" | "kilo";
@@ -129,7 +246,11 @@ function resolveOpenCodeCompatibleModelSelection(
   config: OpenCodeCompatibleTextGenerationConfig,
   input: {
     readonly model?: string;
-    readonly modelSelection?: { provider: string; model: string; options?: unknown };
+    readonly modelSelection?: {
+      provider: string;
+      model: string;
+      options?: unknown;
+    };
   },
 ): OpenCodeCompatibleModelSelection | null {
   if (input.modelSelection?.provider === config.provider) {
@@ -151,6 +272,174 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const hardenedInlineConfig = JSON.stringify({
+      autoupdate: false,
+      share: "disabled",
+      snapshot: false,
+      permission: { "*": "deny" },
+      tools: {
+        bash: false,
+        edit: false,
+        write: false,
+        webfetch: false,
+        websearch: false,
+        codesearch: false,
+      },
+      mcp: {},
+      plugin: [],
+      agent: {},
+      command: {},
+      instructions: [],
+    });
+    const externalClientRoot = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: `scient-${config.provider}-external-writer-`,
+    });
+    const externalClientDirectory = path.join(externalClientRoot, "workspace");
+    yield* fileSystem.makeDirectory(externalClientDirectory, {
+      recursive: true,
+    });
+    if (process.platform !== "win32") {
+      yield* Effect.all(
+        [externalClientRoot, externalClientDirectory].map((directory) =>
+          fileSystem.chmod(directory, 0o700),
+        ),
+        { concurrency: "unbounded" },
+      );
+    }
+    const closeManagedScope = (scope: Scope.Closeable) =>
+      Scope.close(scope, Exit.void).pipe(
+        Effect.catchCause(() =>
+          Effect.logWarning(`${config.displayName} isolated writer runtime cleanup failed.`),
+        ),
+      );
+
+    const prepareManagedWriterRuntime = (
+      operation: TextGenerationOperation,
+      serverScope: Scope.Closeable,
+      authContent: string | null,
+    ) =>
+      Effect.gen(function* () {
+        const runtimeRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: `scient-${config.provider}-writer-`,
+        });
+        const workingDirectory = path.join(runtimeRoot, "workspace");
+        const configHome = path.join(runtimeRoot, "config");
+        const configDirectory = path.join(runtimeRoot, "config-directory");
+        const dataHome = path.join(runtimeRoot, "data");
+        const cacheHome = path.join(runtimeRoot, "cache");
+        const stateHome = path.join(runtimeRoot, "state");
+        const claudeConfigDirectory = path.join(runtimeRoot, "claude-config");
+        const providerDataDirectory = path.join(dataHome, config.cliSpec.dataDirectoryName);
+        yield* Effect.all(
+          [
+            workingDirectory,
+            configHome,
+            configDirectory,
+            providerDataDirectory,
+            cacheHome,
+            stateHome,
+            claudeConfigDirectory,
+          ].map((directory) => fileSystem.makeDirectory(directory, { recursive: true })),
+          { concurrency: "unbounded" },
+        );
+        if (process.platform !== "win32") {
+          yield* Effect.all(
+            [
+              runtimeRoot,
+              workingDirectory,
+              configHome,
+              configDirectory,
+              dataHome,
+              providerDataDirectory,
+              cacheHome,
+              stateHome,
+              claudeConfigDirectory,
+            ].map((directory) => fileSystem.chmod(directory, 0o700)),
+            { concurrency: "unbounded" },
+          );
+        }
+
+        if (authContent !== null) {
+          const isolatedAuthPath = path.join(providerDataDirectory, "auth.json");
+          yield* fileSystem.writeFileString(isolatedAuthPath, authContent);
+          if (process.platform !== "win32") {
+            yield* fileSystem.chmod(isolatedAuthPath, 0o600);
+          }
+        }
+
+        const configPath = path.join(configHome, "opencode.json");
+        yield* fileSystem.writeFileString(configPath, hardenedInlineConfig);
+        if (process.platform !== "win32") {
+          yield* fileSystem.chmod(configPath, 0o600);
+        }
+        const env = makeManagedWriterBaseEnv();
+        env.XDG_CONFIG_HOME = configHome;
+        env.XDG_DATA_HOME = dataHome;
+        env.XDG_CACHE_HOME = cacheHome;
+        env.XDG_STATE_HOME = stateHome;
+        env.APPDATA = dataHome;
+        env.CLAUDE_CONFIG_DIR = claudeConfigDirectory;
+        env.OPENCODE_CONFIG = configPath;
+        env.OPENCODE_CONFIG_DIR = configDirectory;
+        env[config.cliSpec.configContentEnvVar] = hardenedInlineConfig;
+        env.OPENCODE_AUTO_SHARE = "false";
+        env.OPENCODE_DISABLE_AUTOUPDATE = "1";
+        env.OPENCODE_DISABLE_DEFAULT_PLUGINS = "1";
+        env.OPENCODE_DISABLE_LSP_DOWNLOAD = "1";
+        env.OPENCODE_DISABLE_CLAUDE_CODE = "1";
+        env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "1";
+        env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "1";
+        env.OPENCODE_EXPERIMENTAL_WEBSOCKETS = "false";
+        env.OPENCODE_PURE = "1";
+        env.KILO_DISABLE_DEFAULT_PLUGINS = "1";
+        env.KILO_DISABLE_CODEBASE_INDEXING = "vscode-no-workspace";
+        env.KILO_PURE = "1";
+        const serverPassword = randomBytes(32).toString("base64url");
+        env[config.provider === "kilo" ? "KILO_SERVER_PASSWORD" : "OPENCODE_SERVER_PASSWORD"] =
+          serverPassword;
+        return { workingDirectory, env, serverPassword };
+      }).pipe(
+        Effect.provideService(Scope.Scope, serverScope),
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: `Failed to prepare isolated ${config.displayName} text-generation runtime.`,
+              cause,
+            }),
+        ),
+      );
+
+    const resolveManagedWriterAuth = (operation: TextGenerationOperation, providerId: string) =>
+      Effect.gen(function* () {
+        const sourceAuthPath = resolveOpenCodeAuthFilePath({ home: homedir() }, config.cliSpec);
+        const sourceAuth = yield* fileSystem
+          .readFileString(sourceAuthPath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const authContent =
+          sourceAuth === null
+            ? null
+            : yield* Effect.try({
+                try: () => selectOpenCodeApiCredential(sourceAuth, providerId),
+                catch: (cause) =>
+                  new TextGenerationError({
+                    operation,
+                    detail:
+                      cause instanceof Error && cause.message.trim().length > 0
+                        ? cause.message
+                        : `Failed to project the selected ${config.displayName} API credential ` +
+                          "into the isolated writer runtime.",
+                    cause,
+                  }),
+              });
+        return {
+          authContent,
+          credentialRevision:
+            authContent === null ? "none" : createHash("sha256").update(authContent).digest("hex"),
+        };
+      });
     const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
       Scope.close(scope, Exit.void),
     );
@@ -159,7 +448,12 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       server: null,
       serverScope: null,
       binaryPath: null,
+      providerId: null,
+      credentialRevision: null,
+      isolatedWriter: null,
       cwd: null,
+      clientDirectory: null,
+      serverPassword: null,
       activeRequests: 0,
       idleCloseFiber: null,
     };
@@ -169,9 +463,14 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       sharedServerState.server = null;
       sharedServerState.serverScope = null;
       sharedServerState.binaryPath = null;
+      sharedServerState.providerId = null;
+      sharedServerState.credentialRevision = null;
+      sharedServerState.isolatedWriter = null;
       sharedServerState.cwd = null;
+      sharedServerState.clientDirectory = null;
+      sharedServerState.serverPassword = null;
       if (scope !== null) {
-        yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+        yield* closeManagedScope(scope);
       }
     });
 
@@ -206,6 +505,10 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
 
     const acquireSharedServer = (input: {
       readonly binaryPath: string;
+      readonly providerId: string;
+      readonly authContent: string | null;
+      readonly credentialRevision: string;
+      readonly isolatedWriter: boolean;
       readonly cwd: string;
       readonly operation: TextGenerationOperation;
     }) =>
@@ -213,44 +516,66 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         Effect.gen(function* () {
           yield* cancelIdleCloseFiber();
 
-          const startServer = Effect.fn("startOpenCodeTextGenerationServer")(function* () {
-            const serverScope = yield* Scope.make();
-            const startedExit = yield* Effect.exit(
-              openCodeRuntime
-                .startOpenCodeServerProcess({
-                  binaryPath: input.binaryPath,
-                  cliSpec: config.cliSpec,
-                  cwd: input.cwd,
-                })
-                .pipe(
-                  Effect.provideService(Scope.Scope, serverScope),
-                  Effect.mapError(
-                    (cause) =>
-                      new TextGenerationError({
-                        operation: input.operation,
-                        detail: openCodeRuntimeErrorDetail(cause),
-                        cause,
-                      }),
+          const startServer = Effect.fn("startOpenCodeTextGenerationServer")(() =>
+            Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const serverScope = yield* Scope.make();
+                return yield* restore(
+                  Effect.gen(function* () {
+                    const runtime = input.isolatedWriter
+                      ? yield* prepareManagedWriterRuntime(
+                          input.operation,
+                          serverScope,
+                          input.authContent,
+                        )
+                      : {
+                          workingDirectory: input.cwd,
+                          env: undefined,
+                          serverPassword: "",
+                        };
+                    const server = yield* openCodeRuntime
+                      .startOpenCodeServerProcess({
+                        binaryPath: input.binaryPath,
+                        cliSpec: config.cliSpec,
+                        cwd: runtime.workingDirectory,
+                        ...(runtime.env ? { env: runtime.env } : {}),
+                      })
+                      .pipe(
+                        Effect.provideService(Scope.Scope, serverScope),
+                        Effect.mapError(
+                          (cause) =>
+                            new TextGenerationError({
+                              operation: input.operation,
+                              detail: openCodeRuntimeErrorDetail(cause),
+                              cause,
+                            }),
+                        ),
+                      );
+                    return {
+                      server,
+                      serverScope,
+                      clientDirectory: runtime.workingDirectory,
+                      serverPassword: runtime.serverPassword,
+                    };
+                  }),
+                ).pipe(
+                  Effect.onExit((exit) =>
+                    exit._tag === "Failure" ? closeManagedScope(serverScope) : Effect.void,
                   ),
-                ),
-            );
-
-            if (startedExit._tag === "Failure") {
-              yield* Scope.close(serverScope, Exit.void).pipe(Effect.ignore);
-              return yield* Effect.failCause(startedExit.cause);
-            }
-
-            return {
-              server: startedExit.value,
-              serverScope,
-            };
-          });
+                );
+              }),
+            ),
+          );
 
           const existingServer = sharedServerState.server;
           if (existingServer !== null) {
             const sameConfigScope =
               sharedServerState.binaryPath === input.binaryPath &&
-              sharedServerState.cwd === input.cwd;
+              sharedServerState.isolatedWriter === input.isolatedWriter &&
+              (input.isolatedWriter
+                ? sharedServerState.providerId === input.providerId &&
+                  sharedServerState.credentialRevision === input.credentialRevision
+                : sharedServerState.cwd === input.cwd);
             if (!sameConfigScope && sharedServerState.activeRequests === 0) {
               yield* closeSharedServer();
             } else {
@@ -258,42 +583,54 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                 yield* Effect.logWarning(
                   `${config.displayName} shared server config scope mismatch: requested ` +
                     input.binaryPath +
-                    " at " +
-                    input.cwd +
                     " but active server uses " +
                     sharedServerState.binaryPath +
-                    " at " +
-                    sharedServerState.cwd +
                     "; starting a dedicated server for this request",
                 );
-                const dedicated = yield* startServer();
-                return {
-                  server: dedicated.server,
-                  shared: false,
-                  serverScope: dedicated.serverScope,
-                } satisfies AcquiredOpenCodeTextGenerationServer;
+                return yield* Effect.uninterruptibleMask(() =>
+                  Effect.map(
+                    startServer(),
+                    (dedicated) =>
+                      ({
+                        server: dedicated.server,
+                        shared: false,
+                        serverScope: dedicated.serverScope,
+                        clientDirectory: dedicated.clientDirectory,
+                        serverPassword: dedicated.serverPassword,
+                      }) satisfies AcquiredOpenCodeTextGenerationServer,
+                  ),
+                );
               }
               sharedServerState.activeRequests += 1;
               return {
                 server: existingServer,
                 shared: true,
                 serverScope: null,
+                clientDirectory: sharedServerState.clientDirectory!,
+                serverPassword: sharedServerState.serverPassword!,
               } satisfies AcquiredOpenCodeTextGenerationServer;
             }
           }
 
-          return yield* Effect.uninterruptibleMask((restore) =>
+          return yield* Effect.uninterruptibleMask(() =>
             Effect.gen(function* () {
-              const { server, serverScope } = yield* restore(startServer());
+              const { server, serverScope, clientDirectory, serverPassword } = yield* startServer();
               sharedServerState.server = server;
               sharedServerState.serverScope = serverScope;
               sharedServerState.binaryPath = input.binaryPath;
+              sharedServerState.providerId = input.providerId;
+              sharedServerState.credentialRevision = input.credentialRevision;
+              sharedServerState.isolatedWriter = input.isolatedWriter;
               sharedServerState.cwd = input.cwd;
+              sharedServerState.clientDirectory = clientDirectory;
+              sharedServerState.serverPassword = serverPassword;
               sharedServerState.activeRequests = 1;
               return {
                 server,
                 shared: true,
                 serverScope: null,
+                clientDirectory,
+                serverPassword,
               } satisfies AcquiredOpenCodeTextGenerationServer;
             }),
           );
@@ -305,7 +642,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         Effect.gen(function* () {
           if (!acquired.shared) {
             if (acquired.serverScope !== null) {
-              yield* Scope.close(acquired.serverScope, Exit.void).pipe(Effect.ignore);
+              yield* closeManagedScope(acquired.serverScope);
             }
             return;
           }
@@ -351,6 +688,14 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       const binaryPath = providerOptions?.binaryPath?.trim() || config.cliSpec.defaultBinaryPath;
       const serverUrl = providerOptions?.serverUrl?.trim() || "";
       const serverPassword = providerOptions?.serverPassword?.trim() || "";
+      if (serverUrl.length > 0 && SCM_TEXT_GENERATION_OPERATIONS.has(input.operation)) {
+        return yield* new TextGenerationError({
+          operation: input.operation,
+          detail:
+            `Configured external ${config.displayName} servers are not permitted for automatic ` +
+            "source-control writing because Scient cannot verify their sharing or extension policy.",
+        });
+      }
       const providerId = parsedModel.providerID;
       const modelId = parsedModel.modelID;
       const modelOptions = input.modelSelection.options as OpenCodeModelOptions | undefined;
@@ -367,16 +712,23 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       const fileParts = toOpenCodeFileParts({
         attachments: input.attachments,
         resolveAttachmentPath: (attachment) =>
-          resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+          resolveAttachmentPath({
+            attachmentsDir: serverConfig.attachmentsDir,
+            attachment,
+          }),
       });
 
-      const runAgainstServer = (server: Pick<OpenCodeServerConnection, "url">) =>
+      const runAgainstServer = (server: {
+        readonly url: string;
+        readonly clientDirectory: string;
+        readonly serverPassword?: string;
+      }) =>
         Effect.tryPromise({
           try: async () => {
             const client = openCodeRuntime.createOpenCodeSdkClient({
               baseUrl: server.url,
-              directory: input.cwd,
-              ...(serverPassword.length > 0 ? { serverPassword } : {}),
+              directory: server.clientDirectory,
+              ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               cliSpec: config.cliSpec,
             });
             const sessionCreateInput = {
@@ -443,16 +795,42 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         usingExternalServer: serverUrl.length > 0,
       });
 
+      const isolatedWriter = SCM_TEXT_GENERATION_OPERATIONS.has(input.operation);
+      const managedAuth =
+        serverUrl.length === 0 && isolatedWriter
+          ? yield* resolveManagedWriterAuth(input.operation, providerId)
+          : null;
+      if (managedAuth?.authContent === null && isolatedWriter) {
+        return yield* new TextGenerationError({
+          operation: input.operation,
+          detail:
+            `Automatic isolated ${config.displayName} writing requires an API credential for ` +
+            `'${providerId}'. OAuth and remote-policy credentials remain with their owning provider runtime.`,
+        });
+      }
       const rawOutput =
         serverUrl.length > 0
-          ? yield* runAgainstServer({ url: serverUrl })
+          ? yield* runAgainstServer({
+              url: serverUrl,
+              clientDirectory: isolatedWriter ? externalClientDirectory : input.cwd,
+              ...(serverPassword.length > 0 ? { serverPassword } : {}),
+            })
           : yield* Effect.acquireUseRelease(
               acquireSharedServer({
                 binaryPath,
+                providerId,
+                authContent: managedAuth?.authContent ?? null,
+                credentialRevision: managedAuth?.credentialRevision ?? "standard-runtime",
+                isolatedWriter,
                 cwd: input.cwd,
                 operation: input.operation,
               }),
-              (acquired) => runAgainstServer(acquired.server),
+              (acquired) =>
+                runAgainstServer({
+                  url: acquired.server.url,
+                  clientDirectory: acquired.clientDirectory,
+                  serverPassword: acquired.serverPassword,
+                }),
               releaseSharedServer,
             );
 
@@ -464,6 +842,37 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         ...(input.rawTextFallback ? { rawTextFallback: input.rawTextFallback } : {}),
       });
     });
+
+    const preflightSourceControlWriting: TextGenerationShape["preflightSourceControlWriting"] =
+      Effect.fn(`${config.serviceName}.preflightSourceControlWriting`)(function* (input) {
+        if (input.operations.length === 0) return;
+        const modelSelection = resolveOpenCodeCompatibleModelSelection(config, input);
+        const parsedModel = modelSelection ? parseOpenCodeModelSlug(modelSelection.model) : null;
+        if (!parsedModel) {
+          return yield* new TextGenerationError({
+            operation: input.operations[0]!,
+            detail: `Invalid ${config.displayName} model selection.`,
+          });
+        }
+        const providerOptions = input.providerOptions?.[config.provider];
+        if (providerOptions?.serverUrl?.trim()) {
+          return yield* new TextGenerationError({
+            operation: input.operations[0]!,
+            detail:
+              `Configured external ${config.displayName} servers are not permitted for automatic ` +
+              "source-control writing because Scient cannot verify their sharing or extension policy.",
+          });
+        }
+        const auth = yield* resolveManagedWriterAuth(input.operations[0]!, parsedModel.providerID);
+        if (auth.authContent === null) {
+          return yield* new TextGenerationError({
+            operation: input.operations[0]!,
+            detail:
+              `Automatic isolated ${config.displayName} writing requires an API credential for ` +
+              `'${parsedModel.providerID}'. OAuth and remote-policy credentials remain with their owning provider runtime.`,
+          });
+        }
+      });
 
     const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
       `${config.serviceName}.generateCommitMessage`,
@@ -481,6 +890,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         stagedSummary: input.stagedSummary,
         stagedPatch: input.stagedPatch,
         includeBranch: input.includeBranch === true,
+        ...(input.policy ? { policy: input.policy } : {}),
       });
       const generated = yield* runOpenCodeJson({
         operation: "generateCommitMessage",
@@ -492,7 +902,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       });
 
       return {
-        subject: sanitizeCommitSubject(generated.subject),
+        subject: sanitizeCommitSubjectForPolicy(generated, input.policy),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
           ? { branch: sanitizeFeatureBranchName(generated.branch) }
@@ -517,6 +927,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         commitSummary: input.commitSummary,
         diffSummary: input.diffSummary,
         diffPatch: input.diffPatch,
+        ...(input.policy ? { policy: input.policy } : {}),
+        ...(input.pullRequestTemplate ? { pullRequestTemplate: input.pullRequestTemplate } : {}),
       });
       const generated = yield* runOpenCodeJson({
         operation: "generatePrContent",
@@ -576,6 +988,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       const { prompt, outputSchemaJson, rawTextFallback } = buildBranchNamePrompt({
         message: input.message,
         ...(input.attachments ? { attachments: input.attachments } : {}),
+        ...(input.policy ? { policy: input.policy } : {}),
       });
       const generated = yield* runOpenCodeJson({
         operation: "generateBranchName",
@@ -703,6 +1116,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       });
 
     return {
+      preflightSourceControlWriting,
       generateCommitMessage,
       generatePrContent,
       generateDiffSummary,

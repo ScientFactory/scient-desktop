@@ -1999,6 +1999,145 @@ describe("composerDraftStore project draft thread mapping", () => {
     );
   });
 
+  it("clears mapped and mapping-less drafts owned by a deleted project", () => {
+    const store = useComposerDraftStore.getState();
+    const standaloneThreadId = ThreadId.makeUnsafe("thread-standalone-kanban");
+
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setPrompt(threadId, "mapped project draft");
+    store.registerDraftThread(standaloneThreadId, {
+      projectId,
+      entryPoint: "chat",
+      envMode: "local",
+    });
+    store.setPrompt(standaloneThreadId, "standalone kanban draft");
+    store.enqueueQueuedTurn(
+      standaloneThreadId,
+      makeQueuedChatTurn(
+        "queued-standalone-project-delete",
+        makeImage({
+          id: "queued-standalone-image",
+          previewUrl: "blob:queued-standalone-project-delete",
+        }),
+      ),
+    );
+    store.setProjectDraftThreadId(otherProjectId, otherThreadId);
+    store.setPrompt(otherThreadId, "unrelated draft");
+
+    store.clearProjectDraftThreads(projectId);
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(standaloneThreadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+    expect(useComposerDraftStore.getState().draftsByThreadId[standaloneThreadId]).toBeUndefined();
+    expect(useComposerDraftStore.getState().getDraftThread(otherThreadId)).toMatchObject({
+      projectId: otherProjectId,
+    });
+    expect(useComposerDraftStore.getState().draftsByThreadId[otherThreadId]?.prompt).toBe(
+      "unrelated draft",
+    );
+    expect(revokeSpy).toHaveBeenCalledWith("blob:queued-standalone-project-delete");
+  });
+
+  it("persists and deduplicates surfaced worktree recoveries without replacing the primary draft", () => {
+    const store = useComposerDraftStore.getState();
+    const recoveryThreadId = ThreadId.makeUnsafe("thread-recovery");
+    const duplicateCandidateId = ThreadId.makeUnsafe("thread-recovery-duplicate");
+    store.setProjectDraftThreadId(projectId, threadId, { branch: "primary-draft" });
+    store.setPrompt(threadId, "source primary prompt");
+    store.setProjectDraftThreadId(otherProjectId, otherThreadId, { branch: "target-primary" });
+    store.setPrompt(otherThreadId, "target primary prompt");
+
+    expect(
+      store.upsertWorktreeRecoveryDraft(recoveryThreadId, {
+        projectId,
+        createdAt: "2026-07-26T12:00:00.000Z",
+        branch: "scient/recovered-worktree",
+        worktreePath: "/tmp/recovered-worktree",
+      }),
+    ).toBe(recoveryThreadId);
+    expect(
+      useComposerDraftStore.getState().upsertWorktreeRecoveryDraft(duplicateCandidateId, {
+        projectId,
+        branch: "scient/recovered-worktree",
+        worktreePath: "/tmp/recovered-worktree",
+      }),
+    ).toBe(recoveryThreadId);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+      projectId,
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+    useComposerDraftStore.getState().moveDraftThreadToProject(recoveryThreadId, otherProjectId, {
+      branch: "should-not-move",
+      worktreePath: null,
+      envMode: "local",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+      projectId,
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      envMode: "worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByProjectId(otherProjectId)?.threadId,
+    ).toBe(otherThreadId);
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe(
+      "source primary prompt",
+    );
+    expect(useComposerDraftStore.getState().draftsByThreadId[otherThreadId]?.prompt).toBe(
+      "target primary prompt",
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(duplicateCandidateId)).toBeNull();
+    useComposerDraftStore.getState().setDraftThreadContext(recoveryThreadId, {
+      interactionMode: "plan",
+      projectId: otherProjectId,
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+      interactionMode: "plan",
+      projectId,
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      envMode: "worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const mergedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+
+    expect(mergedState.projectDraftThreadIdByProjectId[projectId]).toBe(threadId);
+    expect(mergedState.draftThreadsByThreadId[recoveryThreadId]).toMatchObject({
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+  });
+
   it("tracks chat and terminal draft threads independently for the same project", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId, { entryPoint: "chat" });
@@ -2165,6 +2304,42 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("rolls back only the expected promotion and atomically adopts a surviving worktree", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    store.setPrompt(threadId, "retry me");
+    store.markDraftThreadPromoting(threadId);
+
+    expect(
+      store.rollbackDraftThreadPromotion(threadId, otherThreadId, {
+        branch: "scient/wrong-owner",
+        worktreePath: "/tmp/wrong-owner",
+      }),
+    ).toBe(false);
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)?.promotedTo).toBe(threadId);
+
+    expect(
+      store.rollbackDraftThreadPromotion(threadId, threadId, {
+        branch: "scient/recovered",
+        worktreePath: "/tmp/recovered",
+      }),
+    ).toBe(true);
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toMatchObject({
+      threadId,
+      envMode: "worktree",
+      workspaceOrigin: "intentional",
+      branch: "scient/recovered",
+      worktreePath: "/tmp/recovered",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)?.promotedTo).toBeUndefined();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe("retry me");
+    expect(store.rollbackDraftThreadPromotion(threadId, threadId)).toBe(false);
   });
 
   it("updates branch context on an existing draft thread", () => {
@@ -2784,9 +2959,66 @@ describe("composerDraftStore modelSelection", () => {
     });
 
     expect(state).toEqual({
-      selectedModel: "opus[1m]",
+      selectedModel: "claude-opus-4-8",
       modelOptions: { claudeAgent: { effort: "high" } },
     });
+  });
+
+  it("preserves the historical persisted opus alias as Opus 4.8", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: modelSelection("claudeAgent", "opus"),
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        claudeAgent: [
+          { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        ],
+      },
+    });
+
+    expect(state.selectedModel).toBe("claude-opus-4-8");
+  });
+
+  it("preserves unavailable persisted explicit Opus 5 so runtime gating fails closed", () => {
+    const model = "claude-opus-5";
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: modelSelection("claudeAgent", model),
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        claudeAgent: [
+          { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        ],
+      },
+    });
+
+    expect(state.selectedModel).toBe("claude-opus-5");
   });
 
   it("selects Droid Auto without adding a reasoning override", () => {

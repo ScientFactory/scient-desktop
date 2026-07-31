@@ -883,6 +883,7 @@ function normalizeChatMessage(
     previous.text === incoming.text &&
     previous.dispatchMode === incoming.dispatchMode &&
     previous.dispatchOrigin === incoming.dispatchOrigin &&
+    previous.dispatchSource === incoming.dispatchSource &&
     previous.turnId === incoming.turnId &&
     previous.createdAt === incoming.createdAt &&
     previous.streaming === incoming.streaming &&
@@ -901,6 +902,7 @@ function normalizeChatMessage(
     text: incoming.text,
     ...(incoming.dispatchMode ? { dispatchMode: incoming.dispatchMode } : {}),
     ...(incoming.dispatchOrigin ? { dispatchOrigin: incoming.dispatchOrigin } : {}),
+    ...(incoming.dispatchSource ? { dispatchSource: incoming.dispatchSource } : {}),
     turnId: incoming.turnId,
     createdAt: incoming.createdAt,
     streaming: incoming.streaming,
@@ -963,6 +965,7 @@ function readModelMessageFromChatMessage(
     text: message.text,
     ...(message.dispatchMode ? { dispatchMode: message.dispatchMode } : {}),
     ...(message.dispatchOrigin ? { dispatchOrigin: message.dispatchOrigin } : {}),
+    ...(message.dispatchSource ? { dispatchSource: message.dispatchSource } : {}),
     turnId: message.turnId ?? null,
     streaming: message.streaming,
     source: message.source ?? "native",
@@ -1049,6 +1052,7 @@ function mergeReadModelMessagesWithLiveHotPath(
       text: previousMessage.text,
       dispatchMode: previousMessage.dispatchMode ?? incomingMessage.dispatchMode,
       dispatchOrigin: previousMessage.dispatchOrigin ?? incomingMessage.dispatchOrigin,
+      dispatchSource: previousMessage.dispatchSource ?? incomingMessage.dispatchSource,
       turnId: previousMessage.turnId ?? incomingMessage.turnId ?? null,
       source: previousMessage.source ?? incomingMessage.source ?? "native",
       streaming: previousMessage.streaming,
@@ -3080,6 +3084,10 @@ function mergeStreamingMessage(
     incomingMessage.dispatchOrigin !== undefined
       ? incomingMessage.dispatchOrigin
       : existingMessage.dispatchOrigin;
+  const nextDispatchSource =
+    incomingMessage.dispatchSource !== undefined
+      ? incomingMessage.dispatchSource
+      : existingMessage.dispatchSource;
   const nextSource = incomingMessage.source ?? existingMessage.source;
 
   if (
@@ -3092,6 +3100,7 @@ function mergeStreamingMessage(
     existingMessage.turnId === nextTurnId &&
     existingMessage.dispatchMode === nextDispatchMode &&
     existingMessage.dispatchOrigin === nextDispatchOrigin &&
+    existingMessage.dispatchSource === nextDispatchSource &&
     existingMessage.source === nextSource
   ) {
     return null;
@@ -3107,6 +3116,7 @@ function mergeStreamingMessage(
     ...(nextTurnId !== undefined ? { turnId: nextTurnId } : {}),
     ...(nextDispatchMode !== undefined ? { dispatchMode: nextDispatchMode } : {}),
     ...(nextDispatchOrigin !== undefined ? { dispatchOrigin: nextDispatchOrigin } : {}),
+    ...(nextDispatchSource !== undefined ? { dispatchSource: nextDispatchSource } : {}),
     ...(nextSource !== undefined ? { source: nextSource } : {}),
     ...(nextCompletedAt !== undefined ? { completedAt: nextCompletedAt } : {}),
   };
@@ -3121,6 +3131,7 @@ function applyThreadMessageSentEvent(thread: Thread, event: ThreadMessageSentEve
       text: payload.text,
       dispatchMode: payload.dispatchMode,
       dispatchOrigin: payload.dispatchOrigin,
+      dispatchSource: payload.dispatchSource,
       turnId: payload.turnId,
       attachments: payload.attachments ?? [],
       ...(payload.skills !== undefined ? { skills: payload.skills } : {}),
@@ -4611,6 +4622,20 @@ export const useStore = create<AppStore>((set) => ({
   setThreadWorkspace: (threadId, patch) =>
     set((state) => setThreadWorkspace(state, threadId, patch)),
 }));
+
+/**
+ * Test-only reset of every data field to its empty initial value. Actions live on the same object
+ * as the data (`AppStore extends AppState`), so this must be a shallow merge — never a replace, or
+ * the store loses its methods. A partial reset is unsafe: tests that dispatch a real `project.delete`
+ * / `thread.delete` tombstone ids in `deletedProjectIdsById` / `deletedThreadIdsById`, and tests that
+ * seed the normalized projection write `threadIds` / `threadShellById` (and siblings). Left behind,
+ * a tombstoned project makes the next test's route resolve to "deleted" and its data never loads.
+ */
+export function resetAppStoreForTests(): void {
+  // `structuredClone` gives every reset its own empty containers instead of aliasing the
+  // module-level `initialState` collections across tests.
+  useStore.setState(structuredClone(initialState));
+}
 
 // Persist state changes with debouncing to avoid localStorage thrashing
 useStore.subscribe((state) => {

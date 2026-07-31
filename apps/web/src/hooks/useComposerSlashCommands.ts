@@ -40,7 +40,13 @@ import { useRightDockStore } from "../rightDockStore";
 import { registerSidechatCreator } from "../lib/sidechatCreatorRegistry";
 import { downloadUrlAsBlob } from "../lib/browserDownload";
 import { resolveWsHttpUrl } from "../lib/wsHttpUrl";
+import { getProviderDiscoveryGeneration } from "../lib/providerDiscoveryInvalidation";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
+import {
+  finishProjectOperation,
+  tryBeginProjectOperation,
+  type ProjectOperationLease,
+} from "../lib/projectRemovalCoordination";
 
 type ComposerSnapshot = {
   value: string;
@@ -52,6 +58,20 @@ type SlashCommandItem = Extract<ComposerCommandItem, { type: "slash-command" }>;
 
 function wasPromptReplacementApplied(result: number | false): boolean {
   return result !== false;
+}
+
+type ProjectMutationAdmission = { lease: ProjectOperationLease };
+
+// Every project-mutating creator acquires its own removal-coordination lease. Concurrent
+// leases per project are allowed, so callers never assert "already held" — that assertion
+// was a footgun that let a creator skip the turnstile and race a concurrent removal.
+function tryAdmitProjectMutation(projectId: Project["id"]): ProjectMutationAdmission | null {
+  const lease = tryBeginProjectOperation(projectId);
+  return lease ? { lease } : null;
+}
+
+function finishProjectMutation(admission: ProjectMutationAdmission): void {
+  finishProjectOperation(admission.lease);
 }
 
 export function useComposerSlashCommands(input: {
@@ -67,6 +87,7 @@ export function useComposerSlashCommands(input: {
   fastModeEnabled: boolean;
   providerNativeCommands: readonly ProviderNativeCommandDescriptor[];
   providerCommandDiscoveryCwd: string | null;
+  providerCommandDiscoveryBinaryPath: string | null;
   selectedProvider: ProviderKind;
   currentProviderModelOptions: ProviderModelOptions[ProviderKind] | undefined;
   selectedModelSelection: ModelSelection;
@@ -120,6 +141,7 @@ export function useComposerSlashCommands(input: {
     fastModeEnabled,
     providerNativeCommands,
     providerCommandDiscoveryCwd,
+    providerCommandDiscoveryBinaryPath,
     selectedProvider,
     currentProviderModelOptions,
     selectedModelSelection,
@@ -263,58 +285,74 @@ export function useComposerSlashCommands(input: {
           title: "Fork is unavailable",
           description: "Only existing server-backed threads can be forked right now.",
         });
-        return true;
+        return false;
       }
 
-      const nextThreadId = newThreadId();
-      const importedMessages = inputOptions?.sourceMessageId
-        ? buildThreadForkImportedMessagesThrough(
-            activeThread,
-            inputOptions.sourceMessageId,
-            nextThreadId,
-          )
-        : buildThreadHandoffImportedMessages(activeThread);
-      if (inputOptions?.sourceMessageId && importedMessages.length === 0) {
+      const admission = tryAdmitProjectMutation(activeProject.id);
+      if (!admission) {
         reportComposerFeedback({
           type: "warning",
-          title: "Fork is unavailable",
-          description: "That message is not available as a completed conversation boundary.",
+          title: "Project removal in progress",
+          description: "Wait for project removal to finish or cancel it before creating a fork.",
         });
-        return true;
+        return false;
       }
 
-      const createdAt = new Date().toISOString();
-      // Fork first, then let the normal first-send worktree bootstrap create the cwd if needed.
-      const resolvedTarget = resolveForkThreadEnvironment({
-        target: inputOptions?.target ?? "local",
-        activeRootBranch,
-        sourceThread: activeThread,
-      });
+      try {
+        const nextThreadId = newThreadId();
+        const importedMessages = inputOptions?.sourceMessageId
+          ? buildThreadForkImportedMessagesThrough(
+              activeThread,
+              inputOptions.sourceMessageId,
+              nextThreadId,
+            )
+          : buildThreadHandoffImportedMessages(activeThread);
+        if (inputOptions?.sourceMessageId && importedMessages.length === 0) {
+          reportComposerFeedback({
+            type: "warning",
+            title: "Fork is unavailable",
+            description: "That message is not available as a completed conversation boundary.",
+          });
+          return false;
+        }
 
-      await api.orchestration.dispatchCommand({
-        type: "thread.fork.create",
-        commandId: newCommandId(),
-        threadId: nextThreadId,
-        sourceThreadId: activeThread.id,
-        ...(inputOptions?.sourceMessageId ? { sourceMessageId: inputOptions.sourceMessageId } : {}),
-        projectId: activeProject.id,
-        title: activeThread.title,
-        modelSelection: selectedModelSelection,
-        runtimeMode,
-        interactionMode,
-        envMode: resolvedTarget.envMode,
-        branch: resolvedTarget.branch,
-        worktreePath: resolvedTarget.worktreePath,
-        associatedWorktreePath: resolvedTarget.associatedWorktreePath,
-        associatedWorktreeBranch: resolvedTarget.associatedWorktreeBranch,
-        associatedWorktreeRef: resolvedTarget.associatedWorktreeRef,
-        importedMessages: [...importedMessages],
-        createdAt,
-      });
-      const snapshot = await api.orchestration.getShellSnapshot();
-      syncServerShellSnapshot(snapshot);
-      await navigateToThread(nextThreadId);
-      return true;
+        const createdAt = new Date().toISOString();
+        // Fork first, then let the normal first-send worktree bootstrap create the cwd if needed.
+        const resolvedTarget = resolveForkThreadEnvironment({
+          target: inputOptions?.target ?? "local",
+          activeRootBranch,
+          sourceThread: activeThread,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.fork.create",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          sourceThreadId: activeThread.id,
+          ...(inputOptions?.sourceMessageId
+            ? { sourceMessageId: inputOptions.sourceMessageId }
+            : {}),
+          projectId: activeProject.id,
+          title: activeThread.title,
+          modelSelection: selectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          envMode: resolvedTarget.envMode,
+          branch: resolvedTarget.branch,
+          worktreePath: resolvedTarget.worktreePath,
+          associatedWorktreePath: resolvedTarget.associatedWorktreePath,
+          associatedWorktreeBranch: resolvedTarget.associatedWorktreeBranch,
+          associatedWorktreeRef: resolvedTarget.associatedWorktreeRef,
+          importedMessages: [...importedMessages],
+          createdAt,
+        });
+        const snapshot = await api.orchestration.getShellSnapshot();
+        syncServerShellSnapshot(snapshot);
+        await navigateToThread(nextThreadId);
+        return true;
+      } finally {
+        finishProjectMutation(admission);
+      }
     },
     [
       activeProject,
@@ -338,66 +376,80 @@ export function useComposerSlashCommands(input: {
           title: "Side is unavailable",
           description: "Open a server-backed main thread before starting Side.",
         });
-        return true;
+        return false;
       }
 
-      const importedMessages = buildThreadHandoffImportedMessages(activeThread);
-      const nextThreadId = newThreadId();
-      const createdAt = new Date().toISOString();
-      const initialPrompt = inputOptions?.initialPrompt?.trim() ?? "";
-      const titleSeed =
-        initialPrompt.length > 0
-          ? buildPromptThreadTitleFallback(initialPrompt)
-          : activeThread.title;
+      const admission = tryAdmitProjectMutation(activeProject.id);
+      if (!admission) {
+        reportComposerFeedback({
+          type: "warning",
+          title: "Project removal in progress",
+          description: "Your Side prompt was kept. Wait for removal to finish or cancel it.",
+        });
+        return false;
+      }
 
-      await api.orchestration.dispatchCommand({
-        type: "thread.fork.create",
-        commandId: newCommandId(),
-        threadId: nextThreadId,
-        sourceThreadId: activeThread.id,
-        sidechatSourceThreadId: activeThread.id,
-        projectId: activeProject.id,
-        title: `Sidechat: ${titleSeed}`,
-        modelSelection: selectedModelSelection,
-        runtimeMode: "approval-required",
-        interactionMode: "default",
-        envMode: activeThread.envMode ?? (activeThread.worktreePath ? "worktree" : "local"),
-        branch: activeThread.branch,
-        worktreePath: activeThread.worktreePath,
-        associatedWorktreePath: activeThread.associatedWorktreePath ?? null,
-        associatedWorktreeBranch: activeThread.associatedWorktreeBranch ?? null,
-        associatedWorktreeRef: activeThread.associatedWorktreeRef ?? null,
-        importedMessages: [...importedMessages],
-        createdAt,
-      });
+      try {
+        const importedMessages = buildThreadHandoffImportedMessages(activeThread);
+        const nextThreadId = newThreadId();
+        const createdAt = new Date().toISOString();
+        const initialPrompt = inputOptions?.initialPrompt?.trim() ?? "";
+        const titleSeed =
+          initialPrompt.length > 0
+            ? buildPromptThreadTitleFallback(initialPrompt)
+            : activeThread.title;
 
-      if (initialPrompt.length > 0) {
         await api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
+          type: "thread.fork.create",
           commandId: newCommandId(),
           threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: initialPrompt,
-            attachments: [],
-          },
+          sourceThreadId: activeThread.id,
+          sidechatSourceThreadId: activeThread.id,
+          projectId: activeProject.id,
+          title: `Sidechat: ${titleSeed}`,
           modelSelection: selectedModelSelection,
           runtimeMode: "approval-required",
           interactionMode: "default",
-          createdAt: new Date().toISOString(),
+          envMode: activeThread.envMode ?? (activeThread.worktreePath ? "worktree" : "local"),
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          associatedWorktreePath: activeThread.associatedWorktreePath ?? null,
+          associatedWorktreeBranch: activeThread.associatedWorktreeBranch ?? null,
+          associatedWorktreeRef: activeThread.associatedWorktreeRef ?? null,
+          importedMessages: [...importedMessages],
+          createdAt,
         });
-      }
 
-      const snapshot = await api.orchestration.getShellSnapshot();
-      syncServerShellSnapshot(snapshot);
-      // Side chats now live as a tab in the host thread's right dock instead of a
-      // split-view pane, so the user stays on the main conversation.
-      useRightDockStore.getState().openPane(activeThread.id, {
-        kind: "sidechat",
-        threadId: nextThreadId,
-      });
-      return true;
+        if (initialPrompt.length > 0) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.turn.start",
+            commandId: newCommandId(),
+            threadId: nextThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: initialPrompt,
+              attachments: [],
+            },
+            modelSelection: selectedModelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: new Date().toISOString(),
+          });
+        }
+
+        const snapshot = await api.orchestration.getShellSnapshot();
+        syncServerShellSnapshot(snapshot);
+        // Side chats now live as a tab in the host thread's right dock instead of a
+        // split-view pane, so the user stays on the main conversation.
+        useRightDockStore.getState().openPane(activeThread.id, {
+          kind: "sidechat",
+          threadId: nextThreadId,
+        });
+        return true;
+      } finally {
+        finishProjectMutation(admission);
+      }
     },
     [
       activeProject,
@@ -436,6 +488,16 @@ export function useComposerSlashCommands(input: {
           type: "warning",
           title: "Base branch unavailable",
           description: "Select or detect a base branch before starting this review.",
+        });
+        return false;
+      }
+
+      const admission = tryAdmitProjectMutation(activeProject.id);
+      if (!admission) {
+        reportComposerFeedback({
+          type: "warning",
+          title: "Project removal in progress",
+          description: "Wait for project removal to finish or cancel it before starting a review.",
         });
         return false;
       }
@@ -511,6 +573,8 @@ export function useComposerSlashCommands(input: {
             error instanceof Error ? error.message : "An error occurred while starting review.",
         });
         return false;
+      } finally {
+        finishProjectMutation(admission);
       }
     },
     [
@@ -603,6 +667,10 @@ export function useComposerSlashCommands(input: {
         cwd: providerCommandDiscoveryCwd,
         threadId,
         forceReload: true,
+        ...(providerCommandDiscoveryBinaryPath
+          ? { binaryPath: providerCommandDiscoveryBinaryPath }
+          : {}),
+        discoveryGeneration: getProviderDiscoveryGeneration(),
       });
       if (
         hasProviderNativeSlashCommand(
@@ -630,7 +698,13 @@ export function useComposerSlashCommands(input: {
       description: "Claude did not expose /fast for this account or environment.",
     });
     return false;
-  }, [editorActions, providerCommandDiscoveryCwd, reportComposerFeedback, threadId]);
+  }, [
+    editorActions,
+    providerCommandDiscoveryCwd,
+    providerCommandDiscoveryBinaryPath,
+    reportComposerFeedback,
+    threadId,
+  ]);
 
   const runExportSlashCommand = useCallback(() => {
     // Re-validate at call time (mirrors /compact): menu selections and stale
@@ -754,8 +828,8 @@ export function useComposerSlashCommands(input: {
             });
             return true;
           }
-          editorActions.clearComposerSlashDraft();
-          await runCodexReviewStart(target);
+          const started = await runCodexReviewStart(target);
+          if (started) editorActions.clearComposerSlashDraft();
           return true;
         }
         if (supportsTextNativeReviewCommand && slashInvocation.args.length === 0) {
@@ -790,10 +864,8 @@ export function useComposerSlashCommands(input: {
             openForkTargetPicker();
             return true;
           }
-          await createForkThreadFromSlashCommand({
-            target,
-          });
-          editorActions.clearComposerSlashDraft();
+          const created = await createForkThreadFromSlashCommand({ target });
+          if (created) editorActions.clearComposerSlashDraft();
         } catch (error) {
           reportComposerFeedback({
             type: "error",
@@ -808,8 +880,10 @@ export function useComposerSlashCommands(input: {
       }
       if (slashInvocation.command === "side") {
         try {
-          editorActions.clearComposerSlashDraft();
-          await createSidechatFromSlashCommand({ initialPrompt: slashInvocation.args });
+          const created = await createSidechatFromSlashCommand({
+            initialPrompt: slashInvocation.args,
+          });
+          if (created) editorActions.clearComposerSlashDraft();
         } catch (error) {
           reportComposerFeedback({
             type: "error",

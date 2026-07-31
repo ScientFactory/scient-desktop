@@ -133,11 +133,13 @@ export function useKanbanTaskComposerDiscovery(input: UseKanbanTaskComposerDisco
       cwd: composerSkillCwd,
       threadId: scratchThreadId,
       binaryPath:
-        (selectedProvider === "opencode"
-          ? providerOptionsForDispatch?.opencode?.binaryPath
-          : selectedProvider === "kilo"
-            ? providerOptionsForDispatch?.kilo?.binaryPath
-            : null) ?? null,
+        (selectedProvider === "claudeAgent"
+          ? providerOptionsForDispatch?.claudeAgent?.binaryPath
+          : selectedProvider === "opencode"
+            ? providerOptionsForDispatch?.opencode?.binaryPath
+            : selectedProvider === "kilo"
+              ? providerOptionsForDispatch?.kilo?.binaryPath
+              : null) ?? null,
       serverUrl:
         (selectedProvider === "opencode"
           ? providerOptionsForDispatch?.opencode?.serverUrl

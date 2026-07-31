@@ -42,6 +42,7 @@ import {
   filterPromptProviderMentionReferences,
   filterPromptSkillReferences,
 } from "./composerMentions";
+import { finishProjectOperation, tryBeginProjectOperation } from "./projectRemovalCoordination";
 import {
   appendTerminalContextsToPrompt,
   filterTerminalContextsWithText,
@@ -112,9 +113,21 @@ export function dispatchKanbanDraftThread(
   if (existing) {
     return existing;
   }
-  const dispatchPromise = dispatchKanbanDraftThreadOnce(input).finally(() => {
-    inFlightDispatchByThreadId.delete(input.threadId);
-  });
+  // Hold the project turnstile for the whole dispatch: promoting a draft creates a
+  // thread, so a concurrent project removal must not slip between promotion and the
+  // queued turn and orphan the new thread. Released on every settle path below.
+  const projectOperation = tryBeginProjectOperation(input.projectId);
+  if (!projectOperation) {
+    return Promise.resolve({
+      kind: "error",
+      message: "This project is being removed. Your draft was kept.",
+    });
+  }
+  const dispatchPromise = dispatchKanbanDraftThreadOnce(input)
+    .finally(() => finishProjectOperation(projectOperation))
+    .finally(() => {
+      inFlightDispatchByThreadId.delete(input.threadId);
+    });
   inFlightDispatchByThreadId.set(input.threadId, dispatchPromise);
   return dispatchPromise;
 }

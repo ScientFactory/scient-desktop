@@ -14,6 +14,7 @@ import {
   resolveNewThreadModelPrefetchProvider,
   type ProviderModelPrefetchSettings,
 } from "./providerModelPrefetch";
+import { getProviderDiscoveryGeneration } from "./providerDiscoveryInvalidation";
 import { providerDiscoveryQueryKeys } from "./providerDiscoveryReactQuery";
 
 afterEach(() => {
@@ -25,6 +26,7 @@ function makeSettings(
 ): ProviderModelPrefetchSettings {
   return {
     defaultProvider: "codex",
+    claudeBinaryPath: "",
     cursorBinaryPath: "",
     cursorApiEndpoint: "",
     antigravityBinaryPath: "",
@@ -105,6 +107,7 @@ describe("resolveNewThreadModelPrefetchCwd", () => {
 describe("providerModelsPrefetchQueryOptions", () => {
   it("matches ChatView cache keys for cwd-scoped and binary-scoped providers", () => {
     const settings = makeSettings({
+      claudeBinaryPath: "/bin/claude-custom",
       cursorBinaryPath: "/bin/agent",
       cursorApiEndpoint: "https://api.example",
       antigravityBinaryPath: "/bin/antigravity",
@@ -112,6 +115,22 @@ describe("providerModelsPrefetchQueryOptions", () => {
       piBinaryPath: "/bin/pi",
       piAgentDir: "/tmp/pi-agent",
     });
+
+    const claudeOptions = providerModelsPrefetchQueryOptions({
+      provider: "claudeAgent",
+      settings,
+      cwd: "/tmp/project",
+    });
+    expect(claudeOptions.queryKey).toEqual([
+      ...providerDiscoveryQueryKeys.models(
+        "claudeAgent",
+        "/bin/claude-custom",
+        null,
+        null,
+        "/tmp/project",
+      ),
+      getProviderDiscoveryGeneration(),
+    ]);
 
     const cursorOptions = providerModelsPrefetchQueryOptions({
       provider: "cursor",
@@ -165,6 +184,33 @@ describe("providerModelsPrefetchQueryOptions", () => {
 });
 
 describe("prefetchProviderModelsForNewThread", () => {
+  it("prefetches Claude models and subagents from the same configured executable", async () => {
+    const queryClient = new QueryClient();
+    const prefetchQuery = vi.spyOn(queryClient, "prefetchQuery").mockResolvedValue(undefined);
+
+    prefetchProviderModelsForNewThread(queryClient, {
+      provider: "claudeAgent",
+      settings: makeSettings({ claudeBinaryPath: "/bin/claude-custom" }),
+      cwd: "/tmp/project",
+    });
+
+    expect(prefetchQuery).toHaveBeenCalledTimes(2);
+    expect(prefetchQuery.mock.calls[0]?.[0].queryKey).toEqual([
+      ...providerDiscoveryQueryKeys.models(
+        "claudeAgent",
+        "/bin/claude-custom",
+        null,
+        null,
+        "/tmp/project",
+      ),
+      getProviderDiscoveryGeneration(),
+    ]);
+    expect(prefetchQuery.mock.calls[1]?.[0].queryKey).toEqual([
+      ...providerDiscoveryQueryKeys.agents("claudeAgent", "/bin/claude-custom", "/tmp/project"),
+      getProviderDiscoveryGeneration(),
+    ]);
+  });
+
   it("prefetches models and agents for the resolved provider", async () => {
     const queryClient = new QueryClient();
     const prefetchQuery = vi.spyOn(queryClient, "prefetchQuery").mockResolvedValue(undefined);

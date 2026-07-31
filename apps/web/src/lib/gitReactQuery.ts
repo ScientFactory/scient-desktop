@@ -9,6 +9,7 @@ import type {
   AuthorizedGitPullInput,
   AuthorizedGitRunStackedActionInput,
 } from "@synara/shared/gitMutationRpc";
+import { asGitDiffStatsNativeApi } from "@synara/shared/gitDiffStatsRpc";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 import { buildPatchCacheKey } from "./diffRendering";
@@ -50,6 +51,11 @@ export const gitQueryKeys = {
     cwd: string | null,
     scope: GitReadWorkingTreeDiffInput["scope"] = "workingTree",
   ) => ["git", "working-tree-diff", cwd, scope] as const,
+  // Keep stats under the patch prefix so existing invalidations refresh both forms.
+  workingTreeDiffStats: (
+    cwd: string | null,
+    scope: GitReadWorkingTreeDiffInput["scope"] = "workingTree",
+  ) => ["git", "working-tree-diff", cwd, scope, "stats"] as const,
   diffSummary: (
     cacheScope: string | null,
     model: string | null,
@@ -238,6 +244,32 @@ export function gitWorkingTreeDiffQueryOptions(input: {
         throw new Error("Working tree diff is unavailable.");
       }
       return api.git.readWorkingTreeDiff({ cwd: input.cwd, scope });
+    },
+    enabled: (input.enabled ?? true) && input.cwd !== null,
+    staleTime: GIT_WORKING_TREE_DIFF_STALE_TIME_MS,
+    ...(refetchInterval !== undefined ? { refetchInterval } : {}),
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+}
+
+/** Compact scope totals resolved on the server without returning the patch text. */
+export function gitWorkingTreeDiffStatsQueryOptions(input: {
+  cwd: string | null;
+  scope?: GitReadWorkingTreeDiffInput["scope"];
+  enabled?: boolean;
+  refetchInterval?: number | false;
+}) {
+  const scope = input.scope ?? "workingTree";
+  const refetchInterval = input.refetchInterval;
+  return queryOptions({
+    queryKey: gitQueryKeys.workingTreeDiffStats(input.cwd, scope),
+    queryFn: async () => {
+      const api = asGitDiffStatsNativeApi(ensureNativeApi());
+      if (!input.cwd) {
+        throw new Error("Working tree diff stats are unavailable.");
+      }
+      return api.git.workingTreeDiffStats({ cwd: input.cwd, scope });
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
     staleTime: GIT_WORKING_TREE_DIFF_STALE_TIME_MS,

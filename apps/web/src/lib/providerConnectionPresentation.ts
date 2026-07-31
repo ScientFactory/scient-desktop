@@ -6,6 +6,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProviderConnectionMethod,
+  type ServerProviderInstallationState,
   type ServerProviderInstallPlan,
   type ServerProviderStatus,
 } from "@synara/contracts";
@@ -33,6 +34,36 @@ export function providerConnectionMethod(
   if (provider === "grok") return "grok_browser";
   if (provider === "droid") return "droid_device_pairing";
   return null;
+}
+
+export interface InstallProgress {
+  readonly fraction: number | null;
+  readonly label: string;
+}
+
+const BYTES_PER_MB = 1_048_576;
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / BYTES_PER_MB).toFixed(1)} MB`;
+}
+
+export function formatInstallProgress(
+  installation: ServerProviderInstallationState | undefined,
+): InstallProgress | null {
+  if (!installation || installation.status !== "downloading") return null;
+  const downloaded = Math.max(0, installation.bytesDownloaded ?? 0);
+  const total = installation.totalBytes ?? null;
+  if (total !== null && total > 0) {
+    const fraction = Math.min(1, downloaded / total);
+    return {
+      fraction,
+      label: `${formatMegabytes(downloaded)} of ${formatMegabytes(total)} (${Math.round(fraction * 100)}%)`,
+    };
+  }
+  if (downloaded > 0) {
+    return { fraction: null, label: `${formatMegabytes(downloaded)} downloaded` };
+  }
+  return { fraction: null, label: "Starting download…" };
 }
 
 export const CLAUDE_CONNECTION_METHOD_OPTIONS: ReadonlyArray<{

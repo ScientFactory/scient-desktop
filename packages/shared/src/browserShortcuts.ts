@@ -13,6 +13,13 @@ export interface BrowserShortcutChord {
   readonly shift: boolean;
   readonly alt: boolean;
   readonly key: string;
+  readonly code?: string;
+  readonly type?: string;
+  readonly repeat?: boolean;
+}
+
+export interface KeyboardShortcutPlatform {
+  readonly isWindows: boolean;
 }
 
 // Copy-link chord: Cmd+Shift+C on macOS, Ctrl+Shift+C elsewhere.
@@ -24,4 +31,35 @@ export function isBrowserCopyLinkChord(chord: BrowserShortcutChord, isMac: boole
     return false;
   }
   return isMac ? chord.meta && !chord.ctrl : chord.ctrl && !chord.meta;
+}
+
+export function isKeyboardShortcutsHelpChord(
+  chord: BrowserShortcutChord,
+  platform: KeyboardShortcutPlatform,
+): boolean {
+  if (
+    (chord.type !== undefined && chord.type.toLowerCase() !== "keydown") ||
+    chord.shift ||
+    chord.alt ||
+    chord.repeat
+  ) {
+    return false;
+  }
+
+  // Windows can report Ctrl+- through either the semantic key or the physical code.
+  // Reserve every minus signal for native zoom, while keeping remapped physical Slash
+  // behavior unchanged on other platforms.
+  if (
+    platform.isWindows &&
+    (chord.key === "-" || chord.code === "Minus" || chord.code === "NumpadSubtract")
+  ) {
+    return false;
+  }
+
+  const isSlash = chord.code === "Slash" || chord.key === "/";
+  if (!isSlash) {
+    return false;
+  }
+
+  return chord.meta || chord.ctrl;
 }

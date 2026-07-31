@@ -19,6 +19,8 @@ const BROWSER_USE_PANEL_READY_TIMEOUT_MS = 2_000;
 const BROWSER_USE_PANEL_READY_POLL_MS = 50;
 const BROWSER_USE_PIPE_DIR = "codex-browser-use";
 const BROWSER_USE_PIPE_NAME_PREFIX = "scient-iab";
+// Darwin's sockaddr_un.sun_path includes its trailing NUL in a 104-byte field.
+const DARWIN_UNIX_SOCKET_PATH_MAX_BYTES = 103;
 export const SYNARA_BROWSER_USE_PIPE_ENV = "SYNARA_BROWSER_USE_PIPE_PATH";
 
 type BrowserUseRpcId = string | number;
@@ -40,15 +42,40 @@ interface BrowserUsePipeServerOptions {
   requestOpenPanel?: () => void | Promise<void>;
 }
 
-export function resolveDefaultBrowserUsePipePath(platform = process.platform): string {
-  if (platform === "win32") {
-    return String.raw`\\.\pipe\codex-browser-use-${BROWSER_USE_PIPE_NAME_PREFIX}-${process.pid}`;
+export function withOwnerOnlyPipeCreation<T>(platform: string, create: () => T): T {
+  if (platform === "win32") return create();
+  const previousUmask = process.umask(0o177);
+  try {
+    return create();
+  } finally {
+    process.umask(previousUmask);
   }
-  return Path.join(
-    OS.tmpdir(),
+}
+
+export function resolveDefaultBrowserUsePipePath(
+  platform = process.platform,
+  temporaryDirectory = OS.tmpdir(),
+  pid = process.pid,
+): string {
+  if (platform === "win32") {
+    return String.raw`\\.\pipe\codex-browser-use-${BROWSER_USE_PIPE_NAME_PREFIX}-${pid}`;
+  }
+  const preferredPath = Path.join(
+    temporaryDirectory,
     BROWSER_USE_PIPE_DIR,
-    `${BROWSER_USE_PIPE_NAME_PREFIX}-${process.pid}.sock`,
+    `${BROWSER_USE_PIPE_NAME_PREFIX}-${pid}.sock`,
   );
+  if (
+    platform !== "darwin" ||
+    Buffer.byteLength(preferredPath, "utf8") <= DARWIN_UNIX_SOCKET_PATH_MAX_BYTES
+  ) {
+    return preferredPath;
+  }
+
+  // Deep verifier/user TMPDIR values can exceed Darwin's kernel socket limit.
+  // /tmp is sticky and the process-specific socket is restricted to its owner
+  // immediately after bind in BrowserUsePipeServer.start().
+  return Path.join("/tmp", `${BROWSER_USE_PIPE_NAME_PREFIX}-${pid}.sock`);
 }
 
 export function resolveConfiguredBrowserUsePipePath(
@@ -173,11 +200,34 @@ export class BrowserUsePipeServer {
     ensurePipeParentDirectory(this.pipePath);
     cleanupPipePath(this.pipePath);
     await new Promise<void>((resolve, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(this.pipePath, () => {
-        this.server.off("error", reject);
+      const rejectListen = (error: Error) => {
+        this.server.off("error", rejectListen);
+        reject(error);
+      };
+      this.server.once("error", rejectListen);
+      const handleListening = () => {
+        this.server.off("error", rejectListen);
+        if (process.platform !== "win32") {
+          try {
+            FS.chmodSync(this.pipePath, 0o600);
+          } catch (error) {
+            this.server.close(() => {
+              cleanupPipePath(this.pipePath);
+              reject(error);
+            });
+            return;
+          }
+        }
         resolve();
-      });
+      };
+      try {
+        withOwnerOnlyPipeCreation(process.platform, () =>
+          this.server.listen(this.pipePath, handleListening),
+        );
+      } catch (error) {
+        this.server.off("error", rejectListen);
+        reject(error);
+      }
     });
     this.started = true;
   }

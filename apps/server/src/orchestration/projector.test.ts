@@ -1140,6 +1140,88 @@ describe("orchestration projector", () => {
     expect(message?.updatedAt).toBe(completeAt);
   });
 
+  it("retains additive agent provenance across in-memory message updates", async () => {
+    const createdAt = "2026-07-28T05:20:00.000Z";
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create-agent-provenance",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: { provider: "codex", model: "gpt-5.3-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterAgentSend = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-07-28T05:20:01.000Z",
+          commandId: "cmd-agent-message",
+          payload: {
+            threadId: "thread-1",
+            messageId: "agent-message-1",
+            role: "user",
+            text: "continue",
+            dispatchSource: "agent",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-07-28T05:20:01.000Z",
+            updatedAt: "2026-07-28T05:20:01.000Z",
+          },
+        }),
+      ),
+    );
+    expect(afterAgentSend.threads[0]?.messages[0]?.dispatchSource).toBe("agent");
+
+    const afterPartialUpdate = await Effect.runPromise(
+      projectEvent(
+        afterAgentSend,
+        makeEvent({
+          sequence: 3,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-07-28T05:20:02.000Z",
+          commandId: "cmd-agent-message-update",
+          payload: {
+            threadId: "thread-1",
+            messageId: "agent-message-1",
+            role: "user",
+            text: "continue now",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-07-28T05:20:01.000Z",
+            updatedAt: "2026-07-28T05:20:02.000Z",
+          },
+        }),
+      ),
+    );
+    expect(afterPartialUpdate.threads[0]?.messages[0]).toMatchObject({
+      text: "continue now",
+      dispatchSource: "agent",
+    });
+  });
+
   it("prunes reverted turn messages from in-memory thread snapshot", async () => {
     const createdAt = "2026-02-23T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);

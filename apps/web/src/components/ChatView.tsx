@@ -357,8 +357,17 @@ import {
   useEffectiveComposerModelState,
 } from "../composerDraftStore";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
+import {
+  type OwnedOptimisticUserMessage,
+  useOptimisticUserMessageStore,
+} from "../optimisticUserMessageStore";
 import { useComposerFocusRequestStore } from "../composerFocusRequestStore";
 import { appendComposerPromptText } from "../lib/chatReferences";
+import {
+  finishProjectOperation,
+  tryBeginProjectOperation,
+  type ProjectOperationLease,
+} from "../lib/projectRemovalCoordination";
 import {
   appendOriginalComposerPromptBlocks,
   appendTerminalContextsToPrompt,
@@ -578,6 +587,7 @@ import {
 import {
   buildModelSelection,
   buildNextProviderOptions,
+  filterProviderModelOptionsForRuntime,
   mergeDynamicModelOptions,
   type ProviderModelOption,
 } from "../providerModelOptions";
@@ -589,6 +599,7 @@ import {
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_MESSAGES: ChatMessage[] = [];
+const EMPTY_OPTIMISTIC_USER_MESSAGES: OwnedOptimisticUserMessage[] = [];
 const EMPTY_PINNED_MESSAGES: readonly PinnedMessage[] = [];
 const EMPTY_THREAD_MARKERS: readonly ThreadMarker[] = [];
 const EMPTY_PINNED_TEXT: ReadonlyMap<MessageId, string> = new Map();
@@ -606,6 +617,24 @@ const DRAFT_PROJECT_SYNC_MAX_ATTEMPTS = 6;
 const DRAFT_PROJECT_SYNC_DELAY_MS = 50;
 const SETUP_SCRIPT_TERMINAL_ACTIVITY_START_TIMEOUT_MS = 1_000;
 const SETUP_SCRIPT_TERMINAL_MAX_RUNTIME_MS = 10 * 60 * 1000;
+// A thread can move between single, split, editor, and dock pane scopes while
+// async preflight is still pending. Keep same-thread dispatch ownership outside
+// any one ChatView instance so a scope remount cannot lose the gate.
+const sendInFlightThreadIds = new Set<ThreadId>();
+const sendPreflightInFlightThreadIds = new Set<ThreadId>();
+const sendOperationInFlightThreadIds = new Set<ThreadId>();
+const projectOperationLeasesByThreadId = new Map<ThreadId, Map<ProjectId, ProjectOperationLease>>();
+
+// These dispatch gates live outside React so a scope remount cannot lose them, which also means
+// they survive a component unmount. Tests that abort mid-send (e.g. via `testTimeout`) never reach
+// their gate-clearing paths, so without an explicit reset a stuck `threadId` would block every
+// later test that dispatches with the same id. Reset between tests to keep the suite isolated.
+export function resetChatViewDispatchGatesForTests(): void {
+  sendInFlightThreadIds.clear();
+  sendPreflightInFlightThreadIds.clear();
+  sendOperationInFlightThreadIds.clear();
+  projectOperationLeasesByThreadId.clear();
+}
 
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
@@ -990,6 +1019,17 @@ function formatPastedTextTitleSeed(pastedTexts: ReadonlyArray<PastedTextDraft>):
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const VOICE_RECORDER_ACTION_ARM_DELAY_MS = 250;
 
+function threadSourceStillExists(threadId: ThreadId, sourceWasServerThread: boolean): boolean {
+  if (sourceWasServerThread) {
+    const store = useStore.getState();
+    return (
+      store.deletedThreadIdsById?.[threadId] !== true &&
+      store.threads.some((candidate) => candidate.id === threadId)
+    );
+  }
+  return useComposerDraftStore.getState().getDraftThread(threadId) !== null;
+}
+
 function warnVoiceGuard(event: string, details?: Record<string, unknown>) {
   if (!import.meta.env.DEV) {
     return;
@@ -1068,6 +1108,7 @@ interface ChatViewProps {
     onClick: () => void;
   } | null;
   onChangeThreadInSplitPane?: () => void;
+  onActivateThreadInSplitPane?: (threadId: ThreadId) => void;
   onCloseThreadPane?: () => void;
 }
 
@@ -1128,6 +1169,7 @@ export default function ChatView({
   onMaximizeSurface,
   viewModeAction = null,
   onChangeThreadInSplitPane,
+  onActivateThreadInSplitPane,
   onCloseThreadPane,
 }: ChatViewProps) {
   const markThreadVisited = useStore((store) => store.markThreadVisited);
@@ -1324,11 +1366,19 @@ export default function ChatView({
     useMemo(() => createProjectSelector(fallbackDraftProjectId), [fallbackDraftProjectId]),
   );
   const promptRef = useRef(prompt);
+  // ChatView is pane-scoped and remains mounted while that pane changes threads.
+  // Async send work must check this ref before mutating pane-local UI state.
+  const activeThreadIdRef = useRef(threadId);
+  activeThreadIdRef.current = threadId;
+  const emptyDraftProjectRequestRef = useRef(0);
+  const emptyDraftProjectRequestInFlightRef = useRef<number | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  const optimisticUserMessages = useOptimisticUserMessageStore(
+    (store) => store.messagesByThreadId[threadId] ?? EMPTY_OPTIMISTIC_USER_MESSAGES,
+  );
+  const addOptimisticUserMessage = useOptimisticUserMessageStore((store) => store.addMessage);
+  const removeOptimisticUserMessage = useOptimisticUserMessageStore((store) => store.removeMessage);
   const composerAssistantSelectionsRef = useRef<ComposerAssistantSelectionAttachment[]>(
     composerAssistantSelections,
   );
@@ -1339,6 +1389,7 @@ export default function ChatView({
     Record<ThreadId, string | null>
   >({});
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
+  const localDispatchOwnerThreadIdRef = useRef<ThreadId | null>(null);
   const failedWorktreeSetupDispatchStartedAtRef = useRef<string | null>(null);
   const [isLocalConnecting, _setIsLocalConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
@@ -1504,8 +1555,6 @@ export default function ChatView({
   const localDirectoryMenuRef = useRef<ComposerLocalDirectoryMenuHandle | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
-  const sendInFlightRef = useRef(false);
-  const sendPreflightInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const activatedThreadIdRef = useRef<ThreadId | null>(null);
@@ -1787,6 +1836,7 @@ export default function ChatView({
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const isWorktreeRecoveryDraft = draftThread?.recoveryReason === "worktree-cleanup-refused";
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.panel === "diff";
   const browserOpen = rawSearch.panel === "browser";
@@ -1870,8 +1920,6 @@ export default function ChatView({
   } | null>(null);
   // Tracks the live thread + setup/send state so an async automation resolve that
   // finishes after navigation, cancel, or a later send never commits a stale result.
-  const activeThreadIdRef = useRef(threadId);
-  activeThreadIdRef.current = threadId;
   const pendingAutomationConversationRef = useRef(pendingAutomationConversation);
   pendingAutomationConversationRef.current = pendingAutomationConversation;
   const hasLiveTurnRef = useRef(false);
@@ -2169,9 +2217,20 @@ export default function ChatView({
     activeProjectCwd: activeProject?.cwd ?? null,
     serverCwd: serverConfigQuery.data?.cwd ?? null,
   });
+  const claudeDiscoveryEnabled =
+    selectedProvider === "claudeAgent" ||
+    lockedProvider === "claudeAgent" ||
+    pendingProviderSelection === "claudeAgent" ||
+    isModelPickerOpen;
   const claudeDynamicModelsQuery = useQuery(
-    providerModelsQueryOptions({ provider: "claudeAgent" }),
+    providerModelsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+      cwd: providerModelDiscoveryCwd,
+      enabled: claudeDiscoveryEnabled,
+    }),
   );
+  const claudeProviderVersion = claudeDynamicModelsQuery.data?.runtimeVersion ?? null;
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const openCodeModelDiscoveryEnabled =
     selectedProvider === "opencode" ||
@@ -2261,7 +2320,12 @@ export default function ChatView({
     }),
   );
   const claudeDynamicAgentsQuery = useQuery(
-    providerAgentsQueryOptions({ provider: "claudeAgent" }),
+    providerAgentsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+      cwd: providerModelDiscoveryCwd,
+      enabled: claudeDiscoveryEnabled,
+    }),
   );
   const codexDynamicAgentsQuery = useQuery(providerAgentsQueryOptions({ provider: "codex" }));
   const openCodeDynamicAgentsQuery = useQuery(
@@ -2351,17 +2415,25 @@ export default function ChatView({
     ],
   );
   const modelOptionsByProvider = useMemo(() => {
-    const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
+    const staticOptions: Record<
+      ProviderKind,
+      ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>
+    > = {
       codex: getAppModelOptions(
         "codex",
         customModelsByProvider.codex,
         composerModelHintByProvider.codex,
       ),
-      claudeAgent: getAppModelOptions(
-        "claudeAgent",
-        customModelsByProvider.claudeAgent,
-        composerModelHintByProvider.claudeAgent,
-      ),
+      claudeAgent: filterProviderModelOptionsForRuntime({
+        provider: "claudeAgent",
+        providerVersion: claudeProviderVersion,
+        runtimeModels: claudeDynamicModelsQuery.data?.models,
+        options: getAppModelOptions(
+          "claudeAgent",
+          customModelsByProvider.claudeAgent,
+          composerModelHintByProvider.claudeAgent,
+        ),
+      }),
       cursor: getAppModelOptions(
         "cursor",
         customModelsByProvider.cursor,
@@ -2429,6 +2501,7 @@ export default function ChatView({
       if (dynamicModels && dynamicModels.length > 0) {
         result[provider] = mergeDynamicModelOptions({
           provider,
+          ...(provider === "claudeAgent" ? { providerVersion: claudeProviderVersion } : {}),
           staticOptions: staticOptions[provider],
           dynamicModels,
         });
@@ -2438,6 +2511,7 @@ export default function ChatView({
     return result;
   }, [
     claudeDynamicModelsQuery.data,
+    claudeProviderVersion,
     composerModelHintByProvider,
     codexDynamicModelsQuery.data,
     cursorDynamicModelsQuery.data,
@@ -3063,9 +3137,6 @@ export default function ChatView({
   useEffect(() => {
     return () => {
       clearAttachmentPreviewHandoffs();
-      for (const message of optimisticUserMessagesRef.current) {
-        revokeUserMessagePreviewUrls(message);
-      }
     };
   }, [clearAttachmentPreviewHandoffs]);
   const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
@@ -3163,10 +3234,12 @@ export default function ChatView({
         : [];
     // Optimistic messages exist only briefly after a send; skip the full-transcript
     // id Set on the common (streaming-flush) path where there is nothing to reconcile.
-    let pendingMessages = optimisticUserMessages;
-    if (optimisticUserMessages.length > 0) {
+    let pendingMessages = optimisticUserMessages.filter(
+      (message) => message.ownerThreadId === threadId,
+    );
+    if (pendingMessages.length > 0) {
       const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-      pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+      pendingMessages = pendingMessages.filter((message) => !serverIds.has(message.id));
     }
     const withPending =
       pendingMessages.length === 0
@@ -3185,15 +3258,18 @@ export default function ChatView({
     const activeMessages = activeThread?.messages ?? EMPTY_MESSAGES;
     // Optimistic messages exist only briefly after a send; skip the full-transcript
     // id Set on the common (streaming-flush) path where there is nothing to reconcile.
-    if (optimisticUserMessages.length === 0) {
+    const ownedOptimisticMessages = optimisticUserMessages.filter(
+      (message) => message.ownerThreadId === threadId,
+    );
+    if (ownedOptimisticMessages.length === 0) {
       return derivePromptHistoryFromMessages(activeMessages);
     }
     const activeMessageIds = new Set(activeMessages.map((message) => message.id));
-    const pendingOptimisticMessages = optimisticUserMessages.filter(
+    const pendingOptimisticMessages = ownedOptimisticMessages.filter(
       (message) => !activeMessageIds.has(message.id),
     );
     return derivePromptHistoryFromMessages([...activeMessages, ...pendingOptimisticMessages]);
-  }, [activeThread?.messages, optimisticUserMessages]);
+  }, [activeThread?.messages, optimisticUserMessages, threadId]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
@@ -3204,8 +3280,13 @@ export default function ChatView({
     [activeThread?.proposedPlans, agentActivityTimelineState.timelineWorkEntries, timelineMessages],
   );
   const enteringUserMessageIds = useMemo<ReadonlySet<MessageId>>(
-    () => new Set(optimisticUserMessages.map((message) => message.id)),
-    [optimisticUserMessages],
+    () =>
+      new Set(
+        optimisticUserMessages
+          .filter((message) => message.ownerThreadId === threadId)
+          .map((message) => message.id),
+      ),
+    [optimisticUserMessages, threadId],
   );
   const forkableMessageIds = useMemo(
     () => (activeThread ? resolveThreadForkableMessageIds(activeThread) : new Set<MessageId>()),
@@ -3451,11 +3532,13 @@ export default function ChatView({
       cwd: composerSkillCwd,
       threadId,
       binaryPath:
-        (selectedProvider === "opencode"
-          ? providerOptionsForDispatch?.opencode?.binaryPath
-          : selectedProvider === "kilo"
-            ? providerOptionsForDispatch?.kilo?.binaryPath
-            : null) ?? null,
+        (selectedProvider === "claudeAgent"
+          ? providerOptionsForDispatch?.claudeAgent?.binaryPath
+          : selectedProvider === "opencode"
+            ? providerOptionsForDispatch?.opencode?.binaryPath
+            : selectedProvider === "kilo"
+              ? providerOptionsForDispatch?.kilo?.binaryPath
+              : null) ?? null,
       serverUrl:
         (selectedProvider === "opencode"
           ? providerOptionsForDispatch?.opencode?.serverUrl
@@ -5555,27 +5638,29 @@ export default function ChatView({
       return;
     }
     const serverIds = new Set(activeThread.messages.map((message) => message.id));
-    const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
+    const removedMessages = optimisticUserMessages.filter(
+      (message) => message.ownerThreadId === activeThread.id && serverIds.has(message.id),
+    );
     if (removedMessages.length === 0) {
       return;
     }
-    const timer = window.setTimeout(() => {
-      setOptimisticUserMessages((existing) =>
-        existing.filter((message) => !serverIds.has(message.id)),
-      );
-    }, 0);
     for (const removedMessage of removedMessages) {
-      const previewUrls = collectUserMessageBlobPreviewUrls(removedMessage);
+      const removed = removeOptimisticUserMessage(activeThread.id, removedMessage.id);
+      if (!removed) continue;
+      const previewUrls = collectUserMessageBlobPreviewUrls(removed);
       if (previewUrls.length > 0) {
-        handoffAttachmentPreviews(removedMessage.id, previewUrls);
+        handoffAttachmentPreviews(removed.id, previewUrls);
         continue;
       }
-      revokeUserMessagePreviewUrls(removedMessage);
+      revokeUserMessagePreviewUrls(removed);
     }
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
+  }, [
+    activeThread?.id,
+    activeThread?.messages,
+    handoffAttachmentPreviews,
+    optimisticUserMessages,
+    removeOptimisticUserMessage,
+  ]);
 
   useEffect(() => {
     promptRef.current = prompt;
@@ -5634,14 +5719,6 @@ export default function ChatView({
   }, [selectedProvider, threadId, updateSelectedComposerMentions, updateSelectedComposerSkills]);
 
   useLayoutEffect(() => {
-    // ChatView stays mounted across thread switches, so clear thread-local overlays before paint.
-    setOptimisticUserMessages((existing) => {
-      if (existing.length === 0) return existing;
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
     setExpandedImage(null);
   }, [threadId]);
 
@@ -5654,13 +5731,7 @@ export default function ChatView({
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
     setVoiceCompletionIntent(null);
-    setOptimisticUserMessages((existing) => {
-      if (existing.length === 0) return existing;
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
+    localDispatchOwnerThreadIdRef.current = null;
     setLocalDispatch(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
@@ -5844,7 +5915,11 @@ export default function ChatView({
   });
 
   const beginLocalDispatch = useCallback(
-    (options?: WorktreeSetupDispatchOptions) => {
+    (ownerThreadId: ThreadId, options?: WorktreeSetupDispatchOptions) => {
+      if (activeThreadIdRef.current !== ownerThreadId) {
+        return;
+      }
+      localDispatchOwnerThreadIdRef.current = ownerThreadId;
       setLocalDispatch((current) => {
         const next = resolveNextLocalDispatchSnapshot(
           options ? { current, activeThread, options } : { current, activeThread },
@@ -5858,7 +5933,10 @@ export default function ChatView({
     [activeThread],
   );
 
-  const failLocalDispatchWorktreeSetup = useCallback(() => {
+  const failLocalDispatchWorktreeSetup = useCallback((ownerThreadId: ThreadId) => {
+    if (localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+      return;
+    }
     setLocalDispatch((current) => {
       if (!current?.worktreeSetup) {
         return current;
@@ -5869,16 +5947,26 @@ export default function ChatView({
     });
   }, []);
 
-  const resetLocalDispatch = useCallback(() => {
+  const resetLocalDispatch = useCallback((ownerThreadId?: ThreadId) => {
+    if (ownerThreadId !== undefined && localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+      return;
+    }
     failedWorktreeSetupDispatchStartedAtRef.current = null;
+    localDispatchOwnerThreadIdRef.current = null;
     setLocalDispatch(null);
   }, []);
 
   // Fallback cleanup for a failed worktree setup: clears the dispatch after the
   // error hold unless a newer dispatch already replaced it.
-  const scheduleFailedWorktreeSetupDispatchReset = useCallback(() => {
+  const scheduleFailedWorktreeSetupDispatchReset = useCallback((ownerThreadId: ThreadId) => {
+    if (localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+      return;
+    }
     const failedDispatchStartedAt = failedWorktreeSetupDispatchStartedAtRef.current;
     window.setTimeout(() => {
+      if (localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+        return;
+      }
       setLocalDispatch((current) => {
         if (
           !failedDispatchStartedAt ||
@@ -5889,6 +5977,7 @@ export default function ChatView({
           return current;
         }
         failedWorktreeSetupDispatchStartedAtRef.current = null;
+        localDispatchOwnerThreadIdRef.current = null;
         return null;
       });
     }, WORKTREE_SETUP_ERROR_HOLD_MS);
@@ -5917,6 +6006,7 @@ export default function ChatView({
             return current;
           }
           failedWorktreeSetupDispatchStartedAtRef.current = null;
+          localDispatchOwnerThreadIdRef.current = null;
           return null;
         });
       }, WORKTREE_SETUP_ERROR_HOLD_MS);
@@ -6987,6 +7077,20 @@ export default function ChatView({
         return activeThread.id;
       }
 
+      // Promoting the draft creates a real thread, so hold the project turnstile
+      // across promotion: a concurrent project removal must not orphan the new
+      // thread. Released on every path once the lease is taken.
+      const projectOperation = tryBeginProjectOperation(activeProject.id);
+      if (!projectOperation) {
+        reportComposerFeedback({
+          type: "warning",
+          title: "Project removal in progress",
+          description:
+            "This project is being removed. Wait for removal to finish before creating an automation.",
+        });
+        return null;
+      }
+
       const title = buildPromptThreadTitleFallback(input.titleSeed || GENERIC_CHAT_THREAD_TITLE);
       try {
         const result = await promoteThreadCreate(
@@ -7041,6 +7145,8 @@ export default function ChatView({
               : "Scient could not promote this draft before saving the automation.",
         });
         return null;
+      } finally {
+        finishProjectOperation(projectOperation);
       }
     },
     [
@@ -7302,7 +7408,60 @@ export default function ChatView({
     [removeQueuedComposerTurnFromDraft, threadId],
   );
 
-  const onSend = async (
+  const beginExclusiveSendOperation = useCallback(
+    (ownerThreadId: ThreadId, projectId: ProjectId): boolean => {
+      if (
+        sendOperationInFlightThreadIds.has(ownerThreadId) ||
+        sendPreflightInFlightThreadIds.has(ownerThreadId) ||
+        sendInFlightThreadIds.has(ownerThreadId)
+      ) {
+        return false;
+      }
+      const projectLease = tryBeginProjectOperation(projectId);
+      if (!projectLease) {
+        setThreadError(
+          ownerThreadId,
+          "This project is being removed. Wait for removal to finish or cancel it before sending.",
+        );
+        return false;
+      }
+      projectOperationLeasesByThreadId.set(ownerThreadId, new Map([[projectId, projectLease]]));
+      sendOperationInFlightThreadIds.add(ownerThreadId);
+      return true;
+    },
+    [setThreadError],
+  );
+
+  const ensureExclusiveSendProjectOperation = useCallback(
+    (ownerThreadId: ThreadId, projectId: ProjectId): boolean => {
+      const projectLeases = projectOperationLeasesByThreadId.get(ownerThreadId);
+      if (!projectLeases) return false;
+      if (projectLeases.has(projectId)) return true;
+      const projectLease = tryBeginProjectOperation(projectId);
+      if (!projectLease) {
+        setThreadError(
+          ownerThreadId,
+          "The destination project is being removed. Your message and attachments were kept.",
+        );
+        return false;
+      }
+      projectLeases.set(projectId, projectLease);
+      return true;
+    },
+    [setThreadError],
+  );
+
+  const finishExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): void => {
+    sendOperationInFlightThreadIds.delete(ownerThreadId);
+    const projectLeases = projectOperationLeasesByThreadId.get(ownerThreadId);
+    if (!projectLeases) return;
+    projectOperationLeasesByThreadId.delete(ownerThreadId);
+    for (const projectLease of projectLeases.values()) {
+      finishProjectOperation(projectLease);
+    }
+  }, []);
+
+  const runSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: "queue" | "steer" = "queue",
     queuedTurn?: QueuedComposerChatTurn,
@@ -7316,11 +7475,17 @@ export default function ChatView({
       isSendBusy ||
       isConnecting ||
       (isVoiceTranscribing && voicePromptOverride === undefined) ||
-      sendPreflightInFlightRef.current ||
-      sendInFlightRef.current
+      emptyDraftProjectRequestInFlightRef.current !== null ||
+      sendPreflightInFlightThreadIds.has(threadId) ||
+      sendInFlightThreadIds.has(threadId)
     ) {
       return false;
     }
+    const threadIdForSend = activeThread.id;
+    const sendSourceWasServerThread = isServerThread;
+    const sendSourceStillExists = (): boolean =>
+      threadSourceStillExists(threadIdForSend, sendSourceWasServerThread);
+    const sendOwnsActivePane = () => activeThreadIdRef.current === threadIdForSend;
     if (
       shouldRouteComposerSendToPendingInput({
         hasActivePendingProgress: activePendingProgress !== null,
@@ -7487,6 +7652,7 @@ export default function ChatView({
           text: followUp.text,
           interactionMode: followUp.interactionMode,
           dispatchMode,
+          operationAlreadyHeld: true,
         });
       }
     }
@@ -7664,7 +7830,7 @@ export default function ChatView({
         setPendingAutomationConversation(null);
       }
     }
-    sendPreflightInFlightRef.current = true;
+    sendPreflightInFlightThreadIds.add(threadId);
     const sendProviderAvailability = await (async () => {
       try {
         return await resolveProviderSendAvailabilityWithRefresh({
@@ -7673,9 +7839,14 @@ export default function ChatView({
           refreshStatuses: () => refreshProviderStatuses({ silent: true }),
         });
       } finally {
-        sendPreflightInFlightRef.current = false;
+        sendPreflightInFlightThreadIds.delete(threadId);
       }
     })();
+    // Provider discovery can outlive the source thread. Do not let a stale
+    // continuation target a thread the user deleted while discovery was pending.
+    if (!sendSourceStillExists()) {
+      return false;
+    }
     if (!sendProviderAvailability.usable) {
       useProviderConnectionDialogStore
         .getState()
@@ -7694,6 +7865,13 @@ export default function ChatView({
           image: null,
         }),
       );
+    // Browser state and screenshot capture cross the native boundary. Deletion
+    // owns the source after either await, so discard the captured object URL and
+    // stop before feedback, project creation, or queued-draft mutation.
+    if (!sendSourceStillExists()) {
+      revokeBlobPreviewUrl(browserPromptAttachment.image?.previewUrl);
+      return false;
+    }
     if (browserPromptAttachment.image) {
       const nextAttachmentCount =
         composerImagesForSend.length +
@@ -7703,6 +7881,7 @@ export default function ChatView({
       if (nextAttachmentCount <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         composerImagesForSend = [...composerImagesForSend, browserPromptAttachment.image];
       } else {
+        revokeBlobPreviewUrl(browserPromptAttachment.image.previewUrl);
         reportComposerFeedback({
           type: "warning",
           title: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} references per message.`,
@@ -7741,6 +7920,10 @@ export default function ChatView({
           }
         }),
       );
+      if (!sendSourceStillExists()) {
+        revokeBlobPreviewUrl(browserPromptAttachment.image?.previewUrl);
+        return false;
+      }
       enqueueQueuedComposerTurn(activeThread.id, {
         id: randomUUID(),
         kind: "chat",
@@ -7777,7 +7960,6 @@ export default function ChatView({
       });
       return true;
     }
-    const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || !hasNativeUserMessages;
     const firstSendCreatedAt = new Date();
     let firstComposerImageNameForTitle: string | null = null;
@@ -7893,6 +8075,15 @@ export default function ChatView({
         }
       }
 
+      if (!sendSourceStillExists()) {
+        return false;
+      }
+
+      if (!ensureExclusiveSendProjectOperation(threadIdForSend, targetProjectIdForSend)) {
+        revokeBlobPreviewUrl(browserPromptAttachment.image?.previewUrl);
+        return false;
+      }
+
       clearProjectDraftThreadId(targetProjectIdForSend);
       setDraftThreadContext(threadIdForSend, {
         projectId: targetProjectIdForSend,
@@ -7938,8 +8129,14 @@ export default function ChatView({
       : null;
     const worktreeSetupScriptName = setupScriptForWorktree?.name ?? null;
 
-    sendInFlightRef.current = true;
+    // Browser-context capture and first-send target resolution can also yield.
+    // Revalidate before clearing draft content or starting any send-side effects.
+    if (!sendSourceStillExists()) {
+      return false;
+    }
+    sendInFlightThreadIds.add(threadIdForSend);
     beginLocalDispatch(
+      threadIdForSend,
       baseBranchForWorktree
         ? { worktreeSetupStepId: "create-worktree", setupScriptName: worktreeSetupScriptName }
         : undefined,
@@ -8011,7 +8208,7 @@ export default function ChatView({
     // Sending the first message flips the centered empty landing into a normal
     // transcript. Clear session-only landing overrides when default-open is enabled;
     // otherwise keep the transition closed.
-    if (isCenteredEmptyLanding) {
+    if (sendOwnsActivePane() && isCenteredEmptyLanding) {
       setEnvironmentPanelPreferenceOpen(
         resolveEnvironmentPanelPreferenceAfterFirstSend({
           isCenteredEmptyLanding,
@@ -8020,9 +8217,9 @@ export default function ChatView({
         }),
       );
     }
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
+    if (sendOwnsActivePane()) {
+      addOptimisticUserMessage({
+        ownerThreadId: threadIdForSend,
         id: messageIdForSend,
         role: "user",
         text: outgoingMessageText,
@@ -8035,8 +8232,8 @@ export default function ChatView({
         createdAt: messageCreatedAt,
         streaming: false,
         source: "native",
-      },
-    ]);
+      });
+    }
     // Mark the transcript as anchored before the optimistic row lands so the
     // re-snap effect on row count change pulls us to the new tail.
     armTranscriptAutoFollow(threadIdForSend, true);
@@ -8056,25 +8253,141 @@ export default function ChatView({
     // Queued turns are dispatched from their captured snapshot, so this send path
     // must not clear a separate live draft the user may already be editing.
     if (queuedChatTurn === null) {
-      promptHistoryNavigationRef.current = null;
-      applyingPromptHistoryNavigationRef.current = false;
-      expectedPromptHistoryPromptRef.current = null;
-      promptRef.current = "";
       clearComposerDraftContent(threadIdForSend, { preservePreviewUrls: true });
       if (isLivePlanFollowUpSubmission) {
         setComposerDraftInteractionMode(threadIdForSend, interactionModeForSend);
       }
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      // A clicked submit button steals focus; return it after the controlled
-      // draft reset so rapid follow-up typing lands in the composer.
-      scheduleComposerFocus();
+      if (sendOwnsActivePane()) {
+        promptHistoryNavigationRef.current = null;
+        applyingPromptHistoryNavigationRef.current = false;
+        expectedPromptHistoryPromptRef.current = null;
+        promptRef.current = "";
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        // A clicked submit button steals focus; return it after the controlled
+        // draft reset so rapid follow-up typing lands in the composer.
+        scheduleComposerFocus();
+      }
     }
 
     let createdServerThreadForLocalDraft = false;
+    let promotedServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
+    let createdWorktreeForSend: { cwd: string; path: string; branch: string } | null = null;
+    let createdWorktreeRecoveryThreadId: ThreadId | null = null;
+    let createdWorktreeCleanupIsSafe = true;
+    let createdWorktreeCleanupInFlight = false;
+    const failedSendDraftIsEmpty = (ownerThreadId: ThreadId): boolean => {
+      const failedSendDraft =
+        useComposerDraftStore.getState().draftsByThreadId[ownerThreadId] ?? null;
+      return (
+        (failedSendDraft?.prompt ?? "").length === 0 &&
+        (failedSendDraft?.images.length ?? 0) === 0 &&
+        (failedSendDraft?.files.length ?? 0) === 0 &&
+        (failedSendDraft?.assistantSelections.length ?? 0) === 0 &&
+        (failedSendDraft?.fileComments.length ?? 0) === 0 &&
+        (failedSendDraft?.terminalContexts.length ?? 0) === 0 &&
+        (failedSendDraft?.pastedTexts.length ?? 0) === 0
+      );
+    };
+    const restoreFailedSendDraftContent = (ownerThreadId: ThreadId): void => {
+      if (queuedChatTurn !== null || turnStartSucceeded || !failedSendDraftIsEmpty(ownerThreadId)) {
+        return;
+      }
+      setComposerDraftPrompt(ownerThreadId, promptForSend);
+      if (sourceProposedPlanForSend) {
+        setRestoredQueuedSourceProposedPlan(ownerThreadId, {
+          threadId: ownerThreadId,
+          restoredPrompt: promptForSend,
+          sourceProposedPlan: sourceProposedPlanForSend,
+        });
+      }
+      addComposerDraftImages(
+        ownerThreadId,
+        composerImagesSnapshot.map(cloneComposerImageAttachment),
+      );
+      addComposerDraftFiles(ownerThreadId, composerFilesSnapshot);
+      for (const selection of composerAssistantSelectionsSnapshot) {
+        addComposerDraftAssistantSelection(ownerThreadId, selection);
+      }
+      for (const comment of composerFileCommentsSnapshot) {
+        addComposerDraftFileComment(ownerThreadId, comment);
+      }
+      addComposerDraftTerminalContexts(ownerThreadId, composerTerminalContextsSnapshot);
+      addComposerDraftPastedTexts(ownerThreadId, composerPastedTextsSnapshot);
+      setComposerDraftSkills(ownerThreadId, composerSkillsSnapshot);
+      setComposerDraftMentions(ownerThreadId, composerMentionsSnapshot);
+    };
+    const ensureCreatedWorktreeRecoveryOwner = (): ThreadId | null => {
+      const worktree = createdWorktreeForSend;
+      if (!worktree) return null;
+      const draftStore = useComposerDraftStore.getState();
+      const sourceWasDeleted = useStore.getState().deletedThreadIdsById?.[threadIdForSend] === true;
+      const preferredOwnerThreadId = sourceWasDeleted
+        ? (createdWorktreeRecoveryThreadId ?? newThreadId())
+        : threadIdForSend;
+      const existing = draftStore.getDraftThread(preferredOwnerThreadId);
+      if (existing?.promotedTo === threadIdForSend) {
+        draftStore.rollbackDraftThreadPromotion(preferredOwnerThreadId, threadIdForSend, {
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+        });
+      }
+      const ownerThreadId = draftStore.upsertWorktreeRecoveryDraft(preferredOwnerThreadId, {
+        projectId: targetProjectIdForSend,
+        createdAt: messageCreatedAt,
+        branch: worktree.branch,
+        worktreePath: worktree.path,
+        runtimeMode: nextRuntimeModeForSend,
+        interactionMode: interactionModeForSend,
+        entryPoint: draftThread?.entryPoint ?? "chat",
+      });
+      createdWorktreeRecoveryThreadId = ownerThreadId;
+      const recovered = useComposerDraftStore.getState().getDraftThread(ownerThreadId);
+      if (
+        !recovered ||
+        recovered.promotedTo !== undefined ||
+        recovered.branch !== worktree.branch ||
+        recovered.worktreePath !== worktree.path
+      ) {
+        throw new Error("Failed to record the generated worktree recovery draft.");
+      }
+      restoreFailedSendDraftContent(ownerThreadId);
+      return ownerThreadId;
+    };
+    const removeUntouchedCreatedWorktree = async (): Promise<boolean> => {
+      const worktree = createdWorktreeForSend;
+      if (!worktree) return true;
+      if (!createdWorktreeCleanupIsSafe || createdWorktreeCleanupInFlight) {
+        ensureCreatedWorktreeRecoveryOwner();
+        return false;
+      }
+      createdWorktreeCleanupInFlight = true;
+      try {
+        await api.git.removeWorktree({
+          cwd: worktree.cwd,
+          path: worktree.path,
+          force: false,
+        });
+        createdWorktreeForSend = null;
+        return true;
+      } catch (cleanupError: unknown) {
+        console.error("Failed to remove untouched worktree after send rollback", {
+          threadId: threadIdForSend,
+          worktreePath: worktree.path,
+          cleanupError,
+        });
+        ensureCreatedWorktreeRecoveryOwner();
+        return false;
+      } finally {
+        createdWorktreeCleanupInFlight = false;
+      }
+    };
     await (async () => {
+      if (!sendSourceStillExists()) {
+        throw new Error("Thread was deleted before the message could be sent.");
+      }
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         const result = await createWorktreeMutation.mutateAsync({
@@ -8082,7 +8395,19 @@ export default function ChatView({
           branch: baseBranchForWorktree,
           newBranch: buildTemporaryWorktreeBranchName(),
         });
-        beginLocalDispatch({
+        createdWorktreeForSend = {
+          cwd: targetProjectCwdForSend,
+          path: result.worktree.path,
+          branch: result.worktree.branch,
+        };
+        if (!sendSourceStillExists()) {
+          // No setup action or user turn has run in this freshly-created
+          // worktree, but another process may already have written to it. Let
+          // Git refuse a dirty removal so unique data is never discarded.
+          await removeUntouchedCreatedWorktree();
+          throw new Error("Thread was deleted before the message could be sent.");
+        }
+        beginLocalDispatch(threadIdForSend, {
           worktreeSetupStepId: "prepare-thread",
           setupScriptName: worktreeSetupScriptName,
         });
@@ -8104,6 +8429,9 @@ export default function ChatView({
             associatedWorktreeBranch: nextAssociatedWorktree.associatedWorktreeBranch,
             associatedWorktreeRef: nextAssociatedWorktree.associatedWorktreeRef,
           });
+          if (!sendSourceStillExists()) {
+            throw new Error("Thread was deleted before the message could be sent.");
+          }
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
           setStoreThreadWorkspace(threadIdForSend, {
@@ -8131,7 +8459,7 @@ export default function ChatView({
           threadNotes,
           projectInstructions: inheritedProjectInstructions,
         });
-        await promoteThreadCreate(
+        const promotionResult = await promoteThreadCreate(
           {
             type: "thread.create",
             commandId: newCommandId(),
@@ -8149,6 +8477,11 @@ export default function ChatView({
           },
           api,
         );
+        createdServerThreadForLocalDraft = promotionResult === "created";
+        promotedServerThreadForLocalDraft = promotionResult !== "unavailable";
+        if (!sendSourceStillExists()) {
+          throw new Error("Thread was deleted before the message could be sent.");
+        }
         // `thread.create` does not carry notes, so seed the freshly created
         // server thread's notepad with the inherited project instructions via a
         // dedicated meta update. Best-effort: a failure here must not abort the turn.
@@ -8160,6 +8493,9 @@ export default function ChatView({
             // into the notepad manually from the Environment panel.
           }
         }
+        if (!sendSourceStillExists()) {
+          throw new Error("Thread was deleted before the message could be sent.");
+        }
         if (targetProjectKindForSend === "chat") {
           await api.orchestration.dispatchCommand({
             type: "project.meta.update",
@@ -8168,21 +8504,23 @@ export default function ChatView({
             title,
           });
         }
-        createdServerThreadForLocalDraft = true;
       }
 
       const setupScript = setupScriptForWorktree;
+      if (!sendSourceStillExists()) {
+        throw new Error("Thread was deleted before the message could be sent.");
+      }
       if (setupScript) {
         let shouldRunSetupScript = false;
         if (isServerThread) {
           shouldRunSetupScript = true;
         } else {
-          if (createdServerThreadForLocalDraft) {
+          if (promotedServerThreadForLocalDraft) {
             shouldRunSetupScript = true;
           }
         }
         if (shouldRunSetupScript) {
-          beginLocalDispatch({
+          beginLocalDispatch(threadIdForSend, {
             worktreeSetupStepId: "run-setup-action",
             setupScriptName: setupScript.name,
           });
@@ -8194,12 +8532,22 @@ export default function ChatView({
           if (nextThreadWorktreePath) {
             setupScriptOptions.cwd = nextThreadWorktreePath;
           }
+          // Once a project-owned setup action starts, the worktree may contain
+          // unique changes. Leave later cleanup to the normal deletion path
+          // rather than force-removing data from this send continuation.
+          createdWorktreeCleanupIsSafe = false;
           const setupTerminal = await runProjectScript(setupScript, setupScriptOptions);
+          if (!sendSourceStillExists()) {
+            throw new Error("Thread was deleted before the message could be sent.");
+          }
           if (setupTerminal) {
             await waitForSetupScriptTerminalActivity({
               threadId: threadIdForSend,
               terminalId: setupTerminal.terminalId,
             });
+            if (!sendSourceStillExists()) {
+              throw new Error("Thread was deleted before the message could be sent.");
+            }
           }
         }
       }
@@ -8215,6 +8563,7 @@ export default function ChatView({
       }
 
       beginLocalDispatch(
+        threadIdForSend,
         baseBranchForWorktree
           ? { worktreeSetupStepId: "start-session", setupScriptName: worktreeSetupScriptName }
           : undefined,
@@ -8225,6 +8574,9 @@ export default function ChatView({
         provider: selectedModelSelectionForSend.provider,
         providerOptions: providerOptionsForDispatchForSend,
       });
+      if (!sendSourceStillExists()) {
+        throw new Error("Thread was deleted before the message could be sent.");
+      }
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
@@ -8253,10 +8605,14 @@ export default function ChatView({
       turnStartSucceeded = true;
       // Non-Codex steers interrupt the live turn before re-dispatching; hold
       // queued auto-dispatch through that gap so it can't race the steer.
-      if (dispatchMode === "steer" && selectedModelSelectionForSend.provider !== "codex") {
+      if (
+        sendOwnsActivePane() &&
+        dispatchMode === "steer" &&
+        selectedModelSelectionForSend.provider !== "codex"
+      ) {
         setQueuedSteerGate({ sawInterruptGap: false, gapStartedAt: null });
       }
-      if (sourceProposedPlanForSend) {
+      if (sendOwnsActivePane() && sourceProposedPlanForSend) {
         planSidebarDismissedForTurnRef.current = null;
         setPlanSidebarOpen(true);
       }
@@ -8266,74 +8622,87 @@ export default function ChatView({
     })().catch(async (err: unknown) => {
       // Surface the failure on whichever setup step was active (no-op for
       // sends without a worktree setup in flight).
-      failLocalDispatchWorktreeSetup();
+      failLocalDispatchWorktreeSetup(threadIdForSend);
+      if (!turnStartSucceeded) {
+        removeOptimisticUserMessage(threadIdForSend, messageIdForSend, { revokePreviews: true });
+      }
+      let promotedThreadRollbackSucceeded = true;
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         // This rollback cleans up a retryable draft promotion; do not tombstone the draft id.
-        await api.orchestration
+        promotedThreadRollbackSucceeded = await api.orchestration
           .dispatchCommand({
             type: "thread.delete",
             commandId: newCommandId(),
             threadId: threadIdForSend,
           })
-          .catch(() => undefined);
+          .then(
+            () => true,
+            () => false,
+          );
+        if (promotedThreadRollbackSucceeded) {
+          const createdWorktreeWasRemoved = await removeUntouchedCreatedWorktree();
+          const survivingWorktree = createdWorktreeWasRemoved ? null : createdWorktreeForSend;
+          useComposerDraftStore.getState().rollbackDraftThreadPromotion(
+            threadIdForSend,
+            threadIdForSend,
+            survivingWorktree
+              ? {
+                  branch: survivingWorktree.branch,
+                  worktreePath: survivingWorktree.path,
+                }
+              : undefined,
+          );
+        }
+      }
+      const sendSourceExistsAfterFailure = sendSourceStillExists();
+      if (!sendSourceExistsAfterFailure && !turnStartSucceeded && promotedThreadRollbackSucceeded) {
+        await removeUntouchedCreatedWorktree();
       }
       if (
+        sendSourceExistsAfterFailure &&
         queuedChatTurn === null &&
         !turnStartSucceeded &&
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerFilesRef.current.length === 0 &&
-        composerAssistantSelectionsRef.current.length === 0 &&
-        composerFileCommentsRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerPastedTextsRef.current.length === 0
+        failedSendDraftIsEmpty(threadIdForSend)
       ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = promptForSend;
-        setPrompt(promptForSend);
-        if (sourceProposedPlanForSend) {
-          setRestoredQueuedSourceProposedPlan(threadIdForSend, {
-            threadId: threadIdForSend,
-            restoredPrompt: promptForSend,
-            sourceProposedPlan: sourceProposedPlanForSend,
-          });
+        restoreFailedSendDraftContent(threadIdForSend);
+        if (sendOwnsActivePane()) {
+          promptRef.current = promptForSend;
+          setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
+          setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
         }
-        setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
-        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageAttachment));
-        addComposerFilesToDraft(composerFilesSnapshot);
-        for (const selection of composerAssistantSelectionsSnapshot) {
-          addComposerAssistantSelectionToDraft(selection);
-        }
-        for (const comment of composerFileCommentsSnapshot) {
-          addComposerFileCommentToDraft(comment);
-        }
-        addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        addComposerPastedTextsToDraft(composerPastedTextsSnapshot);
-        updateSelectedComposerSkills(composerSkillsSnapshot);
-        updateSelectedComposerMentions(composerMentionsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
       }
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send message.",
-      );
+      if (sendSourceExistsAfterFailure) {
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send message.",
+        );
+      }
     });
-    sendInFlightRef.current = false;
+    sendInFlightThreadIds.delete(threadIdForSend);
     if (!turnStartSucceeded) {
       if (baseBranchForWorktree) {
-        scheduleFailedWorktreeSetupDispatchReset();
+        scheduleFailedWorktreeSetupDispatchReset(threadIdForSend);
       } else {
-        resetLocalDispatch();
+        resetLocalDispatch(threadIdForSend);
       }
     }
     return turnStartSucceeded;
+  };
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    dispatchMode: "queue" | "steer" = "queue",
+    queuedTurn?: QueuedComposerChatTurn,
+    voicePromptOverride?: string,
+  ): Promise<boolean> => {
+    if (!activeThread || !beginExclusiveSendOperation(threadId, activeThread.projectId)) {
+      e?.preventDefault();
+      return false;
+    }
+    try {
+      return await runSend(e, dispatchMode, queuedTurn, voicePromptOverride);
+    } finally {
+      finishExclusiveSendOperation(threadId);
+    }
   };
   sendVoiceTranscriptRef.current = (voicePrompt) =>
     onSend(undefined, "queue", undefined, voicePrompt);
@@ -8600,11 +8969,13 @@ export default function ChatView({
     interactionMode: nextInteractionMode,
     dispatchMode,
     queuedTurn,
+    operationAlreadyHeld = false,
   }: {
     text: string;
     interactionMode: "default" | "plan";
     dispatchMode: "queue" | "steer";
     queuedTurn?: QueuedComposerPlanFollowUp;
+    operationAlreadyHeld?: boolean;
   }): Promise<boolean> {
     const api = readNativeApi();
     if (
@@ -8613,7 +8984,7 @@ export default function ChatView({
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightRef.current
+      sendInFlightThreadIds.has(threadId)
     ) {
       return false;
     }
@@ -8624,6 +8995,13 @@ export default function ChatView({
     }
 
     const threadIdForSend = activeThread.id;
+    const operationAcquiredHere = !operationAlreadyHeld;
+    if (
+      operationAcquiredHere &&
+      !beginExclusiveSendOperation(threadIdForSend, activeThread.projectId)
+    ) {
+      return false;
+    }
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingComposerPrompt({
@@ -8633,21 +9011,19 @@ export default function ChatView({
       text: trimmed,
     });
 
-    sendInFlightRef.current = true;
-    beginLocalDispatch();
+    sendInFlightThreadIds.add(threadIdForSend);
+    beginLocalDispatch(threadIdForSend);
     setThreadError(threadIdForSend, null);
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        dispatchMode,
-        createdAt: messageCreatedAt,
-        streaming: false,
-        source: "native",
-      },
-    ]);
+    addOptimisticUserMessage({
+      ownerThreadId: threadIdForSend,
+      id: messageIdForSend,
+      role: "user",
+      text: outgoingMessageText,
+      dispatchMode,
+      createdAt: messageCreatedAt,
+      streaming: false,
+      source: "native",
+    });
     armTranscriptAutoFollow(threadIdForSend, true);
 
     try {
@@ -8658,6 +9034,9 @@ export default function ChatView({
         runtimeMode: queuedTurn?.runtimeMode ?? runtimeMode,
         interactionMode: nextInteractionMode,
       });
+      if (!threadSourceStillExists(threadIdForSend, true)) {
+        throw new Error("Thread was deleted before the plan follow-up could be sent.");
+      }
 
       // Keep the mode toggle and plan-follow-up banner in sync immediately
       // while the same-thread implementation turn is starting.
@@ -8703,29 +9082,37 @@ export default function ChatView({
       });
       // Non-Codex steers interrupt the live turn before re-dispatching; hold
       // queued auto-dispatch through that gap so it can't race the steer.
-      if (dispatchMode === "steer" && modelSelectionForPlanDispatch.provider !== "codex") {
+      if (
+        activeThreadIdRef.current === threadIdForSend &&
+        dispatchMode === "steer" &&
+        modelSelectionForPlanDispatch.provider !== "codex"
+      ) {
         setQueuedSteerGate({ sawInterruptGap: false, gapStartedAt: null });
       }
       // Optimistically open the plan sidebar when implementing (not refining).
       // "default" mode here means the agent is executing the plan, which produces
       // step-tracking activities that the sidebar will display.
-      if (nextInteractionMode === "default") {
+      if (activeThreadIdRef.current === threadIdForSend && nextInteractionMode === "default") {
         planSidebarDismissedForTurnRef.current = null;
         setPlanSidebarOpen(true);
       }
-      sendInFlightRef.current = false;
+      sendInFlightThreadIds.delete(threadIdForSend);
       return true;
     } catch (err) {
-      setOptimisticUserMessages((existing) =>
-        existing.filter((message) => message.id !== messageIdForSend),
-      );
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send plan follow-up.",
-      );
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
+      removeOptimisticUserMessage(threadIdForSend, messageIdForSend, { revokePreviews: true });
+      if (threadSourceStillExists(threadIdForSend, true)) {
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send plan follow-up.",
+        );
+      }
+      sendInFlightThreadIds.delete(threadIdForSend);
+      resetLocalDispatch(threadIdForSend);
       return false;
+    } finally {
+      if (operationAcquiredHere) {
+        finishExclusiveSendOperation(threadIdForSend);
+      }
     }
   }
 
@@ -8752,8 +9139,13 @@ export default function ChatView({
         setThreadError(activeThread.id, "Only the latest rollbackable user message can be edited.");
         return false;
       }
-      if (isSendBusy || isConnecting || sendInFlightRef.current) {
+      if (isSendBusy || isConnecting || sendInFlightThreadIds.has(activeThread.id)) {
         setThreadError(activeThread.id, "Wait for the current send to start before editing.");
+        return false;
+      }
+      const threadIdForEdit = activeThread.id;
+      if (!beginExclusiveSendOperation(threadIdForEdit, activeThread.projectId)) {
+        setThreadError(threadIdForEdit, "Wait for the current send to start before editing.");
         return false;
       }
 
@@ -8778,6 +9170,9 @@ export default function ChatView({
           runtimeMode,
           interactionMode,
         });
+        if (!threadSourceStillExists(threadIdForEdit, true)) {
+          return false;
+        }
         await api.orchestration.dispatchCommand({
           type: "thread.message.edit-and-resend",
           commandId: newCommandId(),
@@ -8793,17 +9188,22 @@ export default function ChatView({
         });
         return true;
       } catch (err) {
-        setThreadError(
-          activeThread.id,
-          err instanceof Error ? err.message : "Failed to edit message.",
-        );
+        if (threadSourceStillExists(threadIdForEdit, true)) {
+          setThreadError(
+            threadIdForEdit,
+            err instanceof Error ? err.message : "Failed to edit message.",
+          );
+        }
         return false;
       } finally {
         setIsRevertingCheckpoint(false);
+        finishExclusiveSendOperation(threadIdForEdit);
       }
     },
     [
       activeThread,
+      beginExclusiveSendOperation,
+      finishExclusiveSendOperation,
       isConnecting,
       isRevertingCheckpoint,
       isSendBusy,
@@ -8918,8 +9318,9 @@ export default function ChatView({
     }
     if (
       autoDispatchingQueuedTurnRef.current ||
-      sendInFlightRef.current ||
-      sendPreflightInFlightRef.current
+      sendOperationInFlightThreadIds.has(threadId) ||
+      sendInFlightThreadIds.has(threadId) ||
+      sendPreflightInFlightThreadIds.has(threadId)
     ) {
       // These guards are refs, so nothing re-triggers this effect once they
       // reset; poll until the in-flight send settles instead of leaving the
@@ -8965,7 +9366,7 @@ export default function ChatView({
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightRef.current
+      sendInFlightThreadIds.has(activeThread.id)
     ) {
       return;
     }
@@ -8987,11 +9388,15 @@ export default function ChatView({
       proposedPlan: activeProposedPlan,
     });
 
-    sendInFlightRef.current = true;
-    beginLocalDispatch();
+    if (!beginExclusiveSendOperation(activeThread.id, activeProject.id)) {
+      return;
+    }
+    sendInFlightThreadIds.add(activeThread.id);
+    beginLocalDispatch(activeThread.id);
     const finish = () => {
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
+      sendInFlightThreadIds.delete(activeThread.id);
+      resetLocalDispatch(activeThread.id);
+      finishExclusiveSendOperation(activeThread.id);
     };
 
     await api.orchestration
@@ -9079,7 +9484,9 @@ export default function ChatView({
     activeProposedPlan,
     activeThread,
     activeThreadAssociatedWorktree,
+    beginExclusiveSendOperation,
     beginLocalDispatch,
+    finishExclusiveSendOperation,
     isConnecting,
     isSendBusy,
     isServerThread,
@@ -9345,7 +9752,107 @@ export default function ChatView({
     [moveDraftThreadToProject, scheduleComposerFocus, threadId],
   );
 
+  const assertEmptyDraftProjectChangeAvailable = useCallback(() => {
+    if (isWorktreeRecoveryDraft) {
+      throw new Error(
+        "This recovered worktree stays with its original project until you retry or forget the recovery.",
+      );
+    }
+    if (
+      sendOperationInFlightThreadIds.has(threadId) ||
+      sendPreflightInFlightThreadIds.has(threadId) ||
+      sendInFlightThreadIds.has(threadId)
+    ) {
+      throw new Error("Wait for the current message to finish preparing before changing projects.");
+    }
+  }, [isWorktreeRecoveryDraft, threadId]);
+
+  useLayoutEffect(() => {
+    // ChatView is keyed by pane scope and remains mounted when that pane changes
+    // threads. Invalidate only when this pane's actual thread ownership changes;
+    // global router navigation can merely focus another split pane. Release the
+    // previous thread's send gate immediately while its late completion remains
+    // rejected by the request generation check.
+    emptyDraftProjectRequestRef.current += 1;
+    emptyDraftProjectRequestInFlightRef.current = null;
+    return () => {
+      emptyDraftProjectRequestRef.current += 1;
+      emptyDraftProjectRequestInFlightRef.current = null;
+    };
+  }, [threadId]);
+
+  const isEmptyDraftProjectRequestCurrent = useCallback(
+    (requestId: number) => {
+      if (requestId !== emptyDraftProjectRequestRef.current) return false;
+      const liveDraft = useComposerDraftStore.getState().getDraftThread(threadId);
+      return (
+        liveDraft !== null &&
+        liveDraft.recoveryReason !== "worktree-cleanup-refused" &&
+        liveDraft.promotedTo === undefined &&
+        getThreadFromState(useStore.getState(), threadId) === undefined
+      );
+    },
+    [threadId],
+  );
+
+  const openOrMoveEmptyDraftToLocalProject = useCallback(
+    async (projectId: ProjectId, requestId: number) => {
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) {
+        return;
+      }
+      // Every route into a destination project (direct selection, folder picker, Home, or Studio)
+      // must enter through the same removal turnstile. Keeping the lease at this deepest shared
+      // seam prevents a draft from moving into a project after its removal has already drained.
+      const projectOperation = tryBeginProjectOperation(projectId);
+      if (!projectOperation) {
+        throw new Error("That project is being removed. Your draft stayed in its current project.");
+      }
+      try {
+        const draftStore = useComposerDraftStore.getState();
+        const destinationThreadId = draftStore.projectDraftThreadIdByProjectId[projectId];
+        const destinationDraft = destinationThreadId
+          ? draftStore.getDraftThread(destinationThreadId)
+          : null;
+        if (destinationThreadId && destinationDraft && destinationThreadId !== threadId) {
+          const destinationRouteThreadId = destinationDraft.promotedTo ?? destinationThreadId;
+          if (surfaceMode === "split" && onActivateThreadInSplitPane) {
+            onActivateThreadInSplitPane(destinationRouteThreadId);
+            return;
+          }
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: destinationRouteThreadId },
+          });
+          return;
+        }
+        if (!isEmptyDraftProjectRequestCurrent(requestId)) {
+          return;
+        }
+        moveEmptyDraftToLocalProject(projectId);
+      } finally {
+        finishProjectOperation(projectOperation);
+      }
+    },
+    [
+      isEmptyDraftProjectRequestCurrent,
+      moveEmptyDraftToLocalProject,
+      navigate,
+      onActivateThreadInSplitPane,
+      surfaceMode,
+      threadId,
+    ],
+  );
+
   const handleResetWorkspaceToHome = useCallback(() => {
+    assertEmptyDraftProjectChangeAvailable();
+    const requestId = emptyDraftProjectRequestRef.current + 1;
+    emptyDraftProjectRequestRef.current = requestId;
+    emptyDraftProjectRequestInFlightRef.current = requestId;
+    const finishRequest = () => {
+      if (emptyDraftProjectRequestInFlightRef.current === requestId) {
+        emptyDraftProjectRequestInFlightRef.current = null;
+      }
+    };
     if (isLocalDraftThread) {
       if (isStudioContainer) {
         return (async () => {
@@ -9357,6 +9864,7 @@ export default function ChatView({
           if (!studioProjectId) {
             throw new Error("Unable to prepare Studio.");
           }
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
           const api = readNativeApi();
           if (!api) {
             throw new Error("App is still connecting. Try again in a moment.");
@@ -9369,10 +9877,12 @@ export default function ChatView({
             if (!project || !snapshot) {
               throw new Error(PROJECT_CREATE_SYNC_ERROR);
             }
+            if (requestId !== emptyDraftProjectRequestRef.current) return;
             syncServerShellSnapshot(snapshot);
           }
-          moveEmptyDraftToLocalProject(studioProjectId);
-        })();
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
+          await openOrMoveEmptyDraftToLocalProject(studioProjectId, requestId);
+        })().finally(finishRequest);
       }
       if (!isHomeChatContainer) {
         return (async () => {
@@ -9383,6 +9893,7 @@ export default function ChatView({
           if (!homeProjectId) {
             throw new Error("Unable to prepare a normal chat.");
           }
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
           const api = readNativeApi();
           if (!api) {
             throw new Error("App is still connecting. Try again in a moment.");
@@ -9395,10 +9906,12 @@ export default function ChatView({
             if (!project || !snapshot) {
               throw new Error(PROJECT_CREATE_SYNC_ERROR);
             }
+            if (requestId !== emptyDraftProjectRequestRef.current) return;
             syncServerShellSnapshot(snapshot);
           }
-          moveEmptyDraftToLocalProject(homeProjectId);
-        })();
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
+          await openOrMoveEmptyDraftToLocalProject(homeProjectId, requestId);
+        })().finally(finishRequest);
       }
       setDraftThreadContext(threadId, {
         envMode: "local",
@@ -9407,6 +9920,7 @@ export default function ChatView({
         lastKnownPr: null,
       });
       scheduleComposerFocus();
+      finishRequest();
       return;
     }
 
@@ -9427,15 +9941,17 @@ export default function ChatView({
       }
     }
     scheduleComposerFocus();
+    finishRequest();
   }, [
     activeThread,
+    assertEmptyDraftProjectChangeAvailable,
     chatWorkspaceRoot,
     hasNativeUserMessages,
     homeDir,
     isHomeChatContainer,
     isLocalDraftThread,
     isStudioContainer,
-    moveEmptyDraftToLocalProject,
+    openOrMoveEmptyDraftToLocalProject,
     scheduleComposerFocus,
     setDraftThreadContext,
     setStoreThreadWorkspace,
@@ -9446,6 +9962,8 @@ export default function ChatView({
 
   const handleSelectWorkspaceRoot = useCallback(
     (workspaceRoot: string) => {
+      assertEmptyDraftProjectChangeAvailable();
+      emptyDraftProjectRequestRef.current += 1;
       if (isLocalDraftThread) {
         setDraftThreadContext(threadId, {
           envMode: "worktree",
@@ -9465,6 +9983,7 @@ export default function ChatView({
     },
     [
       activeThread,
+      assertEmptyDraftProjectChangeAvailable,
       isLocalDraftThread,
       scheduleComposerFocus,
       setDraftThreadContext,
@@ -9473,9 +9992,9 @@ export default function ChatView({
     ],
   );
 
-  const handleSelectProjectForEmptyDraft = useCallback(
-    (projectId: ProjectId) => {
-      if (!isLocalDraftThread) {
+  const selectProjectForEmptyDraftRequest = useCallback(
+    async (projectId: ProjectId, requestId: number) => {
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) {
         return;
       }
       const project = useStore
@@ -9488,24 +10007,48 @@ export default function ChatView({
         scheduleComposerFocus();
         return;
       }
-      moveEmptyDraftToLocalProject(projectId);
+
+      await openOrMoveEmptyDraftToLocalProject(projectId, requestId);
     },
     [
       draftThread?.projectId,
-      isLocalDraftThread,
-      moveEmptyDraftToLocalProject,
+      isEmptyDraftProjectRequestCurrent,
+      openOrMoveEmptyDraftToLocalProject,
       scheduleComposerFocus,
     ],
   );
 
-  const handleCreateProjectFromPickerPath = useCallback(
-    async (workspaceRoot: string) => {
-      if (!isLocalDraftThread) {
-        return;
-      }
+  const handleSelectProjectForEmptyDraft = useCallback(
+    (projectId: ProjectId) => {
+      assertEmptyDraftProjectChangeAvailable();
+      const requestId = emptyDraftProjectRequestRef.current + 1;
+      emptyDraftProjectRequestRef.current = requestId;
+      emptyDraftProjectRequestInFlightRef.current = requestId;
+      return selectProjectForEmptyDraftRequest(projectId, requestId).finally(() => {
+        if (emptyDraftProjectRequestInFlightRef.current === requestId) {
+          emptyDraftProjectRequestInFlightRef.current = null;
+        }
+      });
+    },
+    [assertEmptyDraftProjectChangeAvailable, selectProjectForEmptyDraftRequest],
+  );
+
+  const handleCreateProjectFromPicker = useCallback(async () => {
+    assertEmptyDraftProjectChangeAvailable();
+    if (!isLocalDraftThread) {
+      return;
+    }
+    const requestId = emptyDraftProjectRequestRef.current + 1;
+    emptyDraftProjectRequestRef.current = requestId;
+    emptyDraftProjectRequestInFlightRef.current = requestId;
+    try {
       const api = readNativeApi();
       if (!api) {
         throw new Error("App is still connecting. Try again in a moment.");
+      }
+      const workspaceRoot = await api.dialogs.pickFolder();
+      if (!workspaceRoot || !isEmptyDraftProjectRequestCurrent(requestId)) {
+        return;
       }
 
       const existingProject = useStore
@@ -9515,7 +10058,7 @@ export default function ChatView({
             project.kind === "project" && workspaceRootsEqual(project.cwd, workspaceRoot),
         );
       if (existingProject) {
-        handleSelectProjectForEmptyDraft(existingProject.id);
+        await selectProjectForEmptyDraftRequest(existingProject.id, requestId);
         return;
       }
 
@@ -9525,6 +10068,7 @@ export default function ChatView({
         createIfMissing: false,
         loadSnapshot: () => api.orchestration.getShellSnapshot().catch(() => null),
       });
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) return;
       if (creationResult.snapshot) {
         syncServerShellSnapshot(creationResult.snapshot);
       }
@@ -9534,15 +10078,19 @@ export default function ChatView({
       if (!creationResult.project) {
         throw new Error(PROJECT_CREATE_SYNC_ERROR);
       }
-      moveEmptyDraftToLocalProject(creationResult.project.id);
-    },
-    [
-      handleSelectProjectForEmptyDraft,
-      isLocalDraftThread,
-      moveEmptyDraftToLocalProject,
-      syncServerShellSnapshot,
-    ],
-  );
+      await selectProjectForEmptyDraftRequest(creationResult.project.id, requestId);
+    } finally {
+      if (emptyDraftProjectRequestInFlightRef.current === requestId) {
+        emptyDraftProjectRequestInFlightRef.current = null;
+      }
+    }
+  }, [
+    assertEmptyDraftProjectChangeAvailable,
+    isEmptyDraftProjectRequestCurrent,
+    isLocalDraftThread,
+    selectProjectForEmptyDraftRequest,
+    syncServerShellSnapshot,
+  ]);
 
   const applyPromptReplacement = useCallback(
     (
@@ -9790,6 +10338,7 @@ export default function ChatView({
     fastModeEnabled,
     providerNativeCommands,
     providerCommandDiscoveryCwd: composerSkillCwd,
+    providerCommandDiscoveryBinaryPath: settings.claudeBinaryPath || null,
     selectedProvider,
     currentProviderModelOptions,
     selectedModelSelection,
@@ -10455,6 +11004,14 @@ export default function ChatView({
       });
       return;
     }
+    if (outcome === "project-removing") {
+      transientAlertManager.add({
+        type: "warning",
+        title: "Project removal in progress",
+        description: "This project is being removed. Your draft was kept.",
+      });
+      return;
+    }
     if (outcome === "unchanged" || outcome === "unavailable") {
       return;
     }
@@ -10519,10 +11076,26 @@ export default function ChatView({
     }
   };
   const showEmptyLandingProjectPicker =
-    isCenteredEmptyLanding && isLocalDraftThread && activeProject?.kind === "project";
+    isCenteredEmptyLanding &&
+    isLocalDraftThread &&
+    !isWorktreeRecoveryDraft &&
+    activeProject?.kind === "project";
   const emptyLandingProjectChip =
     !isEmptyChatLanding && !showEmptyLandingProjectPicker && activeProjectDisplayName ? (
-      <span className="inline-flex min-w-0 max-w-56 shrink items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-[var(--color-text-foreground-secondary)] sm:max-w-64">
+      <span
+        data-testid={isWorktreeRecoveryDraft ? "recovery-fixed-project-label" : undefined}
+        aria-label={
+          isWorktreeRecoveryDraft
+            ? `Recovered worktree project is fixed to ${activeProjectDisplayName} until retry or forget`
+            : undefined
+        }
+        title={
+          isWorktreeRecoveryDraft
+            ? "Recovered worktrees cannot be moved to another project. Retry the send or forget the recovery first."
+            : undefined
+        }
+        className="inline-flex min-w-0 max-w-56 shrink items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-[var(--color-text-foreground-secondary)] sm:max-w-64"
+      >
         <FolderClosed className="size-3.5 shrink-0" />
         <span className="min-w-0 truncate">{activeProjectDisplayName}</span>
       </span>
@@ -10548,6 +11121,7 @@ export default function ChatView({
     >
       {isEmptyChatLanding ? (
         <ProjectPicker
+          key={`empty-project-picker-${threadId}`}
           align="start"
           side="top"
           triggerClassName="h-7 py-1"
@@ -10555,23 +11129,10 @@ export default function ChatView({
           selectedWorkspaceRoot={resolvedThreadWorktreePath}
           onSelectProject={handleSelectProjectForEmptyDraft}
           onSelectWorkspaceRoot={handleSelectWorkspaceRoot}
-          onCreateProjectFromPath={handleCreateProjectFromPickerPath}
+          onCreateProject={handleCreateProjectFromPicker}
           onResetToHome={handleResetWorkspaceToHome}
         />
-      ) : showEmptyLandingProjectPicker ? (
-        <ProjectPicker
-          align="start"
-          side="top"
-          triggerClassName="h-7 py-1"
-          selectionMode="project"
-          selectedProjectId={activeProject.id}
-          selectedWorkspaceRoot={activeProject.cwd}
-          showResetToHome
-          onSelectProject={handleSelectProjectForEmptyDraft}
-          onCreateProjectFromPath={handleCreateProjectFromPickerPath}
-          onResetToHome={handleResetWorkspaceToHome}
-        />
-      ) : (
+      ) : showEmptyLandingProjectPicker ? null : (
         emptyLandingProjectChip
       )}
       {/* Reserve the Local/branch slot so project selection fades controls in without resizing. */}
@@ -11437,6 +11998,11 @@ export default function ChatView({
                     <ScientLogo aria-label="Scient logo" className="size-10" />
                     <h2
                       data-testid="empty-landing-heading"
+                      aria-label={
+                        isEmptyChatLanding
+                          ? "What should we work on?"
+                          : `What should we do in ${activeProjectDisplayName ?? "this folder"}?`
+                      }
                       className="text-[26px] font-normal leading-[1.15] tracking-[-0.015em] text-foreground/95 sm:text-[30px]"
                     >
                       {isEmptyChatLanding ? (
@@ -11444,10 +12010,47 @@ export default function ChatView({
                       ) : (
                         <>
                           What should we do in{" "}
-                          <span className={COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME}>
-                            {activeProjectDisplayName ?? "this folder"}
-                          </span>
-                          ?
+                          {showEmptyLandingProjectPicker ? (
+                            <span
+                              data-testid="empty-landing-heading-project-cluster"
+                              className="inline-flex max-w-full items-baseline gap-0.5 align-bottom"
+                            >
+                              <ProjectPicker
+                                key={`heading-project-picker-${threadId}`}
+                                align="center"
+                                side="bottom"
+                                selectionMode="project"
+                                selectedProjectId={activeProject.id}
+                                selectedWorkspaceRoot={activeProject.cwd}
+                                showResetToHome
+                                onSelectProject={handleSelectProjectForEmptyDraft}
+                                onCreateProject={handleCreateProjectFromPicker}
+                                onResetToHome={handleResetWorkspaceToHome}
+                                renderTrigger={
+                                  <button
+                                    type="button"
+                                    data-testid="empty-landing-heading-project-trigger"
+                                    aria-label={`Change project from ${activeProjectDisplayName ?? "this folder"}`}
+                                    title={activeProjectDisplayName ?? "Change project"}
+                                    className={cn(
+                                      COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME,
+                                      "inline-block max-w-[min(80vw,42rem)] cursor-pointer truncate rounded-sm align-bottom underline decoration-dotted decoration-[1.5px] underline-offset-[6px] transition-colors duration-150 ease-out hover:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
+                                    )}
+                                  >
+                                    {activeProjectDisplayName ?? "this folder"}
+                                  </button>
+                                }
+                              />
+                              <span>?</span>
+                            </span>
+                          ) : (
+                            <>
+                              <span className={COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME}>
+                                {activeProjectDisplayName ?? "this folder"}
+                              </span>
+                              ?
+                            </>
+                          )}
                         </>
                       )}
                     </h2>

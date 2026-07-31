@@ -137,6 +137,8 @@ export const ProviderListCommandsInput = Schema.Struct({
   experimentalWebSockets: Schema.optional(Schema.Boolean),
   agentDir: Schema.optional(TrimmedNonEmptyString),
   forceReload: Schema.optional(Schema.Boolean),
+  /** Renderer-owned generation used to separate discovery across auth/runtime changes. */
+  discoveryGeneration: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderListCommandsInput = typeof ProviderListCommandsInput.Type;
 
@@ -274,6 +276,8 @@ export const ProviderListModelsInput = Schema.Struct({
   apiEndpoint: Schema.optional(TrimmedNonEmptyString),
   agentDir: Schema.optional(TrimmedNonEmptyString),
   cwd: Schema.optional(TrimmedNonEmptyString),
+  /** Renderer-owned generation used to separate discovery across auth/runtime changes. */
+  discoveryGeneration: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderListModelsInput = typeof ProviderListModelsInput.Type;
 
@@ -303,6 +307,9 @@ export const ProviderModelDescriptor = Schema.Struct({
   // Codex model/list results are normalized here so the web app can consume both
   // the legacy string array and Remodex-style reasoning objects uniformly.
   supportedReasoningEfforts: Schema.optional(Schema.Array(ProviderReasoningEffortDescriptor)),
+  // Distinguishes runtime metadata that explicitly disables effort controls from
+  // an older provider response that does not report effort capability at all.
+  supportsReasoningEffort: Schema.optional(Schema.Boolean),
   defaultReasoningEffort: Schema.optional(TrimmedNonEmptyString),
   supportsFastMode: Schema.optional(Schema.Boolean),
   supportsThinkingToggle: Schema.optional(Schema.Boolean),
@@ -315,6 +322,8 @@ export const ProviderListModelsResult = Schema.Struct({
   models: Schema.Array(ProviderModelDescriptor),
   source: Schema.optional(TrimmedNonEmptyString),
   cached: Schema.optional(Schema.Boolean),
+  /** Version of the exact provider executable/cwd used to produce this catalog. */
+  runtimeVersion: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ProviderListModelsResult = typeof ProviderListModelsResult.Type;
 
@@ -322,6 +331,8 @@ export const ProviderListAgentsInput = Schema.Struct({
   provider: ProviderDiscoveryKind,
   binaryPath: Schema.optional(TrimmedNonEmptyString),
   cwd: Schema.optional(TrimmedNonEmptyString),
+  /** Renderer-owned generation used to separate discovery across auth/runtime changes. */
+  discoveryGeneration: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderListAgentsInput = typeof ProviderListAgentsInput.Type;
 

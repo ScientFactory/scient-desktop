@@ -106,15 +106,82 @@ export const RELEASED_CONTENT_ALLOWANCES = new Set([
   "32:ab3f15243ce0e52083570d112ddb947206b3d24a:5228231e32cb0c9d2519cdcdf403777f5d25cc93",
   "36:ccc73b97cce1ba78ddd22c013ac6474e1d67163b:4196b4113c7b465d35fd770748a745b2bddb9999",
   "39:58c3e0a0c4128dfc218296231f7c7f880d15487d:f149b299375c6fd12931618b4eb93ef1cf00b94d",
+  // Migration 035 decoupled from the live model catalog: it now imports the frozen
+  // v0.5.13 snapshot (migration035FrozenModelSelectionCompatibility) instead of the
+  // evolving modelSelectionCompatibility, so the catalog (model.ts) can add models
+  // like Opus 5 without editing shipped migration history. This one-time audited pair
+  // pins the exact old (catalog-coupled) and new (frozen-snapshot) 035 blobs; behavior
+  // is proven identical by migration035FrozenModelSelectionCompatibility.test.ts.
+  "35:6ee14d9aef504f59ed0485f3c03942268bb87300:70612a2a845bdd42aed5b23213112e7a016232bd",
+]);
+
+/**
+ * Exact, one-time dependency-graph changes found by an audit of the migration 035
+ * decoupling. Each key pins a path AND its exact Git blob so the allowance can only
+ * bless this specific graph delta and fails closed on anything else:
+ *   removed:<path>:<baseline blob>  — a file that left the released closure
+ *   added:<path>:<current blob>     — a file that entered the released closure
+ * Severing migration 035's import of the live modelSelectionCompatibility removes the
+ * sole bridge into @synara/contracts, so the entire contracts barrel legitimately
+ * leaves the migration dependency closure and the frozen snapshot enters it. These
+ * files' current contents are no longer migration-frozen (that is the point); the
+ * baseline blobs below record exactly what dropped out.
+ */
+export const RELEASED_DEPENDENCY_GRAPH_ALLOWANCES = new Set<string>([
+  // One-time audited decoupling of migration 035 from the live model catalog.
+  // Migration 035 now imports migration035FrozenModelSelectionCompatibility instead of
+  // the live modelSelectionCompatibility. That severs the sole bridge from migration
+  // history into @synara/contracts, so modelSelectionCompatibility and the entire
+  // contracts barrel legitimately leave the migration dependency closure while the
+  // frozen snapshot enters it. Each key pins the exact baseline (removed) or current
+  // (added) blob, so this allowance blesses only this specific graph delta and fails
+  // closed on any other change. See migration035FrozenModelSelectionCompatibility.test.ts.
+
+  // The frozen snapshot that migration 035 now depends on (enters the closure).
+  "added:apps/server/src/persistence/migration035FrozenModelSelectionCompatibility.ts:05214e26a6f5011b816a40f2a01eca45eb69a24f",
+
+  // The live helper migration 035 no longer imports (leaves the closure).
+  "removed:apps/server/src/persistence/modelSelectionCompatibility.ts:276a9f520bcc4dc2b2888a8eba0dba5b3afbd3c4",
+
+  // The @synara/contracts barrel and every module it re-exports, no longer reachable
+  // from migration history once the bridge is cut (baseline v0.5.13 blobs).
+  "removed:packages/contracts/package.json:66f32ae9de032dd38ef54e486c9eac6fbe9982cc",
+  "removed:packages/contracts/src/agentMentions.ts:089af8b1f73ff88f0bb210a59937dd3f04ad9c23",
+  "removed:packages/contracts/src/auth.ts:c0f8cd5cf17981ec98e6f9ba7582337eb53ba7fb",
+  "removed:packages/contracts/src/automation.ts:2dc1df66c351c71f7625f822168fff2a140a7476",
+  "removed:packages/contracts/src/baseSchemas.ts:f389d24e0131cc122bf381970489a8438f296228",
+  "removed:packages/contracts/src/editor.ts:06c48331d8394f0f13b0d77aa285f1369faece2f",
+  "removed:packages/contracts/src/environment.ts:8bb7ec2dc1618c659578293d548ba9dfbc035091",
+  "removed:packages/contracts/src/filesystem.ts:235de34a531f5b7d848e5eacf63b9f324238bafe",
+  "removed:packages/contracts/src/git.ts:5efc24396fad3b1c59e82dd99499273d0da06446",
+  "removed:packages/contracts/src/index.ts:d2d9da200e45d436c8028561c14037cab7a2b643",
+  "removed:packages/contracts/src/ipc.ts:ae9d9a6b449e4df3ddc04d089a517aefb6b6b3df",
+  "removed:packages/contracts/src/keybindings.ts:55987a7fb5db94ccc6d482d54f8131bd81e6a46d",
+  "removed:packages/contracts/src/model.ts:18fb3e50a0b0dd4925f5aa2f4f7a7032073a0cfd",
+  "removed:packages/contracts/src/orchestration.ts:b2326be2c768ca82e87937765e0dc48d690c5f2f",
+  "removed:packages/contracts/src/project.ts:e830be9d7a7b1eef57b96c91b9a923e0eacfb0ab",
+  "removed:packages/contracts/src/projectSources.ts:dc2577cd8a2720d839700e87208583600195a1ec",
+  "removed:packages/contracts/src/provider.ts:31e818ae98813acf9fe8a7656e45a798a950600a",
+  "removed:packages/contracts/src/providerDiscovery.ts:b2ee551ace5d836edf483a1b264fd0da454df792",
+  "removed:packages/contracts/src/providerRuntime.ts:610c91a8396c1d5db18c230e93090043c6bad314",
+  "removed:packages/contracts/src/pullRequests.ts:d99edf69a7b4663218f6c55dd6c81024c2f1c071",
+  "removed:packages/contracts/src/rpc.ts:3d62ebfcdd7591c6527a292606a7da9c55585e9b",
+  "removed:packages/contracts/src/scientProjectInitialization.ts:b26300cd323f5c4cdf6d27014c34cb75d719c538",
+  "removed:packages/contracts/src/server.ts:98f0edf93fddd6dd819ad1d223eb15af966ea380",
+  "removed:packages/contracts/src/settings.ts:d1988f635562785ac3a656a078613a044c52cbd6",
+  "removed:packages/contracts/src/stats.ts:b65c18d0c59a081855be9e577a1d29c9f541a93b",
+  "removed:packages/contracts/src/studio.ts:7e2cf016cef8fd5c41fb008283e6031ff41c552e",
+  "removed:packages/contracts/src/terminal.ts:9aa62dc01ca4cc3ecbb60e8f35d57cb6b3e60e9c",
+  "removed:packages/contracts/src/ws.ts:1f08097c0a88852ceb2edeb23f0e3991998a7009",
 ]);
 
 // Digest of every version tag reachable from origin/release/stable at the
-// v0.5.13 release boundary, encoded as sorted `tag\0commit\n` records.
+// v0.5.14 release boundary, encoded as sorted `tag\0commit\n` records.
 // A tag-triggered run may add exactly one new tag at HEAD; the manifest must be
 // advanced after publication so subsequent branch runs preserve that release.
-const protectedReleaseTagCount = 79;
+const protectedReleaseTagCount = 80;
 const protectedReleaseTagDigest =
-  "4ed6ced392c2b5bb0f1720e410567907db14f34cc0945bec6bccb5187359c095";
+  "7f2841bdc31adb51d83bf5b7ced256fb5ee993225a2ebc73448a40962261718d";
 const runtimeResolutionEvidencePath = "@scient/migration-runtime-resolution";
 
 const numberedTypeScriptModulePattern = /^\d{3}_.+\.ts$/u;
@@ -579,7 +646,7 @@ export function findHistoricalReleasedContentViolations(
     if (allowances.has(allowanceKey)) continue;
     problems.push(
       `${tag} released migration ${releasedPath} differs from current ${currentPath} without an ` +
-        `exact audited content allowance.`,
+        `exact audited content allowance [allowance key: ${allowanceKey}].`,
     );
   }
   return problems;
@@ -1355,20 +1422,33 @@ export function findReleasedDependencyViolations(
   releasedContents: ReadonlyMap<string, string>,
   currentContents: ReadonlyMap<string, string>,
   migrationModulePaths: ReadonlySet<string> = new Set(),
+  allowances: ReadonlySet<string> = RELEASED_DEPENDENCY_GRAPH_ALLOWANCES,
 ): string[] {
   const problems: string[] = [];
   for (const [path, releasedContent] of releasedContents) {
     if (migrationModulePaths.has(path)) continue;
     const currentContent = currentContents.get(path);
     if (currentContent === undefined) {
-      problems.push(`Released migration dependency ${path} was deleted or is no longer reachable.`);
+      const allowanceKey = `removed:${path}:${gitBlobOid(releasedContent)}`;
+      if (allowances.has(allowanceKey)) continue;
+      problems.push(
+        `Released migration dependency ${path} was deleted or is no longer reachable ` +
+          `without an exact audited graph allowance [allowance key: ${allowanceKey}].`,
+      );
     } else if (canonicalText(currentContent) !== canonicalText(releasedContent)) {
+      // A dependency that remains reachable but changed content is never blessed by
+      // the one-time decoupling allowance; that is a genuine frozen-content violation.
       problems.push(`Released migration dependency ${path} was modified.`);
     }
   }
-  for (const path of currentContents.keys()) {
+  for (const [path, currentContent] of currentContents) {
     if (migrationModulePaths.has(path) || releasedContents.has(path)) continue;
-    problems.push(`Released migration dependency closure gained ${path}.`);
+    const allowanceKey = `added:${path}:${gitBlobOid(currentContent)}`;
+    if (allowances.has(allowanceKey)) continue;
+    problems.push(
+      `Released migration dependency closure gained ${path} ` +
+        `without an exact audited graph allowance [allowance key: ${allowanceKey}].`,
+    );
   }
   return problems.toSorted();
 }
@@ -1377,6 +1457,7 @@ export function findReleasedContentViolations(
   released: readonly MigrationEntry[],
   currentContents: ReadonlyMap<string, string>,
   releasedContents: ReadonlyMap<string, string>,
+  allowances: ReadonlySet<string> = RELEASED_CONTENT_ALLOWANCES,
 ): string[] {
   const problems: string[] = [];
   for (const entry of released) {
@@ -1391,9 +1472,13 @@ export function findReleasedContentViolations(
       problems.push(`Released migration ${path} was deleted.`);
       continue;
     }
-    if (canonicalText(currentContent) !== canonicalText(releasedContent)) {
-      problems.push(`Released migration ${path} was modified.`);
-    }
+    if (canonicalText(currentContent) === canonicalText(releasedContent)) continue;
+    const allowanceKey = `${entry.id}:${gitBlobOid(releasedContent)}:${gitBlobOid(currentContent)}`;
+    if (allowances.has(allowanceKey)) continue;
+    problems.push(
+      `Released migration ${path} was modified without an exact audited content ` +
+        `allowance [allowance key: ${allowanceKey}].`,
+    );
   }
   return problems;
 }

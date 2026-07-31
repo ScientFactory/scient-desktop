@@ -1233,6 +1233,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.dispatchOrigin !== undefined
             ? { dispatchOrigin: command.dispatchOrigin }
             : {}),
+          ...(command.dispatchSource !== undefined
+            ? { dispatchSource: command.dispatchSource }
+            : {}),
           turnId: null,
           streaming: false,
           source: "native",

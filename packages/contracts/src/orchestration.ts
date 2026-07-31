@@ -233,6 +233,11 @@ export const DEFAULT_TURN_DISPATCH_MODE: TurnDispatchMode = "queue";
 // Absent is treated as "user"; only automation-dispatched turns carry the flag.
 export const MessageDispatchOrigin = Schema.Literals(["user", "automation"]);
 export type MessageDispatchOrigin = typeof MessageDispatchOrigin.Type;
+// Additive provenance for non-human dispatchers. Kept separate from
+// MessageDispatchOrigin so older binaries can continue decoding the released
+// user | automation enum while safely ignoring this optional field.
+export const MessageDispatchSource = Schema.Literal("agent");
+export type MessageDispatchSource = typeof MessageDispatchSource.Type;
 export const ProviderReviewTarget = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("uncommittedChanges"),
@@ -426,6 +431,7 @@ export const OrchestrationMessage = Schema.Struct({
   mentions: Schema.optional(Schema.Array(ProviderMentionReference)),
   dispatchMode: Schema.optional(TurnDispatchMode),
   dispatchOrigin: Schema.optional(MessageDispatchOrigin),
+  dispatchSource: Schema.optional(MessageDispatchSource),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   source: OrchestrationMessageSource.pipe(Schema.withDecodingDefault(() => "native")),
@@ -1115,6 +1121,9 @@ export const ThreadTurnStartCommand = Schema.Struct({
   // Set by the automation engine when it dispatches a turn. Clients cannot set it:
   // ClientThreadTurnStartCommand omits the field, so decoding strips any spoofed value.
   dispatchOrigin: Schema.optional(MessageDispatchOrigin),
+  // Set only by trusted server-side dispatchers. ClientThreadTurnStartCommand
+  // omits this field, so decoding strips any spoofed value.
+  dispatchSource: Schema.optional(MessageDispatchSource),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -1656,6 +1665,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   mentions: Schema.optional(Schema.Array(ProviderMentionReference)),
   dispatchMode: Schema.optional(TurnDispatchMode),
   dispatchOrigin: Schema.optional(MessageDispatchOrigin),
+  dispatchSource: Schema.optional(MessageDispatchSource),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   source: OrchestrationMessageSource.pipe(Schema.withDecodingDefault(() => "native")),

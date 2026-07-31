@@ -3,6 +3,7 @@ import "../index.css";
 
 import {
   AutomationId,
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   type AutomationCreateInput,
   type AutomationDefinition,
@@ -49,10 +50,26 @@ import {
   waitForDraftNavigationIdle,
 } from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
+import {
+  finishProjectOperation,
+  hasActiveProjectOperations,
+  isProjectRemovalReserved,
+  releaseProjectRemoval,
+  reserveProjectRemoval,
+  resetProjectRemovalCoordinationForTests,
+  tryBeginProjectOperation,
+} from "../lib/projectRemovalCoordination";
+import { getSidechatCreator } from "../lib/sidechatCreatorRegistry";
 import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
+import { promoteThreadCreate } from "../lib/threadCreatePromotion";
+import { splitViewPaneScopeId } from "../lib/chatPaneScope";
 import { getRouter } from "../router";
-import { useSplitViewStore } from "../splitViewStore";
-import { useStore } from "../store";
+import {
+  resolveSplitViewPaneIdForThread,
+  resolveSplitViewThreadIds,
+  useSplitViewStore,
+} from "../splitViewStore";
+import { resetAppStoreForTests, useStore } from "../store";
 import {
   createShellSnapshotFromReadModel,
   createTestEnvironmentDescriptor,
@@ -62,10 +79,14 @@ import {
   sendEffectRpcExit,
 } from "../test/effectRpcWebSocketMock";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
+import { useOptimisticUserMessageStore } from "../optimisticUserMessageStore";
+import { transientAlertManager } from "../notifications/transientAlert";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { resetRetainedThreadDetailSubscriptionsForTests } from "../threadDetailSubscriptionRetention";
 import { resetWsNativeApiForTest } from "../wsNativeApi";
+import { resetChatViewDispatchGatesForTests } from "./ChatView";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import type { ChatMessage } from "../types";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const OTHER_THREAD_ID = "thread-browser-test-other" as ThreadId;
@@ -676,7 +697,10 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
-function withOpenProjectPickerFixtures(snapshot: OrchestrationReadModel): OrchestrationReadModel {
+function withOpenProjectPickerFixtures(
+  snapshot: OrchestrationReadModel,
+  otherProjectTitle = "Other Project",
+): OrchestrationReadModel {
   return {
     ...snapshot,
     projects: [
@@ -684,7 +708,7 @@ function withOpenProjectPickerFixtures(snapshot: OrchestrationReadModel): Orches
       {
         id: OTHER_PROJECT_ID,
         kind: "project",
-        title: "Other Project",
+        title: otherProjectTitle,
         workspaceRoot: "/repo/other",
         defaultModelSelection: {
           provider: "codex",
@@ -1671,6 +1695,32 @@ async function waitForEnvironmentModeButton(label: string): Promise<HTMLButtonEl
   );
 }
 
+async function clickProjectRemoveAction(projectName = "Project"): Promise<void> {
+  const projectButton = await waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === projectName,
+      ) ?? null,
+    `Unable to find the ${projectName} sidebar row.`,
+  );
+  projectButton.dispatchEvent(
+    new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    }),
+  );
+  const removeItem = await waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (item) => item.textContent?.trim() === "Remove",
+      ) ?? null,
+    "Unable to find the Remove project action.",
+  );
+  removeItem.click();
+}
+
 async function waitForServerConfigToApply(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -2025,6 +2075,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     resetRetainedThreadDetailSubscriptionsForTests();
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
+    resetProjectRemovalCoordinationForTests();
+    resetChatViewDispatchGatesForTests();
     await setViewport(DEFAULT_VIEWPORT);
     attachmentResponseDelayMs = 0;
     localStorage.clear();
@@ -2037,15 +2089,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
     });
-    useStore.setState({
-      projects: [],
-      threads: [],
-      sidebarThreadSummaryById: {},
-      threadsHydrated: false,
-    });
+    // Full reset (not just `projects`/`threads`): tests that dispatch a real `project.delete`
+    // tombstone ids in `deletedProjectIdsById` and seed the normalized projection
+    // (`threadIds`/`threadShellById`); leaving those behind makes the next test's project route
+    // resolve to "deleted" so its thread data never loads.
+    resetAppStoreForTests();
     useTemporaryThreadStore.setState({
       temporaryThreadIds: {},
     });
+    useOptimisticUserMessageStore.getState().clearAll();
     useTerminalStateStore.setState({
       terminalStateByThreadId: {},
     });
@@ -2056,9 +2108,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterEach(async () => {
+    useOptimisticUserMessageStore.getState().clearAll();
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
     resetRetainedThreadDetailSubscriptionsForTests();
+    resetProjectRemovalCoordinationForTests();
+    resetChatViewDispatchGatesForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
   });
@@ -2261,6 +2316,187 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(sourceLink).not.toBeNull();
       sourceLink?.click();
       await vi.waitFor(() => expect(mounted.router.state.location.pathname).toBe(`/${THREAD_ID}`));
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("blocks direct fork, review, and registered Side creators during project removal", async () => {
+    const sourceMessageId = MessageId.makeUnsafe("msg-user-project-removal-direct-creators");
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: sourceMessageId,
+      targetText: "Keep project mutation entry points closed",
+    });
+    const sourceThread = sourceSnapshot.threads[0]!;
+    const sourceMessageIndex = sourceThread.messages.findIndex(
+      (message) => message.id === sourceMessageId,
+    );
+    const snapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: [
+        {
+          ...sourceThread,
+          messages: sourceThread.messages.slice(sourceMessageIndex, sourceMessageIndex + 2),
+        },
+      ],
+    };
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/review");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+    let reservation: ReturnType<typeof reserveProjectRemoval> = null;
+
+    try {
+      await userEvent.click(await waitForSendButton());
+      await expect
+        .element(page.getByText("Review Uncommitted Changes", { exact: true }))
+        .toBeVisible();
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+      const requestStart = wsRequests.length;
+      reservation = reserveProjectRemoval(PROJECT_ID);
+      expect(reservation).not.toBeNull();
+
+      await page.getByText("Review Uncommitted Changes", { exact: true }).click();
+      await expect.element(page.getByText("Project removal in progress")).toBeInTheDocument();
+
+      const sourceRow = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${sourceMessageId}"][data-message-role="user"]`,
+          ),
+        "Unable to find the source message for the removal-time fork action.",
+      );
+      await userEvent.hover(sourceRow);
+      sourceRow
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Fork conversation from this message"]',
+        )
+        ?.click();
+
+      const createSidechat = getSidechatCreator(THREAD_ID);
+      expect(createSidechat).toBeDefined();
+      await expect(createSidechat?.()).resolves.toBe(false);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some(
+            (command) =>
+              command?.type === "thread.fork.create" || command?.type === "thread.create",
+          ),
+      ).toBe(false);
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("blocks a registered Side creator during removal even while a concurrent lease is held", async () => {
+    // Regression guard for the removed `projectOperationAlreadyHeld` bypass. A creator used to
+    // skip the removal turnstile whenever *any* project-operation lease was already active for
+    // the project, which let it race a concurrent removal and orphan the thread it created.
+    // Every creator now re-acquires its own lease through `tryBeginProjectOperation`, which
+    // refuses once removal is reserved — regardless of other in-flight leases.
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: MessageId.makeUnsafe("msg-user-held-lease-removal-bypass"),
+      targetText: "A concurrent lease must not bypass the removal turnstile",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: sourceSnapshot,
+    });
+    let concurrentLease: ReturnType<typeof tryBeginProjectOperation> = null;
+    let reservation: ReturnType<typeof reserveProjectRemoval> = null;
+
+    try {
+      await vi.waitFor(() => expect(getSidechatCreator(THREAD_ID)).toBeDefined());
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+
+      // A concurrent project operation is already holding a lease at the moment removal begins;
+      // acquiring it before the reservation mirrors the real race the bypass exposed.
+      concurrentLease = tryBeginProjectOperation(PROJECT_ID);
+      expect(concurrentLease).not.toBeNull();
+
+      reservation = reserveProjectRemoval(PROJECT_ID);
+      expect(reservation).not.toBeNull();
+
+      const requestStart = wsRequests.length;
+      const createSidechat = getSidechatCreator(THREAD_ID);
+      expect(createSidechat).toBeDefined();
+      // The held lease must not let the creator through: it refuses and dispatches nothing.
+      await expect(createSidechat?.()).resolves.toBe(false);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      // Assert the refusal came from the removal turnstile, not the creator's "Side is
+      // unavailable" early guard — otherwise this test would pass even with the bypass restored.
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
+        "A removal-blocked Side creator should surface inline composer feedback.",
+      );
+      expect(feedback.textContent).toContain("Project removal in progress");
+
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some(
+            (command) =>
+              command?.type === "thread.fork.create" || command?.type === "thread.create",
+          ),
+      ).toBe(false);
+      // The refused creator neither acquired nor released a lease; the concurrent lease we hold
+      // remains the sole active operation, so the count is unchanged (still active, not drained).
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(true);
+    } finally {
+      if (concurrentLease) finishProjectOperation(concurrentLease);
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the Side command when admitted Side creation fails", async () => {
+    const sidePrompt = "/side";
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, sidePrompt);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-side-admission-failure" as MessageId,
+        targetText: "Side failure source",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.fork.create") {
+              throw new Error("deterministic Side creation failure");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      // The composer hydrates the `/side` draft asynchronously after mount; wait for it so the
+      // send actually carries the slash command rather than an empty prompt.
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => expect(composerEditor.textContent ?? "").toContain("/side"));
+      await userEvent.click(await waitForSendButton());
+      // A failed Side creation surfaces through the inline composer feedback affordance
+      // (`data-composer-local-feedback`), not the global toast stack.
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
+        "Side creation failure should be reported without consuming its prompt.",
+      );
+      expect(feedback.textContent).toContain("Could not start Side");
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(sidePrompt);
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+      expect(hasDispatchedCommandType("thread.turn.start")).toBe(false);
     } finally {
       await mounted.cleanup();
     }
@@ -4543,6 +4779,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("lets an empty project draft switch to another open project", async () => {
+    const longOtherProjectName =
+      "Other Project With an Intentionally Long Name for Responsive Heading Coverage";
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: withOpenProjectPickerFixtures(
@@ -4550,6 +4788,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           targetMessageId: "msg-user-project-picker-switch-test" as MessageId,
           targetText: "project picker switch test",
         }),
+        longOtherProjectName,
       ),
     });
 
@@ -4573,9 +4812,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       useComposerDraftStore.getState().setProjectDraftThreadId(OTHER_PROJECT_ID, OTHER_THREAD_ID);
       useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "replace this other draft");
 
-      const projectPickerTrigger = page.getByTestId("project-picker-trigger");
-      await expect.element(projectPickerTrigger).toHaveTextContent("project");
-      await projectPickerTrigger.click();
+      const headingProjectTrigger = page.getByTestId("empty-landing-heading-project-trigger");
+      await expect.element(headingProjectTrigger).toHaveTextContent("Project");
+      expect(page.getByTestId("project-picker-trigger").elements()).toHaveLength(0);
+      await headingProjectTrigger.click();
 
       await expect.element(page.getByText("New project")).toBeInTheDocument();
       await expect.element(page.getByText("Don't work in a project")).toBeInTheDocument();
@@ -4601,25 +4841,210 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      await projectPickerTrigger.click();
+      await headingProjectTrigger.click();
       await page.getByText("other", { exact: true }).click();
 
       await vi.waitFor(
         () => {
+          expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
           expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
-            projectId: OTHER_PROJECT_ID,
-            envMode: "local",
-            branch: null,
-            worktreePath: null,
+            projectId: PROJECT_ID,
+            envMode: "worktree",
+            branch: "feature/keep-out",
+            worktreePath: "/repo/project/.worktrees/feature-keep-out",
           });
-          expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toBeNull();
-          expect(
-            useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID],
-          ).toBeUndefined();
+          expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toMatchObject({
+            projectId: OTHER_PROJECT_ID,
+          });
+          expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
+            "replace this other draft",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const emptyLandingHeading = page.getByTestId("empty-landing-heading");
+      await expect
+        .element(emptyLandingHeading)
+        .toHaveAccessibleName(`What should we do in ${longOtherProjectName}?`);
+      await expect.element(headingProjectTrigger).toHaveTextContent(longOtherProjectName);
+      await expect
+        .element(headingProjectTrigger)
+        .toHaveAccessibleName(`Change project from ${longOtherProjectName}`);
+
+      await mounted.setViewport({ ...DEFAULT_VIEWPORT, width: 760, height: 700 });
+      const headingProjectElement = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            '[data-testid="empty-landing-heading-project-trigger"]',
+          ),
+        "Unable to find responsive heading project trigger.",
+      );
+      const headingProjectCluster = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            '[data-testid="empty-landing-heading-project-cluster"]',
+          ),
+        "Unable to find responsive heading project cluster.",
+      );
+      const emptyLandingHeadingElement = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-testid="empty-landing-heading"]'),
+        "Unable to find responsive empty landing heading.",
+      );
+      expect(headingProjectElement.scrollWidth).toBeGreaterThan(headingProjectElement.clientWidth);
+      expect(headingProjectCluster.getBoundingClientRect().width).toBeLessThanOrEqual(
+        emptyLandingHeadingElement.getBoundingClientRect().width,
+      );
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
+
+      await headingProjectTrigger.click();
+      await page.getByText("project", { exact: true }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.pathname).toBe(newThreadPath);
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            projectId: PROJECT_ID,
+            envMode: "worktree",
+            branch: "feature/keep-out",
+            worktreePath: "/repo/project/.worktrees/feature-keep-out",
+          });
         },
         { timeout: 8_000, interval: 16 },
       );
       expect(mounted.router.state.location.pathname).toBe(newThreadPath);
+      await expect
+        .element(emptyLandingHeading)
+        .toHaveAccessibleName("What should we do in Project?");
+      await expect.element(headingProjectTrigger).toHaveTextContent("Project");
+      await expect
+        .element(headingProjectTrigger)
+        .toHaveAccessibleName("Change project from Project");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("activates an occupied project draft through the owning split pane", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-split-ownership" as MessageId,
+          targetText: "project picker split ownership",
+        }),
+      ),
+    });
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const sourcePath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a split source draft.",
+      );
+      const sourceThreadId = sourcePath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setPrompt(sourceThreadId, "preserve split source draft");
+      useComposerDraftStore.getState().setProjectDraftThreadId(OTHER_PROJECT_ID, OTHER_THREAD_ID);
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "preserve split target draft");
+
+      const splitViewId = useSplitViewStore.getState().createFromDrop({
+        sourceThreadId,
+        ownerProjectId: PROJECT_ID,
+        droppedThreadId: THREAD_ID,
+        direction: "horizontal",
+        side: "second",
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: sourceThreadId },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+        expect(mounted.router.state.location.pathname).toBe(sourcePath);
+      });
+
+      const splitSourceTrigger = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-split-chat-pane]"))
+            .find(
+              (pane) =>
+                pane.querySelector('[data-testid="empty-landing-heading-project-trigger"]') !==
+                null,
+            )
+            ?.querySelector<HTMLElement>('[data-testid="empty-landing-heading-project-trigger"]') ??
+          null,
+        "Unable to find the source project picker inside the split pane.",
+      );
+      splitSourceTrigger.click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        const splitView = useSplitViewStore.getState().splitViewsById[splitViewId];
+        expect(splitView).toBeDefined();
+        expect(resolveSplitViewThreadIds(splitView!)).toEqual(
+          expect.arrayContaining([THREAD_ID, OTHER_THREAD_ID]),
+        );
+        expect(resolveSplitViewThreadIds(splitView!)).not.toContain(sourceThreadId);
+        expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[sourceThreadId]?.prompt).toBe(
+        "preserve split source draft",
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
+        "preserve split target draft",
+      );
+      await vi.waitFor(() => {
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("composer-editor");
+      });
+
+      const splitAfterReplacement = useSplitViewStore.getState().splitViewsById[splitViewId]!;
+      const originalServerPaneId = resolveSplitViewPaneIdForThread(
+        splitAfterReplacement,
+        THREAD_ID,
+      );
+      expect(originalServerPaneId).not.toBeNull();
+      useSplitViewStore
+        .getState()
+        .replacePaneThread(splitViewId, originalServerPaneId!, sourceThreadId);
+      useSplitViewStore.getState().setFocusedPane(splitViewId, originalServerPaneId!);
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: sourceThreadId },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toBe(sourcePath);
+        expect(
+          document.querySelector(
+            `form[data-chat-pane-scope="${splitViewPaneScopeId(splitViewId, originalServerPaneId!)}"]`,
+          ),
+        ).not.toBeNull();
+      });
+
+      const existingTargetTrigger = await waitForElement(() => {
+        const sourceComposerForm = document.querySelector<HTMLFormElement>(
+          `form[data-chat-pane-scope="${splitViewPaneScopeId(splitViewId, originalServerPaneId!)}"]`,
+        );
+        return (
+          sourceComposerForm
+            ?.closest("[data-split-chat-pane]")
+            ?.querySelector<HTMLElement>('[data-testid="empty-landing-heading-project-trigger"]') ??
+          null
+        );
+      }, "Unable to find the source picker before focusing the existing target pane.");
+      existingTargetTrigger.click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        const splitView = useSplitViewStore.getState().splitViewsById[splitViewId];
+        expect(splitView).toBeDefined();
+        expect(resolveSplitViewThreadIds(splitView!).toSorted()).toEqual(
+          [sourceThreadId, OTHER_THREAD_ID].toSorted(),
+        );
+        expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
+        expect(splitView?.focusedPaneId).toBe(
+          resolveSplitViewPaneIdForThread(splitView!, OTHER_THREAD_ID),
+        );
+      });
     } finally {
       await mounted.cleanup();
     }
@@ -4761,7 +5186,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
-      const projectPickerTrigger = page.getByTestId("project-picker-trigger");
+      const projectPickerTrigger = page.getByTestId("empty-landing-heading-project-trigger");
       await expect.element(projectPickerTrigger).toBeInTheDocument();
       await projectPickerTrigger.click();
       await page.getByText("Don't work in a project").click();
@@ -4778,6 +5203,113 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
       await expect.element(page.getByTestId("workspace-picker-trigger")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps an unsent project draft when Home is being removed", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-home-removal" as MessageId,
+          targetText: "project picker Home removal",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+    });
+    const reservation = reserveProjectRemoval(HOME_PROJECT_ID);
+    expect(reservation).not.toBeNull();
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep my unsent Home switch");
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("Don't work in a project").click();
+
+      await expect
+        .element(
+          page.getByText(
+            "That project is being removed. Your draft stayed in its current project.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "keep my unsent Home switch",
+      );
+      expect(hasActiveProjectOperations(HOME_PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("navigates to a promoting Home draft instead of replacing its recovery state", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-occupied-home" as MessageId,
+          targetText: "project picker occupied home",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+    });
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new project draft UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setProjectDraftThreadId(HOME_PROJECT_ID, OTHER_THREAD_ID);
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "keep occupied Home draft");
+      useComposerDraftStore.getState().markDraftThreadPromoting(OTHER_THREAD_ID);
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("Don't work in a project").click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            projectId: PROJECT_ID,
+          });
+          expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toMatchObject({
+            projectId: HOME_PROJECT_ID,
+            promotedTo: OTHER_THREAD_ID,
+          });
+          expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
+            "keep occupied Home draft",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -4833,15 +5365,27 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const beforeRect = controlsBefore!.getBoundingClientRect();
       const composerBlockBeforeRect = composerBlockBefore!.getBoundingClientRect();
       await workspacePickerTrigger.click();
-
-      const projectOption = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')).find(
-            (item) => item.textContent?.trim() === "project",
-          ) ?? null,
-        "Unable to find existing project option.",
-      );
-      projectOption.click();
+      const projectSearch = page.getByPlaceholder("Search projects");
+      await projectSearch.fill("project");
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('[data-slot="combobox-item"]')).toHaveLength(1);
+      });
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.waitFor(() => {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          'input[placeholder="Search projects"]',
+        );
+        expect(document.activeElement).toBe(searchInput);
+        expect(searchInput?.getAttribute("aria-activedescendant")).toBeTruthy();
+        expect(
+          document.querySelector<HTMLElement>('[data-slot="combobox-item"][data-highlighted]')
+            ?.textContent,
+        ).toContain("project");
+      });
+      await userEvent.keyboard("{Enter}");
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-slot="combobox-popup"]')).toBeNull();
+      });
 
       await vi.waitFor(
         () => {
@@ -4854,7 +5398,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      await expect.element(page.getByTestId("project-picker-trigger")).toBeInTheDocument();
+      await expect
+        .element(page.getByTestId("empty-landing-heading-project-trigger"))
+        .toBeInTheDocument();
       await expect.element(page.getByRole("button", { name: "Local" })).toBeInTheDocument();
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -4880,6 +5426,228 @@ describe("ChatView timeline estimator parity (full app)", () => {
         Math.round(Math.abs(composerBlockAfterRect.top - composerBlockBeforeRect.top)),
       ).toBeLessThanOrEqual(1);
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps an unsent draft in its source project when the picker target is being removed", async () => {
+    const prompt = "keep this draft outside the project being removed";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: HOME_PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [HOME_PROJECT_ID]: THREAD_ID },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, prompt);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withStudioProject(withHomeChatProject(createDraftOnlySnapshot())),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        projects: {
+          ...api.projects,
+          // The workspace picker lists home-directory folders on open. Without a resolving mock the
+          // load rejects, and its "Unable to load folders." error (plus the effect's `setErrorMessage(null)`
+          // reset when it re-runs on reopen) would clobber the project-removal feedback this test asserts.
+          // Return a non-project folder so `directoryEntries` stays populated and the reopen effect
+          // short-circuits, mirroring a real home directory that has folders.
+          listDirectories: vi.fn(async () => ({
+            entries: [
+              {
+                path: "Reference",
+                name: "Reference",
+                kind: "directory" as const,
+                hasChildren: false,
+              },
+            ],
+          })),
+        },
+      }),
+    });
+    const reservation = reserveProjectRemoval(PROJECT_ID);
+    expect(reservation).not.toBeNull();
+
+    try {
+      await page.getByTestId("workspace-picker-trigger").click();
+      const projectSearch = page.getByPlaceholder("Search projects");
+      await projectSearch.fill("project");
+      // The base-ui combobox registers its highlight a tick after ArrowDown, so split the
+      // keystrokes and wait for `aria-activedescendant`/`data-highlighted` before Enter — firing
+      // them back-to-back lets Enter run before any item is highlighted, selecting nothing.
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('[data-slot="combobox-item"]')).toHaveLength(1);
+      });
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.waitFor(() => {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          'input[placeholder="Search projects"]',
+        );
+        expect(document.activeElement).toBe(searchInput);
+        expect(searchInput?.getAttribute("aria-activedescendant")).toBeTruthy();
+        expect(
+          document.querySelector<HTMLElement>('[data-slot="combobox-item"][data-highlighted]')
+            ?.textContent,
+        ).toContain("project");
+      });
+      await userEvent.keyboard("{Enter}");
+
+      await expect
+        .element(
+          page.getByText(
+            "That project is being removed. Your draft stayed in its current project.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: HOME_PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(prompt);
+      expect(useComposerDraftStore.getState().projectDraftThreadIdByProjectId[PROJECT_ID]).toBe(
+        undefined,
+      );
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps an unsent draft when the folder picker resolves to a project being removed", async () => {
+    const pickFolder = vi.fn(async () => "/repo/other");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-folder-removal" as MessageId,
+          targetText: "folder picker removal source",
+        }),
+      ),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, pickFolder },
+      }),
+    });
+    const reservation = reserveProjectRemoval(OTHER_PROJECT_ID);
+    expect(reservation).not.toBeNull();
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep folder-picker draft");
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("New project").click();
+      await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+
+      await expect
+        .element(
+          page.getByText(
+            "That project is being removed. Your draft stayed in its current project.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "keep folder-picker draft",
+      );
+      expect(
+        useComposerDraftStore.getState().projectDraftThreadIdByProjectId[OTHER_PROJECT_ID],
+      ).toBe(undefined);
+      expect(hasActiveProjectOperations(OTHER_PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a container draft intact when its resolved target project is being removed", async () => {
+    const prompt = "preserve this cross-project first send";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: HOME_PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: "/repo/project",
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [HOME_PROJECT_ID]: THREAD_ID },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, prompt);
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(createDraftOnlySnapshot()),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        git: { ...api.git, createWorktree },
+      }),
+    });
+    const reservation = reserveProjectRemoval(PROJECT_ID);
+    expect(reservation).not.toBeNull();
+    const requestStart = wsRequests.length;
+
+    try {
+      await userEvent.click(await waitForSendButton());
+      await expect
+        .element(
+          page.getByText(
+            "The destination project is being removed. Your message and attachments were kept.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: HOME_PROJECT_ID,
+        worktreePath: "/repo/project",
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(prompt);
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.create"),
+      ).toBe(false);
+      await vi.waitFor(() => expect(hasActiveProjectOperations(HOME_PROJECT_ID)).toBe(false));
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
       await mounted.cleanup();
     }
   });
@@ -4925,7 +5693,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       },
     });
-
     try {
       const newThreadButton = page.getByLabelText("Create new thread in Project");
       await expect.element(newThreadButton).toBeInTheDocument();
@@ -4938,7 +5705,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
-      const projectPickerTrigger = page.getByTestId("project-picker-trigger");
+      const projectPickerTrigger = page.getByTestId("empty-landing-heading-project-trigger");
       await expect.element(projectPickerTrigger).toBeInTheDocument();
       await projectPickerTrigger.click();
       await page.getByText("New project").click();
@@ -4986,6 +5753,1512 @@ describe("ChatView timeline estimator parity (full app)", () => {
       } else {
         Reflect.deleteProperty(window, "nativeApi");
       }
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not let late project creation mutate a draft after same-ID promotion", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-project-picker-navigation-race" as MessageId,
+        targetText: "project picker navigation race",
+      }),
+    });
+    const previousNativeApi = window.nativeApi;
+    const wsNativeApi = readNativeApi();
+    expect(wsNativeApi).toBeDefined();
+    const pickFolder = vi.fn(async () => "/repo/slow-navigation-project");
+    let createdProjectId: ProjectId | null = null;
+    let slowCreateSettled = false;
+    let releaseSlowCreate!: () => void;
+    const slowCreateGate = new Promise<void>((resolve) => {
+      releaseSlowCreate = resolve;
+    });
+    const dispatchCommand = vi.fn(async (command: unknown) => {
+      wsRequests.push({
+        _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+        command,
+      });
+      if (recordProjectCreateCommand(command)) {
+        if (command && typeof command === "object" && "projectId" in command) {
+          createdProjectId = command.projectId as ProjectId;
+        }
+        await slowCreateGate;
+        slowCreateSettled = true;
+        return { sequence: fixture.snapshot.snapshotSequence };
+      }
+      return { sequence: fixture.snapshot.snapshotSequence + 1 };
+    });
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...wsNativeApi,
+        dialogs: { ...wsNativeApi?.dialogs, pickFolder },
+        orchestration: {
+          ...wsNativeApi?.orchestration,
+          dispatchCommand,
+          getShellSnapshot: vi.fn(async () => createShellSnapshotFromReadModel(fixture.snapshot)),
+        },
+      },
+    });
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("New project").click();
+      await vi.waitFor(() => expect(createdProjectId).not.toBeNull());
+      await expect.element(page.getByText("New project")).not.toBeInTheDocument();
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep this in the chosen project");
+      const sendRequestStart = wsRequests.length;
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+      expect(
+        wsRequests
+          .slice(sendRequestStart)
+          .some((request) => readDispatchedCommand(request)?.type === "thread.create"),
+      ).toBe(false);
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "keep this in the chosen project",
+      );
+      useComposerDraftStore.getState().markDraftThreadPromoting(newThreadId);
+
+      releaseSlowCreate();
+      await vi.waitFor(() => {
+        expect(slowCreateSettled).toBe(true);
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+        promotedTo: newThreadId,
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.projectId).not.toBe(
+        createdProjectId,
+      );
+    } finally {
+      releaseSlowCreate();
+      if (previousNativeApi) {
+        Object.defineProperty(window, "nativeApi", {
+          configurable: true,
+          value: previousNativeApi,
+        });
+      } else {
+        Reflect.deleteProperty(window, "nativeApi");
+      }
+      await mounted.cleanup();
+    }
+  });
+
+  it("releases the send gate and rejects a late native picker after same-pane navigation", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-dialog-race" as MessageId,
+          targetText: "project picker dialog race",
+        }),
+      ),
+    });
+    const previousNativeApi = window.nativeApi;
+    const wsNativeApi = readNativeApi();
+    expect(wsNativeApi).toBeDefined();
+    let releasePickFolder!: () => void;
+    const pickFolderGate = new Promise<void>((resolve) => {
+      releasePickFolder = resolve;
+    });
+    const pickFolder = vi.fn(async () => {
+      await pickFolderGate;
+      return "/repo/stale-picker-project";
+    });
+    const dispatchCommand = vi.fn(async (command: unknown) => {
+      wsRequests.push({
+        _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+        command,
+      });
+      return { sequence: fixture.snapshot.snapshotSequence + 1 };
+    });
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...wsNativeApi,
+        dialogs: { ...wsNativeApi?.dialogs, pickFolder },
+        orchestration: { ...wsNativeApi?.orchestration, dispatchCommand },
+      },
+    });
+    const requestStart = wsRequests.length;
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("New project").click();
+      await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+
+      const destinationThreadId = "00000000-0000-4000-8000-000000000128" as ThreadId;
+      useComposerDraftStore.getState().registerDraftThread(destinationThreadId, {
+        projectId: OTHER_PROJECT_ID,
+        createdAt: NOW_ISO,
+      });
+      useComposerDraftStore.getState().setModelSelection(destinationThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(destinationThreadId, "send while the previous picker is still pending");
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: destinationThreadId },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${destinationThreadId}`,
+        "The destination draft should be selected while the native picker is pending.",
+      );
+
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain(
+          "send while the previous picker is still pending",
+        );
+      });
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      await sendButton.click();
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some((request) => {
+              const command = readDispatchedCommand(request);
+              return command?.type === "thread.create" && command.threadId === destinationThreadId;
+            }),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      releasePickFolder();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              "command" in request &&
+              request.command &&
+              typeof request.command === "object" &&
+              "type" in request.command &&
+              request.command.type === "project.create",
+          ),
+      ).toBe(false);
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+    } finally {
+      releasePickFolder();
+      if (previousNativeApi) {
+        Object.defineProperty(window, "nativeApi", {
+          configurable: true,
+          value: previousNativeApi,
+        });
+      } else {
+        Reflect.deleteProperty(window, "nativeApi");
+      }
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not move a draft while its first send is still in provider preflight", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-send-race" as MessageId,
+          targetText: "project picker send race",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: {
+          ...api.server,
+          refreshProviders,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      useComposerDraftStore.getState().setModelSelection(newThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(newThreadId, "keep this send in the original project");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain(
+          "keep this send in the original project",
+        );
+      });
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      const otherProjectOption = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')).find(
+            (item) => item.textContent?.trim() === "other",
+          ) ?? null,
+        "Unable to find the Other Project picker option.",
+      );
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      // Start the send and choose the already-open project option in the same
+      // task. This reproduces the rapid reverse-order race before React hides
+      // the empty-draft landing for provider preflight.
+      composerForm.requestSubmit();
+      otherProjectOption.click();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const createCommand = wsRequests
+            .map(readDispatchedCommand)
+            .find(
+              (command) => command?.type === "thread.create" && command.threadId === newThreadId,
+            );
+          expect(createCommand).toMatchObject({
+            projectId: PROJECT_ID,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("rejects a raw workspace choice while that draft is still in provider preflight", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: HOME_PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [HOME_PROJECT_ID]: THREAD_ID },
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(createDraftOnlySnapshot()),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        projects: {
+          ...api.projects,
+          listDirectories: vi.fn(async () => ({
+            entries: [
+              {
+                path: "Race Folder",
+                name: "Race Folder",
+                kind: "directory" as const,
+                hasChildren: false,
+              },
+            ],
+          })),
+        },
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setModelSelection(THREAD_ID, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "send from the original Home scope");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("send from the original Home scope");
+      });
+
+      const workspacePickerTrigger = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-testid="workspace-picker-trigger"]'),
+        "Unable to find the Home workspace picker before the send race.",
+      );
+      workspacePickerTrigger.click();
+      const rawFolderOption = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')).find(
+            (item) => item.textContent?.trim() === "Race Folder",
+          ) ?? null,
+        "Unable to find the raw workspace option.",
+      );
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+      rawFolderOption.click();
+
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+      const pickerError = await waitForElement(
+        () => document.querySelector<HTMLElement>('[role="alert"]'),
+        "The rejected workspace mutation should reopen the picker with an error.",
+      );
+      expect(pickerError.textContent).toContain("Wait for the current message to finish preparing");
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: HOME_PROJECT_ID,
+        envMode: "local",
+        worktreePath: null,
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const createCommand = wsRequests
+            .map(readDispatchedCommand)
+            .find((command) => command?.type === "thread.create" && command.threadId === THREAD_ID);
+          expect(createCommand).toMatchObject({
+            envMode: "local",
+            worktreePath: null,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets the next same-pane draft change projects while the previous draft send is pending", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(
+        withOpenProjectPickerFixtures(
+          createSnapshotForTargetUser({
+            targetMessageId: "msg-user-project-picker-thread-owner-race" as MessageId,
+            targetText: "project picker thread owner race",
+          }),
+        ),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByLabelText("Create new thread in Project").click();
+      const sourcePath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to the source draft.",
+      );
+      const sourceThreadId = sourcePath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setModelSelection(sourceThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore.getState().setPrompt(sourceThreadId, "send from source draft");
+      useComposerDraftStore.getState().addImages(sourceThreadId, [
+        createComposerImage({
+          id: "source-preflight-image",
+          previewUrl: "blob:source-preflight-image",
+          name: "source-preflight-image.png",
+        }),
+      ]);
+      const sourceComposer = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(sourceComposer.textContent ?? "").toContain("send from source draft");
+      });
+      const sourceForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find source composer form.",
+      );
+      sourceForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      const destinationThreadId = "00000000-0000-4000-8000-000000000129" as ThreadId;
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(HOME_PROJECT_ID, destinationThreadId);
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: destinationThreadId },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${destinationThreadId}`,
+        "The destination draft should own the pane while the source send remains pending.",
+      );
+
+      await page.getByTestId("workspace-picker-trigger").click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().getDraftThread(destinationThreadId)).toMatchObject({
+          projectId: OTHER_PROJECT_ID,
+          envMode: "local",
+          worktreePath: null,
+        });
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(sourceThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(destinationThreadId, "destination remains independently sendable");
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const createCommand = wsRequests
+            .map(readDispatchedCommand)
+            .find(
+              (command) => command?.type === "thread.create" && command.threadId === sourceThreadId,
+            );
+          expect(createCommand).toMatchObject({ projectId: PROJECT_ID });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await vi.waitFor(() => {
+        const destinationComposer = document.querySelector<HTMLElement>(
+          '[data-testid="composer-editor"]',
+        );
+        expect(destinationComposer?.textContent ?? "").toContain(
+          "destination remains independently sendable",
+        );
+        expect(document.body.textContent ?? "").not.toContain("send from source draft");
+        expect(
+          document.querySelector('[aria-label="Preview source-preflight-image.png"]'),
+        ).toBeNull();
+      });
+
+      const destinationForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the destination composer after the source preflight completed.",
+      );
+      destinationForm.requestSubmit();
+      await vi.waitFor(
+        () => {
+          const destinationCreate = wsRequests
+            .map(readDispatchedCommand)
+            .find(
+              (command) =>
+                command?.type === "thread.create" && command.threadId === destinationThreadId,
+            );
+          expect(destinationCreate).toMatchObject({ projectId: OTHER_PROJECT_ID });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps optimistic prompts and previews owned by their source across same-pane navigation", async () => {
+    const sourcePrompt = "source optimistic prompt must stay private";
+    const destinationPrompt = "destination sends independently";
+    const sourcePreviewUrl = "blob:source-owned-optimistic-image";
+    let releaseSourceTurn!: () => void;
+    const sourceTurnGate = new Promise<void>((resolve) => {
+      releaseSourceTurn = resolve;
+    });
+    let sourceAcknowledgedMessage: ChatMessage | null = null;
+    const getSourceAcknowledgedMessage = () => sourceAcknowledgedMessage;
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addThreadToSnapshot(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-optimistic-owner-source" as MessageId,
+          targetText: "existing source message",
+        }),
+        OTHER_THREAD_ID,
+      ),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.turn.start" && command.threadId === THREAD_ID) {
+              sourceAcknowledgedMessage = {
+                id: command.message.messageId,
+                role: "user",
+                text: command.message.text,
+                attachments: command.message.attachments,
+                dispatchMode: command.dispatchMode,
+                createdAt: command.createdAt,
+                streaming: false,
+                source: "native",
+              };
+              await sourceTurnGate;
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, sourcePrompt);
+      useComposerDraftStore.getState().addImages(THREAD_ID, [
+        createComposerImage({
+          id: "source-owned-optimistic-image",
+          previewUrl: sourcePreviewUrl,
+          name: "source-owned.png",
+        }),
+      ]);
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the source composer for optimistic ownership.",
+        )
+      ).requestSubmit();
+
+      await vi.waitFor(() => {
+        expect(getSourceAcknowledgedMessage()).not.toBeNull();
+        expect(document.body.textContent ?? "").toContain(sourcePrompt);
+        expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
+      });
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: OTHER_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${OTHER_THREAD_ID}`,
+        "Destination thread should own the pane.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").not.toContain(sourcePrompt);
+        expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).toBeNull();
+      });
+      const destinationEditor = await waitForComposerEditor();
+      destinationEditor.focus();
+      await userEvent.keyboard("{ArrowUp}");
+      expect(destinationEditor.textContent ?? "").not.toContain(sourcePrompt);
+
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, destinationPrompt);
+      await vi.waitFor(() => {
+        expect(destinationEditor.textContent ?? "").toContain(destinationPrompt);
+      });
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the destination composer.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === OTHER_THREAD_ID,
+            ),
+        ).toBe(true);
+      });
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Source thread should regain the pane.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain(sourcePrompt);
+        expect(document.body.textContent ?? "").not.toContain(destinationPrompt);
+        expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
+      });
+
+      const acknowledgedMessage = getSourceAcknowledgedMessage();
+      if (!acknowledgedMessage) {
+        throw new Error("Source turn acknowledgement was not captured.");
+      }
+
+      const splitViewId = useSplitViewStore.getState().createFromDrop({
+        sourceThreadId: THREAD_ID,
+        ownerProjectId: PROJECT_ID,
+        droppedThreadId: OTHER_THREAD_ID,
+        direction: "horizontal",
+        side: "second",
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+        const sourceRows = document.querySelectorAll(
+          `[data-message-id="${acknowledgedMessage.id}"]`,
+        );
+        expect(sourceRows).toHaveLength(1);
+        const sourcePane = sourceRows[0]!.closest<HTMLElement>("[data-split-chat-pane]");
+        expect(sourcePane?.textContent ?? "").toContain(sourcePrompt);
+        expect(sourcePane?.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
+        const destinationPane = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-split-chat-pane]"),
+        ).find((pane) => pane !== sourcePane);
+        expect(destinationPane).toBeDefined();
+        expect(destinationPane?.textContent ?? "").not.toContain(sourcePrompt);
+        expect(destinationPane?.querySelector(`img[src="${sourcePreviewUrl}"]`)).toBeNull();
+        expect(revokeObjectUrl).not.toHaveBeenCalledWith(sourcePreviewUrl);
+      });
+
+      releaseSourceTurn();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) => command?.type === "thread.turn.start" && command.threadId === THREAD_ID,
+            ),
+        ).toBe(true);
+      });
+      useStore.setState((state) => {
+        const existingMessageIds = state.messageIdsByThreadId?.[THREAD_ID] ?? [];
+        const existingMessagesById = state.messageByThreadId?.[THREAD_ID] ?? {};
+        return {
+          messageIdsByThreadId: {
+            ...state.messageIdsByThreadId,
+            [THREAD_ID]: [...existingMessageIds, acknowledgedMessage.id],
+          },
+          messageByThreadId: {
+            ...state.messageByThreadId,
+            [THREAD_ID]: {
+              ...existingMessagesById,
+              [acknowledgedMessage.id]: acknowledgedMessage,
+            },
+          },
+        };
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelectorAll(`[data-message-id="${acknowledgedMessage.id}"]`),
+          ).toHaveLength(1);
+          expect(revokeObjectUrl).toHaveBeenCalledWith(sourcePreviewUrl);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(revokeObjectUrl.mock.calls.filter(([url]) => url === sourcePreviewUrl)).toHaveLength(
+        1,
+      );
+    } finally {
+      releaseSourceTurn();
+      revokeObjectUrl.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
+  it("removes a failed optimistic send without overwriting newer composer content", async () => {
+    const failedPreviewUrl = "blob:failed-send-preview";
+    const newerPreviewUrl = "blob:newer-composer-preview";
+    let releaseTurnStart!: () => void;
+    const turnStartGate = new Promise<void>((resolve) => {
+      releaseTurnStart = resolve;
+    });
+    let turnStartHeld = false;
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-failed-optimistic-owner" as MessageId,
+        targetText: "existing message",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.turn.start" && command.threadId === THREAD_ID) {
+              turnStartHeld = true;
+              await turnStartGate;
+              throw new Error("deterministic held pre-turn failure");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "failed outgoing prompt");
+      useComposerDraftStore.getState().addImages(THREAD_ID, [
+        createComposerImage({
+          id: "failed-send-image",
+          previewUrl: failedPreviewUrl,
+          name: "failed-send.png",
+        }),
+      ]);
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the composer before the held failure.",
+        )
+      ).requestSubmit();
+
+      await vi.waitFor(() => {
+        expect(turnStartHeld).toBe(true);
+        expect(useOptimisticUserMessageStore.getState().messagesByThreadId[THREAD_ID]).toHaveLength(
+          1,
+        );
+      });
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "newer untouched prompt");
+      useComposerDraftStore.getState().addImages(THREAD_ID, [
+        createComposerImage({
+          id: "newer-composer-image",
+          previewUrl: newerPreviewUrl,
+          name: "newer.png",
+        }),
+      ]);
+
+      releaseTurnStart();
+      await vi.waitFor(() => {
+        expect(
+          useOptimisticUserMessageStore.getState().messagesByThreadId[THREAD_ID],
+        ).toBeUndefined();
+        expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toMatchObject({
+          prompt: "newer untouched prompt",
+          images: [{ id: "newer-composer-image", previewUrl: newerPreviewUrl }],
+        });
+      });
+      expect(revokeObjectUrl.mock.calls.filter(([url]) => url === failedPreviewUrl)).toHaveLength(
+        1,
+      );
+      expect(revokeObjectUrl).not.toHaveBeenCalledWith(newerPreviewUrl);
+    } finally {
+      releaseTurnStart();
+      revokeObjectUrl.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the same-thread send gate when provider preflight crosses a split remount", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-split-preflight" as MessageId,
+          targetText: "project picker split preflight",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByLabelText("Create new thread in Project").click();
+      const sourcePath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to the split-preflight source draft.",
+      );
+      const sourceThreadId = sourcePath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setModelSelection(sourceThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(sourceThreadId, "one send must survive the split remount");
+      const sourceForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the source composer before splitting during preflight.",
+      );
+      sourceForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      const splitViewId = useSplitViewStore.getState().createFromThread({
+        sourceThreadId,
+        ownerProjectId: PROJECT_ID,
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: sourceThreadId },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+      });
+
+      const remountedSourcePane = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-split-chat-pane]")).find(
+            (pane) =>
+              pane.querySelector('[data-testid="empty-landing-heading-project-trigger"]') !== null,
+          ) ?? null,
+        "Unable to find the remounted source pane.",
+      );
+      remountedSourcePane
+        .querySelector<HTMLElement>('[data-testid="empty-landing-heading-project-trigger"]')!
+        .click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        expect(document.querySelector<HTMLElement>('[role="alert"]')?.textContent ?? "").toContain(
+          "Wait for the current message to finish preparing",
+        );
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(sourceThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+
+      const remountedSourceForm = remountedSourcePane.querySelector<HTMLFormElement>(
+        'form[data-chat-composer-form="true"]',
+      );
+      expect(remountedSourceForm).not.toBeNull();
+      remountedSourceForm!.requestSubmit();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+      expect(refreshProviders).toHaveBeenCalledOnce();
+      expect(
+        wsRequests
+          .map(readDispatchedCommand)
+          .filter(
+            (command) =>
+              command?.type === "thread.turn.start" && command.threadId === sourceThreadId,
+          ),
+      ).toHaveLength(0);
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const turnStarts = wsRequests
+            .map(readDispatchedCommand)
+            .filter(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === sourceThreadId,
+            );
+          expect(turnStarts).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("abandons provider preflight when its source thread is deleted", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-provider-preflight" as MessageId,
+        targetText: "deleted provider preflight",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "do not resurrect this draft");
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before deleting its pending send.",
+      );
+      const requestStart = wsRequests.length;
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useStore.getState().deletedThreadIdsById?.[THREAD_ID]).toBe(true);
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(wsRequests.slice(requestStart).map(readDispatchedCommand).filter(Boolean)).toEqual([]);
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("abandons browser capture when its source thread is deleted", async () => {
+    let resolveCapture!: (value: {
+      name: string;
+      mimeType: "image/png";
+      sizeBytes: number;
+      bytes: Uint8Array;
+    }) => void;
+    const capture = new Promise<{
+      name: string;
+      mimeType: "image/png";
+      sizeBytes: number;
+      bytes: Uint8Array;
+    }>((resolve) => {
+      resolveCapture = resolve;
+    });
+    const captureScreenshot = vi.fn<NativeApi["browser"]["captureScreenshot"]>(() => capture);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-browser-capture" as MessageId,
+        targetText: "deleted browser capture",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        browser: {
+          ...api.browser,
+          getState: vi.fn(async () => ({
+            threadId: THREAD_ID,
+            version: 1,
+            open: true,
+            activeTabId: "tab-active",
+            tabs: [
+              {
+                id: "tab-active",
+                kind: "web" as const,
+                url: "https://example.test",
+                displayUrl: null,
+                title: "Example",
+                status: "live" as const,
+                isLoading: false,
+                canGoBack: false,
+                canGoForward: false,
+                faviconUrl: null,
+                lastCommittedUrl: "https://example.test",
+                lastError: null,
+              },
+            ],
+            lastError: null,
+          })),
+          captureScreenshot,
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore
+        .getState()
+        .setPrompt(THREAD_ID, "look at the active tab in the in-app browser");
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the browser-capture deletion race.",
+      );
+      const requestStart = wsRequests.length;
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(captureScreenshot).toHaveBeenCalledOnce());
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveCapture({
+        name: "captured-browser.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(wsRequests.slice(requestStart).map(readDispatchedCommand).filter(Boolean)).toEqual([]);
+    } finally {
+      resolveCapture({
+        name: "captured-browser.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      });
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("rejects edit-and-resend while a normal send owns the thread preflight", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-edit-preflight-lock" as MessageId,
+      targetText: "edit preflight lock",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) => ({
+        ...thread,
+        messages: thread.messages.map((message, index) =>
+          index >= thread.messages.length - 2
+            ? { ...message, turnId: "turn-edit-preflight-lock" as TurnId }
+            : message,
+        ),
+      })),
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "normal send owns preflight");
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the edit concurrency test.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      await page.getByRole("button", { name: "Edit message" }).click();
+      const editTextArea = page.getByRole("textbox", { name: "Edit message" });
+      await editTextArea.fill("edited text must not dispatch concurrently");
+      const editForm = editTextArea.element().closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+
+      await vi.waitFor(() => {
+        const commands = wsRequests.map(readDispatchedCommand);
+        expect(commands.some((command) => command?.type === "thread.message.edit-and-resend")).toBe(
+          false,
+        );
+        expect(document.body.textContent ?? "").toContain(
+          "Wait for the current send to start before editing.",
+        );
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const turnStarts = wsRequests
+            .map(readDispatchedCommand)
+            .filter(
+              (command) => command?.type === "thread.turn.start" && command.threadId === THREAD_ID,
+            );
+          expect(turnStarts).toHaveLength(1);
+          expect(turnStarts[0]).toMatchObject({
+            message: expect.objectContaining({
+              text: expect.stringContaining("normal send owns preflight"),
+            }),
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("abandons a plan follow-up when settings persistence outlives thread deletion", async () => {
+    let resolveSettings!: () => void;
+    const settingsGate = new Promise<void>((resolve) => {
+      resolveSettings = resolve;
+    });
+    let delayedSettingsStarted = false;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSettledPlanAwaitingFollowUp(),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.interaction-mode.set") {
+              delayedSettingsStarted = true;
+              await settingsGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      const requestStart = wsRequests.length;
+      const implementButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+            (button) => button.textContent?.trim() === "Implement",
+          ) ?? null,
+        "Unable to find the plan implementation action.",
+      );
+      implementButton.click();
+      await vi.waitFor(() => expect(delayedSettingsStarted).toBe(true));
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveSettings();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.turn.start"),
+      ).toBe(false);
+    } finally {
+      resolveSettings();
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("abandons edit-and-resend when settings persistence outlives thread deletion", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-edit-deletion-race" as MessageId,
+      targetText: "edit deletion race",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) => ({
+        ...thread,
+        messages: thread.messages.map((message, index) =>
+          index >= thread.messages.length - 2
+            ? { ...message, turnId: "turn-edit-deletion-race" as TurnId }
+            : message,
+        ),
+      })),
+    };
+    let resolveSettings!: () => void;
+    const settingsGate = new Promise<void>((resolve) => {
+      resolveSettings = resolve;
+    });
+    let delayedSettingsStarted = false;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.meta.update" && command.modelSelection !== undefined) {
+              delayedSettingsStarted = true;
+              await settingsGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setModelSelection(THREAD_ID, {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+      });
+      await vi.waitFor(() => {
+        expect(
+          useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
+            .codex,
+        ).toEqual({
+          provider: "codex",
+          model: "gpt-5.3-codex",
+        });
+      });
+      const requestStart = wsRequests.length;
+      const editButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Edit message"]'),
+        "Unable to find the edit action before the deletion race.",
+      );
+      editButton.click();
+      const editTextArea = await waitForElement(
+        () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit message"]'),
+        "Unable to find the edit textarea before the deletion race.",
+      );
+      await userEvent.fill(editTextArea, "edited text must not outlive deletion");
+      const editForm = editTextArea.closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+      await vi.waitFor(() => expect(delayedSettingsStarted).toBe(true));
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveSettings();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.message.edit-and-resend"),
+      ).toBe(false);
+    } finally {
+      resolveSettings();
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
       await mounted.cleanup();
     }
   });
@@ -5089,6 +7362,1458 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("records a recovery draft when dirty worktree cleanup refuses after source deletion", async () => {
+    const existingPrimaryDraftId = ThreadId.makeUnsafe("thread-existing-primary-draft");
+    type CreateWorktreeResult = Awaited<ReturnType<NativeApi["git"]["createWorktree"]>>;
+    let resolveCreateWorktree!: (value: CreateWorktreeResult) => void;
+    const createWorktreeResult = new Promise<CreateWorktreeResult>((resolve) => {
+      resolveCreateWorktree = resolve;
+    });
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(() => createWorktreeResult);
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
+    let resolveMetadata!: () => void;
+    const metadataGate = new Promise<void>((resolve) => {
+      resolveMetadata = resolve;
+    });
+    let metadataStarted = false;
+    const snapshot = addThreadToSnapshot(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-worktree-send" as MessageId,
+        targetText: "deleted worktree send",
+      }),
+      OTHER_THREAD_ID,
+    );
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      initialEntry: `/${OTHER_THREAD_ID}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (
+              command.type === "thread.meta.update" &&
+              command.threadId === OTHER_THREAD_ID &&
+              command.envMode === "worktree"
+            ) {
+              metadataStarted = true;
+              await metadataGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+        git: {
+          ...api.git,
+          createWorktree,
+          removeWorktree,
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForComposerEditor();
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, existingPrimaryDraftId);
+      useComposerDraftStore.getState().setPrompt(existingPrimaryDraftId, "existing primary prompt");
+      useStore.getState().setThreadWorkspace(OTHER_THREAD_ID, {
+        envMode: "worktree",
+        branch: "main",
+        worktreePath: null,
+      });
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "do not keep this worktree");
+      await vi.waitFor(() => {
+        const thread = useStore
+          .getState()
+          .threads.find((candidate) => candidate.id === OTHER_THREAD_ID);
+        expect(thread).toMatchObject({ envMode: "worktree", branch: "main", worktreePath: null });
+      });
+
+      const requestStart = wsRequests.length;
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the worktree-deletion race.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
+
+      resolveCreateWorktree({
+        worktree: {
+          path: "/repo/.codex/worktrees/project/deleted-send",
+          branch: "scient/deleted-send",
+        },
+      });
+      await vi.waitFor(() => expect(metadataStarted).toBe(true), {
+        timeout: 12_000,
+        interval: 16,
+      });
+
+      useStore.setState((state) => ({
+        deletedThreadIdsById: {
+          ...(state.deletedThreadIdsById ?? {}),
+          [OTHER_THREAD_ID]: true,
+        },
+      }));
+      useComposerDraftStore.getState().clearDraftThread(OTHER_THREAD_ID);
+      resolveMetadata();
+      await vi.waitFor(
+        () => {
+          expect(removeWorktree).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            path: "/repo/.codex/worktrees/project/deleted-send",
+            force: false,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const recoveryRow = page.getByRole("button", {
+        name: "Open recovered worktree scient/deleted-send at /repo/.codex/worktrees/project/deleted-send",
+      });
+      await expect.element(recoveryRow).toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        existingPrimaryDraftId,
+      );
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[existingPrimaryDraftId]?.prompt,
+      ).toBe("existing primary prompt");
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .filter(
+            (command) => command && "threadId" in command && command.threadId === OTHER_THREAD_ID,
+          ),
+      ).toEqual([]);
+
+      await page.getByTestId("new-thread-button").click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${existingPrimaryDraftId}`,
+        "The existing primary draft should remain reachable from its project action.",
+      );
+      await expect.element(recoveryRow).toBeInTheDocument();
+      await recoveryRow.click();
+      const recoveryPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path) && path !== `/${existingPrimaryDraftId}`,
+        "The surfaced recovery row should open its draft.",
+      );
+      const recoveryThreadId = recoveryPath.slice(1) as ThreadId;
+      expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+        branch: "scient/deleted-send",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-send",
+        envMode: "worktree",
+        recoveryReason: "worktree-cleanup-refused",
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[recoveryThreadId]?.prompt).toBe(
+        "do not keep this worktree",
+      );
+      const recoveryEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(recoveryEditor.textContent ?? "").toContain("do not keep this worktree");
+      });
+      await expect
+        .element(page.getByTestId("empty-landing-heading-project-trigger"))
+        .not.toBeInTheDocument();
+      const fixedProjectLabel = page.getByTestId("recovery-fixed-project-label");
+      await expect.element(fixedProjectLabel).toBeInTheDocument();
+      await expect
+        .element(fixedProjectLabel)
+        .toHaveAttribute(
+          "aria-label",
+          "Recovered worktree project is fixed to Project until retry or forget",
+        );
+      expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+        branch: "scient/deleted-send",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-send",
+        recoveryReason: "worktree-cleanup-refused",
+      });
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        existingPrimaryDraftId,
+      );
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[existingPrimaryDraftId]?.prompt,
+      ).toBe("existing primary prompt");
+      (await waitForSendButton()).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === recoveryThreadId,
+            ),
+        ).toBe(true);
+      });
+      expect(createWorktree).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(
+          Object.values(useComposerDraftStore.getState().draftThreadsByThreadId).filter(
+            (draft) =>
+              draft.recoveryReason === "worktree-cleanup-refused" && draft.promotedTo === undefined,
+          ),
+        ).toHaveLength(0);
+      });
+      await expect.element(recoveryRow).not.toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        existingPrimaryDraftId,
+      );
+    } finally {
+      resolveCreateWorktree({
+        worktree: {
+          path: "/repo/.codex/worktrees/project/deleted-send",
+          branch: "scient/deleted-send",
+        },
+      });
+      resolveMetadata();
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("blocks project removal until a recovery is explicitly forgotten without deleting files", async () => {
+    const primaryDraftId = ThreadId.makeUnsafe("thread-recovery-delete-primary");
+    const recoveryThreadId = ThreadId.makeUnsafe("b6505d06-c23b-4d42-8b6c-561402266a0f");
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    const deletedProjectIdsBeforeTest = useStore.getState().deletedProjectIdsById ?? {};
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovery-project-delete" as MessageId,
+        targetText: "recovery project delete",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        git: { ...api.git, removeWorktree },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, primaryDraftId);
+      useComposerDraftStore.getState().setPrompt(primaryDraftId, "primary survives forget");
+      useComposerDraftStore.getState().upsertWorktreeRecoveryDraft(recoveryThreadId, {
+        projectId: PROJECT_ID,
+        branch: "scient/recovery-delete-block",
+        worktreePath: "/repo/worktrees/recovery-delete-block",
+      });
+      useComposerDraftStore.getState().setPrompt(recoveryThreadId, "recovery retry content");
+
+      const recoveryRow = page.getByRole("button", {
+        name: "Open recovered worktree scient/recovery-delete-block at /repo/worktrees/recovery-delete-block",
+      });
+      await expect.element(recoveryRow).toBeInTheDocument();
+      await clickProjectRemoveAction();
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Resolve recovered worktrees first",
+          ) ?? null,
+        "Project removal should show a recovery-specific error.",
+      );
+      expect(confirm).not.toHaveBeenCalled();
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
+      await expect.element(recoveryRow).toBeInTheDocument();
+      expect(removeWorktree).not.toHaveBeenCalled();
+
+      await page
+        .getByRole("button", { name: "Forget recovered worktree scient/recovery-delete-block" })
+        .click();
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+      expect(confirm.mock.calls[0]?.[0]).toContain(
+        "It does not delete the worktree or any files at /repo/worktrees/recovery-delete-block.",
+      );
+      await expect.element(recoveryRow).not.toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        primaryDraftId,
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[primaryDraftId]?.prompt).toBe(
+        "primary survives forget",
+      );
+      expect(removeWorktree).not.toHaveBeenCalled();
+
+      await clickProjectRemoveAction();
+      await vi.waitFor(
+        () => {
+          expect(confirm).toHaveBeenCalledTimes(2);
+          expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(
+            true,
+          );
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(removeWorktree).not.toHaveBeenCalled();
+    } finally {
+      useStore.setState({
+        deletedProjectIdsById: deletedProjectIdsBeforeTest,
+        deletedThreadIdsById: deletedThreadIdsBeforeTest,
+      });
+      await mounted.cleanup();
+    }
+  });
+
+  it("blocks chat and terminal New Thread entry points while project removal is reserved", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-removal-new-thread-gate" as MessageId,
+        targetText: "new thread admission source",
+      }),
+    });
+    const reservation = reserveProjectRemoval(PROJECT_ID);
+    expect(reservation).not.toBeNull();
+    const originalPath = mounted.router.state.location.pathname;
+    const originalDraftThreadIds = Object.keys(
+      useComposerDraftStore.getState().draftThreadsByThreadId,
+    ).toSorted();
+    const requestStart = wsRequests.length;
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      await page.getByLabelText("Create new terminal thread in Project").click();
+      // Each blocked entry point raises its own "Project removal in progress" warning, so match a
+      // toast by text instead of a single-element locator — two identical toasts would trip the
+      // locator's strict single-match and hang until the test times out.
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Project removal in progress",
+          ) ?? null,
+        "Blocked New Thread entry points should surface a project-removal warning.",
+      );
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      expect(mounted.router.state.location.pathname).toBe(originalPath);
+      expect(
+        Object.keys(useComposerDraftStore.getState().draftThreadsByThreadId).toSorted(),
+      ).toEqual(originalDraftThreadIds);
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.create"),
+      ).toBe(false);
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("deletes a thread admitted before removal from the live post-drain project snapshot", async () => {
+    const admittedOperation = tryBeginProjectOperation(PROJECT_ID);
+    expect(admittedOperation).not.toBeNull();
+    const lateThreadId = ThreadId.makeUnsafe("dfdbccf0-75b0-4a5b-8485-3cb124b05543");
+    const standaloneDraftId = ThreadId.makeUnsafe("478cb186-48c7-4c52-b7ef-79df1234f31a");
+    useComposerDraftStore.getState().registerDraftThread(standaloneDraftId, {
+      projectId: PROJECT_ID,
+      entryPoint: "chat",
+      envMode: "local",
+    });
+    useComposerDraftStore.getState().setPrompt(standaloneDraftId, "standalone kanban draft");
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-removal-live-thread-set" as MessageId,
+        targetText: "live project thread set source",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true));
+      expect(confirm).not.toHaveBeenCalled();
+      expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
+
+      const sourceShell = useStore.getState().threadShellById?.[THREAD_ID];
+      expect(sourceShell).toBeDefined();
+      // Admit the thread the way real thread creation does: into the normalized projection
+      // (`threadIds` + `threadShellById`) that `getThreadsFromState`/`getThreadFromState` read.
+      // Writing only the legacy `threads` array leaves it invisible to the removal deletion
+      // path, so the post-drain snapshot would never see it (the regression this guards).
+      useStore.setState((state) => ({
+        threadIds: [...(state.threadIds ?? []), lateThreadId],
+        threadShellById: {
+          ...state.threadShellById,
+          [lateThreadId]: { ...sourceShell!, id: lateThreadId, title: "Late thread" },
+        },
+      }));
+      finishProjectOperation(admittedOperation!);
+
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(String(confirm.mock.calls[0]?.[0])).toContain("delete 2 threads");
+      expect(String(confirm.mock.calls[0]?.[0])).toContain("and 1 unsent draft");
+
+      await vi.waitFor(
+        () => {
+          expect(
+            dispatchedCommands.some(
+              (command) => command.type === "thread.delete" && command.threadId === lateThreadId,
+            ),
+          ).toBe(true);
+          expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(
+            true,
+          );
+          expect(useComposerDraftStore.getState().getDraftThread(standaloneDraftId)).toBeNull();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+
+      // Consent is requested only after admitted work drains, so its count describes the same
+      // stable thread set that deletion will consume. A late admitted thread must never be deleted
+      // under an earlier, smaller confirmation.
+    } finally {
+      finishProjectOperation(admittedOperation!);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the stable post-drain project state when removal confirmation is cancelled", async () => {
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => false);
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const standaloneDraftId = ThreadId.makeUnsafe("5ab531de-d244-452f-bdae-1fc307ea97bb");
+    useComposerDraftStore.getState().registerDraftThread(standaloneDraftId, {
+      projectId: PROJECT_ID,
+      entryPoint: "chat",
+      envMode: "local",
+    });
+    useComposerDraftStore.getState().setPrompt(standaloneDraftId, "do not discard me");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-removal-cancel-stable-set" as MessageId,
+        targetText: "removal cancellation source",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(String(confirm.mock.calls[0]?.[0])).toContain("1 thread and 1 unsent draft");
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false));
+
+      expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      expect(useComposerDraftStore.getState().getDraftThread(standaloneDraftId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[standaloneDraftId]?.prompt).toBe(
+        "do not discard me",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows cancellable progress while project removal waits for admitted work", async () => {
+    const admittedOperation = tryBeginProjectOperation(PROJECT_ID);
+    expect(admittedOperation).not.toBeNull();
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const addAlert = vi.spyOn(transientAlertManager, "add");
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-removal-wait-cancel" as MessageId,
+      targetText: "removal wait cancellation source",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        projects: snapshot.projects.map((project) =>
+          project.id === PROJECT_ID ? { ...project, title: "Removal Wait Project" } : project,
+        ),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction("Removal Wait Project");
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .toBeInTheDocument();
+      expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true);
+      expect(confirm).not.toHaveBeenCalled();
+
+      await expect
+        .element(page.getByRole("button", { name: 'Cancel removal of "Removal Wait Project"' }))
+        .toBeInTheDocument();
+      const waitingAlertCallIndex = addAlert.mock.calls.findIndex(
+        ([input]) => input.title === 'Waiting to remove "Removal Wait Project"',
+      );
+      const waitingAlert = addAlert.mock.calls[waitingAlertCallIndex]?.[0];
+      expect(waitingAlert?.actionProps?.children).toBe("Cancel removal");
+      // Multiple full-app mounts intentionally share the global toast manager in this file, so a
+      // raw DOM click can target a retained provider from an earlier test. Invoke the exact alert
+      // action captured for this removal after proving its uniquely named button is rendered.
+      waitingAlert?.actionProps?.onClick?.(new MouseEvent("click") as never);
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false), {
+        timeout: 8_000,
+        interval: 16,
+      });
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .not.toBeInTheDocument();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
+
+      const resumedOperation = tryBeginProjectOperation(PROJECT_ID);
+      expect(resumedOperation).not.toBeNull();
+      if (resumedOperation) finishProjectOperation(resumedOperation);
+
+      // Swipe dismissal closes through the toast manager rather than the visible action or X.
+      // Exercise that shared lifecycle directly: hiding the progress surface must also release
+      // the reservation so it cannot leave project sends and creators blocked indefinitely.
+      await clickProjectRemoveAction("Removal Wait Project");
+      await vi.waitFor(() => expect(addAlert).toHaveBeenCalledTimes(2));
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .toBeInTheDocument();
+      expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true);
+      const managerDismissedAlertId = addAlert.mock.results[1]?.value;
+      expect(managerDismissedAlertId).toBeTypeOf("string");
+      transientAlertManager.close(managerDismissedAlertId);
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false), {
+        timeout: 8_000,
+        interval: 16,
+      });
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .not.toBeInTheDocument();
+      expect(confirm).not.toHaveBeenCalled();
+      const operationAfterManagerDismissal = tryBeginProjectOperation(PROJECT_ID);
+      expect(operationAfterManagerDismissal).not.toBeNull();
+      if (operationAfterManagerDismissal) finishProjectOperation(operationAfterManagerDismissal);
+    } finally {
+      addAlert.mockRestore();
+      if (admittedOperation) finishProjectOperation(admittedOperation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("drains an admitted send before removal and reveals a late cleanup recovery", async () => {
+    const sourceDraftId = ThreadId.makeUnsafe("234dc723-a85e-4019-927c-d95d62962588");
+    const createdPath = "/repo/worktrees/removal-late-recovery";
+    const createdBranch = "scient/removal-late-recovery";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [sourceDraftId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: sourceDraftId },
+    });
+    let releaseSourceTurn!: () => void;
+    const sourceTurnGate = new Promise<void>((resolve) => {
+      releaseSourceTurn = resolve;
+    });
+    let sourceTurnHeld = false;
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: { path: createdPath, branch: createdBranch },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addThreadToSnapshot(createDraftOnlySnapshot(), OTHER_THREAD_ID),
+      initialEntry: `/${sourceDraftId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        git: { ...api.git, createWorktree, removeWorktree },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            if (command.type === "thread.turn.start" && command.threadId === sourceDraftId) {
+              sourceTurnHeld = true;
+              await sourceTurnGate;
+              throw new Error("deterministic pre-turn failure during project removal");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(sourceDraftId, "create a recoverable worktree");
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the source composer before project removal.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(
+        () => {
+          expect(sourceTurnHeld).toBe(true);
+          expect(createWorktree).toHaveBeenCalledOnce();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: OTHER_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${OTHER_THREAD_ID}`,
+        "The second project thread should open while the source send remains admitted.",
+      );
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "blocked during removal");
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true));
+      expect(confirm).not.toHaveBeenCalled();
+
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the second composer while removal is reserved.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(() => {
+        expect(
+          useStore.getState().threads.find((thread) => thread.id === OTHER_THREAD_ID)?.error,
+        ).toBe(
+          "This project is being removed. Wait for removal to finish or cancel it before sending.",
+        );
+      });
+      expect(
+        dispatchedCommands.some(
+          (command) => command.type === "thread.turn.start" && command.threadId === OTHER_THREAD_ID,
+        ),
+      ).toBe(false);
+      expect(createWorktree).toHaveBeenCalledOnce();
+
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      releaseSourceTurn();
+
+      const recoveryRow = page.getByRole("button", {
+        name: `Open recovered worktree ${createdBranch} at ${createdPath}`,
+      });
+      await expect.element(recoveryRow).toBeInTheDocument();
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Resolve recovered worktrees first",
+          ) ?? null,
+        "Late cleanup recovery should stop project deletion visibly.",
+        20_000,
+      );
+      expect(removeWorktree).toHaveBeenCalledWith({
+        cwd: "/repo/project",
+        path: createdPath,
+        force: false,
+      });
+      // The admitted send surfaced a recovery while the removal was draining. Re-checking that
+      // blocker before consent means the user never sees a misleading deletion confirmation.
+      expect(confirm).not.toHaveBeenCalled();
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
+
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the second composer after removal released its reservation.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(() => {
+        expect(
+          dispatchedCommands.some(
+            (command) =>
+              command.type === "thread.turn.start" && command.threadId === OTHER_THREAD_ID,
+          ),
+        ).toBe(true);
+      });
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+    } finally {
+      releaseSourceTurn();
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps sends blocked while project deletion is pending and releases them after failure", async () => {
+    const localDraftId = ThreadId.makeUnsafe("48ba1679-20d2-40aa-aa1d-f92605fed30a");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [localDraftId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: localDraftId },
+    });
+    let releaseProjectDelete!: () => void;
+    const projectDeleteGate = new Promise<void>((resolve) => {
+      releaseProjectDelete = resolve;
+    });
+    let projectDeleteStarted = false;
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: {
+        path: "/repo/worktrees/removal-delete-failure",
+        branch: "scient/removal-delete-failure",
+      },
+    }));
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const deletedProjectIdsBeforeTest = useStore.getState().deletedProjectIdsById ?? {};
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deferred-project-delete" as MessageId,
+        targetText: "deferred project delete",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        git: { ...api.git, createWorktree },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            if (command.type === "project.delete") {
+              projectDeleteStarted = true;
+              await projectDeleteGate;
+              throw new Error("deterministic project deletion failure");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(projectDeleteStarted).toBe(true), {
+        timeout: 20_000,
+        interval: 16,
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: localDraftId },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${localDraftId}`,
+        "The local draft should remain reachable while native project deletion is pending.",
+      );
+      useComposerDraftStore.getState().setPrompt(localDraftId, "blocked by project delete");
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the local composer while project deletion is pending.",
+        )
+      ).requestSubmit();
+      await expect
+        .element(
+          page.getByText(
+            "This project is being removed. Wait for removal to finish or cancel it before sending.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(
+        dispatchedCommands.some(
+          (command) => command.type === "thread.turn.start" && command.threadId === localDraftId,
+        ),
+      ).toBe(false);
+
+      releaseProjectDelete();
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false));
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      releaseProjectDelete();
+      useStore.setState({
+        deletedProjectIdsById: deletedProjectIdsBeforeTest,
+        deletedThreadIdsById: deletedThreadIdsBeforeTest,
+      });
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores exact worktree ownership when dirty cleanup refuses after promotion draft clear", async () => {
+    let resolvePromotion!: () => void;
+    const promotionGate = new Promise<void>((resolve) => {
+      resolvePromotion = resolve;
+    });
+    let promotedThreadId: ThreadId | null = null;
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: {
+        path: "/repo/.codex/worktrees/project/deleted-draft",
+        branch: "scient/deleted-draft",
+      },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-draft-promotion" as MessageId,
+        targetText: "deleted draft promotion",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.create") {
+              promotedThreadId = command.threadId;
+              await promotionGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+        git: {
+          ...api.git,
+          createWorktree,
+          removeWorktree,
+        },
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a draft before the promotion-deletion race.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      const envPickerTrigger = await waitForEnvironmentModeButton("Local");
+      envPickerTrigger.click();
+      const newWorktreeOption = page.getByText("New worktree");
+      await expect.element(newWorktreeOption).toBeInTheDocument();
+      await newWorktreeOption.click();
+
+      useComposerDraftStore.getState().setPrompt(newThreadId, "do not promote this draft");
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+          envMode: "worktree",
+          branch: "main",
+        });
+      });
+      const requestStart = wsRequests.length;
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      await sendButton.click();
+      await vi.waitFor(
+        () => {
+          expect(createWorktree).toHaveBeenCalledOnce();
+          expect(promotedThreadId).toBe(newThreadId);
+        },
+        { timeout: 12_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+      resolvePromotion();
+      await vi.waitFor(
+        () => {
+          expect(removeWorktree).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            path: "/repo/.codex/worktrees/project/deleted-draft",
+            force: false,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        branch: "scient/deleted-draft",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-draft",
+        envMode: "worktree",
+      });
+      expect(
+        useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo,
+      ).toBeUndefined();
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "do not promote this draft",
+      );
+      const dispatchedCommands = wsRequests
+        .slice(requestStart)
+        .map(readDispatchedCommand)
+        .filter(Boolean);
+      expect(dispatchedCommands).toContainEqual(
+        expect.objectContaining({ type: "thread.delete", threadId: newThreadId }),
+      );
+      expect(
+        dispatchedCommands.some(
+          (command) => command?.type === "thread.turn.start" && command.threadId === newThreadId,
+        ),
+      ).toBe(false);
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === newThreadId,
+            ),
+        ).toBe(true);
+      });
+      expect(createWorktree).toHaveBeenCalledOnce();
+    } finally {
+      resolvePromotion();
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not delete a thread created by a concurrent draft promoter when send later fails", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-concurrent-promotion-failure");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+          workspaceOrigin: "default",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    let resolvePromotion!: () => void;
+    const promotionGate = new Promise<void>((resolve) => {
+      resolvePromotion = resolve;
+    });
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    let nativeApi: NativeApi | null = null;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => {
+        const configuredApi: NativeApi = {
+          ...api,
+          orchestration: {
+            ...api.orchestration,
+            dispatchCommand: vi.fn(async (command) => {
+              dispatchedCommands.push(command);
+              if (command.type === "thread.create") {
+                await promotionGate;
+              }
+              if (command.type === "thread.turn.start") {
+                throw new Error("deterministic pre-turn failure");
+              }
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }),
+          },
+        };
+        nativeApi = configuredApi;
+        return configuredApi;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep the concurrent thread");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("keep the concurrent thread");
+      });
+      expect(nativeApi).not.toBeNull();
+
+      const competingPromotion = promoteThreadCreate(
+        {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("command-concurrent-promoter"),
+          threadId: newThreadId,
+          projectId: PROJECT_ID,
+          title: "Concurrent owner",
+          modelSelection: { provider: "codex", model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          envMode: "local",
+          branch: "main",
+          worktreePath: null,
+          lastKnownPr: null,
+          createdAt: NOW_ISO,
+        },
+        nativeApi!,
+      );
+      await vi.waitFor(() => {
+        expect(
+          dispatchedCommands.filter((command) => command.type === "thread.create"),
+        ).toHaveLength(1);
+      });
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the concurrent promotion race.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt ?? "").toBe(
+          "",
+        );
+        expect(
+          dispatchedCommands.filter((command) => command.type === "thread.create"),
+        ).toHaveLength(1);
+      });
+      resolvePromotion();
+      await expect(competingPromotion).resolves.toBe("created");
+      await vi.waitFor(() => {
+        expect(dispatchedCommands.some((command) => command.type === "thread.turn.start")).toBe(
+          true,
+        );
+      });
+
+      expect(dispatchedCommands.filter((command) => command.type === "thread.create")).toHaveLength(
+        1,
+      );
+      expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo).toBe(
+        newThreadId,
+      );
+    } finally {
+      resolvePromotion();
+      await mounted.cleanup();
+    }
+  });
+
+  it("removes a generated worktree and restores an owned draft after pre-turn failure", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-owned-promotion-failure");
+    const restoredPreviewUrl = "blob:restored-after-pre-turn-failure";
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async (input) => ({
+      worktree: {
+        path: `/repo/.codex/worktrees/project/${input.newBranch}`,
+        branch: input.newBranch!,
+      },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    let failNextTurn = true;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            const result = await api.orchestration.dispatchCommand(command);
+            if (command.type === "thread.turn.start" && failNextTurn) {
+              failNextTurn = false;
+              throw new Error("deterministic pre-turn failure");
+            }
+            return result;
+          }),
+        },
+        git: { ...api.git, createWorktree, removeWorktree },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "retry this send");
+      useComposerDraftStore.getState().addImages(newThreadId, [
+        createComposerImage({
+          id: "restored-after-pre-turn-failure",
+          previewUrl: restoredPreviewUrl,
+          name: "restored-after-failure.png",
+        }),
+      ]);
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("retry this send");
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+          envMode: "worktree",
+          branch: "main",
+          worktreePath: null,
+        });
+      });
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the owned rollback test.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
+      await vi.waitFor(
+        () => {
+          const commandTypes = wsRequests
+            .map(readDispatchedCommand)
+            .filter((command) => command && command.threadId === newThreadId)
+            .map((command) => command!.type);
+          expect(
+            commandTypes,
+            `Expected owned rollback; saw ${commandTypes.join(", ")}; draft=${JSON.stringify(
+              useComposerDraftStore.getState().getDraftThread(newThreadId),
+            )}; error=${JSON.stringify(
+              useStore.getState().threads.find((thread) => thread.id === newThreadId)?.error,
+            )}`,
+          ).toContain("thread.delete");
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      await vi.waitFor(() => {
+        expect(removeWorktree).toHaveBeenCalledOnce();
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo).toBe(
+          undefined,
+        );
+        expect(
+          useOptimisticUserMessageStore.getState().messagesByThreadId[newThreadId],
+        ).toBeUndefined();
+      });
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        newThreadId,
+      );
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        envMode: "worktree",
+        worktreePath: null,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "retry this send",
+      );
+      const restoredImage =
+        useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.images[0];
+      expect(restoredImage?.previewUrl).toMatch(/^blob:/);
+      expect(restoredImage?.previewUrl).not.toBe(restoredPreviewUrl);
+      expect(document.querySelector(`img[src="${restoredImage!.previewUrl}"]`)).not.toBeNull();
+      expect(revokeObjectUrl.mock.calls.filter(([url]) => url === restoredPreviewUrl)).toHaveLength(
+        1,
+      );
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledTimes(2));
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests
+              .map(readDispatchedCommand)
+              .filter(
+                (command) =>
+                  command?.type === "thread.turn.start" && command.threadId === newThreadId,
+              ),
+          ).toHaveLength(2);
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      const firstPath = (await createWorktree.mock.results[0]!.value).worktree.path;
+      const secondPath = (await createWorktree.mock.results[1]!.value).worktree.path;
+      expect(firstPath).not.toBe(secondPath);
+      expect(removeWorktree).toHaveBeenCalledWith({
+        cwd: "/repo/project",
+        path: firstPath,
+        force: false,
+      });
+    } finally {
+      revokeObjectUrl.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
+  it("adopts a generated worktree when non-forced rollback cleanup refuses removal", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-dirty-worktree-promotion-failure");
+    const createdPath = "/repo/.codex/worktrees/project/dirty-before-turn";
+    const createdBranch = "scient/dirty-before-turn";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: { path: createdPath, branch: createdBranch },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
+    let failNextTurn = true;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            const result = await api.orchestration.dispatchCommand(command);
+            if (command.type === "thread.turn.start" && failNextTurn) {
+              failNextTurn = false;
+              throw new Error("deterministic pre-turn failure");
+            }
+            return result;
+          }),
+        },
+        git: { ...api.git, createWorktree, removeWorktree },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "preserve external worktree data");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("preserve external worktree data");
+      });
+
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the composer before dirty-worktree rollback.",
+        )
+      ).requestSubmit();
+
+      await vi.waitFor(
+        () => {
+          expect(removeWorktree).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            path: createdPath,
+            force: false,
+          });
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            envMode: "worktree",
+            branch: createdBranch,
+            worktreePath: createdPath,
+          });
+          expect(
+            useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo,
+          ).toBeUndefined();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "preserve external worktree data",
+      );
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests
+              .map(readDispatchedCommand)
+              .filter(
+                (command) =>
+                  command?.type === "thread.turn.start" && command.threadId === newThreadId,
+              ),
+          ).toHaveLength(2);
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(createWorktree).toHaveBeenCalledOnce();
+      expect(removeWorktree).toHaveBeenCalledOnce();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("adopts a generated worktree after setup starts so retry creates no duplicate", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-setup-started-promotion-failure");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    const createdPath = "/repo/.codex/worktrees/project/setup-started";
+    const createdBranch = "scient/setup-started";
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: { path: createdPath, branch: createdBranch },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    let failSetupOpen = true;
+    const setupTerminalOpenInputs: Array<Parameters<NativeApi["terminal"]["open"]>[0]> = [];
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "printf setup",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        terminal: {
+          ...api.terminal,
+          open: vi.fn(async (input) => {
+            if (input.threadId === newThreadId && input.cwd === createdPath && failSetupOpen) {
+              failSetupOpen = false;
+              setupTerminalOpenInputs.push(input);
+              throw new Error("deterministic setup failure");
+            }
+            return api.terminal.open(input);
+          }),
+        },
+        git: { ...api.git, createWorktree, removeWorktree },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "retry without another worktree");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("retry without another worktree");
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+          envMode: "worktree",
+          branch: "main",
+          worktreePath: null,
+        });
+      });
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the setup rollback test.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            envMode: "worktree",
+            branch: createdBranch,
+            worktreePath: createdPath,
+          });
+          expect(
+            useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo,
+          ).toBeUndefined();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(setupTerminalOpenInputs).toEqual([
+        expect.objectContaining({ threadId: newThreadId, cwd: createdPath }),
+      ]);
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        newThreadId,
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "retry without another worktree",
+      );
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some((candidate) => {
+            const command = readDispatchedCommand(candidate);
+            return command?.type === "thread.turn.start" && command.threadId === newThreadId;
+          }),
+        ).toBe(true);
+      });
+      expect(createWorktree).toHaveBeenCalledOnce();
+      expect(removeWorktree).not.toHaveBeenCalled();
     } finally {
       await mounted.cleanup();
     }

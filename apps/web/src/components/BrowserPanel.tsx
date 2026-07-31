@@ -49,6 +49,19 @@ import { IMAGE_SIZE_LIMIT_LABEL } from "~/lib/composerSend";
 import { PANEL_RESIZE_OVERLAY_SYNC_EVENT } from "~/lib/panelResize";
 import { serverLocalServersQueryOptions } from "~/lib/serverReactQuery";
 import { cn, isMacPlatform } from "~/lib/utils";
+import {
+  browserWebviewFocusGuardsShouldRemainActive,
+  browserWebviewHandoffKey,
+  browserWebviewRuntimeHostId,
+  createStableBrowserWebviewRuntime,
+  createBrowserWebviewHandoffRegistry,
+  isStableBrowserWebviewRuntimeIntact,
+  resolveBrowserWebviewRuntimeHostGeometry,
+  resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn,
+  resolveBrowserWebviewFocusBridgeTarget,
+  resolveBrowserWebviewLogicalOwnerId,
+  type BrowserWebviewFocusBridgeDirection,
+} from "~/browserWebviewHandoff";
 
 import {
   useBrowserStateStore,
@@ -102,7 +115,99 @@ interface BrowserPanelProps {
 const BROWSER_BOUNDS_SYNC_BURST_FRAMES = 30;
 const BROWSER_BOUNDS_SYNC_STABLE_FRAME_TARGET = 2;
 const BROWSER_PERF_SAMPLE_INTERVAL_MS = 5_000;
+const BROWSER_WEBVIEW_HANDOFF_LEASE_MS = 250;
+// The PiP shell is z-30. Its renderer-owned browser viewport must paint one layer above the
+// shell content, while the existing top-layer occlusion path hides it for dialogs and menus.
+const BROWSER_WEBVIEW_RUNTIME_HOST_Z_INDEX = 31;
+const BROWSER_WEBVIEW_FOCUS_GUARD_SELECTOR = "[data-browser-webview-focus-guard]";
 const SYNARA_BROWSER_LABEL = "Scient browser";
+
+interface ParkedRendererBrowserWebview {
+  readonly webview: BrowserWebviewElement;
+  readonly runtimeHost: HTMLDivElement;
+  readonly tabId: string;
+  readonly attachKey: string | null;
+  readonly webContentsId: number | undefined;
+}
+
+const rendererBrowserWebviewHandoffs = createBrowserWebviewHandoffRegistry<
+  ParkedRendererBrowserWebview,
+  number
+>({
+  schedule: (callback) => window.setTimeout(callback, BROWSER_WEBVIEW_HANDOFF_LEASE_MS),
+  cancel: (handle) => window.clearTimeout(handle),
+});
+
+function createRendererBrowserWebviewFocusGuard(direction: "before" | "after"): HTMLSpanElement {
+  const guard = document.createElement("span");
+  guard.setAttribute("data-browser-webview-focus-guard", direction);
+  guard.tabIndex = -1;
+  guard.style.position = "absolute";
+  guard.style.width = "1px";
+  guard.style.height = "1px";
+  guard.style.overflow = "hidden";
+  guard.style.opacity = "0";
+  guard.style.pointerEvents = "none";
+  return guard;
+}
+
+function setRendererBrowserWebviewFocusGuardsActive(
+  host: HTMLDivElement | null,
+  active: boolean,
+): void {
+  for (const guard of host?.querySelectorAll<HTMLElement>(BROWSER_WEBVIEW_FOCUS_GUARD_SELECTOR) ??
+    []) {
+    guard.tabIndex = active ? 0 : -1;
+  }
+}
+
+function createRendererBrowserWebviewRuntimeHost(threadId: string, tabId: string): HTMLDivElement {
+  const host = document.createElement("div");
+  host.id = browserWebviewRuntimeHostId(threadId, tabId);
+  host.setAttribute("aria-hidden", "true");
+  host.setAttribute("data-browser-webview-runtime-host", "true");
+  host.style.position = "fixed";
+  host.style.left = "0";
+  host.style.top = "0";
+  host.style.width = "0";
+  host.style.height = "0";
+  host.style.zIndex = String(BROWSER_WEBVIEW_RUNTIME_HOST_Z_INDEX);
+  host.style.visibility = "hidden";
+  host.style.overflow = "hidden";
+  host.style.pointerEvents = "none";
+  host.setAttribute("inert", "");
+  host.append(createRendererBrowserWebviewFocusGuard("before"));
+  document.body.append(host);
+  return host;
+}
+
+function syncRendererBrowserWebviewRuntimeHost(
+  host: HTMLDivElement | null,
+  rect: {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  },
+  visible: boolean,
+  logicalOwner: HTMLElement | null,
+): void {
+  if (!host) return;
+  const { ariaHidden, inert, ...geometry } = resolveBrowserWebviewRuntimeHostGeometry({
+    rect,
+    visible,
+  });
+  Object.assign(host.style, geometry);
+  host.toggleAttribute("aria-hidden", ariaHidden);
+  host.toggleAttribute("inert", inert);
+  const logicalOwnerId = resolveBrowserWebviewLogicalOwnerId(host.id, visible);
+  if (logicalOwnerId) {
+    logicalOwner?.setAttribute("aria-owns", logicalOwnerId);
+  } else if (logicalOwner?.getAttribute("aria-owns") === host.id) {
+    logicalOwner.removeAttribute("aria-owns");
+  }
+  if (!visible) setRendererBrowserWebviewFocusGuardsActive(host, false);
+}
 // The address field and tab pills share one chrome-control surface so the whole row reads
 // as a single cohesive control: matching height, radius, border width, and type scale.
 const BROWSER_CHROME_CONTROL_CLASS_NAME = "h-8 rounded-lg border text-xs";
@@ -382,10 +487,16 @@ export function BrowserPanel({
   );
   const addressInputRef = useRef<HTMLInputElement>(null);
   const browserTabsBarRef = useRef<HTMLDivElement>(null);
+  const browserTabpanelRef = useRef<HTMLDivElement>(null);
+  const browserLogicalBeforeRef = useRef<HTMLSpanElement>(null);
+  const browserLogicalAfterRef = useRef<HTMLSpanElement>(null);
   const browserViewportRef = useRef<HTMLDivElement>(null);
   const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
+  const browserWebviewRuntimeHostRef = useRef<HTMLDivElement | null>(null);
   const browserWebviewTabIdRef = useRef<string | null>(null);
   const browserWebviewAttachKeyRef = useRef<string | null>(null);
+  const browserWebviewFocusBridgeCleanupRef = useRef<(() => void) | null>(null);
+  const browserWebviewFocusRedirectingRef = useRef(false);
   const copyScreenshotButtonRef = useRef<HTMLButtonElement>(null);
   const [copyFeedback, setCopyFeedback] = useState<BrowserCopyFeedback | null>(null);
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
@@ -736,10 +847,119 @@ export function BrowserPanel({
     [api, refreshLocalHtmlPreview, threadId, upsertThreadState],
   );
 
-  // Renderer-owned <webview>s are adopted by the desktop manager. Always detach before
-  // removing the DOM node so main never keeps a stale webContents runtime.
+  const redirectRendererBrowserWebviewFocus = useCallback(
+    (
+      direction: BrowserWebviewFocusBridgeDirection,
+      runtimeHost = browserWebviewRuntimeHostRef.current,
+      webview = browserWebviewRef.current,
+    ) => {
+      const active = Boolean(
+        runtimeHost &&
+        webview &&
+        !runtimeHost.hasAttribute("inert") &&
+        runtimeHost.style.visibility === "visible" &&
+        isStableBrowserWebviewRuntimeIntact({ host: runtimeHost, node: webview }),
+      );
+      const primaryTarget =
+        direction === "logical-entry"
+          ? webview
+          : direction === "before-exit"
+            ? browserLogicalBeforeRef.current
+            : browserLogicalAfterRef.current;
+      const fallbackTarget = addressInputRef.current;
+      const target = resolveBrowserWebviewFocusBridgeTarget({
+        active,
+        redirectInProgress: browserWebviewFocusRedirectingRef.current,
+        direction,
+        primaryAvailable: Boolean(primaryTarget?.isConnected),
+        fallbackAvailable: Boolean(fallbackTarget?.isConnected),
+      });
+      if (target === "none") return;
+      const nextTarget = target === "fallback" ? fallbackTarget : primaryTarget;
+      if (!nextTarget || nextTarget === document.activeElement) return;
+
+      browserWebviewFocusRedirectingRef.current = true;
+      setRendererBrowserWebviewFocusGuardsActive(runtimeHost, target === "guest");
+      nextTarget.focus({ preventScroll: true });
+      queueMicrotask(() => {
+        if (
+          !browserWebviewFocusGuardsShouldRemainActive({
+            target,
+            guestReceivedFocus: document.activeElement === webview,
+          })
+        ) {
+          setRendererBrowserWebviewFocusGuardsActive(runtimeHost, false);
+        }
+        browserWebviewFocusRedirectingRef.current = false;
+      });
+    },
+    [],
+  );
+
+  const bindRendererBrowserWebviewFocusBridge = useCallback(
+    (runtimeHost: HTMLDivElement, webview: BrowserWebviewElement) => {
+      browserWebviewFocusBridgeCleanupRef.current?.();
+      const beforeGuard = runtimeHost.querySelector<HTMLElement>(
+        '[data-browser-webview-focus-guard="before"]',
+      );
+      const afterGuard = runtimeHost.querySelector<HTMLElement>(
+        '[data-browser-webview-focus-guard="after"]',
+      );
+      const handleGuestFocus = () => {
+        if (
+          !runtimeHost.hasAttribute("inert") &&
+          runtimeHost.style.visibility === "visible" &&
+          isStableBrowserWebviewRuntimeIntact({ host: runtimeHost, node: webview })
+        ) {
+          setRendererBrowserWebviewFocusGuardsActive(runtimeHost, true);
+        }
+      };
+      const handleBeforeExit = () =>
+        redirectRendererBrowserWebviewFocus("before-exit", runtimeHost, webview);
+      const handleAfterExit = () =>
+        redirectRendererBrowserWebviewFocus("after-exit", runtimeHost, webview);
+      const handleDocumentFocusIn = (event: FocusEvent) => {
+        const focusTarget =
+          event.target === webview
+            ? "guest"
+            : event.target === beforeGuard
+              ? "before-guard"
+              : event.target === afterGuard
+                ? "after-guard"
+                : "outside";
+        const guardsActive = beforeGuard?.tabIndex === 0 || afterGuard?.tabIndex === 0;
+        setRendererBrowserWebviewFocusGuardsActive(
+          runtimeHost,
+          resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+            currentlyActive: guardsActive,
+            target: focusTarget,
+          }),
+        );
+      };
+
+      webview.tabIndex = -1;
+      setRendererBrowserWebviewFocusGuardsActive(runtimeHost, false);
+      document.addEventListener("focusin", handleDocumentFocusIn, true);
+      webview.addEventListener("focus", handleGuestFocus);
+      beforeGuard?.addEventListener("focus", handleBeforeExit);
+      afterGuard?.addEventListener("focus", handleAfterExit);
+      const cleanup = () => {
+        document.removeEventListener("focusin", handleDocumentFocusIn, true);
+        webview.removeEventListener("focus", handleGuestFocus);
+        beforeGuard?.removeEventListener("focus", handleBeforeExit);
+        afterGuard?.removeEventListener("focus", handleAfterExit);
+        setRendererBrowserWebviewFocusGuardsActive(runtimeHost, false);
+      };
+      browserWebviewFocusBridgeCleanupRef.current = cleanup;
+    },
+    [redirectRendererBrowserWebviewFocus],
+  );
+
+  // Explicit tab/partition changes are final ownership changes, so detach immediately.
+  // React host handoffs transfer only the stable runtime reference through the short lease.
   const detachRendererBrowserWebview = useCallback(() => {
     const webview = browserWebviewRef.current;
+    const runtimeHost = browserWebviewRuntimeHostRef.current;
     const tabId = browserWebviewTabIdRef.current;
 
     if (webview && api && isLiveRuntime && tabId) {
@@ -756,11 +976,79 @@ export function BrowserPanel({
       }
     }
 
+    browserWebviewFocusBridgeCleanupRef.current?.();
+    browserWebviewFocusBridgeCleanupRef.current = null;
+    if (runtimeHost && browserTabpanelRef.current?.getAttribute("aria-owns") === runtimeHost.id) {
+      browserTabpanelRef.current.removeAttribute("aria-owns");
+    }
     webview?.remove();
+    runtimeHost?.remove();
     browserWebviewRef.current = null;
+    browserWebviewRuntimeHostRef.current = null;
     browserWebviewTabIdRef.current = null;
     browserWebviewAttachKeyRef.current = null;
   }, [api, isLiveRuntime, threadId]);
+
+  const parkRendererBrowserWebview = useCallback(() => {
+    const webview = browserWebviewRef.current;
+    const runtimeHost = browserWebviewRuntimeHostRef.current;
+    const tabId = browserWebviewTabIdRef.current;
+    const partition = webview?.getAttribute("partition") ?? "";
+    if (
+      !webview ||
+      !runtimeHost ||
+      !isStableBrowserWebviewRuntimeIntact({ host: runtimeHost, node: webview }) ||
+      !tabId ||
+      partition.length === 0
+    ) {
+      detachRendererBrowserWebview();
+      return;
+    }
+
+    let webContentsId: number | undefined;
+    try {
+      webContentsId = webview.getWebContentsId?.();
+    } catch {
+      webContentsId = undefined;
+    }
+    browserWebviewFocusBridgeCleanupRef.current?.();
+    browserWebviewFocusBridgeCleanupRef.current = null;
+    syncRendererBrowserWebviewRuntimeHost(
+      runtimeHost,
+      runtimeHost.getBoundingClientRect(),
+      false,
+      browserTabpanelRef.current,
+    );
+    setBrowserWebviewOverlayOcclusion(webview, true);
+    const key = browserWebviewHandoffKey({ threadId, tabId, partition });
+    rendererBrowserWebviewHandoffs.park(
+      key,
+      {
+        webview,
+        runtimeHost,
+        tabId,
+        attachKey: browserWebviewAttachKeyRef.current,
+        webContentsId,
+      },
+      (parked) => {
+        if (api && isLiveRuntime && parked.webContentsId && parked.webContentsId > 0) {
+          void api.browser
+            .detachWebview({
+              threadId,
+              tabId: parked.tabId,
+              webContentsId: parked.webContentsId,
+            })
+            .catch(ignoreBrowserWebviewDetachError);
+        }
+        parked.webview.remove();
+        parked.runtimeHost.remove();
+      },
+    );
+    browserWebviewRef.current = null;
+    browserWebviewRuntimeHostRef.current = null;
+    browserWebviewTabIdRef.current = null;
+    browserWebviewAttachKeyRef.current = null;
+  }, [api, detachRendererBrowserWebview, isLiveRuntime, threadId]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -848,7 +1136,11 @@ export function BrowserPanel({
   }, [activeTab]);
 
   useLayoutEffect(() => {
-    if (!api || !isLiveRuntime || !workspaceReady || !activeTab) {
+    if (!api || !isLiveRuntime) {
+      return;
+    }
+    if (!activeTab) {
+      detachRendererBrowserWebview();
       return;
     }
 
@@ -877,12 +1169,63 @@ export function BrowserPanel({
       webview = null;
     }
     if (!webview) {
+      const parked = rendererBrowserWebviewHandoffs.adopt(
+        browserWebviewHandoffKey({
+          threadId,
+          tabId: activeTab.id,
+          partition: expectedPartition,
+        }),
+      );
+      if (parked) {
+        if (
+          isStableBrowserWebviewRuntimeIntact({
+            host: parked.runtimeHost,
+            node: parked.webview,
+          })
+        ) {
+          webview = parked.webview;
+          browserWebviewRef.current = webview;
+          browserWebviewRuntimeHostRef.current = parked.runtimeHost;
+          browserWebviewTabIdRef.current = parked.tabId;
+          browserWebviewAttachKeyRef.current = parked.attachKey;
+          const runtimeVisible =
+            workspaceReady && !activeTab.lastError && !hasNativeBrowserObscuringOverlay(host);
+          syncRendererBrowserWebviewRuntimeHost(
+            parked.runtimeHost,
+            host.getBoundingClientRect(),
+            runtimeVisible,
+            browserTabpanelRef.current,
+          );
+          setBrowserWebviewOverlayOcclusion(webview, !runtimeVisible);
+          bindRendererBrowserWebviewFocusBridge(parked.runtimeHost, webview);
+        } else {
+          if (parked.webContentsId && parked.webContentsId > 0) {
+            void api.browser
+              .detachWebview({
+                threadId,
+                tabId: parked.tabId,
+                webContentsId: parked.webContentsId,
+              })
+              .catch(ignoreBrowserWebviewDetachError);
+          }
+          parked.webview.remove();
+          parked.runtimeHost.remove();
+        }
+      }
+    }
+    // The exact parked guest can be adopted before the new host's open RPC completes.
+    // Creating a fresh guest still waits for workspace readiness as before.
+    if (!webview && !workspaceReady) {
+      return;
+    }
+    if (!webview) {
       webview = document.createElement("webview") as BrowserWebviewElement;
       webview.className = "h-full w-full";
       webview.style.display = "flex";
       webview.style.width = "100%";
       webview.style.height = "100%";
       webview.style.backgroundColor = "#0d0d0d";
+      webview.tabIndex = -1;
       webview.setAttribute("partition", expectedPartition);
       webview.setAttribute("webpreferences", "contextIsolation=yes,nodeIntegration=no,sandbox=yes");
       // A <webview> blocks window.open() unless `allowpopups` is set. Without it, clicking
@@ -896,10 +1239,44 @@ export function BrowserPanel({
       // UA on the shared persistent partition, so this webview (and OAuth popups) inherit the
       // same identity. This keeps in-app Google/OAuth sign-in working without duplicating the
       // UA string into the renderer.
+      const runtimeHost = createRendererBrowserWebviewRuntimeHost(threadId, activeTab.id);
+      const runtime = createStableBrowserWebviewRuntime(runtimeHost, webview);
+      if (!runtime) {
+        webview.remove();
+        runtimeHost.remove();
+        return;
+      }
       browserWebviewRef.current = webview;
-      host.append(webview);
-    } else if (webview.parentElement !== host) {
-      host.append(webview);
+      browserWebviewRuntimeHostRef.current = runtimeHost;
+      runtimeHost.append(createRendererBrowserWebviewFocusGuard("after"));
+      const runtimeVisible =
+        workspaceReady && !activeTab.lastError && !hasNativeBrowserObscuringOverlay(host);
+      syncRendererBrowserWebviewRuntimeHost(
+        runtimeHost,
+        host.getBoundingClientRect(),
+        runtimeVisible,
+        browserTabpanelRef.current,
+      );
+      setBrowserWebviewOverlayOcclusion(webview, !runtimeVisible);
+      bindRendererBrowserWebviewFocusBridge(runtimeHost, webview);
+    } else {
+      const runtimeHost = browserWebviewRuntimeHostRef.current;
+      if (
+        !runtimeHost ||
+        !isStableBrowserWebviewRuntimeIntact({ host: runtimeHost, node: webview })
+      ) {
+        detachRendererBrowserWebview();
+        return;
+      }
+      const runtimeVisible =
+        workspaceReady && !activeTab.lastError && !hasNativeBrowserObscuringOverlay(host);
+      syncRendererBrowserWebviewRuntimeHost(
+        runtimeHost,
+        host.getBoundingClientRect(),
+        runtimeVisible,
+        browserTabpanelRef.current,
+      );
+      setBrowserWebviewOverlayOcclusion(webview, !runtimeVisible);
     }
 
     const initialUrl = activeTab.lastCommittedUrl ?? activeTab.url ?? BROWSER_BLANK_URL;
@@ -956,13 +1333,14 @@ export function BrowserPanel({
     threadId,
     upsertThreadState,
     workspaceReady,
+    bindRendererBrowserWebviewFocusBridge,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
-      detachRendererBrowserWebview();
+      parkRendererBrowserWebview();
     };
-  }, [detachRendererBrowserWebview]);
+  }, [parkRendererBrowserWebview]);
 
   useEffect(() => {
     const liveTabIds = new Set(threadBrowserState?.tabs.map((tab) => tab.id) ?? []);
@@ -1000,7 +1378,10 @@ export function BrowserPanel({
     if (!element) {
       return;
     }
-    const surface = activeTab?.kind === "local-html" ? "native" : "renderer";
+    const logicalOwner = browserTabpanelRef.current;
+    const activeTabKind = activeTab?.kind;
+    const surface = activeTabKind === "local-html" ? "native" : "renderer";
+    const hasActiveRendererGuest = activeTabKind !== undefined && activeTabKind !== "local-html";
 
     const syncBounds = () => {
       perfCountersRef.current.syncAttempts += 1;
@@ -1016,6 +1397,12 @@ export function BrowserPanel({
         obscuredByOverlay,
         paneIsActuallyHidden,
       });
+      syncRendererBrowserWebviewRuntimeHost(
+        browserWebviewRuntimeHostRef.current,
+        rect,
+        hasActiveRendererGuest && boundsSyncMode === "send",
+        logicalOwner,
+      );
       // Renderer-owned webviews can be hidden locally while bounds updates are suppressed.
       // Main-owned local HTML views instead receive an explicit transient occlusion signal;
       // sending null bounds would incorrectly start the pane's suspension lifecycle.
@@ -1105,6 +1492,14 @@ export function BrowserPanel({
       });
     };
 
+    const handlePanelResizeOverlaySync = () => {
+      // Native WebContentsView surfaces sit above renderer DOM. Suppress or restore them
+      // in this event turn so a pointer cannot cross the adjustment shield first, then
+      // reconcile once more after layout and overlay mutations settle.
+      syncBounds();
+      scheduleSyncBounds();
+    };
+
     const handleTransitionBounds = (event: TransitionEvent) => {
       if (!isNativeBrowserTransitionSignalTarget(event.target, element)) {
         perfCountersRef.current.ignoredTransitionSignals += 1;
@@ -1151,17 +1546,26 @@ export function BrowserPanel({
       subtree: true,
     });
     window.addEventListener("resize", scheduleSyncBounds);
-    window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
+    window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, handlePanelResizeOverlaySync);
     document.addEventListener("transitionrun", handleTransitionBounds, true);
     document.addEventListener("transitionend", handleTransitionBounds, true);
     document.addEventListener("transitioncancel", handleTransitionBounds, true);
 
     return () => {
-      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, false);
+      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, true);
+      const runtimeHost = browserWebviewRuntimeHostRef.current;
+      if (runtimeHost) {
+        syncRendererBrowserWebviewRuntimeHost(
+          runtimeHost,
+          runtimeHost.getBoundingClientRect(),
+          false,
+          logicalOwner,
+        );
+      }
       observer.disconnect();
       overlayObserver.disconnect();
       window.removeEventListener("resize", scheduleSyncBounds);
-      window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
+      window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, handlePanelResizeOverlaySync);
       document.removeEventListener("transitionrun", handleTransitionBounds, true);
       document.removeEventListener("transitionend", handleTransitionBounds, true);
       document.removeEventListener("transitioncancel", handleTransitionBounds, true);
@@ -1996,6 +2400,7 @@ export function BrowserPanel({
           ) : null}
         </div>
         <div
+          ref={browserTabpanelRef}
           id={`${browserTabsId}-tabpanel`}
           className="relative min-h-0 flex-1 bg-transparent"
           role="tabpanel"
@@ -2009,18 +2414,49 @@ export function BrowserPanel({
               detail={activeTab?.lastCommittedUrl ?? activeTab?.url ?? "Restoring cached browser"}
             />
           ) : !workspaceReady ? (
-            <div className="absolute inset-0 z-10">
+            <div
+              data-browser-loading-overlay="true"
+              data-native-browser-overlay="true"
+              className="absolute inset-0 z-10"
+            >
               <DiffPanelLoadingState label="Starting browser..." />
             </div>
           ) : null}
+          <span
+            ref={browserLogicalBeforeRef}
+            tabIndex={-1}
+            data-browser-logical-focus-anchor="before"
+            className="sr-only"
+          />
           {/* Native pages can leave their canvas transparent. A white host matches
               normal Chromium instead of Scient's dark backing surface. */}
           {isLiveRuntime ? (
-            <div ref={browserViewportRef} className="absolute inset-0 bg-white" />
+            <div
+              ref={browserViewportRef}
+              className="absolute inset-0 bg-white"
+              tabIndex={
+                workspaceReady &&
+                activeTab &&
+                activeTab.kind !== "local-html" &&
+                !showLocalServersHome &&
+                !activeTab.lastError
+                  ? 0
+                  : undefined
+              }
+              aria-label="Browser page"
+              onFocus={() => redirectRendererBrowserWebviewFocus("logical-entry")}
+            />
           ) : null}
+          <span
+            ref={browserLogicalAfterRef}
+            tabIndex={-1}
+            data-browser-logical-focus-anchor="after"
+            className="sr-only"
+          />
           {(isLiveRuntime ? workspaceReady : true) && activeTab?.lastError ? (
             <div
               data-browser-error-overlay="true"
+              data-native-browser-overlay="true"
               className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-background-surface)] p-6"
               role="alert"
             >

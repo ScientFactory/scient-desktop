@@ -46,6 +46,7 @@ import { autoUpdater, BaseUpdater, CancellationToken } from "electron-updater";
 
 import type { ContextMenuItem } from "@synara/contracts";
 import { makeScientBackendShutdownMessage } from "@synara/shared/backendControl";
+import { isKeyboardShortcutsHelpChord } from "@synara/shared/browserShortcuts";
 import { getMacTrafficLightPosition } from "@synara/shared/desktopChrome";
 import {
   SCIENT_APP_NAME,
@@ -109,7 +110,10 @@ import {
 import { collectMacUpdateDiagnostics } from "./macUpdateDiagnostics";
 import { openInitialBackendWindow } from "./initialBackendWindowOpen";
 import { shouldAllowMediaPermissionRequest } from "./mediaPermissions";
-import { PACKAGED_RENDERER_READINESS_EXPRESSION } from "./packagedStartupRendererReadiness";
+import {
+  PACKAGED_RENDERER_READINESS_EXPRESSION,
+  waitForPackagedRendererReadiness,
+} from "./packagedStartupRendererReadiness";
 import { attachPackagedStartupWindowLifecycleProof } from "./packagedStartupWindowLifecycle";
 import {
   installResumableUpdateDownloader,
@@ -133,7 +137,9 @@ import {
   registerDesktopVoiceTranscriptionHandler,
 } from "./voiceTranscription";
 import {
+  applyDesktopPhysicalZoomAction,
   resolveDesktopMenuAccelerator,
+  resolveDesktopPhysicalZoomAction,
   resolveKeyboardShortcutsMenuAccelerator,
   shouldUseNativeZoomMenuRoles,
 } from "./menuShortcuts";
@@ -356,7 +362,34 @@ let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let unreadBackgroundNotificationCount = 0;
 let browserPerfInterval: ReturnType<typeof setInterval> | null = null;
-const browserManager = new DesktopBrowserManager(LOCAL_HTML_CAPABILITY_KEY);
+const browserManager = new DesktopBrowserManager(LOCAL_HTML_CAPABILITY_KEY, {
+  beforeInputEvent: (event, input) => {
+    if (
+      isKeyboardShortcutsHelpChord(
+        {
+          type: input.type,
+          key: input.key,
+          code: input.code,
+          meta: input.meta,
+          ctrl: input.control,
+          shift: input.shift,
+          alt: input.alt,
+          repeat: input.isAutoRepeat,
+        },
+        {
+          isWindows: process.platform === "win32",
+        },
+      )
+    ) {
+      event.preventDefault();
+      dispatchMenuAction("show-shortcuts");
+      return true;
+    }
+
+    const target = resolveMenuTargetWindow()?.webContents;
+    return target ? handleDesktopPhysicalZoomShortcut(event, input, target) : false;
+  },
+});
 let browserUsePipeServer: BrowserUsePipeServer | null = null;
 let appSnapManager: DesktopAppSnapManager | null = null;
 let configuredGitHubUpdateSource: ReturnType<typeof resolveGitHubUpdateSource> = null;
@@ -1431,6 +1464,27 @@ function attachDesktopZoomFactorSync(window: BrowserWindow): void {
   const notify = () => sendDesktopZoomFactor(window.webContents);
   window.webContents.on("zoom-changed", notify);
   window.webContents.on("did-finish-load", notify);
+}
+
+function handleDesktopPhysicalZoomShortcut(
+  event: Electron.Event,
+  input: Electron.Input,
+  target: Electron.WebContents,
+): boolean {
+  const action = resolveDesktopPhysicalZoomAction(process.platform, input);
+  if (!action || target.isDestroyed()) {
+    return false;
+  }
+
+  event.preventDefault();
+  applyDesktopPhysicalZoomAction(target, action);
+  return true;
+}
+
+function attachDesktopPhysicalZoomShortcuts(window: BrowserWindow): void {
+  window.webContents.on("before-input-event", (event, input) => {
+    handleDesktopPhysicalZoomShortcut(event, input, window.webContents);
+  });
 }
 
 function resetWindowZoomFromMenu(): void {
@@ -3687,6 +3741,7 @@ function createWindow(): BrowserWindow {
   );
   browserManager.setWindow(window);
   attachDesktopZoomFactorSync(window);
+  attachDesktopPhysicalZoomShortcuts(window);
 
   window.webContents.on("context-menu", (event, params) => {
     event.preventDefault();
@@ -3744,9 +3799,11 @@ function createWindow(): BrowserWindow {
       setTimeout(() => {
         const generation = getBackendSupervisor().currentGeneration;
         void Promise.all([
-          window.webContents.executeJavaScript(
-            `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
-            true,
+          waitForPackagedRendererReadiness(() =>
+            window.webContents.executeJavaScript(
+              `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
+              true,
+            ),
           ),
           waitForPackagedBackendResponsiveness(backendHttpUrl).then(() => true),
           packagedWindowVisibility,
@@ -3758,14 +3815,20 @@ function createWindow(): BrowserWindow {
               currentGeneration?.number === generation.number &&
               currentGeneration.child.exitCode === null &&
               currentGeneration.child.signalCode === null;
+            const windowIsVisible = window.isVisible();
             if (
               rendererReady !== true ||
               backendReady !== true ||
               !sameLiveGeneration ||
               windowVisible !== true ||
-              !window.isVisible()
+              !windowIsVisible
             ) {
-              throw new Error("renderer or backend failed the delayed responsiveness check");
+              throw new Error(
+                "renderer or backend failed the delayed responsiveness check " +
+                  `rendererReady=${rendererReady === true} backendReady=${backendReady === true} ` +
+                  `windowVisible=${windowVisible === true} windowIsVisible=${windowIsVisible} ` +
+                  `sameLiveGeneration=${sameLiveGeneration}`,
+              );
             }
             writeDesktopLogHeader(
               `packaged responsiveness confirmed generation=${generation.number}`,
