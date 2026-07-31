@@ -14,6 +14,9 @@ import {
   MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS,
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
   MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL,
+  MAX_EVIDENCE_RECEIPTS_PER_PROPOSAL,
+  MAX_EVIDENCE_RECEIPTS_PER_VERIFICATION,
+  MAX_VERIFICATION_RECEIPTS_PER_MANUAL_DECISION,
   BrowserEvidenceContractError,
   type BrowserDocumentIdentity,
   type BrowserEvidenceLeaseUseDecision,
@@ -1252,7 +1255,111 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
           (_, index) => `not-resolved-context-${index}`,
         ),
       }),
-    ).toThrowError(/may reference at most/u);
+    ).toThrowError(/array with at most/u);
+  });
+
+  it("rejects oversized receipt-reference arrays before resolving or fingerprinting them", () => {
+    const kernel = makeKernel();
+    const { provider, source, proposal } = buildEligibleProposal(kernel);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "oversized-proposal-evidence-operation",
+        }),
+        receiptId: "oversized-proposal-evidence",
+        claimDigest: DIGEST_A,
+        evidenceReceiptIds: Array.from(
+          { length: MAX_EVIDENCE_RECEIPTS_PER_PROPOSAL + 1 },
+          (_, index) => `unresolved-proposal-evidence-${index}`,
+        ),
+      }),
+    ).toThrowError(/array with at most/u);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "oversized-proposal-context-operation",
+        }),
+        receiptId: "oversized-proposal-context",
+        claimDigest: DIGEST_A,
+        evidenceReceiptIds: [source.receiptId],
+        contextReceiptIds: Array.from(
+          { length: MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL + 1 },
+          (_, index) => `unresolved-proposal-context-${index}`,
+        ),
+      }),
+    ).toThrowError(/array with at most/u);
+
+    expect(() =>
+      kernel.recordVerification({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "oversized-verification-evidence-operation",
+        }),
+        receiptId: "oversized-verification-evidence",
+        proposalReceiptId: proposal.receiptId,
+        evidenceReceiptIds: Array.from(
+          { length: MAX_EVIDENCE_RECEIPTS_PER_VERIFICATION + 1 },
+          (_, index) => `unresolved-verification-evidence-${index}`,
+        ),
+        outcome: "supports",
+      }),
+    ).toThrowError(/array with at most/u);
+
+    expect(() =>
+      kernel.recordManualDecision({
+        authorizedOperation: trustedOperation({
+          authority: manualAuthority(),
+          operation: "scientific-record.accept",
+          operationId: "oversized-manual-verification-operation",
+        }),
+        receiptId: "oversized-manual-verification",
+        proposalReceiptId: proposal.receiptId,
+        verificationReceiptIds: Array.from(
+          { length: MAX_VERIFICATION_RECEIPTS_PER_MANUAL_DECISION + 1 },
+          (_, index) => `unresolved-manual-verification-${index}`,
+        ),
+        decision: "accept-scientific-truth",
+      }),
+    ).toThrowError(/array with at most/u);
+  });
+
+  it("rejects non-array and sparse receipt-reference inputs", () => {
+    const kernel = makeKernel();
+    const { provider, source } = buildEligibleProposal(kernel);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "non-array-context-operation",
+        }),
+        receiptId: "non-array-context",
+        claimDigest: DIGEST_A,
+        evidenceReceiptIds: [source.receiptId],
+        contextReceiptIds: null,
+      } as never),
+    ).toThrowError(/must be an array/u);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "sparse-evidence-operation",
+        }),
+        receiptId: "sparse-evidence",
+        claimDigest: DIGEST_A,
+        evidenceReceiptIds: new Array(1),
+      }),
+    ).toThrowError(/bounded structured identity/u);
   });
 
   it("requires A1 automation turn binding and prevents cross-thread append", () => {

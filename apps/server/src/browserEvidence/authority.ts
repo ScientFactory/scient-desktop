@@ -20,6 +20,9 @@ import {
   MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS,
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
   MAX_BROWSER_EVIDENCE_REUSE_COUNT,
+  MAX_EVIDENCE_RECEIPTS_PER_PROPOSAL,
+  MAX_EVIDENCE_RECEIPTS_PER_VERIFICATION,
+  MAX_VERIFICATION_RECEIPTS_PER_MANUAL_DECISION,
   SCIENT_OPERATION_BY_BROWSER_EVIDENCE_CLASS,
   SCIENTIFIC_VERIFICATION_OUTCOMES,
   BrowserEvidenceContractError,
@@ -273,8 +276,14 @@ function denial(
   return Object.freeze({ kind: "denied", code, message });
 }
 
-function freezeIds(ids: ReadonlyArray<string>, field: string): ReadonlyArray<string> {
-  const validated = ids.map((id) => browserEvidenceStructuredIdentity(id, field));
+function freezeIds(ids: unknown, field: string, maxReferences: number): ReadonlyArray<string> {
+  if (!Array.isArray(ids) || ids.length > maxReferences) {
+    throw new BrowserEvidenceContractError(
+      "receipt_reference_invalid",
+      `${field} must be an array with at most ${maxReferences} references.`,
+    );
+  }
+  const validated = Array.from(ids, (id) => browserEvidenceStructuredIdentity(id, field));
   if (new Set(validated).size !== validated.length) {
     throw new BrowserEvidenceContractError("duplicate_identity", `${field} contains duplicates.`);
   }
@@ -1069,14 +1078,16 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
   const recordProposal: BrowserEvidenceAuthorityKernel["recordProposal"] = (input) => {
     const actor = actorForReceipt(input, "scientific-record.propose", "scientific-record:propose");
     browserEvidenceDigest(input.claimDigest, "claimDigest");
-    const evidenceReceiptIds = freezeIds(input.evidenceReceiptIds, "evidenceReceiptId");
-    const contextReceiptIds = freezeIds(input.contextReceiptIds ?? [], "contextReceiptId");
-    if (contextReceiptIds.length > MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL) {
-      throw new BrowserEvidenceContractError(
-        "evidence_role_denied",
-        `A proposal may reference at most ${MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL} automation context receipts.`,
-      );
-    }
+    const evidenceReceiptIds = freezeIds(
+      input.evidenceReceiptIds,
+      "evidenceReceiptId",
+      MAX_EVIDENCE_RECEIPTS_PER_PROPOSAL,
+    );
+    const contextReceiptIds = freezeIds(
+      input.contextReceiptIds === undefined ? [] : input.contextReceiptIds,
+      "contextReceiptId",
+      MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL,
+    );
     if (evidenceReceiptIds.length === 0) {
       throw new BrowserEvidenceContractError(
         "evidence_role_denied",
@@ -1148,7 +1159,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       );
     }
     assertActorMayAppendToThread(actor, proposal.threadId);
-    const evidenceReceiptIds = freezeIds(input.evidenceReceiptIds, "evidenceReceiptId");
+    const evidenceReceiptIds = freezeIds(
+      input.evidenceReceiptIds,
+      "evidenceReceiptId",
+      MAX_EVIDENCE_RECEIPTS_PER_VERIFICATION,
+    );
     if (!(SCIENTIFIC_VERIFICATION_OUTCOMES as ReadonlyArray<unknown>).includes(input.outcome)) {
       throw new BrowserEvidenceContractError(
         "evidence_role_denied",
@@ -1232,7 +1247,11 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Proposal is outside the authorized project.",
       );
     }
-    const verificationReceiptIds = freezeIds(input.verificationReceiptIds, "verificationReceiptId");
+    const verificationReceiptIds = freezeIds(
+      input.verificationReceiptIds,
+      "verificationReceiptId",
+      MAX_VERIFICATION_RECEIPTS_PER_MANUAL_DECISION,
+    );
     if (input.decision !== "reject-scientific-truth" && verificationReceiptIds.length === 0) {
       throw new BrowserEvidenceContractError(
         "evidence_role_denied",
