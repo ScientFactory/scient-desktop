@@ -1036,7 +1036,16 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
   const recordAnnotation: BrowserEvidenceAuthorityKernel["recordAnnotation"] = (input) => {
     const actor = actorForReceipt(input, "scientific-record.propose", "scientific-record:propose");
     const use = useReceiptFor(input.leaseUseReceiptId, ["annotation.propose"], actor);
-    receiptInScope(input.sourceReceiptId, "source", use.projectId, use.threadId);
+    const source = receiptInScope(input.sourceReceiptId, "source", use.projectId, use.threadId);
+    if (
+      source.provenance.document === null ||
+      !sameBrowserDocument(source.provenance.document, use.document)
+    ) {
+      throw new BrowserEvidenceContractError(
+        "receipt_scope_mismatch",
+        "Annotation source does not match the authorized browser document.",
+      );
+    }
     browserEvidenceDigest(input.targetDigest, "targetDigest");
     browserEvidenceDigest(input.annotationDigest, "annotationDigest");
     const operation = operationReplay<ScientificAnnotationReceipt>(

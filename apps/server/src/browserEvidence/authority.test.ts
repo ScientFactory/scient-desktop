@@ -329,8 +329,10 @@ function authorizeUseFor(
     readonly operationId: string;
     readonly operationClass: "document.read" | "annotation.propose";
     readonly payloadFingerprint?: string;
+    readonly document?: BrowserDocumentIdentity;
   },
 ) {
+  const document = input.document ?? documentIdentity();
   return kernel.authorizeLeaseUse({
     leaseId: input.leaseId,
     authorizedOperation: trustedKernelOperation(
@@ -347,9 +349,9 @@ function authorizeUseFor(
           : { payloadFingerprint: input.payloadFingerprint }),
       },
       "lease.use",
-      { leaseId: input.leaseId, document: documentIdentity() },
+      { leaseId: input.leaseId, document },
     ),
-    document: documentIdentity(),
+    document,
   });
 }
 
@@ -949,6 +951,148 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
       expect(receipts[index]?.previousReceiptHash).toBe(receipts[index - 1]?.receiptHash);
     }
     expect(receipts.every(Object.isFrozen)).toBe(true);
+  });
+
+  it("requires annotation authority and source provenance to identify the same document", () => {
+    const kernel = makeKernel();
+    const provider = providerAuthority();
+    const sourceDocument = documentIdentity();
+
+    issueReadLease(kernel, { authority: provider, document: sourceDocument });
+    const sourceUse = authorizeUseFor(kernel, {
+      authority: provider,
+      leaseId: "lease-1",
+      operationId: "document-bound-source-use",
+      operationClass: "document.read",
+      document: sourceDocument,
+    });
+    if (sourceUse.kind === "denied") throw new Error("source lease unexpectedly denied");
+    const sourceProvenance = makeHostileContentProvenanceEnvelope({
+      provenanceId: "document-bound-source-provenance",
+      sourceClass: "web-document",
+      document: sourceDocument,
+      originDigest: DIGEST_C,
+      contentDigest: DIGEST_D,
+      mediaType: "text/html",
+      observedAt: NOW,
+    });
+    const sourcePayload = {
+      receiptId: "document-bound-source-receipt",
+      leaseUseReceiptId: sourceUse.receipt.receiptId,
+      provenance: sourceProvenance,
+    };
+    const source = kernel.recordSource({
+      authorizedOperation: trustedKernelOperation(
+        {
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "document-bound-source-append",
+        },
+        "receipt.source",
+        sourcePayload,
+      ),
+      ...sourcePayload,
+    });
+
+    const authorizeAnnotation = (
+      leaseId: string,
+      operationId: string,
+      document: BrowserDocumentIdentity,
+    ) => {
+      const leasePayload = {
+        leaseId,
+        document,
+        operationClass: "annotation.propose" as const,
+        usePolicy: { kind: "single-use" as const, maxUses: 1 as const },
+        ttlMs: 10_000,
+      };
+      kernel.issueLease({
+        authorizingOperation: trustedKernelOperation(
+          {
+            authority: provider,
+            operation: "scientific-record.propose",
+            operationId: `${operationId}-lease-issue`,
+          },
+          "lease.issue",
+          leasePayload,
+        ),
+        ...leasePayload,
+      });
+      const use = authorizeUseFor(kernel, {
+        authority: provider,
+        leaseId,
+        operationId,
+        operationClass: "annotation.propose",
+        document,
+      });
+      if (use.kind === "denied") throw new Error("annotation lease unexpectedly denied");
+      return use.receipt;
+    };
+
+    const matchingUse = authorizeAnnotation(
+      "matching-annotation-lease",
+      "matching-annotation-use",
+      sourceDocument,
+    );
+    const matchingPayload = {
+      receiptId: "matching-annotation-receipt",
+      leaseUseReceiptId: matchingUse.receiptId,
+      sourceReceiptId: source.receiptId,
+      targetDigest: DIGEST_B,
+      annotationDigest: DIGEST_C,
+    };
+    expect(
+      kernel.recordAnnotation({
+        authorizedOperation: trustedKernelOperation(
+          {
+            authority: provider,
+            operation: "scientific-record.propose",
+            operationId: "matching-annotation-append",
+          },
+          "receipt.annotation",
+          matchingPayload,
+        ),
+        ...matchingPayload,
+      }),
+    ).toMatchObject({
+      sourceReceiptId: source.receiptId,
+      leaseUseReceiptId: matchingUse.receiptId,
+    });
+
+    const mismatchedDocuments = [
+      ["tab", documentIdentity({ tabId: "tab-2" })],
+      ["document", documentIdentity({ documentId: "document-2" })],
+      ["navigation", documentIdentity({ navigationId: "navigation-2" })],
+      ["digest", documentIdentity({ documentDigest: DIGEST_B })],
+    ] as const;
+    for (const [mismatch, otherDocument] of mismatchedDocuments) {
+      const mismatchedUse = authorizeAnnotation(
+        `${mismatch}-mismatched-annotation-lease`,
+        `${mismatch}-mismatched-annotation-use`,
+        otherDocument,
+      );
+      const mismatchedPayload = {
+        receiptId: `${mismatch}-mismatched-annotation-receipt`,
+        leaseUseReceiptId: mismatchedUse.receiptId,
+        sourceReceiptId: source.receiptId,
+        targetDigest: DIGEST_B,
+        annotationDigest: DIGEST_C,
+      };
+      expect(() =>
+        kernel.recordAnnotation({
+          authorizedOperation: trustedKernelOperation(
+            {
+              authority: provider,
+              operation: "scientific-record.propose",
+              operationId: `${mismatch}-mismatched-annotation-append`,
+            },
+            "receipt.annotation",
+            mismatchedPayload,
+          ),
+          ...mismatchedPayload,
+        }),
+      ).toThrowError(/source does not match the authorized browser document/u);
+    }
   });
 
   it.each([
