@@ -36,6 +36,11 @@ stacks or ordinary pull requests against `main`.
 - Keep commands non-interactive: provide branch names to `init`, `add`, and
   `checkout`; use `gh stack submit --auto`; and always use
   `gh stack view --json`.
+- Because Stacked Pull Requests is a public-preview feature, fail closed when
+  extension output contradicts live GitHub state. Stop repeated mutations,
+  verify exact refs with `git ls-remote` and pull-request or stack state with
+  `gh api`, and use the Stacks REST API only after independently confirming
+  the intended order, bases, heads, and draft state.
 - Set `rerere.enabled=true` and `remote.pushDefault=origin` in the owning
   repository before initializing a stack.
 - Stage and commit paths deliberately with ordinary Git. Do not use a stack
