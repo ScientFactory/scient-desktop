@@ -19,7 +19,7 @@ export interface AgentGatewaySessionIdentity {
   readonly threadId: ThreadId;
   readonly provider: ProviderKind;
   readonly issuedAt: number;
-  readonly capabilities: ReadonlySet<ScientOperationCapability>;
+  readonly capabilities: ReadonlyArray<ScientOperationCapability>;
 }
 
 export interface AgentGatewayIssuedSession extends AgentGatewaySessionIdentity {

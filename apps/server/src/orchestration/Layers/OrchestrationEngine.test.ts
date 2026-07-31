@@ -12,7 +12,7 @@ import {
   TurnId,
   type OrchestrationEvent,
 } from "@synara/contracts";
-import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
+import { Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -957,6 +957,80 @@ describe("OrchestrationEngine", () => {
 
     expect(result.sequence).toBe(2);
     expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+    await runtime.dispose();
+  });
+
+  it("rolls back an in-flight command when its dispatch caller is interrupted", async () => {
+    let enteredTransaction = false;
+    let transactionInterrupted = false;
+    const cancelledCommandId = CommandId.makeUnsafe("cmd-cancelled-in-flight");
+    const cancellableProjectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: (event) =>
+        event.commandId === cancelledCommandId
+          ? Effect.sync(() => {
+              enteredTransaction = true;
+            }).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  transactionInterrupted = true;
+                }),
+              ),
+            )
+          : Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(
+          Layer.succeed(OrchestrationProjectionPipeline, cancellableProjectionPipeline),
+        ),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const createdAt = now();
+    const cancelledFiber = runtime.runFork(
+      engine.dispatch({
+        type: "project.create",
+        commandId: cancelledCommandId,
+        projectId: asProjectId("project-cancelled-in-flight"),
+        title: "Cancelled",
+        workspaceRoot: "/tmp/project-cancelled-in-flight",
+        createdAt,
+      }),
+    );
+
+    await expect.poll(() => enteredTransaction).toBe(true);
+    await Effect.runPromise(Fiber.interrupt(cancelledFiber));
+    await expect.poll(() => transactionInterrupted).toBe(true);
+
+    const accepted = await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-after-cancelled-in-flight"),
+        projectId: asProjectId("project-after-cancelled-in-flight"),
+        title: "Accepted",
+        workspaceRoot: "/tmp/project-after-cancelled-in-flight",
+        createdAt,
+      }),
+    );
+    expect(accepted.sequence).toBe(1);
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([
+      CommandId.makeUnsafe("cmd-after-cancelled-in-flight"),
+    ]);
+    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(1);
     await runtime.dispose();
   });
 

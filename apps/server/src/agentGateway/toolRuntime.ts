@@ -7,14 +7,14 @@
  *
  * @module agentGateway/toolRuntime
  */
-import type { ProviderKind } from "@synara/contracts";
+import type { OrchestrationThreadShell, ProviderKind } from "@synara/contracts";
 import type { Effect } from "effect";
 
 import { createLogger } from "../logger.ts";
 import type {
-  ScientOperationActorKind,
   ScientOperationAuthority,
-  ScientOperationCapability,
+  ScientOperationDefinition,
+  ScientOperationEffectIdentity,
   ScientOperationRequestEnvelope,
 } from "../scientOperations/authority.ts";
 import {
@@ -56,8 +56,15 @@ export interface ToolContext {
   readonly operationAuthority: ScientOperationAuthority;
   readonly operationEnvelope: ScientOperationRequestEnvelope;
   readonly callerTurnId: string | null;
-  readonly assertOperationAuthorityCurrent: () => Effect.Effect<void, GatewayToolError>;
-  readonly assertCallerTurnActive: () => Effect.Effect<void, GatewayToolError>;
+  readonly requireCurrentOperationCaller: () => Effect.Effect<
+    OrchestrationThreadShell,
+    GatewayToolError
+  >;
+  readonly requireCurrentCallerTurn: () => Effect.Effect<
+    OrchestrationThreadShell,
+    GatewayToolError
+  >;
+  readonly recordOperationEffect: (effect: ScientOperationEffectIdentity) => void;
   readonly jsonRpcRequestId: JsonRpcId;
 }
 
@@ -68,8 +75,7 @@ export type ToolHandler = (
 
 export interface ToolEntry {
   readonly definition: McpToolDefinition;
-  readonly requiredCapability: ScientOperationCapability;
-  readonly allowedActorKinds: ReadonlySet<ScientOperationActorKind>;
+  readonly operation: ScientOperationDefinition;
   readonly handler: ToolHandler;
   readonly requiresActiveTurn?: boolean;
 }

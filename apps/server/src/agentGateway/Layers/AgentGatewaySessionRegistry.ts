@@ -36,7 +36,7 @@ export function makeAgentGatewaySessionRegistry(options?: {
       const issuedAt = now();
       const sessionKey = `gateway-session:${randomId()}`;
       const token = `sagw_session_${randomId()}`;
-      const identity: AgentGatewaySessionIdentity = {
+      const identity: AgentGatewaySessionIdentity = Object.freeze({
         sessionKey,
         threadId,
         provider,
@@ -45,13 +45,13 @@ export function makeAgentGatewaySessionRegistry(options?: {
         // by the wired project-context and thread tools. Drive is still gated
         // per request on an active caller turn and the central drive policy.
         // No automation, browser, file, record, or export power is minted.
-        capabilities: new Set([
+        capabilities: Object.freeze([
           "project:context:read",
           "thread:list",
           "thread:read",
           "thread:drive",
-        ]),
-      };
+        ] as const),
+      });
       sessions.set(token, identity);
       sessionsByKey.set(sessionKey, identity);
       return { token, ...identity };

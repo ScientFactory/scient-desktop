@@ -536,6 +536,31 @@ it.effect("strips client-sent dispatcher provenance from thread.turn.start comma
       dispatchMode: "queue",
       dispatchOrigin: "automation",
       dispatchSource: "agent",
+      operationPrecondition: {
+        actorThreadId: "thread-actor",
+        actor: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: "running",
+          activeTurnId: "turn-actor",
+          latestTurnId: "turn-actor",
+          latestTurnState: "running",
+        },
+        target: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: null,
+          activeTurnId: null,
+          latestTurnId: null,
+          latestTurnState: null,
+        },
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -543,6 +568,46 @@ it.effect("strips client-sent dispatcher provenance from thread.turn.start comma
     assert.strictEqual(command.type, "thread.turn.start");
     assert.strictEqual("dispatchOrigin" in command, false);
     assert.strictEqual("dispatchSource" in command, false);
+    assert.strictEqual("operationPrecondition" in command, false);
+  }),
+);
+
+it.effect("strips trusted operation preconditions from client interrupt commands", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.interrupt",
+      commandId: "cmd-client-interrupt",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      operationPrecondition: {
+        actorThreadId: "thread-actor",
+        actor: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: "running",
+          activeTurnId: "turn-actor",
+          latestTurnId: "turn-actor",
+          latestTurnState: "running",
+        },
+        target: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: "running",
+          activeTurnId: "turn-1",
+          latestTurnId: "turn-1",
+          latestTurnState: "running",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.turn.interrupt");
+    assert.strictEqual("operationPrecondition" in command, false);
   }),
 );
 

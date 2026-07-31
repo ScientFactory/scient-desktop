@@ -45,12 +45,13 @@ describe("makeAgentGatewaySessionRegistry", () => {
         "thread:read",
         "thread:drive",
       ]);
-      expect(issued.capabilities.has("project:context:read")).toBe(true);
-      expect(issued.capabilities.has("thread:list")).toBe(true);
-      expect(issued.capabilities.has("thread:read")).toBe(true);
-      expect(issued.capabilities.has("thread:drive")).toBe(true);
+      expect(issued.capabilities.includes("project:context:read")).toBe(true);
+      expect(issued.capabilities.includes("thread:list")).toBe(true);
+      expect(issued.capabilities.includes("thread:read")).toBe(true);
+      expect(issued.capabilities.includes("thread:drive")).toBe(true);
       // No automation tool is wired, so automation:run is never minted.
-      expect(issued.capabilities.has("automation:run")).toBe(false);
+      expect(issued.capabilities.includes("automation:run")).toBe(false);
+      expect(Object.isFrozen(issued.capabilities)).toBe(true);
     });
   });
 

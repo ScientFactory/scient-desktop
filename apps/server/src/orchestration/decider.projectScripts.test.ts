@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
@@ -15,6 +16,61 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
+
+async function readModelWithOperationTarget(now: string) {
+  const initial = createEmptyReadModel(now);
+  const withProject = await Effect.runPromise(
+    projectEvent(initial, {
+      sequence: 1,
+      eventId: asEventId("evt-operation-project"),
+      aggregateKind: "project",
+      aggregateId: asProjectId("project-operation"),
+      type: "project.created",
+      occurredAt: now,
+      commandId: CommandId.makeUnsafe("cmd-operation-project"),
+      causationEventId: null,
+      correlationId: CommandId.makeUnsafe("cmd-operation-project"),
+      metadata: {},
+      payload: {
+        projectId: asProjectId("project-operation"),
+        title: "Operation project",
+        workspaceRoot: "/tmp/operation-project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+  return Effect.runPromise(
+    projectEvent(withProject, {
+      sequence: 2,
+      eventId: asEventId("evt-operation-thread"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.makeUnsafe("thread-operation"),
+      type: "thread.created",
+      occurredAt: now,
+      commandId: CommandId.makeUnsafe("cmd-operation-thread"),
+      causationEventId: null,
+      correlationId: CommandId.makeUnsafe("cmd-operation-thread"),
+      metadata: {},
+      payload: {
+        threadId: ThreadId.makeUnsafe("thread-operation"),
+        projectId: asProjectId("project-operation"),
+        title: "Operation target",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        handoff: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
@@ -445,6 +501,146 @@ describe("decider project scripts", () => {
       },
       runtimeMode: "approval-required",
     });
+  });
+
+  it("rejects a trusted turn start when authorization-relevant target state changed", async () => {
+    const now = new Date().toISOString();
+    const readModel = await readModelWithOperationTarget(now);
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.makeUnsafe("cmd-operation-stale-start"),
+            threadId: ThreadId.makeUnsafe("thread-operation"),
+            message: {
+              messageId: asMessageId("message-operation-stale"),
+              role: "user",
+              text: "must not commit",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            operationPrecondition: {
+              actorThreadId: ThreadId.makeUnsafe("thread-operation"),
+              actor: {
+                projectId: asProjectId("project-operation"),
+                runtimeMode: "approval-required",
+                envMode: "local",
+                interactionMode: "default",
+                provider: "codex",
+                sessionStatus: null,
+                activeTurnId: null,
+                latestTurnId: null,
+                latestTurnState: null,
+              },
+              target: {
+                projectId: asProjectId("project-operation"),
+                runtimeMode: "full-access",
+                envMode: "local",
+                interactionMode: "default",
+                provider: "codex",
+                sessionStatus: null,
+                activeTurnId: null,
+                latestTurnId: null,
+                latestTurnState: null,
+              },
+            },
+            createdAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("operation target precondition failed");
+  });
+
+  it("rejects a trusted turn start when the actor privilege changed before commit", async () => {
+    const now = new Date().toISOString();
+    const readModel = await readModelWithOperationTarget(now);
+    const actualState = {
+      projectId: asProjectId("project-operation"),
+      runtimeMode: "approval-required" as const,
+      envMode: "local" as const,
+      interactionMode: "default" as const,
+      provider: "codex",
+      sessionStatus: null,
+      activeTurnId: null,
+      latestTurnId: null,
+      latestTurnState: null,
+    };
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.makeUnsafe("cmd-operation-stale-actor"),
+            threadId: ThreadId.makeUnsafe("thread-operation"),
+            message: {
+              messageId: asMessageId("message-operation-stale-actor"),
+              role: "user",
+              text: "must not commit",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            operationPrecondition: {
+              actorThreadId: ThreadId.makeUnsafe("thread-operation"),
+              actor: { ...actualState, runtimeMode: "full-access" },
+              target: actualState,
+            },
+            createdAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("operation actor precondition failed");
+  });
+
+  it("rejects a trusted interrupt when its pinned target turn is stale", async () => {
+    const now = new Date().toISOString();
+    const readModel = await readModelWithOperationTarget(now);
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.interrupt",
+            commandId: CommandId.makeUnsafe("cmd-operation-stale-interrupt"),
+            threadId: ThreadId.makeUnsafe("thread-operation"),
+            turnId: TurnId.makeUnsafe("turn-stale"),
+            operationPrecondition: {
+              actorThreadId: ThreadId.makeUnsafe("thread-operation"),
+              actor: {
+                projectId: asProjectId("project-operation"),
+                runtimeMode: "approval-required",
+                envMode: "local",
+                interactionMode: "default",
+                provider: "codex",
+                sessionStatus: null,
+                activeTurnId: null,
+                latestTurnId: null,
+                latestTurnState: null,
+              },
+              target: {
+                projectId: asProjectId("project-operation"),
+                runtimeMode: "approval-required",
+                envMode: "local",
+                interactionMode: "default",
+                provider: "codex",
+                sessionStatus: "running",
+                activeTurnId: TurnId.makeUnsafe("turn-stale"),
+                latestTurnId: TurnId.makeUnsafe("turn-stale"),
+                latestTurnState: "running",
+              },
+            },
+            createdAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("operation target precondition failed");
   });
 
   it("emits thread.runtime-mode-set from thread.runtime-mode.set", async () => {

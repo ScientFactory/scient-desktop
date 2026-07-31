@@ -14,9 +14,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
-  makeScientOperationRequestEnvelope,
+  beginScientOperation,
+  defineScientOperation,
   type ScientOperationAuthority,
-  type ScientOperationCapability,
 } from "../scientOperations/authority.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import type { McpToolCallResult } from "./protocol.ts";
@@ -29,6 +29,12 @@ const TARGET_THREAD = "thread-target";
 const CALLER_PROJECT = "project-1";
 const OTHER_PROJECT = "project-2";
 const ISO = "2026-01-01T00:00:00.000Z";
+const TEST_WRITE_OPERATION = defineScientOperation({
+  id: "thread.message.send",
+  capability: "thread:drive",
+  allowedActorKinds: ["provider-thread"],
+  idempotencyInputField: "requestId",
+});
 
 // Captured dispatch commands are asserted structurally; `any` keeps the test
 // focused on the runtime shape the gateway emits and, unlike an object type,
@@ -94,32 +100,34 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
       provider: "claudeAgent",
       sessionKey: "gateway-session:test",
     },
-    projectIds: new Set([CALLER_PROJECT]),
-    capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
+    projectIds: [CALLER_PROJECT],
+    capabilities: ["thread:read", "thread:drive"],
     issuedAt: 0,
     expiresAt: null,
     revokedAt: null,
   };
+  const started = beginScientOperation({
+    authority: operationAuthority,
+    definition: TEST_WRITE_OPERATION,
+    operationId: "operation-test",
+    projectId: CALLER_PROJECT,
+    ingress: "provider-gateway",
+    semanticIdempotencyIdentity: "test",
+    payloadFingerprint: "test-payload",
+    receivedAt: 1,
+  });
+  if (!started.allow) throw new Error("Expected test operation authority to be allowed.");
   return {
     callerThreadId: CALLER_THREAD,
     callerProjectId: CALLER_PROJECT,
     callerSessionKey: "gateway-session:test",
     callerProvider: "claudeAgent",
     operationAuthority,
-    operationEnvelope: makeScientOperationRequestEnvelope({
-      authority: operationAuthority,
-      operationId: "operation-test",
-      operation: "scient_send_message",
-      capability: "thread:drive",
-      projectId: CALLER_PROJECT,
-      ingress: "provider-gateway",
-      idempotencyIdentity: "test",
-      payloadFingerprint: "test-payload",
-      receivedAt: 1,
-    }),
+    operationEnvelope: started.envelope,
     callerTurnId: "turn-caller",
-    assertOperationAuthorityCurrent: () => Effect.void,
-    assertCallerTurnActive: () => Effect.void,
+    requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
+    requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),
+    recordOperationEffect: () => undefined,
     jsonRpcRequestId: 1,
     ...overrides,
   };
@@ -162,15 +170,10 @@ function setup(options?: {
         ? { dispatch: options.dispatch }
         : {},
   );
-  const requireThreadShell = (id: string) => {
-    const found = threadShells[id];
-    return found ? Effect.succeed(found) : Effect.fail(new Error(`Thread "${id}" was not found.`));
-  };
   let revocationListener: ((identity: { readonly sessionKey: string }) => void) | undefined;
   const tools = makeThreadWriteTools({
     snapshotQuery,
     orchestrationEngine: engine,
-    requireThreadShell,
     now: () => ISO,
     randomId: options?.randomId ?? (() => "rand-id"),
     subscribeSessionRevocations: (listener) => {
@@ -180,10 +183,14 @@ function setup(options?: {
       };
     },
   });
+  const defaultContext = makeContext({
+    requireCurrentOperationCaller: () => Effect.succeed(caller),
+    requireCurrentCallerTurn: () => Effect.succeed(caller),
+  });
   const callEffect = (
     name: string,
     args: Record<string, unknown>,
-    context: ToolContext = makeContext(),
+    context: ToolContext = defaultContext,
   ) => {
     const tool = tools.find((entry) => entry.definition.name === name);
     if (!tool) throw new Error(`tool ${name} not found`);
@@ -196,7 +203,7 @@ function setup(options?: {
   const call = (
     name: string,
     args: Record<string, unknown>,
-    context: ToolContext = makeContext(),
+    context: ToolContext = defaultContext,
   ) => Effect.runPromise(callEffect(name, args, context));
   return {
     call,
@@ -239,6 +246,31 @@ describe("scient_send_message", () => {
     expect(command.dispatchSource).toBe("agent");
     expect(command.runtimeMode).toBe("full-access");
     expect(command.interactionMode).toBe("plan");
+    expect(command.operationPrecondition).toEqual({
+      actorThreadId: CALLER_THREAD,
+      actor: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "default",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: null,
+        latestTurnState: null,
+      },
+      target: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "plan",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: null,
+        latestTurnState: null,
+      },
+    });
     expect(command.createdAt).toBe(ISO);
     expect(command.commandId).toBe("agent:rand-id:send");
     expect(command.message.messageId).toBe("agent:rand-id:message");
@@ -265,7 +297,7 @@ describe("scient_send_message", () => {
       "scient_send_message",
       { threadId: TARGET_THREAD, message: "must not dispatch" },
       makeContext({
-        assertOperationAuthorityCurrent: () =>
+        requireCurrentCallerTurn: () =>
           Effect.fail(
             new GatewayToolError(
               "caller_session_inactive",
@@ -392,7 +424,6 @@ describe("scient_send_message", () => {
     const tools = makeThreadWriteTools({
       snapshotQuery,
       orchestrationEngine: engine,
-      requireThreadShell,
     });
     const credentials = {
       verifySession: () => ({
@@ -400,7 +431,7 @@ describe("scient_send_message", () => {
         threadId: CALLER_THREAD,
         provider: "claudeAgent",
         issuedAt: 0,
-        capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
+        capabilities: ["thread:read", "thread:drive"],
       }),
       bindWriteAuthority: () => ({
         sessionKey: "gateway-session:test",
@@ -409,6 +440,7 @@ describe("scient_send_message", () => {
         turnId: "turn-caller",
       }),
       verifyWriteAuthority: () => true,
+      subscribeSessionRevocations: () => () => undefined,
     } as unknown as AgentGatewayCredentialsShape;
     const transport = makeAgentGatewayMcpTransport({
       credentials,
@@ -785,6 +817,31 @@ describe("scient_interrupt_thread", () => {
     expect(commands[0].threadId).toBe(TARGET_THREAD);
     expect(commands[0].turnId).toBe("turn-x");
     expect(commands[0].commandId).toBe(`agent:${TARGET_THREAD}:turn-x:interrupt`);
+    expect(commands[0].operationPrecondition).toEqual({
+      actorThreadId: CALLER_THREAD,
+      actor: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "default",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: null,
+        latestTurnState: null,
+      },
+      target: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "default",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: "turn-x",
+        latestTurnState: "running",
+      },
+    });
     expect(commands[0].createdAt).toBe(ISO);
   });
 
@@ -800,7 +857,7 @@ describe("scient_interrupt_thread", () => {
       "scient_interrupt_thread",
       { threadId: TARGET_THREAD },
       makeContext({
-        assertCallerTurnActive: () =>
+        requireCurrentCallerTurn: () =>
           Effect.fail(
             new GatewayToolError("caller_turn_inactive", "Caller turn is no longer active."),
           ),
@@ -882,15 +939,16 @@ describe("makeThreadWriteTools", () => {
     const tools = makeThreadWriteTools({
       snapshotQuery: makeSnapshotQuery({}),
       orchestrationEngine: makeEngine().engine,
-      requireThreadShell: (id: string) => Effect.fail(new Error(id)),
     });
     expect(tools.map((tool) => tool.definition.name)).toEqual([
       "scient_send_message",
       "scient_interrupt_thread",
     ]);
     expect(tools.every((tool) => tool.requiresActiveTurn === true)).toBe(true);
-    expect(tools.every((tool) => tool.requiredCapability === "thread:drive")).toBe(true);
-    expect(tools.every((tool) => tool.allowedActorKinds.has("provider-thread"))).toBe(true);
+    expect(tools.every((tool) => tool.operation.capability === "thread:drive")).toBe(true);
+    expect(
+      tools.every((tool) => tool.operation.allowedActorKinds.includes("provider-thread")),
+    ).toBe(true);
     // Drive tools must carry write annotations (not read-only).
     expect(tools.every((tool) => tool.definition.annotations?.readOnlyHint === false)).toBe(true);
   });

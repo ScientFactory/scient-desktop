@@ -32,6 +32,7 @@ import { Cause, Effect, Option } from "effect";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { defineScientOperation } from "../scientOperations/authority.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
 import { mcpToolResultJson, type McpToolCallResult } from "./protocol.ts";
 import { readStringArg, ToolInputError } from "./toolInput.ts";
@@ -56,6 +57,18 @@ const SEND_MAX_PENDING_PER_SESSION = 16;
 const SEND_MAX_PENDING_BYTES_PER_SESSION = 4 * 1024 * 1024;
 const SEND_REQUEST_ID_MAX_UTF8_BYTES = 256;
 const SEND_MESSAGE_MAX_UTF8_BYTES = 512 * 1024;
+const PROVIDER_THREAD_ACTOR = ["provider-thread"] as const;
+const SEND_MESSAGE_OPERATION = defineScientOperation({
+  id: "thread.message.send",
+  capability: "thread:drive",
+  allowedActorKinds: PROVIDER_THREAD_ACTOR,
+  idempotencyInputField: "requestId",
+});
+const INTERRUPT_THREAD_OPERATION = defineScientOperation({
+  id: "thread.interrupt",
+  capability: "thread:drive",
+  allowedActorKinds: PROVIDER_THREAD_ACTOR,
+});
 
 interface SendResultPayload {
   readonly threadId: string;
@@ -93,9 +106,6 @@ function idempotencyIdentity(sessionKey: string, requestId: string): string {
 export interface ThreadWriteToolsInput {
   readonly snapshotQuery: ProjectionSnapshotQueryShape;
   readonly orchestrationEngine: OrchestrationEngineShape;
-  readonly requireThreadShell: (
-    threadId: string,
-  ) => Effect.Effect<OrchestrationThreadShell, unknown, never>;
   /** Injectable clock (ISO-8601). Defaults to the wall clock. */
   readonly now?: () => string;
   /** Injectable id source for non-idempotent commands. Defaults to a UUID. */
@@ -105,8 +115,22 @@ export interface ThreadWriteToolsInput {
   ) => () => void;
 }
 
+function protectedThreadOperationState(thread: OrchestrationThreadShell) {
+  return {
+    projectId: thread.projectId,
+    runtimeMode: thread.runtimeMode,
+    envMode: thread.envMode ?? "local",
+    interactionMode: thread.interactionMode,
+    provider: thread.session?.providerName ?? thread.modelSelection.provider,
+    sessionStatus: thread.session?.status ?? null,
+    activeTurnId: thread.session?.activeTurnId ?? null,
+    latestTurnId: thread.latestTurn?.turnId ?? null,
+    latestTurnState: thread.latestTurn?.state ?? null,
+  };
+}
+
 export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArray<ToolEntry> {
-  const { snapshotQuery, orchestrationEngine, requireThreadShell } = input;
+  const { snapshotQuery, orchestrationEngine } = input;
   const now = input.now ?? (() => new Date().toISOString());
   const randomId = input.randomId ?? randomUUID;
 
@@ -181,9 +205,17 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
       targetEnvMode: target.envMode ?? "local",
     });
 
+  const operationPrecondition = (
+    actor: OrchestrationThreadShell,
+    target: OrchestrationThreadShell,
+  ) => ({
+    actorThreadId: actor.id,
+    actor: protectedThreadOperationState(actor),
+    target: protectedThreadOperationState(target),
+  });
+
   const sendMessage: ToolEntry = {
-    requiredCapability: "thread:drive",
-    allowedActorKinds: new Set(["provider-thread"]),
+    operation: SEND_MESSAGE_OPERATION,
     requiresActiveTurn: true,
     definition: {
       name: "scient_send_message",
@@ -287,7 +319,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
           }
 
           const attempt = yield* Effect.gen(function* () {
-            const caller = yield* requireThreadShell(context.callerThreadId);
+            const caller = yield* context.requireCurrentCallerTurn();
             const target = yield* resolveTarget(threadId);
             const decision = authorizeDrive(context, caller, target, threadId);
             if (!decision.allow) {
@@ -298,19 +330,15 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
               } satisfies PendingSendResolution;
             }
 
-            // Revalidate the host-resolved grant and pinned caller turn at the
-            // last safe point before dispatching the protected effect.
-            yield* context.assertOperationAuthorityCurrent();
-            yield* context.assertCallerTurnActive();
-
             const commandSuffix =
               requestId === undefined
                 ? randomId()
                 : idempotencyIdentity(context.callerSessionKey, requestId);
+            const commandId = CommandId.makeUnsafe(`agent:${commandSuffix}:send`);
             yield* orchestrationEngine
               .dispatch({
                 type: "thread.turn.start",
-                commandId: CommandId.makeUnsafe(`agent:${commandSuffix}:send`),
+                commandId,
                 threadId: target.id,
                 message: {
                   messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
@@ -322,6 +350,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                 dispatchSource: "agent",
                 runtimeMode: target.runtimeMode,
                 interactionMode: target.interactionMode,
+                operationPrecondition: operationPrecondition(caller, target),
                 createdAt: now(),
               })
               .pipe(
@@ -329,6 +358,10 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                   unexpectedGatewayToolError(error, { operation: "send_message_dispatch" }),
                 ),
               );
+            context.recordOperationEffect({
+              kind: "orchestration-command",
+              identity: commandId,
+            });
 
             return {
               payload: {
@@ -377,8 +410,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   };
 
   const interruptThread: ToolEntry = {
-    requiredCapability: "thread:drive",
-    allowedActorKinds: new Set(["provider-thread"]),
+    operation: INTERRUPT_THREAD_OPERATION,
     requiresActiveTurn: true,
     definition: {
       name: "scient_interrupt_thread",
@@ -397,7 +429,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
     handler: (args, context) =>
       Effect.gen(function* () {
         const threadId = readStringArg(args, "threadId", { required: true })!;
-        const caller = yield* requireThreadShell(context.callerThreadId);
+        const caller = yield* context.requireCurrentCallerTurn();
         const target = yield* resolveTarget(threadId);
         const decision = authorizeDrive(context, caller, target, threadId);
         if (!decision.allow) {
@@ -415,17 +447,17 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             reason: "no_active_turn",
           });
         }
-        yield* context.assertOperationAuthorityCurrent();
-        yield* context.assertCallerTurnActive();
+        const commandId = CommandId.makeUnsafe(`agent:${target.id}:${runningTurnId}:interrupt`);
         yield* orchestrationEngine
           .dispatch({
             type: "thread.turn.interrupt",
             // Pin to the observed turn so a retry (or a turn that ends first) can
             // never interrupt a different, later turn; the id is deterministic so
             // the receipt layer collapses duplicate interrupts of the same turn.
-            commandId: CommandId.makeUnsafe(`agent:${target.id}:${runningTurnId}:interrupt`),
+            commandId,
             threadId: target.id,
             turnId: runningTurnId,
+            operationPrecondition: operationPrecondition(caller, target),
             createdAt: now(),
           })
           .pipe(
@@ -433,6 +465,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
               unexpectedGatewayToolError(error, { operation: "interrupt_thread_dispatch" }),
             ),
           );
+        context.recordOperationEffect({ kind: "orchestration-command", identity: commandId });
         return mcpToolResultJson({
           threadId: target.id,
           interrupted: true,

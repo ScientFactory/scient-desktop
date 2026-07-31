@@ -1099,6 +1099,24 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const TrustedThreadOperationStatePrecondition = Schema.Struct({
+  projectId: ProjectId,
+  runtimeMode: RuntimeMode,
+  envMode: ThreadEnvironmentMode,
+  interactionMode: ProviderInteractionMode,
+  provider: TrimmedNonEmptyString,
+  sessionStatus: Schema.NullOr(OrchestrationSessionStatus),
+  activeTurnId: Schema.NullOr(TurnId),
+  latestTurnId: Schema.NullOr(TurnId),
+  latestTurnState: Schema.NullOr(OrchestrationLatestTurnState),
+});
+
+const TrustedThreadOperationPrecondition = Schema.Struct({
+  actorThreadId: ThreadId,
+  actor: TrustedThreadOperationStatePrecondition,
+  target: TrustedThreadOperationStatePrecondition,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1124,6 +1142,12 @@ export const ThreadTurnStartCommand = Schema.Struct({
   // Set only by trusted server-side dispatchers. ClientThreadTurnStartCommand
   // omits this field, so decoding strips any spoofed value.
   dispatchSource: Schema.optional(MessageDispatchSource),
+  // Trusted server-side callers may pin the exact authorization-relevant
+  // actor and target state they inspected. The decider checks this against the same
+  // authoritative read model used to commit the command, closing the gap
+  // between an adapter's policy check and the persisted effect. The client
+  // command schema deliberately omits this field.
+  operationPrecondition: Schema.optional(TrustedThreadOperationPrecondition),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -1158,6 +1182,15 @@ const ClientThreadTurnStartCommand = Schema.Struct({
 });
 
 const ThreadTurnInterruptCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.interrupt"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  operationPrecondition: Schema.optional(TrustedThreadOperationPrecondition),
+  createdAt: IsoDateTime,
+});
+
+const ClientThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -1305,7 +1338,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
-  ThreadTurnInterruptCommand,
+  ClientThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,

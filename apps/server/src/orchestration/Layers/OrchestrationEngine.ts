@@ -26,6 +26,7 @@ import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
+  OrchestrationCommandCancelledError,
   OrchestrationCommandInvariantError,
   OrchestrationCommandInternalError,
   OrchestrationCommandPreviouslyRejectedError,
@@ -52,6 +53,7 @@ interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   executionState: Ref.Ref<CommandExecutionState>;
+  cancellation: Deferred.Deferred<void>;
   deadlineAtMs: number;
 }
 
@@ -112,6 +114,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       commandId: command.commandId,
       commandType: command.type,
       timeoutMs: ORCHESTRATION_DISPATCH_TIMEOUT_MS,
+    });
+
+  const makeCommandCancelledError = (command: OrchestrationCommand) =>
+    new OrchestrationCommandCancelledError({
+      commandId: command.commandId,
+      commandType: command.type,
     });
 
   const makeCommandInternalError = (
@@ -517,15 +525,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }),
       );
 
-      const committedCommand = yield* sql
-        .withTransaction(transactionalCommitEffect)
-        .pipe(
-          Effect.catchTag("SqlError", (sqlError) =>
-            Effect.fail(
-              toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),
+      const committedCommand = yield* Effect.raceFirst(
+        sql
+          .withTransaction(transactionalCommitEffect)
+          .pipe(
+            Effect.catchTag("SqlError", (sqlError) =>
+              Effect.fail(
+                toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),
+              ),
             ),
           ),
-        );
+        Deferred.await(envelope.cancellation).pipe(
+          Effect.andThen(Effect.fail(makeCommandCancelledError(envelope.command))),
+        ),
+      );
 
       commandReadModel = committedCommand.nextCommandReadModel;
       yield* Effect.forEach(
@@ -703,10 +716,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       const executionState = yield* Ref.make<CommandExecutionState>("queued");
+      const cancellation = yield* Deferred.make<void>();
       yield* Queue.offer(commandQueue, {
         command,
         result,
         executionState,
+        cancellation,
         deadlineAtMs: Date.now() + ORCHESTRATION_DISPATCH_TIMEOUT_MS,
       });
       return yield* Deferred.await(result).pipe(
@@ -747,6 +762,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             onSome: Effect.succeed,
           }),
+        ),
+        Effect.onInterrupt(() =>
+          Effect.all([
+            Ref.set(executionState, "abandoned"),
+            Deferred.succeed(cancellation, undefined),
+          ]).pipe(Effect.asVoid),
         ),
       );
     });

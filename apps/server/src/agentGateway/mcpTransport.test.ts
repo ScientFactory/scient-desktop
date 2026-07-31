@@ -12,7 +12,10 @@ import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ScientOperationCapability } from "../scientOperations/authority.ts";
+import {
+  defineScientOperation,
+  type ScientOperationResultReceipt,
+} from "../scientOperations/authority.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -32,7 +35,7 @@ function makeIdentity(
     threadId: ThreadId.makeUnsafe(CALLER_THREAD),
     provider: "claudeAgent",
     issuedAt: 0,
-    capabilities: new Set<ScientOperationCapability>(["thread:read"]),
+    capabilities: ["thread:read"],
     ...overrides,
   };
 }
@@ -52,6 +55,7 @@ function makeCredentials(cfg?: {
   readonly session?: AgentGatewaySessionIdentity | null;
   readonly writeAuthorityValid?: boolean;
   readonly verifySession?: (token: string) => AgentGatewaySessionIdentity | null;
+  readonly subscribeSessionRevocations?: AgentGatewayCredentialsShape["subscribeSessionRevocations"];
 }): AgentGatewayCredentialsShape {
   const session = cfg?.session === undefined ? makeIdentity() : cfg.session;
   return {
@@ -67,6 +71,7 @@ function makeCredentials(cfg?: {
           }
         : null,
     verifyWriteAuthority: () => cfg?.writeAuthorityValid ?? true,
+    subscribeSessionRevocations: cfg?.subscribeSessionRevocations ?? (() => () => undefined),
   } as unknown as AgentGatewayCredentialsShape;
 }
 
@@ -79,8 +84,11 @@ function makeSnapshotQuery(
 }
 
 const echoTool: ToolEntry = {
-  requiredCapability: "thread:read",
-  allowedActorKinds: new Set(["provider-thread"]),
+  operation: defineScientOperation({
+    id: "thread.read",
+    capability: "thread:read",
+    allowedActorKinds: ["provider-thread"],
+  }),
   definition: {
     name: "scient_echo",
     description: "Echo the arguments back.",
@@ -90,8 +98,11 @@ const echoTool: ToolEntry = {
 };
 
 const writeTool: ToolEntry = {
-  requiredCapability: "thread:drive",
-  allowedActorKinds: new Set(["provider-thread"]),
+  operation: defineScientOperation({
+    id: "thread.message.send",
+    capability: "thread:drive",
+    allowedActorKinds: ["provider-thread"],
+  }),
   definition: {
     name: "scient_write_thing",
     description: "A write tool that requires an active turn.",
@@ -102,8 +113,11 @@ const writeTool: ToolEntry = {
 };
 
 const defectTool: ToolEntry = {
-  requiredCapability: "thread:read",
-  allowedActorKinds: new Set(["provider-thread"]),
+  operation: defineScientOperation({
+    id: "thread.read",
+    capability: "thread:read",
+    allowedActorKinds: ["provider-thread"],
+  }),
   definition: {
     name: "scient_defect",
     description: "Throw an unexpected internal error.",
@@ -113,8 +127,11 @@ const defectTool: ToolEntry = {
 };
 
 const envelopeTool: ToolEntry = {
-  requiredCapability: "thread:read",
-  allowedActorKinds: new Set(["provider-thread"]),
+  operation: defineScientOperation({
+    id: "thread.read",
+    capability: "thread:read",
+    allowedActorKinds: ["provider-thread"],
+  }),
   definition: {
     name: "scient_envelope",
     description: "Return non-secret operation-envelope fields for testing.",
@@ -127,10 +144,10 @@ const envelopeTool: ToolEntry = {
         operation: context.operationEnvelope.operation,
         capability: context.operationEnvelope.capability,
         projectId: context.operationEnvelope.projectId,
-        actorKind: context.operationEnvelope.actor.kind,
-        authorityGeneration: context.operationEnvelope.authorityGeneration,
+        actorKind: context.operationEnvelope.authority.actor.kind,
+        authorityGeneration: context.operationEnvelope.authority.generation,
         ingress: context.operationEnvelope.ingress,
-        payloadFingerprint: context.operationEnvelope.payloadFingerprint,
+        payloadFingerprint: context.operationEnvelope.idempotency.payloadFingerprint,
       }),
     ),
 };
@@ -141,6 +158,7 @@ function makeTransport(cfg?: {
   readonly requireShell?: OrchestrationThreadShell;
   readonly tools?: ReadonlyArray<ToolEntry>;
   readonly randomId?: () => string;
+  readonly recordOperationReceipt?: (receipt: ScientOperationResultReceipt) => void;
 }) {
   const requireShell = cfg?.requireShell ?? makeShell();
   return makeAgentGatewayMcpTransport({
@@ -153,6 +171,9 @@ function makeTransport(cfg?: {
     instructions: "TEST_INSTRUCTIONS",
     requireThreadShell: () => Effect.succeed(requireShell),
     ...(cfg?.randomId === undefined ? {} : { randomId: cfg.randomId }),
+    ...(cfg?.recordOperationReceipt === undefined
+      ? {}
+      : { recordOperationReceipt: cfg.recordOperationReceipt }),
   });
 }
 
@@ -299,7 +320,7 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
     );
     expect(toolResultJson(res.body)).toMatchObject({
       operationId: "scient-operation:operation-random",
-      operation: "scient_envelope",
+      operation: "thread.read",
       capability: "thread:read",
       projectId: CALLER_PROJECT,
       actorKind: "provider-thread",
@@ -397,7 +418,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<ScientOperationCapability>(["thread:drive"]),
+            capabilities: ["thread:drive"],
           }),
         }),
       }),
@@ -485,7 +506,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
+            capabilities: ["thread:read", "thread:drive"],
           }),
         }),
         callerShell: Option.some(makeShell({ latestTurn: null })),
@@ -513,7 +534,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
+            capabilities: ["thread:read", "thread:drive"],
           }),
           writeAuthorityValid: true,
         }),
@@ -533,6 +554,81 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
     expect(toolResultJson(res.body)).toEqual({ wrote: true });
   });
 
+  it("interrupts an in-flight write on exact session revocation and records uncertainty after an observed effect", async () => {
+    let revocationListener: ((identity: AgentGatewaySessionIdentity) => void) | undefined;
+    let handlerStarted = false;
+    let handlerInterrupted = false;
+    const receipts: ScientOperationResultReceipt[] = [];
+    const fencedWriteTool: ToolEntry = {
+      ...writeTool,
+      handler: (_args, context) =>
+        Effect.sync(() => {
+          handlerStarted = true;
+          context.recordOperationEffect({
+            kind: "orchestration-command",
+            identity: "command-may-have-committed",
+          });
+        }).pipe(
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              handlerInterrupted = true;
+            }),
+          ),
+        ),
+    };
+    const runningShell = makeShell({
+      latestTurn: { turnId: RUNNING_TURN, state: "running" },
+      session: { providerName: "claudeAgent", status: "running" },
+    });
+    const session = makeIdentity({ capabilities: ["thread:read", "thread:drive"] });
+    const response = run(
+      makeTransport({
+        credentials: makeCredentials({
+          session,
+          writeAuthorityValid: true,
+          subscribeSessionRevocations: (listener) => {
+            revocationListener = listener;
+            return () => {
+              revocationListener = undefined;
+            };
+          },
+        }),
+        callerShell: Option.some(runningShell),
+        requireShell: runningShell,
+        tools: [fencedWriteTool],
+        recordOperationReceipt: (receipt) => receipts.push(receipt),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 55,
+          method: "tools/call",
+          params: { name: "scient_write_thing", arguments: {} },
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(handlerStarted).toBe(true);
+      expect(revocationListener).toBeTypeOf("function");
+    });
+    revocationListener!(session);
+
+    const result = await response;
+    expect(handlerInterrupted).toBe(true);
+    expect(toolResultJson(result.body)).toMatchObject({
+      error: { code: "caller_session_inactive" },
+    });
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      outcome: "uncertain/reconciliation-required",
+      errorCode: "caller_session_inactive",
+      effects: [{ identity: "command-may-have-committed" }],
+    });
+  });
+
   it("rejects a write tool when the pinned turn has been superseded", async () => {
     // Turn is running at ingress (authority binds) but requireThreadShell later
     // reports a different latest turn → recheck-after-dispatch style TOCTOU deny.
@@ -546,7 +642,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
+            capabilities: ["thread:read", "thread:drive"],
           }),
           writeAuthorityValid: true,
         }),
