@@ -827,6 +827,29 @@ describe("scient_send_message", () => {
     expect(effects).toEqual([{ kind: "orchestration-command", identity: "agent:rand-id:send" }]);
   });
 
+  it("requires the exact original requestId when retrying an uncertain idempotent send", async () => {
+    const { call } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: (command) =>
+        Effect.fail(
+          new OrchestrationCommandOutcomeUncertainError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "Injected reconciliation failure.",
+          }),
+        ),
+    });
+    const result = await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "x",
+      requestId: "stable-request",
+    });
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_outcome_uncertain");
+    expect(error.message).toContain("reuse the exact original requestId");
+    expect(error.message).not.toContain("No requestId was supplied");
+  });
+
   it("does not remember a failed dispatch for later replay", async () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
@@ -875,29 +898,6 @@ describe("scient_interrupt_thread", () => {
         identity: `agent:${TARGET_THREAD}:turn-x:interrupt`,
       },
     ]);
-  });
-
-  it("requires the exact original requestId when retrying an uncertain idempotent send", async () => {
-    const { call } = setup({
-      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
-      dispatch: (command) =>
-        Effect.fail(
-          new OrchestrationCommandOutcomeUncertainError({
-            commandId: command.commandId,
-            commandType: command.type,
-            detail: "Injected reconciliation failure.",
-          }),
-        ),
-    });
-    const result = await call("scient_send_message", {
-      threadId: TARGET_THREAD,
-      message: "x",
-      requestId: "stable-request",
-    });
-    const error = jsonBody(result).error as { code: string; message: string };
-    expect(error.code).toBe("operation_outcome_uncertain");
-    expect(error.message).toContain("reuse the exact original requestId");
-    expect(error.message).not.toContain("No requestId was supplied");
   });
 
   it("interrupts a running turn, pinned to the observed turn id", async () => {
