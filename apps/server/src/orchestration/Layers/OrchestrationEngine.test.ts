@@ -12,8 +12,9 @@ import {
   TurnId,
   type OrchestrationEvent,
 } from "@synara/contracts";
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -1444,6 +1445,78 @@ describe("OrchestrationEngine", () => {
       ),
     ).resolves.toEqual({ sequence: 2 });
     await runtime.dispose();
+  });
+
+  it("does not replay an already-projected streaming message after deferred timeout", async () => {
+    let enteredDeferredProjection = false;
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: (event) =>
+        event.commandId === "cmd-streaming-delta-timeout"
+          ? Effect.sync(() => {
+              enteredDeferredProjection = true;
+            }).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+    };
+    const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(SqlitePersistenceMemory),
+      Layer.provideMerge(TestClock.layer()),
+    );
+    await Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const createdAt = now();
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-streaming-project"),
+        projectId: asProjectId("project-streaming-timeout"),
+        title: "Streaming timeout",
+        workspaceRoot: "/tmp/project-streaming-timeout",
+        createdAt,
+      });
+      const threadId = ThreadId.makeUnsafe("thread-streaming-timeout");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-streaming-thread"),
+        threadId,
+        projectId: asProjectId("project-streaming-timeout"),
+        title: "Streaming",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      const protectedResult = yield* engine.dispatchProtected(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.makeUnsafe("cmd-streaming-delta-timeout"),
+          threadId,
+          messageId: MessageId.makeUnsafe("message-streaming-timeout"),
+          delta: "A",
+          createdAt,
+        },
+        Effect.never,
+      );
+      expect(protectedResult).toEqual({ sequence: 3 });
+      yield* TestClock.withLive(Effect.sleep(10));
+      expect(enteredDeferredProjection).toBe(true);
+
+      yield* TestClock.adjust(Duration.seconds(46));
+      yield* TestClock.withLive(Effect.sleep(10));
+      const model = yield* engine.getReadModel();
+      expect(model.snapshotSequence).toBe(3);
+      const thread = model.threads.find((entry) => entry.id === threadId);
+      expect(thread?.messages).toHaveLength(1);
+      expect(thread?.messages[0]?.text).toBe("A");
+    }).pipe(Effect.provide(orchestrationLayer), Effect.scoped, Effect.runPromise);
   });
 
   it("does not change non-gateway dispatch semantics when its caller is interrupted", async () => {

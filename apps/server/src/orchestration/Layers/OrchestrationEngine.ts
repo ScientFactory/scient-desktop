@@ -103,6 +103,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
   let commandReadModel = createEmptyReadModel(new Date().toISOString());
+  let lastPublishedEventSequence = 0;
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -289,6 +290,21 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       { concurrency: 1 },
     );
 
+  const publishCommittedEventsAtMostOnce = (events: ReadonlyArray<OrchestrationEvent>) =>
+    Effect.forEach(
+      events,
+      (event) => {
+        if (event.sequence <= lastPublishedEventSequence) return Effect.void;
+        // Advance before publishing: recovery is explicitly at-most-once. An
+        // interrupted publication may omit a transient live notification, but
+        // can never redeliver a domain event whose durable state is available
+        // through snapshots/event replay.
+        lastPublishedEventSequence = event.sequence;
+        return PubSub.publish(eventPubSub, event).pipe(Effect.asVoid);
+      },
+      { concurrency: 1 },
+    );
+
   const refreshCommandReadModelFromProjectionState = Effect.gen(function* () {
     const nextCommandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
     commandReadModel = nextCommandReadModel;
@@ -457,8 +473,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         return;
       }
 
+      const unseenEvents = persistedEvents.filter(
+        (persistedEvent) => persistedEvent.sequence > commandReadModel.snapshotSequence,
+      );
       let nextCommandReadModel = commandReadModel;
-      for (const persistedEvent of persistedEvents) {
+      for (const persistedEvent of unseenEvents) {
         nextCommandReadModel = yield* projectEvent(nextCommandReadModel, persistedEvent);
       }
       commandReadModel = nextCommandReadModel;
@@ -473,9 +492,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         eventType: lastPersistedEvent.type,
         sequence: lastPersistedEvent.sequence,
       });
-      for (const persistedEvent of persistedEvents) {
-        yield* PubSub.publish(eventPubSub, persistedEvent);
-      }
+      yield* publishCommittedEventsAtMostOnce(persistedEvents);
     });
 
     const recoverCommittedState = (sequence: number) =>
@@ -660,9 +677,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
       commandReadModel = committedCommand.nextCommandReadModel;
       yield* projectDeferredCommittedEvents(committedCommand.committedEvents);
-      for (const event of committedCommand.committedEvents) {
-        yield* PubSub.publish(eventPubSub, event);
-      }
+      yield* publishCommittedEventsAtMostOnce(committedCommand.committedEvents);
       yield* Deferred.succeed(envelope.result, { sequence: committedCommand.lastSequence });
     }).pipe(
       Effect.timeoutOption(remainingBudgetMs),
@@ -812,6 +827,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* projectionPipeline.bootstrap;
 
   commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
+  lastPublishedEventSequence = commandReadModel.snapshotSequence;
 
   const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
   yield* Effect.forkScoped(worker);
