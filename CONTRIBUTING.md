@@ -43,6 +43,65 @@ update the task branch as GitHub requires and revalidate the current head.
 Merging to `main` integrates the change but does not publish a desktop release.
 Release promotion to `release/stable` is a separate reviewed decision.
 
+### Dependent Changes And Stacked Pull Requests
+
+Use GitHub stacked pull requests when one focused change genuinely depends on
+another unmerged change. A stack is a linear chain: the bottom pull request
+targets `main`, and each higher pull request targets the branch immediately
+below it. Do not use a stack as a holding queue for unrelated work, and do not
+replace `main` with a staging or shadow-main branch.
+
+Plan the complete stack before implementation. Put shared contracts and other
+foundations in lower layers, and put their consumers in higher layers. Every
+layer must remain a coherent review unit, include the tests that prove its own
+behavior, and depend only on its own branch or a lower branch. Run the relevant
+verification for every layer and run combined integration, runtime, visual, or
+release-risk verification against the exact top-of-stack head.
+
+One coordinator owns the stack's branch order, synchronization, submission,
+and merge. Keep the live stack in one dedicated worktree; parallel agents may
+review exact heads or work in separate stacks, but must not concurrently mutate
+branches in the same stack. Before creating a stack, fetch `origin`, confirm
+that the local trunk exactly matches `origin/main`, and inspect existing
+worktrees and hosted pull requests for overlapping ownership.
+
+The supported non-interactive flow uses GitHub CLI 2.90.0 or later and the
+official `github/gh-stack` extension:
+
+```sh
+gh --version
+gh extension install github/gh-stack
+# Agents should also install GitHub's gh-stack skill for their host. For Codex:
+gh skill install github/gh-stack gh-stack --agent codex --scope user
+
+git config rerere.enabled true
+git config remote.pushDefault origin
+gh stack init --base main BRANCH
+gh stack add NEXT_BRANCH
+gh stack submit --auto
+gh stack view --json
+```
+
+Stacks are submitted as drafts by default. Review and stabilize them from the
+bottom up. Before merging any contiguous portion, confirm that every included
+pull request is non-draft, linear, current with the protected stack base, green
+at its exact hosted head, and supported by accurate evidence. Use the
+stack-aware merge command with the repository's squash policy:
+
+```sh
+gh stack merge STACK_OR_PR_NUMBER --yes --squash
+```
+
+Do not use `gh pr merge` for a stacked pull request. Do not rely on auto-merge
+while GitHub Stacked Pull Requests remains a public-preview feature.
+
+Maintaining a published stack may rewrite its feature branches. The only
+permitted forced update is the explicit `--force-with-lease` behavior performed
+by `gh stack` on coordinator-owned stack branches after a fresh fetch and
+ownership check. Never force-update `main`, `release/stable`, donor branches,
+ordinary pull-request branches, or a branch owned by another active task. Stop
+on a lease mismatch or ambiguous ownership instead of overriding it.
+
 ## Automated Verification
 
 Use the smallest reliable test that can fail for the behavior being changed.
