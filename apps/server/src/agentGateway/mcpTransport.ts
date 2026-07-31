@@ -9,21 +9,19 @@
  *
  * @module agentGateway/mcpTransport
  */
-import { createHash, randomUUID } from "node:crypto";
-
 import { ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
-  beginScientOperation,
-  completeScientOperation,
   makeScientOperationAuthority,
   SCIENT_OPERATION_DEFINITIONS,
   ScientOperationInputError,
   type ScientOperationAuthority,
   type ScientOperationResultReceipt,
 } from "../scientOperations/authority.ts";
+import { makeScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
+import type { ScientOperationExecutorShape } from "../scientOperations/Services/ScientOperationExecutor.ts";
 import type { AgentGatewayShape } from "./Services/AgentGateway.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
 import { extractBearerToken } from "./bearerToken.ts";
@@ -37,6 +35,7 @@ import {
   JSON_RPC_METHOD_NOT_FOUND,
   parseMcpMessage,
   type JsonRpcRequest,
+  type McpToolCallResult,
 } from "./protocol.ts";
 import { errorText } from "./toolInput.ts";
 import {
@@ -64,20 +63,6 @@ type ToolRequestBaseContext = Omit<
   ) => Effect.Effect<A, E | GatewayToolError>;
 };
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const object = value as Record<string, unknown>;
-  return `{${Object.keys(object)
-    .toSorted()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-    .join(",")}}`;
-}
-
-function payloadFingerprint(args: Record<string, unknown>): string {
-  return createHash("sha256").update(canonicalJson(args)).digest("hex");
-}
-
 function toolResultErrorCode(result: {
   readonly content: ReadonlyArray<{ readonly text: string }>;
   readonly isError?: boolean;
@@ -104,9 +89,17 @@ export function makeAgentGatewayMcpTransport(input: {
   readonly now?: () => number;
   readonly randomId?: () => string;
   readonly recordOperationReceipt?: (receipt: ScientOperationResultReceipt) => void;
+  readonly operationExecutor?: ScientOperationExecutorShape;
 }): AgentGatewayShape["handleMcpPost"] {
-  const now = input.now ?? Date.now;
-  const randomId = input.randomId ?? randomUUID;
+  const operationExecutor =
+    input.operationExecutor ??
+    makeScientOperationExecutor({
+      ...(input.now === undefined ? {} : { now: input.now }),
+      ...(input.randomId === undefined ? {} : { randomId: input.randomId }),
+      ...(input.recordOperationReceipt === undefined
+        ? {}
+        : { recordReceipt: input.recordOperationReceipt }),
+    });
   const toolsByName = new Map(input.tools.map((tool) => [tool.definition.name, tool]));
 
   const handleRequest = (request: JsonRpcRequest, context: ToolRequestBaseContext) =>
@@ -154,151 +147,95 @@ export function makeAgentGatewayMcpTransport(input: {
               ),
             );
           }
-          const canonicalized = yield* Effect.try({
-            try: () => canonicalizeDomainInput(tool.decodeInput(args)),
-            catch: (error) =>
-              error instanceof ScientOperationInputError
-                ? new ToolInputError(error.message)
-                : error,
+          const decoded = yield* Effect.try({
+            try: () => tool.decodeInput(args),
+            catch: (error) => error,
           }).pipe(
             Effect.match({
               onFailure: (error) => ({ ok: false as const, error }),
               onSuccess: (value) => ({ ok: true as const, value }),
             }),
           );
-          if (!canonicalized.ok) {
+          if (!decoded.ok) {
             return jsonRpcResult(
               request.id,
-              gatewayToolFailureResult(canonicalized.error, {
-                operation: "canonicalize_tool_input",
+              gatewayToolFailureResult(decoded.error, {
+                operation: "decode_tool_input",
                 toolName,
               }),
             );
           }
-          const canonicalArgs = canonicalized.value;
-          const operationId = `scient-operation:${randomId()}`;
-          const semanticIdempotencyIdentity =
-            operation.idempotencyInputField === null
-              ? null
-              : typeof canonicalArgs[operation.idempotencyInputField] === "string"
-                ? (canonicalArgs[operation.idempotencyInputField] as string)
-                : null;
-          const started = beginScientOperation({
+          const admissionEffect =
+            operation.admission === "write-authority"
+              ? context.requireCurrentCallerTurn()
+              : context.requireCurrentOperationCaller();
+          const outcome = yield* operationExecutor.execute<
+            McpToolCallResult,
+            OrchestrationThreadShell,
+            GatewayToolError
+          >({
             authority: context.operationAuthority,
             definition: operation,
             projectId: context.callerProjectId,
             ingress: "provider-gateway",
-            operationId,
-            semanticIdempotencyIdentity,
-            payloadFingerprint: payloadFingerprint(canonicalArgs),
-            receivedAt: now(),
-          });
-          if (!started.allow) {
-            return jsonRpcResult(
-              request.id,
-              gatewayToolErrorResult(
-                new GatewayToolError(
-                  started.decision.code,
-                  started.decision.message,
-                  started.decision.details,
+            domainInput: decoded.value,
+            admit: admissionEffect,
+            execute: (canonicalInput, executionContext) => {
+              const invocationContext: ToolContext = {
+                ...context,
+                admittedCaller: executionContext.admission,
+                operationEnvelope: executionContext.envelope,
+                operationRevocationFence: context.revocationFence,
+                recordOperationEffect: executionContext.recordEffect,
+                jsonRpcRequestId: request.id,
+              };
+              return Effect.suspend(() => tool.handler(canonicalInput, invocationContext)).pipe(
+                Effect.catchDefect((defect) =>
+                  Effect.succeed(
+                    gatewayToolFailureResult(defect, {
+                      operation: "tool_handler_defect",
+                      toolName,
+                    }),
+                  ),
                 ),
-              ),
-            );
-          }
-          const operationEffects: Array<Parameters<ToolContext["recordOperationEffect"]>[0]> = [];
-          const admission = yield* (
-            operation.admission === "write-authority"
-              ? context.requireCurrentCallerTurn()
-              : context.requireCurrentOperationCaller()
-          ).pipe(
-            Effect.match({
-              onFailure: (error) => ({ ok: false as const, error }),
-              onSuccess: (caller) => ({ ok: true as const, caller }),
-            }),
-          );
-          if (!admission.ok) {
-            return jsonRpcResult(request.id, gatewayToolErrorResult(admission.error));
-          }
-          const invocationContext: ToolContext = {
-            ...context,
-            admittedCaller: admission.caller,
-            operationEnvelope: started.envelope,
-            operationRevocationFence: context.revocationFence,
-            recordOperationEffect: (effect) => operationEffects.push({ ...effect }),
-            jsonRpcRequestId: request.id,
-          };
-          const handlerEffect = Effect.suspend(() =>
-            tool.handler(canonicalArgs, invocationContext),
-          ).pipe(
-            Effect.catchDefect((defect) =>
-              Effect.succeed(
-                gatewayToolFailureResult(defect, {
-                  operation: "tool_handler_defect",
-                  toolName,
-                }),
-              ),
-            ),
-          );
-          const executionEffect =
-            operation.effectClass === "transactional-write"
-              ? context.runTransactionalWrite(handlerEffect)
-              : Effect.raceFirst(handlerEffect, context.revocationFence);
-          const execution = yield* executionEffect.pipe(
-            Effect.match({
-              onFailure: (error) => ({
-                result: gatewayToolFailureResult(error),
-                executionErrorCode: error.code,
-              }),
-              onSuccess: (result) => ({ result, executionErrorCode: null }),
-            }),
-          );
-          const result = execution.result;
-          const receiptErrorCode = execution.executionErrorCode ?? toolResultErrorCode(result);
-          if (operation.effectClass === "read") {
-            const releaseError = yield* context.requireCurrentOperationCaller().pipe(
-              Effect.match({
-                onFailure: (error) => error,
-                onSuccess: () => null,
-              }),
-            );
-            if (releaseError !== null) {
-              const receipt = completeScientOperation({
-                envelope: started.envelope,
-                receiptId: `scient-receipt:${randomId()}`,
-                finishedAt: now(),
-                outcome: "failed",
-                errorCode: releaseError.code,
-                effects: operationEffects,
-              });
-              try {
-                input.recordOperationReceipt?.(receipt);
-              } catch {
-                // Receipt sinks are diagnostics/audit adapters and cannot alter
-                // operation authorization or response behavior.
-              }
-              return jsonRpcResult(request.id, gatewayToolErrorResult(releaseError));
-            }
-          }
-          const receipt = completeScientOperation({
-            envelope: started.envelope,
-            receiptId: `scient-receipt:${randomId()}`,
-            finishedAt: now(),
-            outcome:
-              receiptErrorCode === "operation_outcome_uncertain" ||
-              (receiptErrorCode !== null && operationEffects.length > 0)
-                ? "uncertain/reconciliation-required"
-                : result.isError
-                  ? "failed"
-                  : "succeeded",
-            errorCode: receiptErrorCode,
-            effects: operationEffects,
+              );
+            },
+            releaseRead: () => context.requireCurrentOperationCaller().pipe(Effect.asVoid),
+            runTransactionalWrite: (effect) => context.runTransactionalWrite(effect),
+            revocationFence: context.revocationFence,
+            resultErrorCode: toolResultErrorCode,
           });
-          try {
-            input.recordOperationReceipt?.(receipt);
-          } catch {
-            // See the release-error path above: the sink is never authoritative.
+
+          switch (outcome.kind) {
+            case "input-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolFailureResult(
+                  outcome.error instanceof ScientOperationInputError
+                    ? new ToolInputError(outcome.error.message)
+                    : outcome.error,
+                  { operation: "canonicalize_tool_input", toolName },
+                ),
+              );
+            case "authority-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolErrorResult(
+                  new GatewayToolError(
+                    outcome.decision.code,
+                    outcome.decision.message,
+                    outcome.decision.details,
+                  ),
+                ),
+              );
+            case "admission-rejected":
+              return jsonRpcResult(request.id, gatewayToolErrorResult(outcome.error));
+            case "finished":
+              return jsonRpcResult(
+                request.id,
+                outcome.error === null ? outcome.result : gatewayToolFailureResult(outcome.error),
+              );
           }
-          return jsonRpcResult(request.id, result);
         }
         default:
           return jsonRpcError(
