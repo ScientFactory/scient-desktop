@@ -81,6 +81,12 @@ function makeEngine(options?: {
       if (options?.failWith !== undefined) return Effect.fail(new Error(options.failWith));
       return Effect.succeed({ sequence: commands.length });
     },
+    dispatchProtected: (command: AnyCommand) => {
+      commands.push(command);
+      if (options?.dispatch !== undefined) return options.dispatch(command);
+      if (options?.failWith !== undefined) return Effect.fail(new Error(options.failWith));
+      return Effect.succeed({ sequence: commands.length });
+    },
   } as unknown as OrchestrationEngineShape;
   return { engine, commands };
 }
@@ -123,6 +129,7 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     callerTurnId: "turn-caller",
     requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
     requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),
+    operationRevocationFence: Effect.never,
     recordOperationEffect: () => undefined,
     jsonRpcRequestId: 1,
     ...overrides,

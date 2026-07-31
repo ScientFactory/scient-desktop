@@ -40,7 +40,7 @@ function makeIdentity(
     threadId: ThreadId.makeUnsafe(CALLER_THREAD),
     provider: "claudeAgent",
     issuedAt: 0,
-    capabilities: ["thread:read"],
+    capabilities: ["project:context:read", "thread:read"],
     ...overrides,
   };
 }
@@ -96,8 +96,8 @@ function makeSnapshotQuery(
 }
 
 const echoTool: ToolEntry = {
-  operation: "thread.read",
-  canonicalizeInput: (args) => ({ ...args }),
+  operation: "project.context.read",
+  decodeInput: () => ({}),
   definition: {
     name: "scient_echo",
     description: "Echo the arguments back.",
@@ -108,7 +108,7 @@ const echoTool: ToolEntry = {
 
 const writeTool: ToolEntry = {
   operation: "thread.message.send",
-  canonicalizeInput: (args) => ({ ...args }),
+  decodeInput: () => ({ threadId: "thread-target", message: "test", mode: "queue" }),
   definition: {
     name: "scient_write_thing",
     description: "A write tool that requires an active turn.",
@@ -118,8 +118,8 @@ const writeTool: ToolEntry = {
 };
 
 const defectTool: ToolEntry = {
-  operation: "thread.read",
-  canonicalizeInput: (args) => ({ ...args }),
+  operation: "project.context.read",
+  decodeInput: () => ({}),
   definition: {
     name: "scient_defect",
     description: "Throw an unexpected internal error.",
@@ -129,8 +129,8 @@ const defectTool: ToolEntry = {
 };
 
 const envelopeTool: ToolEntry = {
-  operation: "thread.read",
-  canonicalizeInput: (args) => ({ ...args }),
+  operation: "project.context.read",
+  decodeInput: () => ({}),
   definition: {
     name: "scient_envelope",
     description: "Return non-secret operation-envelope fields for testing.",
@@ -153,7 +153,8 @@ const envelopeTool: ToolEntry = {
 
 const normalizedWriteEnvelopeTool: ToolEntry = {
   operation: "thread.message.send",
-  canonicalizeInput: (args) => ({
+  decodeInput: (args) => ({
+    threadId: "thread-target",
     message: String(args.message).trim(),
     mode: args.mode ?? "queue",
     requestId: String(args.requestId).trim(),
@@ -324,7 +325,7 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
       },
     });
     expect(res.status).toBe(200);
-    expect(toolResultJson(res.body)).toEqual({ echoed: { hello: "world" } });
+    expect(toolResultJson(res.body)).toEqual({ echoed: {} });
   });
 
   it("provides a host-resolved operation envelope to the handler", async () => {
@@ -342,8 +343,8 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
     );
     expect(toolResultJson(res.body)).toMatchObject({
       operationId: "scient-operation:operation-random",
-      operation: "thread.read",
-      capability: "thread:read",
+      operation: "project.context.read",
+      capability: "project:context:read",
       projectId: CALLER_PROJECT,
       actorKind: "provider-thread",
       authorityGeneration: "gateway-session:test",
@@ -499,7 +500,10 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       },
     );
     expect(toolResultJson(res.body)).toMatchObject({
-      error: { code: "capability_denied", details: { requiredCapability: "thread:read" } },
+      error: {
+        code: "capability_denied",
+        details: { requiredCapability: "project:context:read" },
+      },
     });
   });
 

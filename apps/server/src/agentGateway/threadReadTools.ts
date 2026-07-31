@@ -63,7 +63,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const contextTool: ToolEntry = {
     operation: "project.context.read",
-    canonicalizeInput: () => ({}),
+    decodeInput: () => ({}),
     definition: {
       name: "scient_context",
       description:
@@ -106,7 +106,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const listProjects: ToolEntry = {
     operation: "project.list",
-    canonicalizeInput: () => ({}),
+    decodeInput: () => ({}),
     definition: {
       name: "scient_list_projects",
       description:
@@ -134,7 +134,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const listThreads: ToolEntry = {
     operation: "thread.list",
-    canonicalizeInput: (args) => ({
+    decodeInput: (args) => ({
       ...(readStringArg(args, "parentThreadId") === undefined
         ? {}
         : { parentThreadId: readStringArg(args, "parentThreadId") }),
@@ -199,7 +199,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const readThread: ToolEntry = {
     operation: "thread.read",
-    canonicalizeInput: (args) => ({
+    decodeInput: (args) => ({
       threadId: readStringArg(args, "threadId", { required: true })!,
       ...(readStringArg(args, "cursor") === undefined
         ? {}
@@ -278,7 +278,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const waitForThreads: ToolEntry = {
     operation: "thread.wait",
-    canonicalizeInput: (args) => {
+    decodeInput: (args) => {
       const waitInput = decodeWaitForThreadsInput(args);
       if (waitInput.runIds && waitInput.runIds.length !== waitInput.threadIds.length) {
         throw new ToolInputError('Argument "runIds" must have the same length as "threadIds".');

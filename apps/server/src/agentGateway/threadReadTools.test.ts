@@ -156,6 +156,7 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     callerTurnId: null,
     requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
     requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),
+    operationRevocationFence: Effect.never,
     recordOperationEffect: () => undefined,
     jsonRpcRequestId: 1,
     ...overrides,

@@ -375,6 +375,22 @@ const orchestrationEngine = {
           dispatchedCommands.push(command);
           return { sequence: dispatchedCommands.length };
         }),
+  dispatchProtected: (command: OrchestrationCommand) =>
+    failDispatchType !== null && command.type === failDispatchType
+      ? Effect.fail(
+          new OrchestrationCommandInternalError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "dispatch rejected by test harness",
+          }),
+        )
+      : Effect.gen(function* () {
+          if (dispatchHook) {
+            yield* dispatchHook(command);
+          }
+          dispatchedCommands.push(command);
+          return { sequence: dispatchedCommands.length };
+        }),
   repairState: () =>
     Effect.succeed({
       snapshotSequence: 0,

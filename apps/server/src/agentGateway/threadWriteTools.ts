@@ -31,6 +31,7 @@ import {
 import { Cause, Effect, Option } from "effect";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationCommandCancelledError } from "../orchestration/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
 import { mcpToolResultJson, type McpToolCallResult } from "./protocol.ts";
@@ -114,6 +115,15 @@ function protectedThreadOperationState(thread: OrchestrationThreadShell) {
     latestTurnId: thread.latestTurn?.turnId ?? null,
     latestTurnState: thread.latestTurn?.state ?? null,
   };
+}
+
+function mapProtectedDispatchError(error: unknown, operation: string): GatewayToolError {
+  return error instanceof OrchestrationCommandCancelledError
+    ? new GatewayToolError(
+        "caller_session_inactive",
+        "This Scient write was revoked before its protected effect committed.",
+      )
+    : unexpectedGatewayToolError(error, { operation });
 }
 
 export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArray<ToolEntry> {
@@ -203,7 +213,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
 
   const sendMessage: ToolEntry = {
     operation: "thread.message.send",
-    canonicalizeInput: (args) => {
+    decodeInput: (args) => {
       const threadId = readStringArg(args, "threadId", { required: true })!;
       const message = readStringArg(args, "message", {
         required: true,
@@ -342,7 +352,8 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                 : idempotencyIdentity(context.callerSessionKey, requestId);
             const commandId = CommandId.makeUnsafe(`agent:${commandSuffix}:send`);
             yield* orchestrationEngine
-              .dispatch({
+              .dispatchProtected(
+                {
                 type: "thread.turn.start",
                 commandId,
                 threadId: target.id,
@@ -358,11 +369,11 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                 interactionMode: target.interactionMode,
                 operationPrecondition: operationPrecondition(caller, target),
                 createdAt: now(),
-              })
+                },
+                context.operationRevocationFence,
+              )
               .pipe(
-                Effect.mapError((error) =>
-                  unexpectedGatewayToolError(error, { operation: "send_message_dispatch" }),
-                ),
+                Effect.mapError((error) => mapProtectedDispatchError(error, "send_message_dispatch")),
               );
             context.recordOperationEffect({
               kind: "orchestration-command",
@@ -417,7 +428,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
 
   const interruptThread: ToolEntry = {
     operation: "thread.interrupt",
-    canonicalizeInput: (args) => ({
+    decodeInput: (args) => ({
       threadId: readStringArg(args, "threadId", { required: true })!,
     }),
     definition: {
@@ -457,7 +468,8 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
         }
         const commandId = CommandId.makeUnsafe(`agent:${target.id}:${runningTurnId}:interrupt`);
         yield* orchestrationEngine
-          .dispatch({
+          .dispatchProtected(
+            {
             type: "thread.turn.interrupt",
             // Pin to the observed turn so a retry (or a turn that ends first) can
             // never interrupt a different, later turn; the id is deterministic so
@@ -467,10 +479,12 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             turnId: runningTurnId,
             operationPrecondition: operationPrecondition(caller, target),
             createdAt: now(),
-          })
+            },
+            context.operationRevocationFence,
+          )
           .pipe(
             Effect.mapError((error) =>
-              unexpectedGatewayToolError(error, { operation: "interrupt_thread_dispatch" }),
+              mapProtectedDispatchError(error, "interrupt_thread_dispatch"),
             ),
           );
         context.recordOperationEffect({ kind: "orchestration-command", identity: commandId });

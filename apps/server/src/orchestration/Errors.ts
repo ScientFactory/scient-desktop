@@ -66,6 +66,19 @@ export class OrchestrationCommandTimeoutError extends Schema.TaggedErrorClass<Or
   }
 }
 
+/** A protected dispatch was revoked before its persistence transaction committed. */
+export class OrchestrationCommandCancelledError extends Schema.TaggedErrorClass<OrchestrationCommandCancelledError>()(
+  "OrchestrationCommandCancelledError",
+  {
+    commandId: Schema.String,
+    commandType: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Protected orchestration command cancelled before commit (${this.commandType}, ${this.commandId})`;
+  }
+}
+
 export class OrchestrationCommandInternalError extends Schema.TaggedErrorClass<OrchestrationCommandInternalError>()(
   "OrchestrationCommandInternalError",
   {
@@ -108,6 +121,7 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 
 export type OrchestrationDispatchError =
   | ProjectionRepositoryError
+  | OrchestrationCommandCancelledError
   | OrchestrationCommandInvariantError
   | OrchestrationCommandInternalError
   | OrchestrationCommandPreviouslyRejectedError

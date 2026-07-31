@@ -76,12 +76,19 @@ export interface ScientOperationDefinition {
   readonly effectClass: "read" | "transactional-write" | "irreversible-external";
   /** Optional validated logical retry identity field exposed by an adapter. */
   readonly idempotencyInputField: string | null;
+  /** Canonical domain input shared by every ingress adapter, or null until specified. */
+  readonly canonicalizeInput:
+    | ((input: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>)
+    | null;
 }
 
-function defineScientOperation(input: ScientOperationDefinition): ScientOperationDefinition {
+function defineScientOperation(
+  input: Omit<ScientOperationDefinition, "canonicalizeInput">,
+): ScientOperationDefinition {
   return Object.freeze({
     ...input,
     allowedActorKinds: Object.freeze([...new Set(input.allowedActorKinds)]),
+    canonicalizeInput: canonicalInputForOperation(input.id),
   });
 }
 
@@ -97,6 +104,154 @@ const EXECUTION_ACTORS: ReadonlyArray<ScientOperationActorKind> = Object.freeze(
   "external-integration",
   "automation-run",
 ]);
+
+export class ScientOperationInputError extends Error {}
+
+function canonicalString(
+  input: Readonly<Record<string, unknown>>,
+  name: string,
+  options?: { readonly required?: boolean; readonly maxUtf8Bytes?: number },
+): string | undefined {
+  const value = input[name];
+  if (value === undefined || value === null) {
+    if (options?.required) throw new ScientOperationInputError(`Missing required field "${name}".`);
+    return undefined;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ScientOperationInputError(`Field "${name}" must be a non-empty string.`);
+  }
+  const normalized = value.trim();
+  if (
+    options?.maxUtf8Bytes !== undefined &&
+    Buffer.byteLength(normalized, "utf8") > options.maxUtf8Bytes
+  ) {
+    throw new ScientOperationInputError(
+      `Field "${name}" must be at most ${options.maxUtf8Bytes} UTF-8 bytes.`,
+    );
+  }
+  return normalized;
+}
+
+function canonicalNumber(
+  input: Readonly<Record<string, unknown>>,
+  name: string,
+): number | undefined {
+  const value = input[name];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new ScientOperationInputError(`Field "${name}" must be a finite number.`);
+  }
+  return value;
+}
+
+function canonicalBoolean(
+  input: Readonly<Record<string, unknown>>,
+  name: string,
+): boolean | undefined {
+  const value = input[name];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") {
+    throw new ScientOperationInputError(`Field "${name}" must be a boolean.`);
+  }
+  return value;
+}
+
+const EMPTY_INPUT = () => Object.freeze({});
+const canonicalThreadListInput = (input: Readonly<Record<string, unknown>>) => {
+  const parentThreadId = canonicalString(input, "parentThreadId");
+  return Object.freeze({
+    ...(parentThreadId === undefined ? {} : { parentThreadId }),
+    includeArchived: canonicalBoolean(input, "includeArchived") ?? false,
+    limit: Math.max(1, Math.min(canonicalNumber(input, "limit") ?? 50, 200)),
+  });
+};
+const canonicalThreadReadInput = (input: Readonly<Record<string, unknown>>) => {
+  const cursor = canonicalString(input, "cursor");
+  const messageLimit = canonicalNumber(input, "messageLimit");
+  const maxMessageChars = canonicalNumber(input, "maxMessageChars");
+  return Object.freeze({
+    threadId: canonicalString(input, "threadId", { required: true })!,
+    ...(cursor === undefined ? {} : { cursor }),
+    ...(messageLimit === undefined ? {} : { messageLimit }),
+    ...(maxMessageChars === undefined ? {} : { maxMessageChars }),
+  });
+};
+const canonicalThreadWaitInput = (input: Readonly<Record<string, unknown>>) => {
+  const rawThreadIds = input.threadIds;
+  if (!Array.isArray(rawThreadIds) || rawThreadIds.length < 1 || rawThreadIds.length > 20) {
+    throw new ScientOperationInputError('Field "threadIds" must contain 1 to 20 thread IDs.');
+  }
+  const threadIds = rawThreadIds.map(
+    (value) => canonicalString({ value }, "value", { required: true })!,
+  );
+  const rawRunIds = input.runIds;
+  let runIds: ReadonlyArray<string | null> | undefined;
+  if (rawRunIds !== undefined) {
+    if (!Array.isArray(rawRunIds) || rawRunIds.length !== threadIds.length) {
+      throw new ScientOperationInputError(
+        'Field "runIds" must have the same length as "threadIds".',
+      );
+    }
+    runIds = Object.freeze(
+      rawRunIds.map((value) =>
+        value === null ? null : canonicalString({ value }, "value", { required: true })!,
+      ),
+    );
+  }
+  const timeoutMs = canonicalNumber(input, "timeoutMs") ?? 30_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60_000) {
+    throw new ScientOperationInputError('Field "timeoutMs" must be an integer from 0 to 60000.');
+  }
+  return Object.freeze({
+    threadIds: Object.freeze(threadIds),
+    ...(runIds === undefined ? {} : { runIds }),
+    timeoutMs,
+  });
+};
+const canonicalSendInput = (input: Readonly<Record<string, unknown>>) => {
+  const mode = canonicalString(input, "mode") ?? "queue";
+  if (mode !== "queue" && mode !== "steer") {
+    throw new ScientOperationInputError('Field "mode" must be "queue" or "steer".');
+  }
+  const requestId = canonicalString(input, "requestId", { maxUtf8Bytes: 256 });
+  return Object.freeze({
+    threadId: canonicalString(input, "threadId", { required: true })!,
+    message: canonicalString(input, "message", {
+      required: true,
+      maxUtf8Bytes: 512 * 1024,
+    })!,
+    mode,
+    ...(requestId === undefined ? {} : { requestId }),
+  });
+};
+const canonicalInterruptInput = (input: Readonly<Record<string, unknown>>) =>
+  Object.freeze({
+    threadId: canonicalString(input, "threadId", { required: true })!,
+  });
+
+function canonicalInputForOperation(
+  operation: ScientOperationId,
+): ScientOperationDefinition["canonicalizeInput"] {
+  switch (operation) {
+    case "project.context.read":
+    case "project.list":
+      return EMPTY_INPUT;
+    case "thread.list":
+      return canonicalThreadListInput;
+    case "thread.read":
+      return canonicalThreadReadInput;
+    case "thread.wait":
+      return canonicalThreadWaitInput;
+    case "thread.message.send":
+      return canonicalSendInput;
+    case "thread.interrupt":
+      return canonicalInterruptInput;
+    default:
+      // Future operation families stay unexecutable until their Scient-owned
+      // domain input contract is deliberately defined here.
+      return null;
+  }
+}
 
 /**
  * Canonical Scient-owned operation policy. Adapters reference these immutable

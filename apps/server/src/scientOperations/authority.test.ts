@@ -155,6 +155,31 @@ describe("beginScientOperation", () => {
   });
 });
 
+describe("SCIENT_OPERATION_DEFINITIONS", () => {
+  it("owns canonical send semantics independently of transport spelling", () => {
+    const canonicalize = SCIENT_OPERATION_DEFINITIONS["thread.message.send"].canonicalizeInput;
+    expect(canonicalize).not.toBeNull();
+    const omittedDefault = canonicalize!({
+      threadId: " thread-2 ",
+      message: " hello ",
+      requestId: " retry-1 ",
+    });
+    const explicitDefault = canonicalize!({
+      threadId: "thread-2",
+      message: "hello",
+      mode: "queue",
+      requestId: "retry-1",
+    });
+    expect(omittedDefault).toEqual(explicitDefault);
+    expect(Object.isFrozen(omittedDefault)).toBe(true);
+  });
+
+  it("keeps future operation families unavailable until their domain input is defined", () => {
+    expect(SCIENT_OPERATION_DEFINITIONS["browser.action"].canonicalizeInput).toBeNull();
+    expect(SCIENT_OPERATION_DEFINITIONS["automation.run"].canonicalizeInput).toBeNull();
+  });
+});
+
 describe("completeScientOperation", () => {
   it("emits an immutable receipt tied to authorization and effect identities", () => {
     const started = begin();

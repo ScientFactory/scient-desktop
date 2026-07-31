@@ -65,6 +65,8 @@ export interface ToolContext {
     OrchestrationThreadShell,
     GatewayToolError
   >;
+  /** Exact-session revocation fence for a protected transactional commit. */
+  readonly operationRevocationFence: Effect.Effect<never, GatewayToolError>;
   readonly recordOperationEffect: (effect: ScientOperationEffectIdentity) => void;
   readonly jsonRpcRequestId: JsonRpcId;
 }
@@ -77,8 +79,8 @@ export type ToolHandler = (
 export interface ToolEntry {
   readonly definition: McpToolDefinition;
   readonly operation: ScientOperationId;
-  /** Validate and normalize once; the envelope and handler consume the same value. */
-  readonly canonicalizeInput: (args: Record<string, unknown>) => Record<string, unknown>;
+  /** Decode this wire shape; the Scient operation registry performs domain canonicalization. */
+  readonly decodeInput: (args: Record<string, unknown>) => Record<string, unknown>;
   readonly handler: ToolHandler;
 }
 

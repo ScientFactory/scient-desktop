@@ -20,6 +20,7 @@ import {
   completeScientOperation,
   makeScientOperationAuthority,
   SCIENT_OPERATION_DEFINITIONS,
+  ScientOperationInputError,
   type ScientOperationAuthority,
   type ScientOperationResultReceipt,
 } from "../scientOperations/authority.ts";
@@ -44,13 +45,18 @@ import {
   gatewayToolErrorResult,
   type ToolContext,
   type ToolEntry,
+  ToolInputError,
 } from "./toolRuntime.ts";
 
 const MCP_MAX_BATCH_MESSAGES = 50;
 
 type ToolRequestBaseContext = Omit<
   ToolContext,
-  "admittedCaller" | "jsonRpcRequestId" | "operationEnvelope" | "recordOperationEffect"
+  | "admittedCaller"
+  | "jsonRpcRequestId"
+  | "operationEnvelope"
+  | "operationRevocationFence"
+  | "recordOperationEffect"
 > & {
   readonly revocationFence: Effect.Effect<never, GatewayToolError>;
   readonly runTransactionalWrite: <A, E>(
@@ -135,9 +141,25 @@ export function makeAgentGatewayMcpTransport(input: {
             typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)
               ? (rawArgs as Record<string, unknown>)
               : {};
+          const operation = SCIENT_OPERATION_DEFINITIONS[tool.operation];
+          const canonicalizeDomainInput = operation.canonicalizeInput;
+          if (canonicalizeDomainInput === null) {
+            return jsonRpcResult(
+              request.id,
+              gatewayToolErrorResult(
+                new GatewayToolError(
+                  "operation_not_available",
+                  "This Scient operation does not yet have an executable domain-input contract.",
+                ),
+              ),
+            );
+          }
           const canonicalized = yield* Effect.try({
-            try: () => tool.canonicalizeInput(args),
-            catch: (error) => error,
+            try: () => canonicalizeDomainInput(tool.decodeInput(args)),
+            catch: (error) =>
+              error instanceof ScientOperationInputError
+                ? new ToolInputError(error.message)
+                : error,
           }).pipe(
             Effect.match({
               onFailure: (error) => ({ ok: false as const, error }),
@@ -154,7 +176,6 @@ export function makeAgentGatewayMcpTransport(input: {
             );
           }
           const canonicalArgs = canonicalized.value;
-          const operation = SCIENT_OPERATION_DEFINITIONS[tool.operation];
           const operationId = `scient-operation:${randomId()}`;
           const semanticIdempotencyIdentity =
             operation.idempotencyInputField === null
@@ -202,6 +223,7 @@ export function makeAgentGatewayMcpTransport(input: {
             ...context,
             admittedCaller: admission.caller,
             operationEnvelope: started.envelope,
+            operationRevocationFence: context.revocationFence,
             recordOperationEffect: (effect) => operationEffects.push({ ...effect }),
             jsonRpcRequestId: request.id,
           };

@@ -26,6 +26,7 @@ import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
+  OrchestrationCommandCancelledError,
   OrchestrationCommandInvariantError,
   OrchestrationCommandInternalError,
   OrchestrationCommandPreviouslyRejectedError,
@@ -51,6 +52,11 @@ type DispatchTimeoutDecision = { kind: "abandon" } | { kind: "wait" };
 interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
+  protectedCommitResult: Deferred.Deferred<
+    { sequence: number },
+    OrchestrationDispatchError
+  > | null;
+  revocation: Effect.Effect<unknown, unknown, never> | null;
   executionState: Ref.Ref<CommandExecutionState>;
   deadlineAtMs: number;
 }
@@ -112,6 +118,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       commandId: command.commandId,
       commandType: command.type,
       timeoutMs: ORCHESTRATION_DISPATCH_TIMEOUT_MS,
+    });
+
+  const makeCommandCancelledError = (command: OrchestrationCommand) =>
+    new OrchestrationCommandCancelledError({
+      commandId: command.commandId,
+      commandType: command.type,
     });
 
   const makeCommandInternalError = (
@@ -428,18 +440,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       });
       if (Option.isSome(existingReceipt)) {
         if (existingReceipt.value.status === "accepted") {
-          yield* Deferred.succeed(envelope.result, {
+          const accepted = {
             sequence: existingReceipt.value.resultSequence,
-          });
+          };
+          if (envelope.protectedCommitResult !== null) {
+            yield* Deferred.succeed(envelope.protectedCommitResult, accepted);
+          }
+          yield* Deferred.succeed(envelope.result, accepted);
           return;
         }
-        yield* Deferred.fail(
-          envelope.result,
-          new OrchestrationCommandPreviouslyRejectedError({
-            commandId: envelope.command.commandId,
-            detail: existingReceipt.value.error ?? "Previously rejected.",
-          }),
-        );
+        const rejected = new OrchestrationCommandPreviouslyRejectedError({
+          commandId: envelope.command.commandId,
+          detail: existingReceipt.value.error ?? "Previously rejected.",
+        });
+        if (envelope.protectedCommitResult !== null) {
+          yield* Deferred.fail(envelope.protectedCommitResult, rejected);
+        }
+        yield* Deferred.fail(envelope.result, rejected);
         return;
       }
 
@@ -517,7 +534,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }),
       );
 
-      const committedCommand = yield* sql
+      const transaction = sql
         .withTransaction(transactionalCommitEffect)
         .pipe(
           Effect.catchTag("SqlError", (sqlError) =>
@@ -526,6 +543,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           ),
         );
+      const committedCommand = yield* (envelope.revocation === null
+        ? transaction
+        : Effect.raceFirst(
+            transaction,
+            envelope.revocation.pipe(
+              Effect.matchCause({
+                onFailure: () => undefined,
+                onSuccess: () => undefined,
+              }),
+              Effect.andThen(Effect.fail(makeCommandCancelledError(envelope.command))),
+            ),
+          ));
+
+      if (envelope.protectedCommitResult !== null) {
+        // This is the protected operation's durable effect boundary. Complete
+        // it before deferred projection/publication so a later revocation can
+        // never turn an already-committed command into a definite failure.
+        yield* Deferred.succeed(envelope.protectedCommitResult, {
+          sequence: committedCommand.lastSequence,
+        });
+      }
 
       commandReadModel = committedCommand.nextCommandReadModel;
       yield* Effect.forEach(
@@ -604,6 +642,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               }),
             );
             if (resolvedTimeoutOutcome._tag === "Right") {
+              if (envelope.protectedCommitResult !== null) {
+                yield* Deferred.succeed(
+                  envelope.protectedCommitResult,
+                  resolvedTimeoutOutcome.right,
+                );
+              }
               yield* Deferred.succeed(envelope.result, resolvedTimeoutOutcome.right);
               return;
             }
@@ -623,6 +667,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 error: error.message,
               })
               .pipe(Effect.catch(() => Effect.void));
+          }
+          if (envelope.protectedCommitResult !== null) {
+            yield* Deferred.fail(envelope.protectedCommitResult, error);
           }
           yield* Deferred.fail(envelope.result, error);
         }),
@@ -661,17 +708,21 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
           if (resolvedCrashOutcome._tag === "Right") {
+            if (envelope.protectedCommitResult !== null) {
+              yield* Deferred.succeed(envelope.protectedCommitResult, resolvedCrashOutcome.right);
+            }
             yield* Deferred.succeed(envelope.result, resolvedCrashOutcome.right);
             return;
           }
 
           const resolvedError = resolvedCrashOutcome.left;
-          yield* Deferred.fail(
-            envelope.result,
-            Schema.is(OrchestrationCommandTimeoutError)(resolvedError)
-              ? makeCommandInternalError(envelope.command)
-              : resolvedError,
-          );
+          const reportedError = Schema.is(OrchestrationCommandTimeoutError)(resolvedError)
+            ? makeCommandInternalError(envelope.command)
+            : resolvedError;
+          if (envelope.protectedCommitResult !== null) {
+            yield* Deferred.fail(envelope.protectedCommitResult, reportedError);
+          }
+          yield* Deferred.fail(envelope.result, reportedError);
         });
       }),
     );
@@ -699,17 +750,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const refreshCommandReadModel: OrchestrationEngineShape["refreshCommandReadModel"] = () =>
     maintenanceLock.withPermits(1)(refreshCommandReadModelFromProjectionState);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const enqueueDispatch = (
+    command: OrchestrationCommand,
+    revocation: Effect.Effect<unknown, unknown, never> | null,
+  ) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
+      const protectedCommitResult =
+        revocation === null
+          ? null
+          : yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       const executionState = yield* Ref.make<CommandExecutionState>("queued");
       yield* Queue.offer(commandQueue, {
         command,
         result,
+        protectedCommitResult,
+        revocation,
         executionState,
         deadlineAtMs: Date.now() + ORCHESTRATION_DISPATCH_TIMEOUT_MS,
       });
-      return yield* Deferred.await(result).pipe(
+      const awaitedResult = protectedCommitResult ?? result;
+      return yield* Deferred.await(awaitedResult).pipe(
         Effect.timeoutOption(`${ORCHESTRATION_DISPATCH_TIMEOUT_MS} millis`),
         Effect.flatMap((outcome) =>
           Option.match(outcome, {
@@ -731,7 +792,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                           commandType: command.type,
                           timeoutMs: ORCHESTRATION_DISPATCH_TIMEOUT_MS,
                         }),
-                        Effect.flatMap(() => Deferred.await(result)),
+                        Effect.flatMap(() => Deferred.await(awaitedResult)),
                       )
                     : Effect.logWarning(
                         "orchestration dispatch timed out before command started",
@@ -750,6 +811,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         ),
       );
     });
+
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+    enqueueDispatch(command, null);
+
+  const dispatchProtected: OrchestrationEngineShape["dispatchProtected"] = (
+    command,
+    revocation,
+  ) => enqueueDispatch(command, revocation);
 
   // Used by the settings screen to rebuild local indexes without deleting chats.
   const repairState: OrchestrationEngineShape["repairState"] = () =>
@@ -846,6 +915,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     refreshCommandReadModel,
     readEvents,
     dispatch,
+    dispatchProtected,
     repairState,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (Effect RPC, ProviderRuntimeIngestion, CheckpointReactor, etc.)

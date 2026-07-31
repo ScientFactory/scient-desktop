@@ -12,7 +12,7 @@ import {
   TurnId,
   type OrchestrationEvent,
 } from "@synara/contracts";
-import { Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -957,6 +957,143 @@ describe("OrchestrationEngine", () => {
 
     expect(result.sequence).toBe(2);
     expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+    await runtime.dispose();
+  });
+
+  it("rolls back a protected dispatch when revocation wins before commit", async () => {
+    let enteredTransaction = false;
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-revoked-before-commit");
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: (event) =>
+        event.commandId === protectedCommandId
+          ? Effect.sync(() => {
+              enteredTransaction = true;
+            }).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedOutcome = runtime.runPromise(
+      Effect.exit(
+        engine.dispatchProtected(
+          {
+            type: "project.create",
+            commandId: protectedCommandId,
+            projectId: asProjectId("project-protected-revoked-before-commit"),
+            title: "Protected",
+            workspaceRoot: "/tmp/project-protected-revoked-before-commit",
+            createdAt: now(),
+          },
+          Deferred.await(revocation),
+        ),
+      ),
+    );
+
+    await expect.poll(() => enteredTransaction).toBe(true);
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    expect((await protectedOutcome)._tag).toBe("Failure");
+
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-after-protected-revocation"),
+        projectId: asProjectId("project-after-protected-revocation"),
+        title: "After",
+        workspaceRoot: "/tmp/project-after-protected-revocation",
+        createdAt: now(),
+      }),
+    );
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([
+      CommandId.makeUnsafe("cmd-after-protected-revocation"),
+    ]);
+    await runtime.dispose();
+  });
+
+  it("returns a protected commit before deferred publication and ignores later revocation", async () => {
+    let enteredDeferredProjection = false;
+    let releaseDeferredProjection!: () => void;
+    const deferredGate = new Promise<void>((resolve) => {
+      releaseDeferredProjection = resolve;
+    });
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-committed");
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: (event) =>
+        event.commandId === protectedCommandId
+          ? Effect.sync(() => {
+              enteredDeferredProjection = true;
+            }).pipe(Effect.andThen(Effect.promise(() => deferredGate)))
+          : Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const committed = await runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-committed"),
+          title: "Committed",
+          workspaceRoot: "/tmp/project-protected-committed",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+    expect(committed.sequence).toBe(1);
+    await expect.poll(() => enteredDeferredProjection).toBe(true);
+
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    releaseDeferredProjection();
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-after-protected-commit"),
+        projectId: asProjectId("project-after-protected-commit"),
+        title: "After",
+        workspaceRoot: "/tmp/project-after-protected-commit",
+        createdAt: now(),
+      }),
+    );
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([
+      protectedCommandId,
+      CommandId.makeUnsafe("cmd-after-protected-commit"),
+    ]);
     await runtime.dispose();
   });
 
