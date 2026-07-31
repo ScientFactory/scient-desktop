@@ -917,14 +917,26 @@ export function buildProjectThreadTree<
   threads: readonly T[];
   expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
   forceVisibleThreadId?: T["id"] | undefined;
+  rootThreadIds?: ReadonlySet<T["id"]> | undefined;
 }): SidebarThreadTreeRow<T>[] {
-  const { expandedParentThreadIds, forceVisibleThreadId, threads } = input;
+  const { expandedParentThreadIds, forceVisibleThreadId, rootThreadIds, threads } = input;
   const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
   const childrenByParentId = new Map<T["id"], T[]>();
   const roots: T[] = [];
 
   for (const thread of threads) {
     const parentThreadId = thread.parentThreadId ?? null;
+    if (rootThreadIds !== undefined) {
+      if (rootThreadIds.has(thread.id)) {
+        roots.push(thread);
+      }
+      if (parentThreadId !== null) {
+        const siblings = childrenByParentId.get(parentThreadId) ?? [];
+        siblings.push(thread);
+        childrenByParentId.set(parentThreadId, siblings);
+      }
+      continue;
+    }
     if (!parentThreadId) {
       roots.push(thread);
       continue;
@@ -942,8 +954,11 @@ export function buildProjectThreadTree<
 
   const forcedExpandedParentIds = collectForcedExpandedParentIds(threadById, forceVisibleThreadId);
   const orderedRows: SidebarThreadTreeRow<T>[] = [];
+  const renderedThreadIds = new Set<T["id"]>();
 
   const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
+    if (renderedThreadIds.has(thread.id)) return;
+    renderedThreadIds.add(thread.id);
     const childThreads = childrenByParentId.get(thread.id) ?? [];
     const isExpanded =
       childThreads.length > 0 &&
@@ -1043,32 +1058,20 @@ export function getPinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
   return getPinnedItems(threads, pinnedThreadIds);
 }
 
-export interface PinnedSidebarThreadRow<
-  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
-> {
-  readonly thread: T;
-  readonly depth: number;
-  readonly rootThreadId: T["id"];
-}
-
 // A pin owns the complete visible conversation family. Descendants stay under
 // the pinned root even when they are not independently pinned, so active work
 // cannot disappear between the pinned and project sections.
 export function getPinnedThreadRowsForSidebar<
   T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
->(threads: readonly T[], pinnedThreadIds: readonly T["id"][]): PinnedSidebarThreadRow<T>[] {
+>(
+  threads: readonly T[],
+  pinnedThreadIds: readonly T["id"][],
+  options?: {
+    readonly expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
+    readonly forceVisibleThreadId?: T["id"] | undefined;
+  },
+): SidebarThreadTreeRow<T>[] {
   const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
-  const childrenByParentId = new Map<T["id"], T[]>();
-  for (const thread of threads) {
-    const parentThreadId = thread.parentThreadId ?? null;
-    if (parentThreadId === null) continue;
-    const children = childrenByParentId.get(parentThreadId) ?? [];
-    children.push(thread);
-    childrenByParentId.set(parentThreadId, children);
-  }
-
-  const rows: PinnedSidebarThreadRow<T>[] = [];
-  const renderedThreadIds = new Set<T["id"]>();
   const pinnedThreadIdSet = new Set(pinnedThreadIds);
   const hasPinnedAncestor = (thread: T) => {
     const visitedThreadIds = new Set<T["id"]>([thread.id]);
@@ -1081,20 +1084,20 @@ export function getPinnedThreadRowsForSidebar<
     }
     return false;
   };
-  const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
-    if (renderedThreadIds.has(thread.id)) return;
-    renderedThreadIds.add(thread.id);
-    rows.push({ thread, depth, rootThreadId });
-    for (const child of childrenByParentId.get(thread.id) ?? []) {
-      visit(child, depth + 1, rootThreadId);
-    }
-  };
-
+  const rootThreadIds = new Set<T["id"]>();
   for (const pinnedThreadId of pinnedThreadIds) {
     const root = threadById.get(pinnedThreadId);
-    if (root && !hasPinnedAncestor(root)) visit(root, 0, root.id);
+    if (root && !hasPinnedAncestor(root)) {
+      rootThreadIds.add(root.id);
+    }
   }
-  return rows;
+
+  return buildProjectThreadTree({
+    threads,
+    rootThreadIds,
+    expandedParentThreadIds: options?.expandedParentThreadIds,
+    forceVisibleThreadId: options?.forceVisibleThreadId,
+  });
 }
 
 // Resolve the visible pinned ids from server state, local legacy pins, and pending user clicks.

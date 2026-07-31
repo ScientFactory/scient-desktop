@@ -1919,8 +1919,19 @@ export default function Sidebar() {
       getPinnedThreadRowsForSidebar(
         isOnStudio ? studioSidebarDisplayThreads : nonStudioSidebarDisplayThreads,
         pinnedThreadIds,
+        {
+          expandedParentThreadIds: expandedSubagentParentIds,
+          forceVisibleThreadId: visualActiveSidebarThreadId ?? undefined,
+        },
       ),
-    [isOnStudio, nonStudioSidebarDisplayThreads, pinnedThreadIds, studioSidebarDisplayThreads],
+    [
+      expandedSubagentParentIds,
+      isOnStudio,
+      nonStudioSidebarDisplayThreads,
+      pinnedThreadIds,
+      studioSidebarDisplayThreads,
+      visualActiveSidebarThreadId,
+    ],
   );
   const pinnedThreads = useMemo(
     () => pinnedThreadRows.map((row) => row.thread),
@@ -5737,7 +5748,9 @@ export default function Sidebar() {
           <span className={SIDEBAR_SECTION_LABEL_CLASS_NAME}>Pinned</span>
         </div>
         <div className="flex flex-col gap-0.5">
-          {pinnedThreadRows.map((row) => renderPinnedThreadRow(row.thread, row.depth))}
+          {pinnedThreadRows.map((row) =>
+            renderPinnedThreadRow(row.thread, row.depth, row.childCount, row.isExpanded),
+          )}
         </div>
       </div>
     );
@@ -5799,7 +5812,12 @@ export default function Sidebar() {
     );
   }
 
-  function renderPinnedThreadRow(thread: SidebarThreadSummary, depth = 0) {
+  function renderPinnedThreadRow(
+    thread: SidebarThreadSummary,
+    depth = 0,
+    childCount = 0,
+    isExpanded = false,
+  ) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
     const terminalStatus = terminalStatusFromThreadState({
@@ -5836,6 +5854,8 @@ export default function Sidebar() {
     // hair of clearance so it stops kissing the worktree chip — see the margin below.
     const hasTrailingStatusGlyph = Boolean(threadStatus) || Boolean(threadJumpLabel);
     const showThreadProviderAvatar = !isGenericChatThreadTitle(thread.title);
+    const canToggleSubagents = childCount > 0;
+    const childCountLabel = `${childCount} ${pluralize(childCount, "subagent")}`;
     const hoverAnchorId = createSidebarThreadHoverAnchorId({
       scope: "pinned",
       threadId: thread.id,
@@ -5950,6 +5970,30 @@ export default function Sidebar() {
                 </span>
               ) : null}
             </div>
+            {canToggleSubagents ? (
+              <button
+                type="button"
+                data-thread-selection-safe
+                aria-expanded={isExpanded}
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${childCountLabel}`}
+                title={childCountLabel}
+                className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center gap-0.5 rounded-full border border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] px-[5px] text-[color:var(--color-text-foreground-secondary)] transition-colors hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[color:var(--color-text-foreground)]"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleSubagentParent(thread.id);
+                }}
+              >
+                <span className="text-[9px] font-medium leading-none tabular-nums">
+                  {childCount}
+                </span>
+                {isExpanded ? (
+                  <SidebarGlyph icon={ChevronDownIcon} variant="chevron" />
+                ) : (
+                  <SidebarGlyph icon={ChevronRightIcon} variant="chevron" />
+                )}
+              </button>
+            ) : null}
             {projectLabel ? (
               // Right-aligned project context for the flattened pinned list. The title
               // (flex-1) pushes it to the content edge, so it shows in full when the row

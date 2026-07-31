@@ -785,7 +785,7 @@ describe("pin helpers", () => {
     ).toEqual([threads[0]]);
   });
 
-  it("renders a complete family under its pinned root and removes that family from the project", () => {
+  it("collapses a pinned family by default and expands it with the normal hierarchy state", () => {
     const root = makeThread("thread-root");
     const child = {
       ...makeThread("thread-child"),
@@ -799,16 +799,86 @@ describe("pin helpers", () => {
     const threads = [root, child, grandchild, unrelated];
 
     expect(getPinnedThreadRowsForSidebar(threads, [root.id])).toEqual([
-      { thread: root, depth: 0, rootThreadId: root.id },
-      { thread: child, depth: 1, rootThreadId: root.id },
-      { thread: grandchild, depth: 2, rootThreadId: root.id },
+      {
+        thread: root,
+        depth: 0,
+        rootThreadId: root.id,
+        childCount: 1,
+        isExpanded: false,
+      },
     ]);
-    expect(getPinnedThreadRowsForSidebar(threads, [child.id, root.id])).toEqual([
-      { thread: root, depth: 0, rootThreadId: root.id },
-      { thread: child, depth: 1, rootThreadId: root.id },
-      { thread: grandchild, depth: 2, rootThreadId: root.id },
+    expect(
+      getPinnedThreadRowsForSidebar(threads, [root.id], {
+        expandedParentThreadIds: new Set([root.id, child.id]),
+      }),
+    ).toEqual([
+      { thread: root, depth: 0, rootThreadId: root.id, childCount: 1, isExpanded: true },
+      { thread: child, depth: 1, rootThreadId: root.id, childCount: 1, isExpanded: true },
+      {
+        thread: grandchild,
+        depth: 2,
+        rootThreadId: root.id,
+        childCount: 0,
+        isExpanded: false,
+      },
     ]);
     expect(getUnpinnedThreadsForSidebar(threads, [root.id])).toEqual([unrelated]);
+  });
+
+  it("force-reveals an active pinned descendant without persisting expansion", () => {
+    const root = makeThread("thread-root");
+    const child = { ...makeThread("thread-child"), parentThreadId: root.id };
+    const grandchild = { ...makeThread("thread-grandchild"), parentThreadId: child.id };
+
+    expect(
+      getPinnedThreadRowsForSidebar([root, child, grandchild], [root.id], {
+        forceVisibleThreadId: grandchild.id,
+      }).map((row) => [row.thread.id, row.isExpanded]),
+    ).toEqual([
+      [root.id, true],
+      [child.id, true],
+      [grandchild.id, false],
+    ]);
+  });
+
+  it("treats an independently pinned child as a root without duplicating it under a pinned ancestor", () => {
+    const root = makeThread("thread-root");
+    const child = { ...makeThread("thread-child"), parentThreadId: root.id };
+    const grandchild = { ...makeThread("thread-grandchild"), parentThreadId: child.id };
+    const threads = [root, child, grandchild];
+
+    expect(getPinnedThreadRowsForSidebar(threads, [child.id])).toEqual([
+      {
+        thread: child,
+        depth: 0,
+        rootThreadId: child.id,
+        childCount: 1,
+        isExpanded: false,
+      },
+    ]);
+    expect(
+      getPinnedThreadRowsForSidebar(threads, [child.id, root.id], {
+        expandedParentThreadIds: new Set([root.id, child.id]),
+      }).map((row) => row.thread.id),
+    ).toEqual([root.id, child.id, grandchild.id]);
+  });
+
+  it("keeps a large pinned family bounded while collapsed", () => {
+    const root = makeThread("thread-root");
+    const children = Array.from({ length: 200 }, (_, index) => ({
+      ...makeThread(`thread-child-${index}`),
+      parentThreadId: root.id,
+    }));
+
+    expect(getPinnedThreadRowsForSidebar([root, ...children], [root.id])).toEqual([
+      {
+        thread: root,
+        depth: 0,
+        rootThreadId: root.id,
+        childCount: 200,
+        isExpanded: false,
+      },
+    ]);
   });
 
   it("lets an optimistic unpin override server and persisted pinned state", () => {
@@ -1797,7 +1867,9 @@ describe("deriveSidebarProjectData", () => {
     });
     const allThreads = [parent, activeChild];
 
-    const pinnedRows = getPinnedThreadRowsForSidebar(allThreads, [parent.id]);
+    const pinnedRows = getPinnedThreadRowsForSidebar(allThreads, [parent.id], {
+      forceVisibleThreadId: activeChild.id,
+    });
     const projectData = deriveSidebarProjectData({
       projects: [project],
       sortedSidebarThreadsByProjectId: groupSidebarThreadsByProjectId(allThreads),
