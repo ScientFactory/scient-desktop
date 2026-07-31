@@ -63,6 +63,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   const { snapshotQuery, requireThreadShell } = input;
 
   const contextTool: ToolEntry = {
+    requiredCapability: "project:context:read",
+    allowedActorKinds: new Set(["provider-thread"]),
     definition: {
       name: "scient_context",
       description:
@@ -89,19 +91,23 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
             projectId: caller.projectId,
           },
           capabilities: {
-            threadRead: context.callerCapabilities.has("thread:read"),
+            threadRead: context.operationAuthority.capabilities.has("thread:read"),
             // Drive (scient_send_message / scient_interrupt_thread) needs the
             // write capability and is only usable while the caller's own turn is
             // active, so it is reported false without a live turn.
-            threadDrive: turnId !== null && context.callerCapabilities.has("thread:write"),
-            threadWait: context.callerCapabilities.has("thread:read"),
-            automations: turnId !== null && context.callerCapabilities.has("automation:write"),
+            threadDrive:
+              turnId !== null && context.operationAuthority.capabilities.has("thread:drive"),
+            threadWait: context.operationAuthority.capabilities.has("thread:read"),
+            automations:
+              turnId !== null && context.operationAuthority.capabilities.has("automation:run"),
           },
         });
       }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   const listProjects: ToolEntry = {
+    requiredCapability: "project:context:read",
+    allowedActorKinds: new Set(["provider-thread"]),
     definition: {
       name: "scient_list_projects",
       description:
@@ -128,6 +134,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const listThreads: ToolEntry = {
+    requiredCapability: "thread:list",
+    allowedActorKinds: new Set(["provider-thread"]),
     definition: {
       name: "scient_list_threads",
       description:
@@ -179,6 +187,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const readThread: ToolEntry = {
+    requiredCapability: "thread:read",
+    allowedActorKinds: new Set(["provider-thread"]),
     definition: {
       name: "scient_read_thread",
       description:
@@ -245,6 +255,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const waitForThreads: ToolEntry = {
+    requiredCapability: "thread:read",
+    allowedActorKinds: new Set(["provider-thread"]),
     definition: {
       name: "scient_wait_for_threads",
       description: `Wait for the pinned turns of 1–20 Scient threads in your project and return every outcome in input order. Assistant summaries are capped at ${WAIT_THREAD_SUMMARY_MAX_CHARS} characters; use each result's readThread call to page the full transcript. Timeouts only report progress; they never retry, replace, cancel, or create work. Only threads in your own project can be waited on.`,

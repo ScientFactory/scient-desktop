@@ -182,6 +182,8 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
     });
 
   const sendMessage: ToolEntry = {
+    requiredCapability: "thread:drive",
+    allowedActorKinds: new Set(["provider-thread"]),
     requiresActiveTurn: true,
     definition: {
       name: "scient_send_message",
@@ -296,6 +298,11 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
               } satisfies PendingSendResolution;
             }
 
+            // Revalidate the host-resolved grant and pinned caller turn at the
+            // last safe point before dispatching the protected effect.
+            yield* context.assertOperationAuthorityCurrent();
+            yield* context.assertCallerTurnActive();
+
             const commandSuffix =
               requestId === undefined
                 ? randomId()
@@ -370,6 +377,8 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   };
 
   const interruptThread: ToolEntry = {
+    requiredCapability: "thread:drive",
+    allowedActorKinds: new Set(["provider-thread"]),
     requiresActiveTurn: true,
     definition: {
       name: "scient_interrupt_thread",
@@ -406,6 +415,8 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             reason: "no_active_turn",
           });
         }
+        yield* context.assertOperationAuthorityCurrent();
+        yield* context.assertCallerTurnActive();
         yield* orchestrationEngine
           .dispatch({
             type: "thread.turn.interrupt",

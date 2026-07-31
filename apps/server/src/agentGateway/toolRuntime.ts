@@ -11,6 +11,12 @@ import type { ProviderKind } from "@synara/contracts";
 import type { Effect } from "effect";
 
 import { createLogger } from "../logger.ts";
+import type {
+  ScientOperationActorKind,
+  ScientOperationAuthority,
+  ScientOperationCapability,
+  ScientOperationRequestEnvelope,
+} from "../scientOperations/authority.ts";
 import {
   mcpToolResultError,
   mcpToolResultJson,
@@ -47,8 +53,10 @@ export interface ToolContext {
   readonly callerProjectId: string;
   readonly callerSessionKey: string;
   readonly callerProvider: ProviderKind;
-  readonly callerCapabilities: ReadonlySet<"thread:read" | "thread:write" | "automation:write">;
+  readonly operationAuthority: ScientOperationAuthority;
+  readonly operationEnvelope: ScientOperationRequestEnvelope;
   readonly callerTurnId: string | null;
+  readonly assertOperationAuthorityCurrent: () => Effect.Effect<void, GatewayToolError>;
   readonly assertCallerTurnActive: () => Effect.Effect<void, GatewayToolError>;
   readonly jsonRpcRequestId: JsonRpcId;
 }
@@ -60,6 +68,8 @@ export type ToolHandler = (
 
 export interface ToolEntry {
   readonly definition: McpToolDefinition;
+  readonly requiredCapability: ScientOperationCapability;
+  readonly allowedActorKinds: ReadonlySet<ScientOperationActorKind>;
   readonly handler: ToolHandler;
   readonly requiresActiveTurn?: boolean;
 }

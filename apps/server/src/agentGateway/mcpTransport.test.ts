@@ -12,6 +12,7 @@ import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { ScientOperationCapability } from "../scientOperations/authority.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -23,8 +24,6 @@ const CALLER_PROJECT = "project-1";
 const VALID_TOKEN = "sagw_session_valid";
 const RUNNING_TURN = "turn-running";
 
-type Capability = "thread:read" | "thread:write" | "automation:write";
-
 function makeIdentity(
   overrides?: Partial<AgentGatewaySessionIdentity>,
 ): AgentGatewaySessionIdentity {
@@ -33,7 +32,7 @@ function makeIdentity(
     threadId: ThreadId.makeUnsafe(CALLER_THREAD),
     provider: "claudeAgent",
     issuedAt: 0,
-    capabilities: new Set<Capability>(["thread:read"]),
+    capabilities: new Set<ScientOperationCapability>(["thread:read"]),
     ...overrides,
   };
 }
@@ -52,10 +51,12 @@ function makeShell(overrides?: Partial<Record<string, unknown>>): OrchestrationT
 function makeCredentials(cfg?: {
   readonly session?: AgentGatewaySessionIdentity | null;
   readonly writeAuthorityValid?: boolean;
+  readonly verifySession?: (token: string) => AgentGatewaySessionIdentity | null;
 }): AgentGatewayCredentialsShape {
   const session = cfg?.session === undefined ? makeIdentity() : cfg.session;
   return {
-    verifySession: (token: string) => (token === VALID_TOKEN ? session : null),
+    verifySession:
+      cfg?.verifySession ?? ((token: string) => (token === VALID_TOKEN ? session : null)),
     bindWriteAuthority: (token: string, turnId: string) =>
       token === VALID_TOKEN && session
         ? {
@@ -78,6 +79,8 @@ function makeSnapshotQuery(
 }
 
 const echoTool: ToolEntry = {
+  requiredCapability: "thread:read",
+  allowedActorKinds: new Set(["provider-thread"]),
   definition: {
     name: "scient_echo",
     description: "Echo the arguments back.",
@@ -87,6 +90,8 @@ const echoTool: ToolEntry = {
 };
 
 const writeTool: ToolEntry = {
+  requiredCapability: "thread:drive",
+  allowedActorKinds: new Set(["provider-thread"]),
   definition: {
     name: "scient_write_thing",
     description: "A write tool that requires an active turn.",
@@ -97,6 +102,8 @@ const writeTool: ToolEntry = {
 };
 
 const defectTool: ToolEntry = {
+  requiredCapability: "thread:read",
+  allowedActorKinds: new Set(["provider-thread"]),
   definition: {
     name: "scient_defect",
     description: "Throw an unexpected internal error.",
@@ -105,11 +112,35 @@ const defectTool: ToolEntry = {
   handler: () => Effect.die(new Error("SECRET=sk-sentinel path=/Users/alice/private/.env")),
 };
 
+const envelopeTool: ToolEntry = {
+  requiredCapability: "thread:read",
+  allowedActorKinds: new Set(["provider-thread"]),
+  definition: {
+    name: "scient_envelope",
+    description: "Return non-secret operation-envelope fields for testing.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: true },
+  },
+  handler: (_args, context) =>
+    Effect.succeed(
+      mcpToolResultJson({
+        operationId: context.operationEnvelope.operationId,
+        operation: context.operationEnvelope.operation,
+        capability: context.operationEnvelope.capability,
+        projectId: context.operationEnvelope.projectId,
+        actorKind: context.operationEnvelope.actor.kind,
+        authorityGeneration: context.operationEnvelope.authorityGeneration,
+        ingress: context.operationEnvelope.ingress,
+        payloadFingerprint: context.operationEnvelope.payloadFingerprint,
+      }),
+    ),
+};
+
 function makeTransport(cfg?: {
   readonly credentials?: AgentGatewayCredentialsShape;
   readonly callerShell?: Option.Option<OrchestrationThreadShell>;
   readonly requireShell?: OrchestrationThreadShell;
   readonly tools?: ReadonlyArray<ToolEntry>;
+  readonly randomId?: () => string;
 }) {
   const requireShell = cfg?.requireShell ?? makeShell();
   return makeAgentGatewayMcpTransport({
@@ -121,6 +152,7 @@ function makeTransport(cfg?: {
     tools: cfg?.tools ?? [echoTool, writeTool],
     instructions: "TEST_INSTRUCTIONS",
     requireThreadShell: () => Effect.succeed(requireShell),
+    ...(cfg?.randomId === undefined ? {} : { randomId: cfg.randomId }),
   });
 }
 
@@ -252,6 +284,31 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
     expect(toolResultJson(res.body)).toEqual({ echoed: { hello: "world" } });
   });
 
+  it("provides a host-resolved operation envelope to the handler", async () => {
+    const res = await run(
+      makeTransport({ tools: [envelopeTool], randomId: () => "operation-random" }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 30,
+          method: "tools/call",
+          params: { name: "scient_envelope", arguments: { z: 1, a: "two" } },
+        },
+      },
+    );
+    expect(toolResultJson(res.body)).toMatchObject({
+      operationId: "scient-operation:operation-random",
+      operation: "scient_envelope",
+      capability: "thread:read",
+      projectId: CALLER_PROJECT,
+      actorKind: "provider-thread",
+      authorityGeneration: "gateway-session:test",
+      ingress: "provider-gateway",
+    });
+    expect(String(toolResultJson(res.body).payloadFingerprint)).toMatch(/^[a-f0-9]{64}$/);
+  });
+
   it("does not reflect unexpected handler diagnostics to the provider", async () => {
     const protectedLogs: string[] = [];
     const logSpy = vi.spyOn(console, "error").mockImplementation((line) => {
@@ -318,6 +375,92 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
 });
 
 describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
+  it("uses explicit operation metadata rather than inferring capability from the tool name", async () => {
+    const automationNamedReadTool: ToolEntry = {
+      ...echoTool,
+      definition: { ...echoTool.definition, name: "scient_automation_status" },
+    };
+    const res = await run(makeTransport({ tools: [automationNamedReadTool] }), {
+      authorizationHeader: auth(VALID_TOKEN),
+      body: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "scient_automation_status", arguments: {} },
+      },
+    });
+    expect(toolResultJson(res.body)).toEqual({ echoed: {} });
+  });
+
+  it("denies a read operation when only drive capability is present", async () => {
+    const res = await run(
+      makeTransport({
+        credentials: makeCredentials({
+          session: makeIdentity({
+            capabilities: new Set<ScientOperationCapability>(["thread:drive"]),
+          }),
+        }),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_echo", arguments: {} },
+        },
+      },
+    );
+    expect(toolResultJson(res.body)).toMatchObject({
+      error: { code: "capability_denied", details: { requiredCapability: "thread:read" } },
+    });
+  });
+
+  it("rejects authority revoked after ingress but before handler dispatch", async () => {
+    const session = makeIdentity();
+    let verificationCount = 0;
+    const res = await run(
+      makeTransport({
+        credentials: makeCredentials({
+          verifySession: (token) => {
+            verificationCount += 1;
+            return token === VALID_TOKEN && verificationCount === 1 ? session : null;
+          },
+        }),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_echo", arguments: {} },
+        },
+      },
+    );
+    expect(toolResultJson(res.body)).toMatchObject({
+      error: { code: "caller_session_inactive" },
+    });
+  });
+
+  it("rejects a caller whose project scope changes after ingress", async () => {
+    const res = await run(
+      makeTransport({ requireShell: makeShell({ projectId: ProjectId.makeUnsafe("project-2") }) }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "scient_echo", arguments: {} },
+        },
+      },
+    );
+    expect(toolResultJson(res.body)).toMatchObject({
+      error: { code: "caller_session_inactive" },
+    });
+  });
+
   it("denies a write tool for a read-only session", async () => {
     const res = await run(makeTransport(), {
       authorizationHeader: auth(VALID_TOKEN),
@@ -332,7 +475,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       error: { code: string; details: { requiredCapability: string } };
     };
     expect(parsed.error.code).toBe("capability_denied");
-    expect(parsed.error.details.requiredCapability).toBe("thread:write");
+    expect(parsed.error.details.requiredCapability).toBe("thread:drive");
   });
 
   it("denies a write tool when the caller has the capability but no active turn", async () => {
@@ -342,7 +485,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+            capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
           }),
         }),
         callerShell: Option.some(makeShell({ latestTurn: null })),
@@ -370,7 +513,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+            capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
           }),
           writeAuthorityValid: true,
         }),
@@ -403,7 +546,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       makeTransport({
         credentials: makeCredentials({
           session: makeIdentity({
-            capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+            capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
           }),
           writeAuthorityValid: true,
         }),

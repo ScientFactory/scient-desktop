@@ -13,19 +13,22 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  makeScientOperationRequestEnvelope,
+  type ScientOperationAuthority,
+  type ScientOperationCapability,
+} from "../scientOperations/authority.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import type { McpToolCallResult } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
 import { makeThreadWriteTools } from "./threadWriteTools.ts";
-import { gatewayToolFailureResult, type ToolContext } from "./toolRuntime.ts";
+import { gatewayToolFailureResult, GatewayToolError, type ToolContext } from "./toolRuntime.ts";
 
 const CALLER_THREAD = "thread-caller";
 const TARGET_THREAD = "thread-target";
 const CALLER_PROJECT = "project-1";
 const OTHER_PROJECT = "project-2";
 const ISO = "2026-01-01T00:00:00.000Z";
-
-type Capability = "thread:read" | "thread:write" | "automation:write";
 
 // Captured dispatch commands are asserted structurally; `any` keeps the test
 // focused on the runtime shape the gateway emits and, unlike an object type,
@@ -82,13 +85,40 @@ function makeEngine(options?: {
 }
 
 function makeContext(overrides?: Partial<ToolContext>): ToolContext {
+  const operationAuthority: ScientOperationAuthority = overrides?.operationAuthority ?? {
+    authorityId: "gateway-session:test",
+    generation: "gateway-session:test",
+    actor: {
+      kind: "provider-thread",
+      threadId: CALLER_THREAD,
+      provider: "claudeAgent",
+      sessionKey: "gateway-session:test",
+    },
+    projectIds: new Set([CALLER_PROJECT]),
+    capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
+    issuedAt: 0,
+    expiresAt: null,
+    revokedAt: null,
+  };
   return {
     callerThreadId: CALLER_THREAD,
     callerProjectId: CALLER_PROJECT,
     callerSessionKey: "gateway-session:test",
     callerProvider: "claudeAgent",
-    callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
+    operationAuthority,
+    operationEnvelope: makeScientOperationRequestEnvelope({
+      authority: operationAuthority,
+      operationId: "operation-test",
+      operation: "scient_send_message",
+      capability: "thread:drive",
+      projectId: CALLER_PROJECT,
+      ingress: "provider-gateway",
+      idempotencyIdentity: "test",
+      payloadFingerprint: "test-payload",
+      receivedAt: 1,
+    }),
     callerTurnId: "turn-caller",
+    assertOperationAuthorityCurrent: () => Effect.void,
     assertCallerTurnActive: () => Effect.void,
     jsonRpcRequestId: 1,
     ...overrides,
@@ -227,6 +257,28 @@ describe("scient_send_message", () => {
     expect(commands[0].dispatchMode).toBe("steer");
   });
 
+  it("revalidates operation authority immediately before dispatch", async () => {
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+    });
+    const result = await call(
+      "scient_send_message",
+      { threadId: TARGET_THREAD, message: "must not dispatch" },
+      makeContext({
+        assertOperationAuthorityCurrent: () =>
+          Effect.fail(
+            new GatewayToolError(
+              "caller_session_inactive",
+              "Provider-session authority was revoked.",
+            ),
+          ),
+      }),
+    );
+
+    expect(jsonBody(result)).toMatchObject({ error: { code: "caller_session_inactive" } });
+    expect(commands).toHaveLength(0);
+  });
+
   it("rejects an invalid mode", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     const result = await call("scient_send_message", {
@@ -348,7 +400,7 @@ describe("scient_send_message", () => {
         threadId: CALLER_THREAD,
         provider: "claudeAgent",
         issuedAt: 0,
-        capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+        capabilities: new Set<ScientOperationCapability>(["thread:read", "thread:drive"]),
       }),
       bindWriteAuthority: () => ({
         sessionKey: "gateway-session:test",
@@ -736,6 +788,29 @@ describe("scient_interrupt_thread", () => {
     expect(commands[0].createdAt).toBe(ISO);
   });
 
+  it("revalidates the pinned caller turn before interrupt dispatch", async () => {
+    const { call, commands } = setup({
+      threadShells: {
+        [TARGET_THREAD]: shell(TARGET_THREAD, {
+          latestTurn: { turnId: "turn-target", state: "running" },
+        }),
+      },
+    });
+    const result = await call(
+      "scient_interrupt_thread",
+      { threadId: TARGET_THREAD },
+      makeContext({
+        assertCallerTurnActive: () =>
+          Effect.fail(
+            new GatewayToolError("caller_turn_inactive", "Caller turn is no longer active."),
+          ),
+      }),
+    );
+
+    expect(jsonBody(result)).toMatchObject({ error: { code: "caller_turn_inactive" } });
+    expect(commands).toHaveLength(0);
+  });
+
   it("is a no-op when the target has no running turn", async () => {
     const { call, commands } = setup({
       threadShells: {
@@ -803,7 +878,7 @@ describe("scient_interrupt_thread", () => {
 });
 
 describe("makeThreadWriteTools", () => {
-  it("exposes exactly the two drive tools, both requiring an active turn", () => {
+  it("exposes exactly two provider-thread drive operations requiring an active turn", () => {
     const tools = makeThreadWriteTools({
       snapshotQuery: makeSnapshotQuery({}),
       orchestrationEngine: makeEngine().engine,
@@ -814,6 +889,8 @@ describe("makeThreadWriteTools", () => {
       "scient_interrupt_thread",
     ]);
     expect(tools.every((tool) => tool.requiresActiveTurn === true)).toBe(true);
+    expect(tools.every((tool) => tool.requiredCapability === "thread:drive")).toBe(true);
+    expect(tools.every((tool) => tool.allowedActorKinds.has("provider-thread"))).toBe(true);
     // Drive tools must carry write annotations (not read-only).
     expect(tools.every((tool) => tool.definition.annotations?.readOnlyHint === false)).toBe(true);
   });
