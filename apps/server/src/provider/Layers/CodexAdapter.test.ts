@@ -830,6 +830,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.itemId, "img_call_2");
+      assert.equal(firstEvent.value.providerRefs?.providerThreadId, "provider-thread-1");
       assert.equal(firstEvent.value.payload.itemType, "image_generation");
       assert.deepStrictEqual(firstEvent.value.payload.data, {
         kind: "codex.generated_image",

@@ -610,7 +610,7 @@ function codexEventBase(
   };
 }
 
-function codexGeneratedImageThreadId(
+function codexGeneratedImageProviderThreadId(
   event: ProviderEvent,
   payload: Record<string, unknown> | undefined,
 ): string | undefined {
@@ -620,9 +620,15 @@ function codexGeneratedImageThreadId(
     firstStringValue(msg, ["thread_id", "threadId", "threadID", "thread"]) ??
     firstStringValue(nestedEvent, ["thread_id", "threadId", "threadID", "thread"]) ??
     firstStringValue(payload, ["thread_id", "threadId", "threadID", "thread"]) ??
-    event.providerThreadId ??
-    event.threadId
+    event.providerThreadId
   );
+}
+
+function codexGeneratedImageThreadId(
+  event: ProviderEvent,
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  return codexGeneratedImageProviderThreadId(event, payload) ?? event.threadId;
 }
 
 function sanitizeGeneratedImagePayload(event: ProviderEvent, canonicalThreadId: ThreadId): unknown {
@@ -689,9 +695,10 @@ function mapGeneratedImageEndEvent(
   }
   const payload = asObject(event.payload);
   const candidate = generatedImageEventCandidate(event);
+  const providerThreadId = codexGeneratedImageProviderThreadId(event, payload);
   const reference = extractCodexGeneratedImageReference({
     value: candidate,
-    threadId: codexGeneratedImageThreadId(event, payload) ?? canonicalThreadId,
+    threadId: providerThreadId ?? canonicalThreadId,
   });
   if (!reference) {
     return undefined;
@@ -714,6 +721,7 @@ function mapGeneratedImageEndEvent(
       ...runtimeEventBase(
         {
           ...event,
+          ...(providerThreadId ? { providerThreadId } : {}),
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
         },

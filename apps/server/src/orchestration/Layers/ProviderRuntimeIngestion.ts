@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import {
   ApprovalRequestId,
   type ChatImageAttachment,
@@ -10,7 +12,6 @@ import {
   type OrchestrationProposedPlanId,
   CheckpointRef,
   isToolLifecycleItemType,
-  STUDIO_OUTPUTS_ACTIVITY_KIND,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -34,8 +35,10 @@ import {
   isCodexGeneratedImageArtifact,
   resolveCodexGeneratedImagesRoots,
 } from "../../codexGeneratedImages.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
+  cleanupStaleGeneratedImageAttachmentTemps,
   generatedImageAttachmentId,
   materializeGeneratedImageAttachment,
   removeMaterializedGeneratedImageAttachment,
@@ -75,8 +78,12 @@ function persistedGeneratedImageWarningCounts(text: string): {
   readonly omitted: number;
   readonly failed: number;
 } {
+  const attachmentLimit = String(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
   const omittedPlural = text.match(
-    /Additional (\d+) generated images were omitted because chat messages support at most 8 attachments\./u,
+    new RegExp(
+      `Additional (\\d+) generated images were omitted because chat messages support at most ${attachmentLimit} attachments\\.`,
+      "u",
+    ),
   );
   const failedPlural = text.match(
     /(\d+) generated images could not be displayed because Scient could not safely store them\./u,
@@ -85,7 +92,7 @@ function persistedGeneratedImageWarningCounts(text: string): {
     omitted: omittedPlural
       ? Number(omittedPlural[1])
       : text.includes(
-            "Additional generated image was omitted because chat messages support at most 8 attachments.",
+            `Additional generated image was omitted because chat messages support at most ${attachmentLimit} attachments.`,
           )
         ? 1
         : 0,
@@ -717,6 +724,8 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 interface PersistedGeneratedImageReference {
   readonly path: string;
   readonly provenanceKey: string;
+  readonly sourceKind: "codex" | "studio" | null;
+  readonly sourceProviderThreadId: string | null;
 }
 
 function generatedImageProvenanceKey(event: ProviderRuntimeEvent): string {
@@ -730,6 +739,19 @@ function generatedImageProvenanceKey(event: ProviderRuntimeEvent): string {
 function normalizeIdentifier(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function providerThreadDirectoryName(value: string | null | undefined): string | null {
+  const normalized = normalizeIdentifier(value ?? undefined);
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    path.basename(normalized) !== normalized
+  ) {
+    return null;
+  }
+  return normalized;
 }
 
 function subagentThreadId(parentThreadId: ThreadId, providerThreadId: string): ThreadId {
@@ -2424,17 +2446,11 @@ const make = Effect.gen(function* () {
     thread: OrchestrationThread;
     sourcePath: string;
     provenanceKey: string;
+    sourceKind: "codex" | "studio" | null;
+    sourceProviderThreadId: string | null;
     allowDurableFallbackWhenSourceUnavailable?: boolean;
   }) =>
     Effect.gen(function* () {
-      const project = yield* getProjectShell(input.thread);
-      const workspaceRoot =
-        project?.kind === "studio"
-          ? resolveThreadWorkspaceCwd({
-              thread: input.thread,
-              projects: [project],
-            })
-          : null;
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.catch(() =>
           Effect.logWarning(
@@ -2444,13 +2460,22 @@ const make = Effect.gen(function* () {
       );
       const configuredCodexHomePath =
         settings?.providers.codex.enabled === true ? settings.providers.codex.homePath.trim() : "";
-      const allowedSourceRoots = [
+      const generatedImageRoots = [
         ...resolveCodexGeneratedImagesRoots(),
         ...(configuredCodexHomePath
           ? resolveCodexGeneratedImagesRoots(configuredCodexHomePath)
           : []),
-        ...(workspaceRoot ? [workspaceRoot] : []),
       ];
+      const providerThreadId = providerThreadDirectoryName(input.sourceProviderThreadId);
+      const allowedSourceRoots =
+        input.sourceKind === "codex" && providerThreadId
+          ? generatedImageRoots.map((root) => path.join(root, providerThreadId))
+          : [];
+      if (allowedSourceRoots.length === 0) {
+        return yield* Effect.fail(
+          new Error("Generated image source is missing its trusted provider-thread binding."),
+        );
+      }
       return yield* Effect.tryPromise({
         try: () =>
           materializeGeneratedImageAttachment({
@@ -2546,6 +2571,8 @@ const make = Effect.gen(function* () {
         (reference): PersistedGeneratedImageReference => ({
           path: reference.sourcePath,
           provenanceKey: reference.provenanceKey,
+          sourceKind: reference.sourceKind,
+          sourceProviderThreadId: reference.sourceProviderThreadId,
         }),
       );
       if (
@@ -2640,6 +2667,8 @@ const make = Effect.gen(function* () {
               thread: refreshedThread,
               sourcePath: reference.path,
               provenanceKey: reference.provenanceKey,
+              sourceKind: reference.sourceKind,
+              sourceProviderThreadId: reference.sourceProviderThreadId,
               allowDurableFallbackWhenSourceUnavailable: true,
             })
           : null;
@@ -2729,6 +2758,7 @@ const make = Effect.gen(function* () {
         turnId: input.turnId,
         eventId: input.event.eventId,
         createdAt: input.createdAt,
+        trustedSourceRoots: [serverConfig.attachmentsDir],
       });
     }).pipe(
       Effect.catchCause((cause) => {
@@ -3430,7 +3460,16 @@ const make = Effect.gen(function* () {
       }
 
       const generatedImagePath = generatedImagePathFromRuntimeEvent(event);
-      if (generatedImagePath) {
+      const sourceProviderThreadId = providerThreadDirectoryName(
+        event.providerRefs?.providerThreadId,
+      );
+      if (generatedImagePath && !sourceProviderThreadId) {
+        yield* Effect.logWarning("ignored generated image without provider-thread identity", {
+          threadId: thread.id,
+          eventId: event.eventId,
+        });
+      }
+      if (generatedImagePath && sourceProviderThreadId) {
         const generatedImageTurnId = toTurnId(event.turnId) ?? activeTurnId ?? undefined;
         const provenanceKey = generatedImageProvenanceKey(event);
         const expectedAttachmentId = generatedImageAttachmentId({
@@ -3467,6 +3506,8 @@ const make = Effect.gen(function* () {
           attachmentId: expectedAttachmentId,
           provenanceKey,
           sourcePath: generatedImagePath,
+          sourceKind: "codex",
+          sourceProviderThreadId,
           createdAt: now,
         });
         {
@@ -3541,6 +3582,8 @@ const make = Effect.gen(function* () {
             currentReference: {
               path: generatedImagePath,
               provenanceKey,
+              sourceKind: "codex",
+              sourceProviderThreadId,
             },
           });
         } else if (
@@ -3559,19 +3602,28 @@ const make = Effect.gen(function* () {
             (yield* Effect.gen(function* () {
               const reserved = yield* reserveGeneratedImageAttempt(thread.id, provenanceKey, 1);
               if (!reserved) return null;
-              const copied = yield* materializeStudioGeneratedImage({
-                event,
+              const attachment = yield* materializeGeneratedImage({
                 thread,
-                imagePath: generatedImagePath,
-                turnId: generatedImageTurnId,
-                createdAt: now,
-              });
-              const displayPath = copied?.fullPath ?? generatedImagePath;
-              return yield* materializeGeneratedImage({
-                thread,
-                sourcePath: displayPath,
+                sourcePath: generatedImagePath,
                 provenanceKey,
+                sourceKind: "codex",
+                sourceProviderThreadId,
               });
+              if (!attachment) return null;
+              const durableSourcePath = resolveAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              });
+              if (durableSourcePath) {
+                yield* materializeStudioGeneratedImage({
+                  event,
+                  thread,
+                  imagePath: durableSourcePath,
+                  turnId: generatedImageTurnId,
+                  createdAt: now,
+                });
+              }
+              return attachment;
             }));
           if (referencedAttachment) {
             // Exact replay before terminal settlement is already represented.
@@ -4070,6 +4122,8 @@ const make = Effect.gen(function* () {
           thread,
           sourcePath: reference.sourcePath,
           provenanceKey: reference.provenanceKey,
+          sourceKind: reference.sourceKind,
+          sourceProviderThreadId: reference.sourceProviderThreadId,
           allowDurableFallbackWhenSourceUnavailable: true,
         });
         if (attachment) recoveredAttachments.push(attachment);
@@ -4167,6 +4221,8 @@ const make = Effect.gen(function* () {
               thread,
               sourcePath: reference.sourcePath,
               provenanceKey: reference.provenanceKey,
+              sourceKind: reference.sourceKind,
+              sourceProviderThreadId: reference.sourceProviderThreadId,
               allowDurableFallbackWhenSourceUnavailable: true,
             })
           : null;
@@ -4201,6 +4257,19 @@ const make = Effect.gen(function* () {
 
   const reconcileGeneratedImagesAtStartup: ProviderRuntimeIngestionShape["reconcileGeneratedImagesAtStartup"] =
     Effect.gen(function* () {
+      yield* Effect.tryPromise({
+        try: () =>
+          cleanupStaleGeneratedImageAttachmentTemps({
+            attachmentsDir: serverConfig.attachmentsDir,
+          }),
+        catch: (cause) => cause,
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to clean stale generated-image temporary files", {
+            causeName: cause instanceof Error ? cause.name : "UnknownError",
+          }),
+        ),
+      );
       const [turnReferences, turnlessReferences] = yield* Effect.all([
         projectionSnapshotQuery.listTurnGeneratedImageReferencesForStartup().pipe(
           Effect.catch((cause) =>

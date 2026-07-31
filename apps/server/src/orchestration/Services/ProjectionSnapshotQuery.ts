@@ -57,6 +57,8 @@ export interface ProjectionThreadCheckpointContextOptions {
 export interface ProjectionGeneratedImageReferenceRecord {
   readonly sourcePath: string;
   readonly provenanceKey: string;
+  readonly sourceKind: "codex" | "studio" | null;
+  readonly sourceProviderThreadId: string | null;
 }
 
 export interface ProjectionTurnGeneratedImageStartupReferenceRecord extends ProjectionGeneratedImageReferenceRecord {
