@@ -32,6 +32,7 @@ describe("ChatImageFrame", () => {
           name: "Capture",
         }}
         accessibleName="Capture"
+        onActivate={() => {}}
       />,
     );
     expect(markup).toContain('<button type="button"');
@@ -40,6 +41,25 @@ describe("ChatImageFrame", () => {
     const buttonMarkup = markup.match(/<button[\s\S]*?<\/button>/)?.[0];
     expect(buttonMarkup).toBeDefined();
     expect(buttonMarkup).not.toContain("<a");
+  });
+
+  it("renders supported images without a dead activation control when no handler exists", () => {
+    const markup = renderToStaticMarkup(
+      <ChatImageFrame
+        source={{
+          kind: "remote",
+          previewUrl: "https://images.example/capture.png",
+          openUrl: "https://images.example/capture.png",
+          name: "Capture",
+        }}
+        accessibleName="Capture"
+      />,
+    );
+
+    expect(markup).toContain('class="chat-image-frame__content"');
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain("Preview Capture");
+    expect(markup).toContain('aria-label="Open source for Capture"');
   });
 
   it("does not expose a rejected raw source", () => {

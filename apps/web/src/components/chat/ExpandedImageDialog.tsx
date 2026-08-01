@@ -77,7 +77,7 @@ export function ExpandedImageDialog(props: {
               ) : null}
               <div className="min-h-0 min-w-0 flex-1">
                 <ChatImageFrame
-                  key={`${item.source.kind}:${item.source.previewUrl}`}
+                  key={`${currentIndex}:${item.source.kind}:${item.source.previewUrl}`}
                   source={item.source}
                   accessibleName={item.name}
                   display="expanded"

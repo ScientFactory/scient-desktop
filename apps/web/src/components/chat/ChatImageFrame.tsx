@@ -93,8 +93,9 @@ export function ChatImageFrame(props: {
 
   const display = props.display ?? "inline";
   const supported = source.kind !== "unsupported";
+  const interactive = supported && props.onActivate !== undefined;
   const activate = (event: MouseEvent<HTMLButtonElement>) => {
-    if (supported && status !== "error") props.onActivate?.(source, event.currentTarget);
+    if (interactive && status !== "error") props.onActivate(source, event.currentTarget);
   };
   const sourceAction =
     source.kind === "remote" ? (
@@ -121,6 +122,39 @@ export function ChatImageFrame(props: {
         <span>Download</span>
       </a>
     ) : null;
+  const imageContent = supported ? (
+    <>
+      {status === "loading" ? (
+        <span className="chat-image-frame__loading" aria-label="Loading image">
+          <Loader2Icon className="size-4 animate-spin motion-reduce:animate-none" />
+        </span>
+      ) : null}
+      {status === "error" ? (
+        <span className="chat-image-frame__error" role="alert">
+          <TriangleAlertIcon className="size-4" aria-hidden="true" />
+          <span>Image unavailable</span>
+        </span>
+      ) : null}
+      <img
+        key={sourceKey}
+        src={source.previewUrl}
+        alt={props.accessibleName}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        referrerPolicy={source.kind === "remote" ? "no-referrer" : undefined}
+        className="chat-image-frame__image"
+        onLoad={() => settle("ready")}
+        onError={() => settle("error")}
+      />
+      {interactive && status === "ready" && display !== "expanded" ? (
+        <span className="chat-image-frame__expand" aria-hidden="true">
+          <Maximize2 className="size-3.5" />
+          <span>Preview</span>
+        </span>
+      ) : null}
+    </>
+  ) : null;
 
   return (
     <span
@@ -132,7 +166,7 @@ export function ChatImageFrame(props: {
       data-status={supported ? status : "unsupported"}
       data-source-kind={source.kind}
     >
-      {supported ? (
+      {interactive ? (
         <button
           type="button"
           className="chat-image-frame__button"
@@ -140,36 +174,10 @@ export function ChatImageFrame(props: {
           disabled={status === "error"}
           aria-label={props.activationLabel ?? `Preview ${props.accessibleName}`}
         >
-          {status === "loading" ? (
-            <span className="chat-image-frame__loading" aria-label="Loading image">
-              <Loader2Icon className="size-4 animate-spin motion-reduce:animate-none" />
-            </span>
-          ) : null}
-          {status === "error" ? (
-            <span className="chat-image-frame__error" role="alert">
-              <TriangleAlertIcon className="size-4" aria-hidden="true" />
-              <span>Image unavailable</span>
-            </span>
-          ) : null}
-          <img
-            key={sourceKey}
-            src={source.previewUrl}
-            alt={props.accessibleName}
-            loading="lazy"
-            decoding="async"
-            draggable={false}
-            referrerPolicy={source.kind === "remote" ? "no-referrer" : undefined}
-            className="chat-image-frame__image"
-            onLoad={() => settle("ready")}
-            onError={() => settle("error")}
-          />
-          {status === "ready" && display !== "expanded" ? (
-            <span className="chat-image-frame__expand" aria-hidden="true">
-              <Maximize2 className="size-3.5" />
-              <span>Preview</span>
-            </span>
-          ) : null}
+          {imageContent}
         </button>
+      ) : supported ? (
+        <span className="chat-image-frame__content">{imageContent}</span>
       ) : (
         <span className="chat-image-frame__unsupported" role="alert">
           <TriangleAlertIcon className="size-4" aria-hidden="true" />

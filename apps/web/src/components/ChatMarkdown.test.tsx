@@ -35,6 +35,7 @@ async function renderMarkdown(
       cwd={cwd}
       isStreaming={options.isStreaming ?? false}
       markers={markers}
+      onImageExpand={() => {}}
       {...(options.directionHint ? { directionHint: options.directionHint } : {})}
       {...(options.recognizeFrontmatter ? { recognizeFrontmatter: true } : {})}
     />,
@@ -145,12 +146,14 @@ describe("ChatMarkdown", () => {
     },
   );
 
-  it("uses the same local image frame in sent user markdown", async () => {
+  it("keeps local image download access without a dead preview control in sent user markdown", async () => {
     const markup = await renderUserMarkdown("![Attached](./capture.png)");
 
     expect(markup).toContain('data-source-kind="local"');
     expect(markup).toContain("/api/local-image?path=.%2Fcapture.png");
-    expect(markup).toContain('aria-label="Preview Attached"');
+    expect(markup).toContain('aria-label="Download Attached"');
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain('aria-label="Preview Attached"');
   });
 
   it("does not expose unsupported image sources or proxy them as local files", async () => {

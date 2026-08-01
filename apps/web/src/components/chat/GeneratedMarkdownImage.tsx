@@ -27,19 +27,24 @@ export function GeneratedMarkdownImage(props: GeneratedMarkdownImageProps) {
     [props.alt, props.cwd, props.src],
   );
   const accessibleName = props.alt.trim() || source.name || "Chat image";
+  const onImageExpand = props.onImageExpand;
   return (
     <ChatImageFrame
       source={source}
       accessibleName={accessibleName}
       onSettled={props.onImageSettled}
-      onActivate={(_source, trigger) => {
-        if (!isSupportedChatImageSource(source)) return;
-        props.onImageExpand?.({
-          images: [{ src: source.previewUrl, source, name: source.name || accessibleName }],
-          index: 0,
-          returnFocus: trigger,
-        });
-      }}
+      onActivate={
+        onImageExpand
+          ? (_source, trigger) => {
+              if (!isSupportedChatImageSource(source)) return;
+              onImageExpand({
+                images: [{ src: source.previewUrl, source, name: source.name || accessibleName }],
+                index: 0,
+                returnFocus: trigger,
+              });
+            }
+          : undefined
+      }
     />
   );
 }
