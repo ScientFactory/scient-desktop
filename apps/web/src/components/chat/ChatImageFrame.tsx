@@ -53,10 +53,11 @@ export function ChatImageFrame(props: {
     | ((source: SupportedChatImageSource, trigger: HTMLButtonElement) => void)
     | undefined;
   readonly onSettled?: (() => void) | undefined;
+  readonly onActionError?: ((message: string | null) => void) | undefined;
   readonly display?: "inline" | "thumbnail" | "expanded";
   readonly activationLabel?: string | undefined;
 }) {
-  const { onSettled, source } = props;
+  const { onActionError, onSettled, source } = props;
   const sourceKey = chatImageSourceKey(source);
   const [loadState, setLoadState] = useState<ChatImageLoadState>({
     key: sourceKey,
@@ -71,9 +72,11 @@ export function ChatImageFrame(props: {
     key: sourceKey,
     error: null,
   });
+  const actionRequestIdRef = useRef(0);
   const actionError = actionState.key === sourceKey ? actionState.error : null;
 
   useEffect(() => {
+    actionRequestIdRef.current += 1;
     setLoadState({ key: sourceKey, status: "loading" });
     setActionState({ key: sourceKey, error: null });
   }, [sourceKey]);
@@ -96,19 +99,26 @@ export function ChatImageFrame(props: {
       event.preventDefault();
       event.stopPropagation();
       const actionKey = sourceKey;
+      const requestId = actionRequestIdRef.current + 1;
+      actionRequestIdRef.current = requestId;
       setActionState({ key: actionKey, error: null });
+      onActionError?.(null);
       void downloadUrlAsBlob({ url: source.downloadUrl, filename: source.name }).catch(
         (error: unknown) => {
+          if (actionRequestIdRef.current !== requestId) return;
+          const message =
+            error instanceof Error ? error.message : "The image could not be downloaded.";
           setActionState((current) =>
             reduceChatImageActionState(current, {
               key: actionKey,
-              error: error instanceof Error ? error.message : "The image could not be downloaded.",
+              error: message,
             }),
           );
+          onActionError?.(message);
         },
       );
     },
-    [source, sourceKey],
+    [onActionError, source, sourceKey],
   );
 
   const display = props.display ?? "inline";
@@ -205,7 +215,7 @@ export function ChatImageFrame(props: {
         </span>
       )}
       <span className="chat-image-frame__actions">{sourceAction}</span>
-      {actionError ? (
+      {actionError && display !== "thumbnail" ? (
         <span className="chat-image-frame__action-error" role="alert">
           Could not download image: {actionError}
         </span>

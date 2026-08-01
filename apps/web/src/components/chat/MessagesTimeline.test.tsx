@@ -177,7 +177,6 @@ describe("MessagesTimeline", () => {
     expect(shouldCorrectTimelineForSettledImage({ isTailRow: false, isAtEnd: true })).toBe(false);
     expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: false })).toBe(false);
   });
-
   it("renders assistant math through the shared markdown renderer", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
