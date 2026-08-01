@@ -6,7 +6,11 @@
 import { ProjectId, ThreadId, type OrchestrationReadModel } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { getInactiveThreadIdsForRetention, THREAD_RETENTION_UNUSED_MS } from "./threadRetention";
+import {
+  getInactiveThreadIdsForRetention,
+  getRetentionDeleteScope,
+  THREAD_RETENTION_UNUSED_MS,
+} from "./threadRetention";
 
 function makeReadModelThread(
   overrides: Partial<OrchestrationReadModel["threads"][number]> = {},
@@ -126,5 +130,124 @@ describe("thread retention", () => {
         new Set([heartbeatTarget.id]),
       ),
     ).toEqual([ordinaryThread.id]);
+  });
+
+  it("selects one root for an entirely inactive subtree", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    const root = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-root"),
+      latestUserMessageAt: oldActivityAt,
+    });
+    const child = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-child"),
+      parentThreadId: root.id,
+      latestUserMessageAt: oldActivityAt,
+    });
+    const grandchild = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-grandchild"),
+      parentThreadId: child.id,
+      latestUserMessageAt: oldActivityAt,
+    });
+
+    expect(
+      getInactiveThreadIdsForRetention(makeReadModel([child, grandchild, root]), nowMs),
+    ).toEqual([root.id]);
+  });
+
+  it.each(["recent", "busy", "pinned", "protected"] as const)(
+    "keeps the whole subtree when a descendant is %s",
+    (protectedState) => {
+      const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+      const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+      const recentActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS + 1).toISOString();
+      const root = makeReadModelThread({
+        id: ThreadId.makeUnsafe(`thread-root-${protectedState}`),
+        latestUserMessageAt: oldActivityAt,
+      });
+      const child = makeReadModelThread({
+        id: ThreadId.makeUnsafe(`thread-child-${protectedState}`),
+        parentThreadId: root.id,
+        latestUserMessageAt: protectedState === "recent" ? recentActivityAt : oldActivityAt,
+        ...(protectedState === "busy" ? { hasPendingApprovals: true } : {}),
+        ...(protectedState === "pinned" ? { isPinned: true } : {}),
+      });
+      const protectedIds =
+        protectedState === "protected" ? new Set<ThreadId>([child.id]) : new Set<ThreadId>();
+
+      expect(
+        getInactiveThreadIdsForRetention(makeReadModel([root, child]), nowMs, protectedIds),
+      ).toEqual([]);
+    },
+  );
+
+  it("treats an inactive legacy orphan as its own safe retention root", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    const orphan = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-orphan"),
+      parentThreadId: ThreadId.makeUnsafe("thread-missing-parent"),
+      latestUserMessageAt: oldActivityAt,
+    });
+
+    expect(getInactiveThreadIdsForRetention(makeReadModel([orphan]), nowMs)).toEqual([orphan.id]);
+  });
+
+  it("binds retention deletion to a fresh exact subtree revision", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    const root = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-retention-root"),
+      latestUserMessageAt: oldActivityAt,
+    });
+    const child = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-retention-child"),
+      parentThreadId: root.id,
+      latestUserMessageAt: oldActivityAt,
+    });
+    const snapshot = {
+      ...makeReadModel([root, child]),
+      snapshotSequence: 41,
+    } as unknown as import("@synara/contracts").OrchestrationShellSnapshot;
+
+    expect(getRetentionDeleteScope(snapshot, root.id, nowMs, new Set())).toEqual({
+      expectedDescendantThreadIds: [child.id],
+      expectedReadModelSequence: 41,
+    });
+
+    const recentChild = {
+      ...child,
+      latestUserMessageAt: new Date(nowMs).toISOString(),
+      updatedAt: new Date(nowMs).toISOString(),
+    };
+    const changedSnapshot = {
+      ...snapshot,
+      snapshotSequence: 42,
+      threads: [root, recentChild],
+    } as unknown as import("@synara/contracts").OrchestrationShellSnapshot;
+    expect(getRetentionDeleteScope(changedSnapshot, root.id, nowMs, new Set())).toBeNull();
+  });
+
+  it("indexes a wide forest once instead of rescanning it for every root", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    let parentLinkReads = 0;
+    const threads = Array.from({ length: 1_000 }, (_, index) => {
+      const thread = makeReadModelThread({
+        id: ThreadId.makeUnsafe(`thread-wide-${index}`),
+        latestUserMessageAt: oldActivityAt,
+      });
+      return new Proxy(thread, {
+        get(target, property, receiver) {
+          if (property === "parentThreadId") {
+            parentLinkReads += 1;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    });
+
+    expect(getInactiveThreadIdsForRetention(makeReadModel(threads), nowMs)).toHaveLength(1_000);
+    expect(parentLinkReads).toBeLessThan(5_000);
   });
 });

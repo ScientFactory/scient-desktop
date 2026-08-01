@@ -66,9 +66,24 @@ describe("Sidebar module", () => {
         projectName: "LitRev",
         completedCount: 0,
         failureCount: 0,
-        skippedRunningCount: 0,
+        skippedBusyCount: 0,
       }),
     ).toBeNull();
+
+    expect(
+      createSidebarBulkThreadActivity({
+        operation: "archive",
+        projectId,
+        projectName: "LitRev",
+        completedCount: 1,
+        failureCount: 0,
+        skippedBusyCount: 2,
+      }),
+    ).toMatchObject({
+      tone: "warning",
+      description:
+        "LitRev: 1 thread archived. 2 threads were skipped because their subtrees had starting or active sessions.",
+    });
   }, 15_000);
 
   it("keeps project setup outcomes reviewable without success cards", async () => {
