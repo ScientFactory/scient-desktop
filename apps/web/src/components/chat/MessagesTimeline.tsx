@@ -174,6 +174,7 @@ import {
 } from "./userMessageCollapse";
 import { observeUserMessageOverflow } from "./userMessageOverflowObserver";
 import { resolveRawTextDirectionHint, type ResolvedTextDirection } from "~/lib/textDirection";
+import { useUserMessageEditDraftStore } from "~/userMessageEditDraftStore";
 import {
   resolveActiveTrailSnapshot,
   type ActiveTrailSnapshot,
@@ -228,6 +229,7 @@ const ACTIVE_MARKER_CLASS_NAME = "thread-marker-active";
 const EMPTY_MESSAGE_MARKERS: readonly ThreadMarker[] = [];
 const EMPTY_THREAD_MARKERS_BY_MESSAGE_ID = new Map<MessageId, readonly ThreadMarker[]>();
 const EMPTY_MESSAGE_ID_SET: ReadonlySet<MessageId> = new Set();
+const DEFAULT_TIMELINE_THREAD_ID = ThreadId.makeUnsafe("messages-timeline");
 
 /**
  * Imperative handle the transcript exposes so the Environment panel's pinned-message
@@ -399,6 +401,8 @@ function WorktreeSetupCard({ steps }: { steps: ReadonlyArray<WorktreeSetupStep> 
 }
 
 interface MessagesTimelineProps {
+  activeThreadId?: ThreadId;
+  threadError?: string | null;
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
@@ -474,6 +478,8 @@ interface MessagesTimelineProps {
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  activeThreadId = DEFAULT_TIMELINE_THREAD_ID,
+  threadError = null,
   hasMessages,
   isWorking,
   activeTurnInProgress,
@@ -591,6 +597,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [editingUserMessageId, setEditingUserMessageId] = useState<MessageId | null>(null);
   const [submittingEditedUserMessageId, setSubmittingEditedUserMessageId] =
     useState<MessageId | null>(null);
+  const pendingUserMessageEdit = useUserMessageEditDraftStore(
+    (state) => state.draftsByThreadId[activeThreadId],
+  );
   const [selectedToolDetailsEntryId, setSelectedToolDetailsEntryId] = useState<string | null>(null);
   const openToolDetails = useCallback((workEntry: TimelineWorkEntry) => {
     setSelectedToolDetailsEntryId(workEntry.id);
@@ -681,6 +690,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedWorkGroupsState,
       highlightedMessageId,
       pinnedMessageIds,
+      pendingUserMessageEdit,
       settledTurnCollapseTransitions,
       submittingEditedUserMessageId,
       threadMarkersByMessageId,
@@ -697,6 +707,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedWorkGroupsState,
       highlightedMessageId,
       pinnedMessageIds,
+      pendingUserMessageEdit,
       settledTurnCollapseTransitions,
       submittingEditedUserMessageId,
       threadMarkersByMessageId,
@@ -975,11 +986,63 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }));
   }, []);
   const cancelUserMessageEdit = useCallback(() => {
+    useUserMessageEditDraftStore
+      .getState()
+      .clear(activeThreadId, editingUserMessageId ?? undefined);
     setEditingUserMessageId(null);
-  }, []);
-  const startUserMessageEdit = useCallback((messageId: MessageId) => {
-    setEditingUserMessageId(messageId);
-  }, []);
+  }, [activeThreadId, editingUserMessageId]);
+  const startUserMessageEdit = useCallback(
+    (messageId: MessageId) => {
+      useUserMessageEditDraftStore.getState().clear(activeThreadId);
+      setEditingUserMessageId(messageId);
+    },
+    [activeThreadId],
+  );
+
+  useEffect(() => {
+    if (!pendingUserMessageEdit) {
+      return;
+    }
+    const pendingRow = rows.find(
+      (row) =>
+        row.kind === "message" &&
+        row.message.role === "user" &&
+        row.message.id === pendingUserMessageEdit.messageId,
+    );
+    if (!pendingRow || pendingRow.kind !== "message") {
+      useUserMessageEditDraftStore
+        .getState()
+        .clear(activeThreadId, pendingUserMessageEdit.messageId);
+      setEditingUserMessageId((current) =>
+        current === pendingUserMessageEdit.messageId ? null : current,
+      );
+      return;
+    }
+    if (pendingUserMessageEdit.phase === "dispatching") {
+      return;
+    }
+    if (threadError) {
+      useUserMessageEditDraftStore
+        .getState()
+        .markRejected(activeThreadId, pendingUserMessageEdit.messageId);
+      setEditingUserMessageId(pendingUserMessageEdit.messageId);
+      return;
+    }
+    if (
+      pendingUserMessageEdit.phase === "accepted" &&
+      pendingRow.message.text !== pendingUserMessageEdit.originalText
+    ) {
+      useUserMessageEditDraftStore
+        .getState()
+        .clear(activeThreadId, pendingUserMessageEdit.messageId);
+      setEditingUserMessageId((current) =>
+        current === pendingUserMessageEdit.messageId ? null : current,
+      );
+      return;
+    }
+    setEditingUserMessageId(pendingUserMessageEdit.messageId);
+  }, [activeThreadId, pendingUserMessageEdit, rows, threadError]);
+
   const submitUserMessageEdit = useCallback(
     async (messageId: MessageId, text: string) => {
       if (!onEditUserMessage) {
@@ -989,17 +1052,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (!nextText) {
         return;
       }
+      const originalRow = rows.find(
+        (row) => row.kind === "message" && row.message.id === messageId,
+      );
+      if (!originalRow || originalRow.kind !== "message") {
+        return;
+      }
+      useUserMessageEditDraftStore.getState().begin(activeThreadId, {
+        messageId,
+        draftText: nextText,
+        originalText: originalRow.message.text,
+      });
       setSubmittingEditedUserMessageId(messageId);
       try {
         const saved = await onEditUserMessage(messageId, nextText);
         if (saved) {
-          cancelUserMessageEdit();
+          useUserMessageEditDraftStore.getState().markAccepted(activeThreadId, messageId);
+        } else {
+          useUserMessageEditDraftStore.getState().clear(activeThreadId, messageId);
         }
       } finally {
         setSubmittingEditedUserMessageId(null);
       }
     },
-    [cancelUserMessageEdit, onEditUserMessage],
+    [activeThreadId, onEditUserMessage, rows],
   );
 
   const renderRowContent = (row: MessagesTimelineRow) => (
@@ -1202,8 +1278,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 {isEditingThisMessage ? (
                   <UserMessageEditForm
                     key={row.message.id}
-                    initialValue={displayedUserMessage.copyText}
-                    disabled={isSubmittingThisEdit || isRevertingCheckpoint}
+                    initialValue={
+                      pendingUserMessageEdit?.messageId === row.message.id
+                        ? pendingUserMessageEdit.draftText
+                        : displayedUserMessage.copyText
+                    }
+                    disabled={
+                      pendingUserMessageEdit?.messageId === row.message.id &&
+                      pendingUserMessageEdit.phase === "rejected"
+                        ? false
+                        : isSubmittingThisEdit ||
+                          isRevertingCheckpoint ||
+                          (pendingUserMessageEdit?.messageId === row.message.id &&
+                            pendingUserMessageEdit.phase === "accepted")
+                    }
                     chatTypographyStyle={userMessageTypographyStyle}
                     onCancel={cancelUserMessageEdit}
                     onSubmit={(text) => void submitUserMessageEdit(row.message.id, text)}

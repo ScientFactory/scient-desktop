@@ -12076,6 +12076,7 @@ export default function ChatView({
                 <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                   <ChatTranscriptPane
                     activeThreadId={activeThread.id}
+                    threadError={activeThread.error}
                     activeTurnId={activeThread.session?.activeTurnId ?? null}
                     interruptedTurn={interruptedTurnEditContext({
                       latestTurn: activeThread.latestTurn,
