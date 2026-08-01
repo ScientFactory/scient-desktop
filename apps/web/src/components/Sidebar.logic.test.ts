@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProjectThreadTree,
+  nestVisibleSidebarThreadRows,
+  collectSelectedThreadSubtreeRoots,
   createSidebarThreadHoverAnchorId,
   derivePinnedProjectIdsForSidebar,
   derivePinnedThreadIdsForSidebar,
@@ -15,6 +17,7 @@ import {
   orderPinnedProjectsForSidebar,
   pullRequestRepositoryConfigFingerprint,
   getPinnedThreadsForSidebar,
+  getPinnedThreadRowsForSidebar,
   getNextVisibleSidebarThreadId,
   getSidebarThreadIdForJumpCommand,
   getSidebarThreadIdsToPrewarm,
@@ -27,6 +30,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   partitionSidebarThreadsByProjectIds,
+  partitionProjectArchiveSubtrees,
   isLatestPinnedThreadMutation,
   isLoopbackHostname,
   isDuplicateProjectCreateError,
@@ -36,10 +40,12 @@ import {
   resolveSidebarThreadListPaging,
   resolveProjectEmptyState,
   resolvePendingSidebarViewSelection,
+  resolveArchiveSelection,
   resolveNewThreadInWorkspaceAction,
   resolveSettingsBackTarget,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveSubtreeRouteThreadId,
   resolveThreadHoverCardMetadata,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -781,6 +787,102 @@ describe("pin helpers", () => {
     ).toEqual([threads[0]]);
   });
 
+  it("collapses a pinned family by default and expands it with the normal hierarchy state", () => {
+    const root = makeThread("thread-root");
+    const child = {
+      ...makeThread("thread-child"),
+      parentThreadId: root.id,
+    };
+    const grandchild = {
+      ...makeThread("thread-grandchild"),
+      parentThreadId: child.id,
+    };
+    const unrelated = makeThread("thread-unrelated");
+    const threads = [root, child, grandchild, unrelated];
+
+    expect(getPinnedThreadRowsForSidebar(threads, [root.id])).toEqual([
+      {
+        thread: root,
+        depth: 0,
+        rootThreadId: root.id,
+        childCount: 1,
+        isExpanded: false,
+      },
+    ]);
+    expect(
+      getPinnedThreadRowsForSidebar(threads, [root.id], {
+        expandedParentThreadIds: new Set([root.id, child.id]),
+      }),
+    ).toEqual([
+      { thread: root, depth: 0, rootThreadId: root.id, childCount: 1, isExpanded: true },
+      { thread: child, depth: 1, rootThreadId: root.id, childCount: 1, isExpanded: true },
+      {
+        thread: grandchild,
+        depth: 2,
+        rootThreadId: root.id,
+        childCount: 0,
+        isExpanded: false,
+      },
+    ]);
+    expect(getUnpinnedThreadsForSidebar(threads, [root.id])).toEqual([unrelated]);
+  });
+
+  it("force-reveals an active pinned descendant without persisting expansion", () => {
+    const root = makeThread("thread-root");
+    const child = { ...makeThread("thread-child"), parentThreadId: root.id };
+    const grandchild = { ...makeThread("thread-grandchild"), parentThreadId: child.id };
+
+    expect(
+      getPinnedThreadRowsForSidebar([root, child, grandchild], [root.id], {
+        forceVisibleThreadId: grandchild.id,
+      }).map((row) => [row.thread.id, row.isExpanded]),
+    ).toEqual([
+      [root.id, true],
+      [child.id, true],
+      [grandchild.id, false],
+    ]);
+  });
+
+  it("treats an independently pinned child as a root without duplicating it under a pinned ancestor", () => {
+    const root = makeThread("thread-root");
+    const child = { ...makeThread("thread-child"), parentThreadId: root.id };
+    const grandchild = { ...makeThread("thread-grandchild"), parentThreadId: child.id };
+    const threads = [root, child, grandchild];
+
+    expect(getPinnedThreadRowsForSidebar(threads, [child.id])).toEqual([
+      {
+        thread: child,
+        depth: 0,
+        rootThreadId: child.id,
+        childCount: 1,
+        isExpanded: false,
+      },
+    ]);
+    expect(
+      getPinnedThreadRowsForSidebar(threads, [child.id, root.id], {
+        expandedParentThreadIds: new Set([root.id, child.id]),
+      }).map((row) => row.thread.id),
+    ).toEqual([root.id, child.id, grandchild.id]);
+  });
+
+  it("keeps a large pinned family bounded while collapsed", () => {
+    const root = makeThread("thread-root");
+    const children = Array.from({ length: 200 }, (_, index) => ({
+      ...makeThread(`thread-child-${index}`),
+      parentThreadId: root.id,
+    }));
+
+    expect(getPinnedThreadRowsForSidebar([root, ...children], [root.id])).toEqual([
+      {
+        thread: root,
+        depth: 0,
+        rootThreadId: root.id,
+        childCount: 200,
+        isExpanded: false,
+      },
+    ]);
+  });
+
   it("lets an optimistic unpin override server and persisted pinned state", () => {
     const threads = [
       {
@@ -1218,6 +1320,24 @@ describe("getRenderedThreadsForSidebarProject", () => {
 });
 
 describe("buildProjectThreadTree", () => {
+  it("does not promote a subagent whose parent is absent to a top-level row", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-orphaned-child"),
+          parentThreadId: ThreadId.makeUnsafe("thread-archived-parent"),
+          createdAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-unrelated"),
+          createdAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+    });
+
+    expect(rows.map((row) => row.thread.id)).toEqual([ThreadId.makeUnsafe("thread-unrelated")]);
+  });
+
   it("keeps child threads hidden until their parent is expanded", () => {
     const rows = buildProjectThreadTree({
       threads: [
@@ -1269,6 +1389,32 @@ describe("buildProjectThreadTree", () => {
       [ThreadId.makeUnsafe("thread-child"), 1, true],
       [ThreadId.makeUnsafe("thread-grandchild"), 2, false],
     ]);
+  });
+
+  it("reconstructs only currently visible family branches for animated disclosure regions", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("thread-child");
+    const threads = [
+      makeThread({ id: parentId, createdAt: "2026-03-09T10:02:00.000Z" }),
+      makeThread({
+        id: childId,
+        parentThreadId: parentId,
+        createdAt: "2026-03-09T10:01:00.000Z",
+      }),
+    ];
+
+    const closedForest = nestVisibleSidebarThreadRows(buildProjectThreadTree({ threads }));
+    expect(closedForest).toHaveLength(1);
+    expect(closedForest[0]?.thread.id).toBe(parentId);
+    expect(closedForest[0]?.children).toEqual([]);
+
+    const openForest = nestVisibleSidebarThreadRows(
+      buildProjectThreadTree({
+        threads,
+        expandedParentThreadIds: new Set([parentId]),
+      }),
+    );
+    expect(openForest[0]?.children.map((node) => node.thread.id)).toEqual([childId]);
   });
 });
 
@@ -1701,6 +1847,66 @@ describe("partitionSidebarThreadsByProjectIds", () => {
   });
 });
 
+function makeArchiveSession(
+  orchestrationStatus: NonNullable<SidebarThreadSummary["session"]>["orchestrationStatus"],
+  activeTurnId?: NonNullable<SidebarThreadSummary["session"]>["activeTurnId"],
+): NonNullable<SidebarThreadSummary["session"]> {
+  return {
+    provider: "codex",
+    status: orchestrationStatus === "running" ? "running" : "ready",
+    ...(activeTurnId === undefined ? {} : { activeTurnId }),
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    orchestrationStatus,
+  };
+}
+
+describe("partitionProjectArchiveSubtrees", () => {
+  it("skips a whole subtree when a descendant session is starting", () => {
+    const root = makeSidebarThreadSummary({ id: ThreadId.makeUnsafe("root-starting") });
+    const child = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("child-starting"),
+      parentThreadId: root.id,
+      session: makeArchiveSession("starting"),
+    });
+
+    expect(partitionProjectArchiveSubtrees([root, child])).toEqual({
+      archivableSubtrees: [],
+      busyCount: 2,
+    });
+  });
+
+  it("treats a running session without an active turn id as busy", () => {
+    const running = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("running-before-turn-projection"),
+      session: makeArchiveSession("running"),
+    });
+
+    expect(partitionProjectArchiveSubtrees([running])).toEqual({
+      archivableSubtrees: [],
+      busyCount: 1,
+    });
+  });
+
+  it("keeps an independent idle subtree archivable", () => {
+    const busyRoot = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("busy-root"),
+      session: makeArchiveSession("starting"),
+    });
+    const idleRoot = makeSidebarThreadSummary({ id: ThreadId.makeUnsafe("idle-root") });
+    const idleChild = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("idle-child"),
+      parentThreadId: idleRoot.id,
+      session: makeArchiveSession("idle"),
+    });
+
+    expect(partitionProjectArchiveSubtrees([busyRoot, idleRoot, idleChild])).toEqual({
+      archivableSubtrees: [[idleRoot, idleChild]],
+      busyCount: 1,
+    });
+  });
+});
+
 describe("deriveSidebarProjectData", () => {
   it("keeps pinned threads in the total project thread count", () => {
     const project = makeProject();
@@ -1734,6 +1940,38 @@ describe("deriveSidebarProjectData", () => {
       allProjectThreadCount: 2,
       orderedProjectThreadIds: [unpinnedThread.id],
     });
+  });
+
+  it("keeps an active unpinned child visible under its pinned parent only", () => {
+    const project = makeProject();
+    const parent = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("thread-pinned-parent"),
+      title: "Pinned parent",
+    });
+    const activeChild = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("thread-active-child"),
+      parentThreadId: parent.id,
+      title: "Active child",
+    });
+    const allThreads = [parent, activeChild];
+
+    const pinnedRows = getPinnedThreadRowsForSidebar(allThreads, [parent.id], {
+      forceVisibleThreadId: activeChild.id,
+    });
+    const projectData = deriveSidebarProjectData({
+      projects: [project],
+      sortedSidebarThreadsByProjectId: groupSidebarThreadsByProjectId(allThreads),
+      pinnedThreadIds: [parent.id],
+      expandedParentThreadIds: new Set(),
+      threadListExtraPagesByProjectCwd: new Map(),
+      normalizeProjectCwd: (cwd) => cwd,
+      activeSidebarThreadId: activeChild.id,
+      previewLimit: 5,
+      previewPageSize: 5,
+    });
+
+    expect(pinnedRows.map((row) => row.thread.id)).toEqual([parent.id, activeChild.id]);
+    expect(projectData.get(project.id)?.visibleEntries).toEqual([]);
   });
 
   it("shows split member threads as normal project rows", () => {
@@ -2089,6 +2327,60 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.makeUnsafe("thread-next"));
+  });
+});
+
+describe("subtree lifecycle sidebar helpers", () => {
+  const rootId = ThreadId.makeUnsafe("thread-root");
+  const childId = ThreadId.makeUnsafe("thread-child");
+  const grandchildId = ThreadId.makeUnsafe("thread-grandchild");
+  const otherId = ThreadId.makeUnsafe("thread-other");
+  const threads = [
+    makeThread({ id: rootId, parentThreadId: null }),
+    makeThread({ id: childId, parentThreadId: rootId }),
+    makeThread({ id: grandchildId, parentThreadId: childId }),
+    makeThread({ id: otherId, parentThreadId: null }),
+  ];
+
+  it("recognizes an active descendant as part of an archived route subtree", () => {
+    expect(
+      resolveSubtreeRouteThreadId({
+        threads,
+        rootThreadId: rootId,
+        routeThreadId: grandchildId,
+      }),
+    ).toBe(grandchildId);
+    expect(
+      resolveSubtreeRouteThreadId({
+        threads,
+        rootThreadId: rootId,
+        routeThreadId: otherId,
+      }),
+    ).toBeNull();
+  });
+
+  it("offers bulk archive only for selected family roots and reports the full scope", () => {
+    expect(resolveArchiveSelection(threads, new Set([childId]))).toEqual({
+      rootThreadIds: [],
+      subtreeThreadIds: [],
+    });
+    expect(resolveArchiveSelection(threads, new Set([rootId, otherId]))).toEqual({
+      rootThreadIds: [rootId, otherId],
+      subtreeThreadIds: [rootId, childId, grandchildId, otherId],
+    });
+  });
+
+  it("removes selected descendant roots already covered through full ancestry", () => {
+    expect(
+      collectSelectedThreadSubtreeRoots(threads, new Set([rootId, grandchildId])).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([rootId]);
+    expect(
+      collectSelectedThreadSubtreeRoots(threads, new Set([childId, otherId])).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([childId, otherId]);
   });
 });
 

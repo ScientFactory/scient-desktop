@@ -8,16 +8,18 @@
 
 import type { ThreadId } from "@synara/contracts";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useCallback, useMemo, useState } from "react";
 
 import { useAppSettings } from "~/appSettings";
 import { RenameThreadDialog } from "~/components/RenameThreadDialog";
 import { copyTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { reconcileDeletedThreadFromClient } from "~/lib/deletedThreadClientReconciliation";
+import { reconcileDeletedThreadsFromClient } from "~/lib/deletedThreadClientReconciliation";
 import { gitRemoveWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { pinActionLabel } from "~/lib/pin";
 import { dispatchThreadRename } from "~/lib/threadRename";
+import { threadArchiveActionLabel, threadArchiveToastTitle } from "~/lib/threadArchivePresentation";
 import { newCommandId } from "~/lib/utils";
 import { activityManager } from "~/notifications/activityStore";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -25,7 +27,7 @@ import { useKanbanUiStore } from "../../kanbanUiStore";
 import { readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { useTerminalStateStore } from "../../terminalStateStore";
-import { isThreadRunningTurn } from "../../session-logic";
+import { isSessionBusyForArchive } from "../../session-logic";
 import { getThreadFromState, getThreadsFromState } from "../../threadDerivation";
 import {
   formatWorktreePathForDisplay,
@@ -97,38 +99,51 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       });
       return;
     }
-    const thread = getThreadFromState(useStore.getState(), threadId);
+    const currentThreads = getThreadsFromState(useStore.getState());
+    const thread = currentThreads.find((candidate) => candidate.id === threadId);
     if (!thread) return;
-    if (isThreadRunningTurn(thread)) {
+    const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
+    const runningCount = subtreeThreads.filter((candidate) =>
+      isSessionBusyForArchive(candidate.session),
+    ).length;
+    if (runningCount > 0) {
       setFeedback({
         tone: "error",
         title: "Cannot archive",
-        description: "Stop the running session before archiving this thread.",
+        description:
+          runningCount === 1
+            ? "Wait for startup or stop the active turn in this conversation subtree before archiving it."
+            : `Wait for startup or stop the ${runningCount} active sessions in this conversation subtree before archiving it.`,
       });
       return;
     }
     // Archived threads leave the board's thread feed, so a live optimistic
     // dispatch entry could never reconcile — drop it with the card.
-    useKanbanUiStore.getState().clearOptimisticDispatch(threadId);
+    for (const subtreeThread of subtreeThreads) {
+      useKanbanUiStore.getState().clearOptimisticDispatch(subtreeThread.id);
+    }
     await api.orchestration.dispatchCommand({
       type: "thread.archive",
       commandId: newCommandId(),
       threadId,
     });
+    setFeedback({ tone: "success", title: threadArchiveToastTitle(subtreeThreads.length) });
   }, []);
 
   const deleteCardThread = useCallback(
-    async (card: KanbanCard) => {
-      // A deleted thread can never reconcile its optimistic dispatch — drop the
-      // entry first so no phantom In Progress card survives the deletion.
-      useKanbanUiStore.getState().clearOptimisticDispatch(card.threadId);
+    async (
+      card: KanbanCard,
+      options?: { readonly expectedDescendantThreadIds?: readonly ThreadId[] },
+    ) => {
       // Local-only draft (never promoted): just drop it from the draft store.
       if (card.thread === null) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(card.threadId);
         clearDraftThread(card.threadId);
         return;
       }
       // A settled thread can have a separate draft card for its unsent composer prompt.
       if (isKanbanDraftOnlyCard(card)) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(card.threadId);
         clearComposerContent(card.threadId);
         return;
       }
@@ -144,9 +159,25 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       const state = useStore.getState();
       const thread = getThreadFromState(state, card.threadId);
       if (!thread) return;
+      const allThreads = getThreadsFromState(state);
+      const threadById = new Map(allThreads.map((candidate) => [candidate.id, candidate] as const));
+      const expectedDescendantThreadIds =
+        options?.expectedDescendantThreadIds ??
+        collectSubagentDescendants(allThreads, card.threadId).map((candidate) => candidate.id);
+      const subtreeThreads = [
+        thread,
+        ...expectedDescendantThreadIds.flatMap((descendantId) => {
+          const descendant = threadById.get(descendantId);
+          return descendant ? [descendant] : [];
+        }),
+      ];
       const project = state.projects.find((candidate) => candidate.id === thread.projectId) ?? null;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        getThreadsFromState(state),
+        allThreads.filter(
+          (candidate) =>
+            candidate.id === card.threadId ||
+            !subtreeThreads.some((deletedThread) => deletedThread.id === candidate.id),
+        ),
         card.threadId,
       );
       const displayWorktreePath = orphanedWorktreePath
@@ -164,35 +195,30 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           ].join("\n"),
         ));
 
-      if (thread.session && thread.session.status !== "closed") {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId: card.threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-      }
-      try {
-        terminalRuntimeRegistry.disposeThread(card.threadId);
-        await api.terminal.close({ threadId: card.threadId, deleteHistory: true });
-      } catch {
-        // Terminal may already be closed.
-      }
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
         threadId: card.threadId,
+        cascadeDescendants: true,
+        expectedDescendantThreadIds,
       });
-      await reconcileDeletedThreadFromClient({
+      try {
+        await api.terminal.close({ threadId: card.threadId, deleteHistory: true });
+      } catch {
+        // Terminal may already be closed.
+      }
+      await reconcileDeletedThreadsFromClient({
         api,
-        threadId: card.threadId,
+        threadIds: subtreeThreads.map((candidate) => candidate.id),
         removeDeletedThreadFromClientState: useStore.getState().removeDeletedThreadFromClientState,
       });
-      clearDraftThread(card.threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
-      clearTerminalState(card.threadId);
+      for (const deletedThread of subtreeThreads) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(deletedThread.id);
+        terminalRuntimeRegistry.disposeThread(deletedThread.id);
+        clearDraftThread(deletedThread.id);
+        clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
+        clearTerminalState(deletedThread.id);
+      }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !project) {
         return;
@@ -263,6 +289,10 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       const deletesOnlyDraft = !isThreadBacked || isDraftOnlyCard;
       const isThreadActionCard = isThreadBacked && !isDraftOnlyCard;
       const workspacePath = resolveCardWorkspacePath(card);
+      const archiveConversationCount = isThreadActionCard
+        ? collectSubagentDescendants(getThreadsFromState(useStore.getState()), card.threadId)
+            .length + 1
+        : 1;
 
       void (async () => {
         const clicked = await api.contextMenu.show(
@@ -281,7 +311,15 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
               : []),
             ...(isThreadBacked ? [{ id: "copy-thread-id", label: "Copy Thread ID" }] : []),
             ...(isThreadActionCard
-              ? [{ id: "archive", label: "Archive", separatorBefore: true }]
+              ? card.thread?.parentThreadId
+                ? []
+                : [
+                    {
+                      id: "archive",
+                      label: threadArchiveActionLabel(archiveConversationCount),
+                      separatorBefore: true,
+                    },
+                  ]
               : []),
             {
               id: "delete",
@@ -319,9 +357,14 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         if (clicked === "archive") {
           if (!isThreadActionCard) return;
           if (settings.confirmThreadArchive) {
+            const conversationCount =
+              collectSubagentDescendants(getThreadsFromState(useStore.getState()), card.threadId)
+                .length + 1;
             const confirmed = await api.dialogs.confirm(
               [
-                `Archive thread "${card.title}"?`,
+                conversationCount === 1
+                  ? `Archive thread "${card.title}"?`
+                  : `Archive "${card.title}" with its ${conversationCount - 1} sub-agent conversations?`,
                 "Archived threads are hidden from the sidebar but can be restored later.",
               ].join("\n"),
             );
@@ -331,18 +374,37 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           return;
         }
         if (clicked !== "delete") return;
+        let confirmedDescendantThreadIds: readonly ThreadId[] | undefined;
         if (settings.confirmThreadDelete) {
+          const storedThread = getThreadFromState(useStore.getState(), card.threadId);
+          confirmedDescendantThreadIds = storedThread
+            ? collectSubagentDescendants(
+                getThreadsFromState(useStore.getState()),
+                card.threadId,
+              ).map((thread) => thread.id)
+            : [];
+          const conversationCount = confirmedDescendantThreadIds.length + 1;
           const confirmed = await api.dialogs.confirm(
             deletesOnlyDraft
               ? `Delete this draft? This removes its unsent prompt.`
-              : [
-                  `Delete thread "${card.title}"?`,
-                  "This permanently clears conversation history for this thread.",
-                ].join("\n"),
+              : conversationCount === 1
+                ? [
+                    `Delete thread "${card.title}"?`,
+                    "This permanently clears conversation history for this thread.",
+                  ].join("\n")
+                : [
+                    `Delete "${card.title}" and its ${conversationCount - 1} sub-agent conversations?`,
+                    `This permanently clears all ${conversationCount} conversation histories.`,
+                  ].join("\n"),
           );
           if (!confirmed) return;
         }
-        await deleteCardThread(card);
+        await deleteCardThread(
+          card,
+          confirmedDescendantThreadIds
+            ? { expectedDescendantThreadIds: confirmedDescendantThreadIds }
+            : undefined,
+        );
       })().catch((error: unknown) => {
         setFeedback({
           tone: "error",

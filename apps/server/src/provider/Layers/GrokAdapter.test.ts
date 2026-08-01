@@ -4,16 +4,22 @@
 // Depends on: GrokAdapter helper exports and shared contract ids.
 
 import { TurnId } from "@synara/contracts";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
   isGrokContextCompactionToolCall,
   isRenderableGrokAssistantDelta,
+  makeGrokAdapter,
   mergeGrokModelDescriptors,
   parseXaiLanguageModelDescriptors,
   scopeGrokRuntimeItemIdForTurn,
   scopeGrokToolCallStateForTurn,
 } from "./GrokAdapter.ts";
+import {
+  observeAdapterNotificationLifecycle,
+  ProviderNotificationAdapterTestLayer,
+} from "./ProviderNotificationDrain.testSupport.ts";
 
 describe("GrokAdapter runtime event scoping", () => {
   it("makes reused ACP assistant segment ids unique per DP turn", () => {
@@ -144,5 +150,31 @@ describe("GrokAdapter runtime event scoping", () => {
         "high",
       ]);
     }
+  });
+});
+
+describe("GrokAdapter notification drain lifetime", () => {
+  it("delivers post-start notifications and bounds replacement, stop, and startup failure", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        observeAdapterNotificationLifecycle({
+          provider: "grok",
+          makeAdapter: (sessionRuntimeFactory) => makeGrokAdapter({}, { sessionRuntimeFactory }),
+        }).pipe(Effect.provide(ProviderNotificationAdapterTestLayer)),
+      ),
+    );
+
+    expect(result).toEqual({
+      firstEventProvider: "grok",
+      firstEventDelta: "late-first",
+      firstScopeClosed: true,
+      replacementEventProvider: "grok",
+      replacementEventDelta: "late-replacement",
+      replacementScopeClosed: true,
+      sessionPresentAfterStop: false,
+      failedStart: true,
+      failedScopeClosed: true,
+      failedSessionPresent: false,
+    });
   });
 });

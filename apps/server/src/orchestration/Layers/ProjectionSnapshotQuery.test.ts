@@ -445,7 +445,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               checkpointTurnCount: 1,
               checkpointRef: asCheckpointRef("checkpoint-1"),
               status: "ready",
-              files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+              files: [
+                {
+                  path: "README.md",
+                  kind: "modified",
+                  additions: 2,
+                  deletions: 1,
+                },
+              ],
               assistantMessageId: asMessageId("message-1"),
               completedAt: "2026-02-24T00:00:08.000Z",
             },
@@ -966,7 +973,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const snapshot = yield* snapshotQuery.getSnapshot();
       assert.deepEqual(
-        snapshot.projects.map((project) => ({ id: project.id, kind: project.kind })),
+        snapshot.projects.map((project) => ({
+          id: project.id,
+          kind: project.kind,
+        })),
         [
           { id: asProjectId("project-folder"), kind: "project" },
           { id: asProjectId("project-chat"), kind: "chat" },
@@ -975,7 +985,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.deepEqual(
-        shellSnapshot.projects.map((project) => ({ id: project.id, kind: project.kind })),
+        shellSnapshot.projects.map((project) => ({
+          id: project.id,
+          kind: project.kind,
+        })),
         [
           { id: asProjectId("project-folder"), kind: "project" },
           { id: asProjectId("project-chat"), kind: "chat" },
@@ -1815,34 +1828,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         ]);
       }
-
-      const generatedImageActivities = yield* snapshotQuery.listGeneratedImageActivitiesByTurn(
-        ThreadId.makeUnsafe("thread-context"),
-        TurnId.makeUnsafe("turn-2"),
-      );
-      assert.deepEqual(generatedImageActivities, [
-        {
-          kind: "studio.outputs.captured",
-          payload: {
-            itemType: "studio_outputs",
-            data: {
-              files: [{ path: "Outbox/Images/generated.png" }],
-              generatedImage: {
-                sourcePath: "/codex/generated.png",
-                fullPath: "/tmp/context-workspace/Outbox/Images/generated.png",
-              },
-            },
-          },
-        },
-        {
-          kind: "tool.completed",
-          payload: {
-            itemType: "image_generation",
-            status: "completed",
-            data: { kind: "codex.generated_image", path: "/codex/generated.png" },
-          },
-        },
-      ]);
 
       const fullThreadDiffContext = yield* snapshotQuery.getFullThreadDiffContext(
         ThreadId.makeUnsafe("thread-context"),

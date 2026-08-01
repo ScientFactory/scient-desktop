@@ -2061,7 +2061,7 @@ describe("store pure functions", () => {
 });
 
 describe("store read model sync", () => {
-  it("adds the desktop bridge token to server attachment preview URLs", () => {
+  it("adds the desktop bridge token to assistant attachment preview URLs during hydration", () => {
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const testWindow = {
       location: { origin: "scient://app" },
@@ -2079,8 +2079,8 @@ describe("store read model sync", () => {
         messages: [
           {
             id: MessageId.makeUnsafe("message-with-image"),
-            role: "user",
-            text: "see image",
+            role: "assistant",
+            text: "generated image",
             attachments: [
               {
                 type: "image",

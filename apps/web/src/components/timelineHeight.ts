@@ -19,10 +19,11 @@ import {
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
 const ASSISTANT_BASE_HEIGHT_PX = 78;
+const ASSISTANT_ATTACHMENT_ROW_MARGIN_TOP_PX = 8;
 const USER_BASE_HEIGHT_PX = 97;
 const USER_ATTACHMENT_THUMBNAIL_SIZE_PX = 60;
 const USER_ATTACHMENT_THUMBNAIL_GAP_PX = 8;
-const USER_ATTACHMENT_THUMBNAILS_PER_ROW = 4;
+const IMAGE_ATTACHMENT_THUMBNAILS_PER_ROW = 3;
 const USER_ATTACHMENT_ROW_MARGIN_BOTTOM_PX = 4;
 const USER_PASTED_TEXT_CARD_HEIGHT_PX = 52;
 const USER_PASTED_TEXT_CARD_GAP_PX = 6;
@@ -61,7 +62,10 @@ const changedFilesSummaryHeightCache = new WeakMap<
 interface TimelineMessageHeightInput {
   role: "user" | "assistant" | "system";
   text: string;
-  attachments?: ReadonlyArray<{ id: string; type?: "image" | "file" | "assistant-selection" }>;
+  attachments?: ReadonlyArray<{
+    id: string;
+    type?: "image" | "file" | "assistant-selection";
+  }>;
   dispatchMode?: "queue" | "steer";
   dispatchOrigin?: "user" | "automation";
   dispatchSource?: "agent";
@@ -267,11 +271,22 @@ export function estimateTimelineMessageHeight(
         maxVisibleEntries: 4,
       },
     );
+    const imageAttachmentCount =
+      message.attachments?.filter((attachment) => attachment.type === "image").length ?? 0;
+    const imageAttachmentHeight =
+      imageAttachmentCount > 0
+        ? Math.ceil(imageAttachmentCount / IMAGE_ATTACHMENT_THUMBNAILS_PER_ROW) *
+            USER_ATTACHMENT_THUMBNAIL_SIZE_PX +
+          Math.max(Math.ceil(imageAttachmentCount / IMAGE_ATTACHMENT_THUMBNAILS_PER_ROW) - 1, 0) *
+            USER_ATTACHMENT_THUMBNAIL_GAP_PX +
+          (message.text.length > 0 ? ASSISTANT_ATTACHMENT_ROW_MARGIN_TOP_PX : 0)
+        : 0;
     return (
       ASSISTANT_BASE_HEIGHT_PX +
       estimatedLines * lineHeightPx +
       changedFilesHeight +
-      inlineToolPreviewHeight
+      inlineToolPreviewHeight +
+      imageAttachmentHeight
     );
   }
 
@@ -306,9 +321,9 @@ export function estimateTimelineMessageHeight(
     const pastedTextCount = displayedUserMessage.pastedTexts.length;
     const imageAttachmentHeight =
       imageAttachmentCount > 0
-        ? Math.ceil(imageAttachmentCount / USER_ATTACHMENT_THUMBNAILS_PER_ROW) *
+        ? Math.ceil(imageAttachmentCount / IMAGE_ATTACHMENT_THUMBNAILS_PER_ROW) *
             USER_ATTACHMENT_THUMBNAIL_SIZE_PX +
-          Math.max(Math.ceil(imageAttachmentCount / USER_ATTACHMENT_THUMBNAILS_PER_ROW) - 1, 0) *
+          Math.max(Math.ceil(imageAttachmentCount / IMAGE_ATTACHMENT_THUMBNAILS_PER_ROW) - 1, 0) *
             USER_ATTACHMENT_THUMBNAIL_GAP_PX
         : 0;
     const assistantSelectionHeight = assistantSelectionCount > 0 ? 40 : 0;
