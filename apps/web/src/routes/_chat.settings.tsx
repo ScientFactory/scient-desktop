@@ -1883,8 +1883,7 @@ function SettingsRouteView() {
         return;
       }
       const archivedDeletionCount = deletionPlan.threadIds.length;
-      const linkedConversationCount =
-        deletionPlan.linkedActiveThreadCount + archivedDeletionCount;
+      const linkedConversationCount = deletionPlan.linkedActiveThreadCount + archivedDeletionCount;
       const confirmed = await api.dialogs.confirm(
         linkedConversationCount > 0
           ? [

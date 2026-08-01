@@ -1862,7 +1862,6 @@ function makeArchiveSession(
 }
 
 describe("partitionProjectArchiveSubtrees", () => {
-
   it("skips a whole subtree when a descendant session is starting", () => {
     const root = makeSidebarThreadSummary({ id: ThreadId.makeUnsafe("root-starting") });
     const child = makeSidebarThreadSummary({

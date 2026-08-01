@@ -59,7 +59,9 @@ describe("SidebarPinnedThreadMainAction", () => {
     await page.getByText("Scient desktop", { exact: true }).click();
 
     expect(onActivate).toHaveBeenCalledTimes(2);
-    await expect.element(page.getByRole("button", { name: "Main analysis Scient desktop" })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Main analysis Scient desktop" }))
+      .toBeVisible();
   });
 
   it("keeps disclosure and hover actions as sibling controls", async () => {

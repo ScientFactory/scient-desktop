@@ -1604,7 +1604,9 @@ export function collectSelectedThreadSubtreeRoots<T extends ParentLinkedThread>(
 
 export function partitionProjectArchiveSubtrees<
   T extends Pick<SidebarThreadSummary, "id" | "parentThreadId" | "session">,
->(threads: readonly T[]): {
+>(
+  threads: readonly T[],
+): {
   readonly archivableSubtrees: readonly (readonly T[])[];
   readonly busyCount: number;
 } {
@@ -1615,10 +1617,7 @@ export function partitionProjectArchiveSubtrees<
   const archivableSubtrees = projectSubtrees.filter((subtree) =>
     subtree.every((thread) => !isSessionBusyForArchive(thread.session)),
   );
-  const archivableCount = archivableSubtrees.reduce(
-    (count, subtree) => count + subtree.length,
-    0,
-  );
+  const archivableCount = archivableSubtrees.reduce((count, subtree) => count + subtree.length, 0);
   return {
     archivableSubtrees,
     busyCount: threads.length - archivableCount,
