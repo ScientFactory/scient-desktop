@@ -96,6 +96,31 @@ function collectExistingMessageIds(readModel: OrchestrationReadModel) {
   );
 }
 
+function resolveSharedProviderParentThread(
+  readModel: OrchestrationReadModel,
+  thread: OrchestrationReadModel["threads"][number],
+) {
+  if (thread.parentThreadId) {
+    return readModel.threads.find((candidate) => candidate.id === thread.parentThreadId);
+  }
+  const rawThreadId = thread.id as string;
+  if (!rawThreadId.startsWith("subagent:")) {
+    return undefined;
+  }
+  return readModel.threads
+    .filter(
+      (candidate) =>
+        candidate.id !== thread.id && rawThreadId.startsWith(`subagent:${candidate.id}:`),
+    )
+    .toSorted((left, right) => (right.id as string).length - (left.id as string).length)[0];
+}
+
+function isProviderSessionBusyForChildEdit(
+  session: OrchestrationReadModel["threads"][number]["session"] | undefined,
+) {
+  return session?.status === "starting" || session?.status === "running";
+}
+
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
   aggregateKind: "thread",
@@ -1635,16 +1660,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Only the latest rollbackable user message can be edited and resent (${editTarget.reason}).`,
         });
       }
-      const parentThread = thread.parentThreadId
-        ? readModel.threads.find((candidate) => candidate.id === thread.parentThreadId)
-        : undefined;
-      if (
-        parentThread?.session?.status === "running" &&
-        parentThread.session.activeTurnId !== null
-      ) {
+      const parentThread = resolveSharedProviderParentThread(readModel, thread);
+      if (editTarget.rollbackTurnCount > 0 && isProviderSessionBusyForChildEdit(parentThread?.session)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: "A subagent message cannot be edited while its shared parent turn is running.",
+          detail: "A subagent message cannot be edited while its shared parent session is busy.",
         });
       }
       return {

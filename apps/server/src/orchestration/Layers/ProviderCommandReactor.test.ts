@@ -6411,6 +6411,49 @@ describe("ProviderCommandReactor", () => {
       ),
     ).toEqual(settledChild);
 
+    for (const parentStatus of ["starting", "running"] as const) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.makeUnsafe(`cmd-session-parent-${parentStatus}-without-turn-id`),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          session: {
+            threadId: ThreadId.makeUnsafe("thread-1"),
+            status: parentStatus,
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+      const busyEditExit = await Effect.runPromiseExit(
+        harness.engine.dispatch({
+          type: "thread.message.edit-and-resend",
+          commandId: CommandId.makeUnsafe(`cmd-edit-child-parent-${parentStatus}-without-turn-id`),
+          threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+          messageId: asMessageId("message-subagent-stop-in-flight"),
+          text: `do not edit while parent is ${parentStatus}`,
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: now,
+        }),
+      );
+      expect(busyEditExit._tag).toBe("Failure");
+      const busyRejectedModel = await Effect.runPromise(harness.engine.getReadModel());
+      expect(
+        busyRejectedModel.threads.find(
+          (entry) => entry.id === "subagent:thread-1:child-provider-1",
+        ),
+      ).toEqual(settledChild);
+      expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(harness.rollbackConversation).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    }
+
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",

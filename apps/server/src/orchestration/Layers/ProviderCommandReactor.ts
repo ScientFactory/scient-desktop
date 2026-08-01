@@ -2418,8 +2418,8 @@ const make = Effect.gen(function* () {
       thread &&
       providerThread &&
       providerThread.id !== thread.id &&
-      providerThread.session?.status === "running" &&
-      providerThread.session.activeTurnId !== null &&
+      (providerThread.session?.status === "starting" ||
+        providerThread.session?.status === "running") &&
       !isQueuedMessageEdit
     ) {
       yield* Effect.logInfo("skipping subagent edit while its shared parent turn is running", {
