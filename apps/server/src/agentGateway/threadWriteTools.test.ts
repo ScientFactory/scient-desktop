@@ -12,20 +12,26 @@ import { Effect, Fiber, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationCommandOutcomeUncertainError } from "../orchestration/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  beginScientOperation,
+  SCIENT_OPERATION_DEFINITIONS,
+  type ScientOperationAuthority,
+} from "../scientOperations/authority.ts";
+import { makeEphemeralScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import type { McpToolCallResult } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
 import { makeThreadWriteTools } from "./threadWriteTools.ts";
-import { gatewayToolFailureResult, type ToolContext } from "./toolRuntime.ts";
+import { gatewayToolFailureResult, GatewayToolError, type ToolContext } from "./toolRuntime.ts";
 
 const CALLER_THREAD = "thread-caller";
 const TARGET_THREAD = "thread-target";
 const CALLER_PROJECT = "project-1";
 const OTHER_PROJECT = "project-2";
 const ISO = "2026-01-01T00:00:00.000Z";
-
-type Capability = "thread:read" | "thread:write" | "automation:write";
+const TEST_WRITE_OPERATION = SCIENT_OPERATION_DEFINITIONS["thread.message.send"];
 
 // Captured dispatch commands are asserted structurally; `any` keeps the test
 // focused on the runtime shape the gateway emits and, unlike an object type,
@@ -77,19 +83,68 @@ function makeEngine(options?: {
       if (options?.failWith !== undefined) return Effect.fail(new Error(options.failWith));
       return Effect.succeed({ sequence: commands.length });
     },
+    dispatchProtected: (command: AnyCommand) => {
+      commands.push(command);
+      if (options?.dispatch !== undefined) return options.dispatch(command);
+      if (options?.failWith !== undefined) return Effect.fail(new Error(options.failWith));
+      return Effect.succeed({ sequence: commands.length });
+    },
   } as unknown as OrchestrationEngineShape;
   return { engine, commands };
 }
 
 function makeContext(overrides?: Partial<ToolContext>): ToolContext {
+  const operationAuthority: ScientOperationAuthority = overrides?.operationAuthority ?? {
+    authorityId: "gateway-session:test",
+    generation: "gateway-session:test",
+    actor: {
+      kind: "provider-thread",
+      threadId: CALLER_THREAD,
+      provider: "claudeAgent",
+      sessionKey: "gateway-session:test",
+    },
+    projectIds: [CALLER_PROJECT],
+    capabilities: ["thread:read", "thread:drive"],
+    issuedAt: 0,
+    expiresAt: null,
+    revokedAt: null,
+  };
+  const started = beginScientOperation({
+    authority: operationAuthority,
+    definition: TEST_WRITE_OPERATION,
+    operationId: "operation-test",
+    projectId: CALLER_PROJECT,
+    ingress: "provider-gateway",
+    semanticIdempotencyIdentity: "test",
+    semanticIdempotencyScope: {
+      kind: "provider-turn",
+      provider:
+        operationAuthority.actor.kind === "provider-thread"
+          ? operationAuthority.actor.provider
+          : "claudeAgent",
+      callerThreadId:
+        operationAuthority.actor.kind === "provider-thread"
+          ? operationAuthority.actor.threadId
+          : CALLER_THREAD,
+      callerTurnId: overrides?.callerTurnId ?? "turn-caller",
+    },
+    payloadFingerprint: "test-payload",
+    receivedAt: 1,
+  });
+  if (!started.allow) throw new Error("Expected test operation authority to be allowed.");
   return {
     callerThreadId: CALLER_THREAD,
     callerProjectId: CALLER_PROJECT,
     callerSessionKey: "gateway-session:test",
     callerProvider: "claudeAgent",
-    callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
+    operationAuthority,
+    operationEnvelope: started.envelope,
+    admittedCaller: shell(CALLER_THREAD),
     callerTurnId: "turn-caller",
-    assertCallerTurnActive: () => Effect.void,
+    requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
+    requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),
+    operationRevocationFence: Effect.never,
+    recordOperationEffect: () => undefined,
     jsonRpcRequestId: 1,
     ...overrides,
   };
@@ -132,15 +187,10 @@ function setup(options?: {
         ? { dispatch: options.dispatch }
         : {},
   );
-  const requireThreadShell = (id: string) => {
-    const found = threadShells[id];
-    return found ? Effect.succeed(found) : Effect.fail(new Error(`Thread "${id}" was not found.`));
-  };
   let revocationListener: ((identity: { readonly sessionKey: string }) => void) | undefined;
   const tools = makeThreadWriteTools({
     snapshotQuery,
     orchestrationEngine: engine,
-    requireThreadShell,
     now: () => ISO,
     randomId: options?.randomId ?? (() => "rand-id"),
     subscribeSessionRevocations: (listener) => {
@@ -150,10 +200,15 @@ function setup(options?: {
       };
     },
   });
+  const defaultContext = makeContext({
+    admittedCaller: caller,
+    requireCurrentOperationCaller: () => Effect.succeed(caller),
+    requireCurrentCallerTurn: () => Effect.succeed(caller),
+  });
   const callEffect = (
     name: string,
     args: Record<string, unknown>,
-    context: ToolContext = makeContext(),
+    context: ToolContext = defaultContext,
   ) => {
     const tool = tools.find((entry) => entry.definition.name === name);
     if (!tool) throw new Error(`tool ${name} not found`);
@@ -166,7 +221,7 @@ function setup(options?: {
   const call = (
     name: string,
     args: Record<string, unknown>,
-    context: ToolContext = makeContext(),
+    context: ToolContext = defaultContext,
   ) => Effect.runPromise(callEffect(name, args, context));
   return {
     call,
@@ -209,9 +264,36 @@ describe("scient_send_message", () => {
     expect(command.dispatchSource).toBe("agent");
     expect(command.runtimeMode).toBe("full-access");
     expect(command.interactionMode).toBe("plan");
+    expect(command.operationPrecondition).toEqual({
+      actorThreadId: CALLER_THREAD,
+      actor: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "default",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: null,
+        latestTurnState: null,
+      },
+      target: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "plan",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: null,
+        latestTurnState: null,
+      },
+    });
     expect(command.createdAt).toBe(ISO);
-    expect(command.commandId).toBe("agent:rand-id:send");
-    expect(command.message.messageId).toBe("agent:rand-id:message");
+    expect(command.commandId).toMatch(/^scient-operation:v2:[0-9a-f]{64}:thread-send$/);
+    expect(command.message.messageId).toBe(
+      command.commandId.replace(/:thread-send$/, ":thread-message"),
+    );
   });
 
   it("passes steer mode through to the dispatch", async () => {
@@ -225,6 +307,28 @@ describe("scient_send_message", () => {
     );
     expect(body.dispatched).toBe("steer");
     expect(commands[0].dispatchMode).toBe("steer");
+  });
+
+  it("uses the transport-admitted caller without a duplicate projection read", async () => {
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+    });
+    const result = await call(
+      "scient_send_message",
+      { threadId: TARGET_THREAD, message: "dispatch once" },
+      makeContext({
+        requireCurrentCallerTurn: () =>
+          Effect.fail(
+            new GatewayToolError(
+              "caller_session_inactive",
+              "Provider-session authority was revoked.",
+            ),
+          ),
+      }),
+    );
+
+    expect(jsonBody(result)).toMatchObject({ threadId: TARGET_THREAD, dispatched: "queue" });
+    expect(commands).toHaveLength(1);
   });
 
   it("rejects an invalid mode", async () => {
@@ -268,10 +372,10 @@ describe("scient_send_message", () => {
       deduplicated: true,
     });
     expect(commands).toHaveLength(1);
-    // Idempotent sends derive a bounded deterministic identity from the exact
-    // provider session plus request id.
-    expect(commands[0].commandId).toMatch(/^agent:[0-9a-f]{32}:send$/);
-    expect(commands[0].message.messageId).toBe(commands[0].commandId.replace(/:send$/, ":message"));
+    expect(commands[0].commandId).toMatch(/^scient-operation:v2:[0-9a-f]{64}:thread-send$/);
+    expect(commands[0].message.messageId).toBe(
+      commands[0].commandId.replace(/:thread-send$/, ":thread-message"),
+    );
   });
 
   it("single-flights concurrent retries with the same requestId and fingerprint", async () => {
@@ -340,7 +444,6 @@ describe("scient_send_message", () => {
     const tools = makeThreadWriteTools({
       snapshotQuery,
       orchestrationEngine: engine,
-      requireThreadShell,
     });
     const credentials = {
       verifySession: () => ({
@@ -348,7 +451,7 @@ describe("scient_send_message", () => {
         threadId: CALLER_THREAD,
         provider: "claudeAgent",
         issuedAt: 0,
-        capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+        capabilities: ["thread:read", "thread:drive"],
       }),
       bindWriteAuthority: () => ({
         sessionKey: "gateway-session:test",
@@ -357,6 +460,11 @@ describe("scient_send_message", () => {
         turnId: "turn-caller",
       }),
       verifyWriteAuthority: () => true,
+      acquireWriteLease: () => ({
+        sessionKey: "gateway-session:test",
+        release: () => undefined,
+      }),
+      subscribeSessionRevocations: () => () => undefined,
     } as unknown as AgentGatewayCredentialsShape;
     const transport = makeAgentGatewayMcpTransport({
       credentials,
@@ -364,6 +472,7 @@ describe("scient_send_message", () => {
       tools,
       instructions: "test",
       requireThreadShell,
+      operationExecutor: makeEphemeralScientOperationExecutor(),
     });
     const request = Effect.runPromise(
       transport({
@@ -605,20 +714,22 @@ describe("scient_send_message", () => {
     expect(commands).toHaveLength(2);
   });
 
-  it("does not share dedup across replacement provider sessions on one thread", async () => {
+  it("keeps one durable command identity across replacement sessions in the same turn", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     await call(
       "scient_send_message",
-      { threadId: TARGET_THREAD, message: "first session", requestId: "same" },
+      { threadId: TARGET_THREAD, message: "same message", requestId: "same" },
       makeContext({ callerSessionKey: "gateway-session:first" }),
     );
     await call(
       "scient_send_message",
-      { threadId: TARGET_THREAD, message: "replacement session", requestId: "same" },
+      { threadId: TARGET_THREAD, message: "same message", requestId: "same" },
       makeContext({ callerSessionKey: "gateway-session:replacement" }),
     );
     expect(commands).toHaveLength(2);
-    expect(commands[0].commandId).not.toBe(commands[1].commandId);
+    // Direct handler calls bypass the durable executor's cross-session replay,
+    // but the orchestration command identity remains one final dedup fence.
+    expect(commands[0].commandId).toBe(commands[1].commandId);
   });
 
   it.each([
@@ -705,6 +816,64 @@ describe("scient_send_message", () => {
     expect(result.content[0]!.text).not.toContain("engine boom");
   });
 
+  it("surfaces an uncertain dispatch without inviting an unsafe retry and records its possible effect", async () => {
+    const effects: Array<{ readonly kind: string; readonly identity: string }> = [];
+    const { call } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: (command) =>
+        Effect.fail(
+          new OrchestrationCommandOutcomeUncertainError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "Injected reconciliation failure.",
+          }),
+        ),
+    });
+    const context = makeContext({
+      recordOperationEffect: (effect) => effects.push(effect),
+    });
+    const result = await call(
+      "scient_send_message",
+      { threadId: TARGET_THREAD, message: "x" },
+      context,
+    );
+    expect(result.isError).toBe(true);
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_outcome_uncertain");
+    expect(error.message).toContain("No requestId was supplied");
+    expect(error.message).toContain("Do not retry automatically");
+    expect(error.message).toContain("confirm the message is absent");
+    expect(effects).toEqual([
+      {
+        kind: "orchestration-command",
+        identity: `scient-operation:v2:${context.operationEnvelope.idempotency.claimKey}:thread-send`,
+      },
+    ]);
+  });
+
+  it("requires the exact original requestId when retrying an uncertain idempotent send", async () => {
+    const { call } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: (command) =>
+        Effect.fail(
+          new OrchestrationCommandOutcomeUncertainError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "Injected reconciliation failure.",
+          }),
+        ),
+    });
+    const result = await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "x",
+      requestId: "stable-request",
+    });
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_outcome_uncertain");
+    expect(error.message).toContain("reuse the exact original requestId");
+    expect(error.message).not.toContain("No requestId was supplied");
+  });
+
   it("does not remember a failed dispatch for later replay", async () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
@@ -718,6 +887,43 @@ describe("scient_send_message", () => {
 });
 
 describe("scient_interrupt_thread", () => {
+  it("requires turn reconciliation when an interrupt outcome is uncertain", async () => {
+    const effects: Array<{ readonly kind: string; readonly identity: string }> = [];
+    const { call } = setup({
+      threadShells: {
+        [TARGET_THREAD]: shell(TARGET_THREAD, {
+          latestTurn: { turnId: "turn-x", state: "running" },
+        }),
+      },
+      dispatch: (command) =>
+        Effect.fail(
+          new OrchestrationCommandOutcomeUncertainError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "Injected reconciliation failure.",
+          }),
+        ),
+    });
+    const result = await call(
+      "scient_interrupt_thread",
+      { threadId: TARGET_THREAD },
+      makeContext({
+        recordOperationEffect: (effect) => effects.push(effect),
+      }),
+    );
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_outcome_uncertain");
+    expect(error.message).toContain("Reread the target thread");
+    expect(error.message).toContain("do not retry this interrupt blindly");
+    expect(error.message).not.toContain("requestId");
+    expect(effects).toEqual([
+      {
+        kind: "orchestration-command",
+        identity: `agent:${TARGET_THREAD}:turn-x:interrupt`,
+      },
+    ]);
+  });
+
   it("interrupts a running turn, pinned to the observed turn id", async () => {
     const { call, commands } = setup({
       threadShells: {
@@ -733,7 +939,55 @@ describe("scient_interrupt_thread", () => {
     expect(commands[0].threadId).toBe(TARGET_THREAD);
     expect(commands[0].turnId).toBe("turn-x");
     expect(commands[0].commandId).toBe(`agent:${TARGET_THREAD}:turn-x:interrupt`);
+    expect(commands[0].operationPrecondition).toEqual({
+      actorThreadId: CALLER_THREAD,
+      actor: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "default",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: null,
+        latestTurnState: null,
+      },
+      target: {
+        projectId: CALLER_PROJECT,
+        runtimeMode: "full-access",
+        envMode: "local",
+        interactionMode: "default",
+        provider: "claudeAgent",
+        sessionStatus: null,
+        activeTurnId: null,
+        latestTurnId: "turn-x",
+        latestTurnState: "running",
+      },
+    });
     expect(commands[0].createdAt).toBe(ISO);
+  });
+
+  it("uses the transport-admitted caller for interrupt without a duplicate projection read", async () => {
+    const { call, commands } = setup({
+      threadShells: {
+        [TARGET_THREAD]: shell(TARGET_THREAD, {
+          latestTurn: { turnId: "turn-target", state: "running" },
+        }),
+      },
+    });
+    const result = await call(
+      "scient_interrupt_thread",
+      { threadId: TARGET_THREAD },
+      makeContext({
+        requireCurrentCallerTurn: () =>
+          Effect.fail(
+            new GatewayToolError("caller_turn_inactive", "Caller turn is no longer active."),
+          ),
+      }),
+    );
+
+    expect(jsonBody(result)).toMatchObject({ threadId: TARGET_THREAD, interrupted: true });
+    expect(commands).toHaveLength(1);
   });
 
   it("is a no-op when the target has no running turn", async () => {
@@ -803,17 +1057,30 @@ describe("scient_interrupt_thread", () => {
 });
 
 describe("makeThreadWriteTools", () => {
-  it("exposes exactly the two drive tools, both requiring an active turn", () => {
+  it("exposes exactly two provider-thread drive operations requiring an active turn", () => {
     const tools = makeThreadWriteTools({
       snapshotQuery: makeSnapshotQuery({}),
       orchestrationEngine: makeEngine().engine,
-      requireThreadShell: (id: string) => Effect.fail(new Error(id)),
     });
     expect(tools.map((tool) => tool.definition.name)).toEqual([
       "scient_send_message",
       "scient_interrupt_thread",
     ]);
-    expect(tools.every((tool) => tool.requiresActiveTurn === true)).toBe(true);
+    expect(
+      tools.every(
+        (tool) => SCIENT_OPERATION_DEFINITIONS[tool.operation].admission === "write-authority",
+      ),
+    ).toBe(true);
+    expect(
+      tools.every(
+        (tool) => SCIENT_OPERATION_DEFINITIONS[tool.operation].capability === "thread:drive",
+      ),
+    ).toBe(true);
+    expect(
+      tools.every((tool) =>
+        SCIENT_OPERATION_DEFINITIONS[tool.operation].allowedActorKinds.includes("provider-thread"),
+      ),
+    ).toBe(true);
     // Drive tools must carry write annotations (not read-only).
     expect(tools.every((tool) => tool.definition.annotations?.readOnlyHint === false)).toBe(true);
   });

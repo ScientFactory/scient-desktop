@@ -26,6 +26,8 @@ import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
+  OrchestrationCommandCancelledError,
+  OrchestrationCommandOutcomeUncertainError,
   OrchestrationCommandInvariantError,
   OrchestrationCommandInternalError,
   OrchestrationCommandPreviouslyRejectedError,
@@ -51,6 +53,8 @@ type DispatchTimeoutDecision = { kind: "abandon" } | { kind: "wait" };
 interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
+  protectedCommitResult: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError> | null;
+  revocation: Effect.Effect<unknown, unknown, never> | null;
   executionState: Ref.Ref<CommandExecutionState>;
   deadlineAtMs: number;
 }
@@ -91,6 +95,12 @@ function isProjectMetadataEvent(
   );
 }
 
+export const publishThenAdvanceCursor = <E, R>(
+  publish: Effect.Effect<unknown, E, R>,
+  advanceCursor: () => void,
+): Effect.Effect<void, E, R> =>
+  Effect.uninterruptible(publish.pipe(Effect.andThen(Effect.sync(advanceCursor)), Effect.asVoid));
+
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
@@ -99,6 +109,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
   let commandReadModel = createEmptyReadModel(new Date().toISOString());
+  let lastPublishedEventSequence = 0;
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -112,6 +123,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       commandId: command.commandId,
       commandType: command.type,
       timeoutMs: ORCHESTRATION_DISPATCH_TIMEOUT_MS,
+    });
+
+  const makeCommandCancelledError = (command: OrchestrationCommand) =>
+    new OrchestrationCommandCancelledError({
+      commandId: command.commandId,
+      commandType: command.type,
     });
 
   const makeCommandInternalError = (
@@ -167,7 +184,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           commandId: command.commandId,
         }),
       );
-      const existingReceipt = receiptExit._tag === "Success" ? receiptExit.value : Option.none();
+      if (receiptExit._tag === "Failure") {
+        return yield* new OrchestrationCommandOutcomeUncertainError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail:
+            "Command outcome is uncertain because its durable receipt could not be reconciled. Reconcile local state before retrying.",
+          cause: Cause.squash(receiptExit.cause),
+        });
+      }
+      const existingReceipt = receiptExit.value;
       if (Option.isNone(existingReceipt)) {
         return yield* makeCommandTimeoutError(command);
       }
@@ -228,6 +254,63 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       )
       .pipe(Effect.forkIn(deferredProjectionScope), Effect.asVoid);
   });
+
+  const projectDeferredCommittedEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
+    Effect.forEach(
+      events,
+      (event) =>
+        Effect.gen(function* () {
+          const isDeferredProjectionDirty = yield* Ref.get(deferredProjectionDirty);
+          if (isDeferredProjectionDirty) {
+            yield* scheduleDeferredProjectionCatchUp({
+              eventType: event.type,
+              sequence: event.sequence,
+            });
+            return;
+          }
+
+          const deferredProjectionOutcome = yield* projectionPipeline
+            .projectDeferredEvent(event)
+            .pipe(
+              Effect.matchCause({
+                onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+                onSuccess: () => ({ _tag: "success" as const }),
+              }),
+            );
+
+          if (deferredProjectionOutcome._tag === "success") {
+            return;
+          }
+
+          yield* Ref.set(deferredProjectionDirty, true);
+          yield* Effect.logWarning("deferred orchestration projector failed", {
+            sequence: event.sequence,
+            eventType: event.type,
+            cause: Cause.pretty(deferredProjectionOutcome.cause),
+          });
+          yield* scheduleDeferredProjectionCatchUp({
+            eventType: event.type,
+            sequence: event.sequence,
+          });
+        }),
+      { concurrency: 1 },
+    );
+
+  const publishCommittedEventsAtMostOnce = (events: ReadonlyArray<OrchestrationEvent>) =>
+    Effect.forEach(
+      events,
+      (event) => {
+        if (event.sequence <= lastPublishedEventSequence) return Effect.void;
+        // Reactor delivery is operationally significant (for example, it can
+        // start a provider turn). Enqueue first and advance the cursor only
+        // after success, within one uninterruptible region. A defect leaves the
+        // cursor eligible for durable recovery.
+        return publishThenAdvanceCursor(PubSub.publish(eventPubSub, event), () => {
+          lastPublishedEventSequence = event.sequence;
+        });
+      },
+      { concurrency: 1 },
+    );
 
   const refreshCommandReadModelFromProjectionState = Effect.gen(function* () {
     const nextCommandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
@@ -425,16 +508,62 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         return;
       }
 
+      const unseenEvents = persistedEvents.filter(
+        (persistedEvent) => persistedEvent.sequence > commandReadModel.snapshotSequence,
+      );
       let nextCommandReadModel = commandReadModel;
-      for (const persistedEvent of persistedEvents) {
+      for (const persistedEvent of unseenEvents) {
         nextCommandReadModel = yield* projectEvent(nextCommandReadModel, persistedEvent);
       }
       commandReadModel = nextCommandReadModel;
 
-      for (const persistedEvent of persistedEvents) {
-        yield* PubSub.publish(eventPubSub, persistedEvent);
-      }
+      // The protected commit result must never wait on deferred projection.
+      // Mark the cursor dirty and let the existing bounded-lifecycle bootstrap
+      // catch-up replay the committed sequence after this worker releases the
+      // maintenance lock.
+      yield* Ref.set(deferredProjectionDirty, true);
+      const lastPersistedEvent = persistedEvents.at(-1)!;
+      yield* scheduleDeferredProjectionCatchUp({
+        eventType: lastPersistedEvent.type,
+        sequence: lastPersistedEvent.sequence,
+      });
+      yield* publishCommittedEventsAtMostOnce(persistedEvents);
     });
+
+    const recoverCommittedState = (sequence: number) =>
+      reconcileCommandReadModelAfterDispatchFailure.pipe(
+        Effect.catchCause((eventReadCause) =>
+          Effect.logWarning(
+            "event reconciliation failed after a durable orchestration outcome; refreshing committed projections",
+          ).pipe(
+            Effect.annotateLogs({
+              commandId: envelope.command.commandId,
+              sequence,
+              cause: Cause.pretty(eventReadCause),
+            }),
+            // The event replay read failed, so rebuild every persisted
+            // projection before refreshing the command model. This runs only
+            // after protected commit certainty has already been reported; if
+            // rebuilding also fails, the worker fail-stops below instead of
+            // processing another command against stale authority state.
+            Effect.andThen(projectionPipeline.bootstrap),
+            Effect.andThen(refreshCommandReadModelFromProjectionState),
+            Effect.andThen(Ref.set(deferredProjectionDirty, false)),
+            Effect.catchCause((refreshCause) =>
+              Effect.logError(
+                "orchestration state recovery failed after a durable command; stopping the worker until restart",
+              ).pipe(
+                Effect.annotateLogs({
+                  commandId: envelope.command.commandId,
+                  sequence,
+                  cause: Cause.pretty(refreshCause),
+                }),
+                Effect.andThen(Effect.never),
+              ),
+            ),
+          ),
+        ),
+      );
 
     const runCommand = Effect.gen(function* () {
       const shouldSkip = yield* Ref.modify(envelope.executionState, (state) => {
@@ -456,18 +585,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       });
       if (Option.isSome(existingReceipt)) {
         if (existingReceipt.value.status === "accepted") {
-          yield* Deferred.succeed(envelope.result, {
+          const accepted = {
             sequence: existingReceipt.value.resultSequence,
-          });
+          };
+          if (envelope.protectedCommitResult !== null) {
+            yield* Deferred.succeed(envelope.protectedCommitResult, accepted);
+          }
+          yield* Deferred.succeed(envelope.result, accepted);
           return;
         }
-        yield* Deferred.fail(
-          envelope.result,
-          new OrchestrationCommandPreviouslyRejectedError({
-            commandId: envelope.command.commandId,
-            detail: existingReceipt.value.error ?? "Previously rejected.",
-          }),
-        );
+        const rejected = new OrchestrationCommandPreviouslyRejectedError({
+          commandId: envelope.command.commandId,
+          detail: existingReceipt.value.error ?? "Previously rejected.",
+        });
+        if (envelope.protectedCommitResult !== null) {
+          yield* Deferred.fail(envelope.protectedCommitResult, rejected);
+        }
+        yield* Deferred.fail(envelope.result, rejected);
         return;
       }
 
@@ -545,7 +679,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }),
       );
 
-      const committedCommand = yield* sql
+      const transaction = sql
         .withTransaction(transactionalCommitEffect)
         .pipe(
           Effect.catchTag("SqlError", (sqlError) =>
@@ -554,50 +688,31 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           ),
         );
+      const committedCommand = yield* envelope.revocation === null
+        ? transaction
+        : Effect.raceFirst(
+            transaction,
+            envelope.revocation.pipe(
+              Effect.matchCause({
+                onFailure: () => undefined,
+                onSuccess: () => undefined,
+              }),
+              Effect.andThen(Effect.fail(makeCommandCancelledError(envelope.command))),
+            ),
+          );
+
+      if (envelope.protectedCommitResult !== null) {
+        // This is the protected operation's durable effect boundary. Complete
+        // it before deferred projection/publication so a later revocation can
+        // never turn an already-committed command into a definite failure.
+        yield* Deferred.succeed(envelope.protectedCommitResult, {
+          sequence: committedCommand.lastSequence,
+        });
+      }
 
       commandReadModel = committedCommand.nextCommandReadModel;
-      yield* Effect.forEach(
-        committedCommand.committedEvents,
-        (event) =>
-          Effect.gen(function* () {
-            const isDeferredProjectionDirty = yield* Ref.get(deferredProjectionDirty);
-            if (isDeferredProjectionDirty) {
-              yield* scheduleDeferredProjectionCatchUp({
-                eventType: event.type,
-                sequence: event.sequence,
-              });
-              return;
-            }
-
-            const deferredProjectionOutcome = yield* projectionPipeline
-              .projectDeferredEvent(event)
-              .pipe(
-                Effect.matchCause({
-                  onFailure: (cause) => ({ _tag: "failure" as const, cause }),
-                  onSuccess: () => ({ _tag: "success" as const }),
-                }),
-              );
-
-            if (deferredProjectionOutcome._tag === "success") {
-              return;
-            }
-
-            yield* Ref.set(deferredProjectionDirty, true);
-            yield* Effect.logWarning("deferred orchestration projector failed", {
-              sequence: event.sequence,
-              eventType: event.type,
-              cause: Cause.pretty(deferredProjectionOutcome.cause),
-            });
-            yield* scheduleDeferredProjectionCatchUp({
-              eventType: event.type,
-              sequence: event.sequence,
-            });
-          }),
-        { concurrency: 1 },
-      );
-      for (const event of committedCommand.committedEvents) {
-        yield* PubSub.publish(eventPubSub, event);
-      }
+      yield* projectDeferredCommittedEvents(committedCommand.committedEvents);
+      yield* publishCommittedEventsAtMostOnce(committedCommand.committedEvents);
       yield* Deferred.succeed(envelope.result, { sequence: committedCommand.lastSequence });
     }).pipe(
       Effect.timeoutOption(remainingBudgetMs),
@@ -609,6 +724,48 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       ),
       Effect.catch((error: OrchestrationDispatchError) =>
         Effect.gen(function* () {
+          const timedOut = Schema.is(OrchestrationCommandTimeoutError)(error);
+          const cancelled = Schema.is(OrchestrationCommandCancelledError)(error);
+          if (timedOut || cancelled) {
+            const resolvedAmbiguousOutcome = yield* resolveStoredCommandOutcome(
+              envelope.command,
+            ).pipe(
+              Effect.match({
+                onFailure: (resolvedError) => ({ _tag: "Left" as const, left: resolvedError }),
+                onSuccess: (value) => ({ _tag: "Right" as const, right: value }),
+              }),
+            );
+            if (resolvedAmbiguousOutcome._tag === "Right") {
+              if (envelope.protectedCommitResult !== null) {
+                yield* Deferred.succeed(
+                  envelope.protectedCommitResult,
+                  resolvedAmbiguousOutcome.right,
+                );
+              }
+              yield* recoverCommittedState(resolvedAmbiguousOutcome.right.sequence);
+              yield* Deferred.succeed(envelope.result, resolvedAmbiguousOutcome.right);
+              return;
+            }
+            // A timeout remains an ambiguous completion even when no receipt
+            // exists, so preserve the resolver's established timeout/rejection
+            // result. Revocation is different: without an accepted durable
+            // receipt, the exact-session cancellation remains authoritative.
+            if (
+              timedOut ||
+              !Schema.is(OrchestrationCommandTimeoutError)(resolvedAmbiguousOutcome.left)
+            ) {
+              error = resolvedAmbiguousOutcome.left;
+            }
+            if (Schema.is(OrchestrationCommandOutcomeUncertainError)(error)) {
+              if (envelope.protectedCommitResult !== null) {
+                yield* Deferred.fail(envelope.protectedCommitResult, error);
+              }
+              yield* recoverCommittedState(dispatchStartSequence);
+              yield* Deferred.fail(envelope.result, error);
+              return;
+            }
+          }
+
           yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
             Effect.catch(() =>
               Effect.logWarning(
@@ -621,22 +778,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             ),
           );
-
-          if (Schema.is(OrchestrationCommandTimeoutError)(error)) {
-            const resolvedTimeoutOutcome = yield* resolveStoredCommandOutcome(
-              envelope.command,
-            ).pipe(
-              Effect.match({
-                onFailure: (resolvedError) => ({ _tag: "Left" as const, left: resolvedError }),
-                onSuccess: (value) => ({ _tag: "Right" as const, right: value }),
-              }),
-            );
-            if (resolvedTimeoutOutcome._tag === "Right") {
-              yield* Deferred.succeed(envelope.result, resolvedTimeoutOutcome.right);
-              return;
-            }
-            error = resolvedTimeoutOutcome.left;
-          }
 
           if (Schema.is(OrchestrationCommandInvariantError)(error)) {
             const aggregateRef = commandToAggregateRef(envelope.command);
@@ -652,6 +793,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               })
               .pipe(Effect.catch(() => Effect.void));
           }
+          if (envelope.protectedCommitResult !== null) {
+            yield* Deferred.fail(envelope.protectedCommitResult, error);
+          }
           yield* Deferred.fail(envelope.result, error);
         }),
       ),
@@ -660,19 +804,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           return Effect.interrupt;
         }
         return Effect.gen(function* () {
-          yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
-            Effect.catch(() =>
-              Effect.logWarning(
-                "failed to reconcile orchestration read model after unexpected worker failure",
-              ).pipe(
-                Effect.annotateLogs({
-                  commandId: envelope.command.commandId,
-                  snapshotSequence: commandReadModel.snapshotSequence,
-                }),
-              ),
-            ),
-          );
-
           yield* Effect.logError("orchestration worker crashed while processing command").pipe(
             Effect.annotateLogs({
               commandId: envelope.command.commandId,
@@ -689,17 +820,38 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
           if (resolvedCrashOutcome._tag === "Right") {
+            if (envelope.protectedCommitResult !== null) {
+              yield* Deferred.succeed(envelope.protectedCommitResult, resolvedCrashOutcome.right);
+            }
+            yield* recoverCommittedState(resolvedCrashOutcome.right.sequence);
             yield* Deferred.succeed(envelope.result, resolvedCrashOutcome.right);
             return;
           }
 
           const resolvedError = resolvedCrashOutcome.left;
-          yield* Deferred.fail(
-            envelope.result,
-            Schema.is(OrchestrationCommandTimeoutError)(resolvedError)
-              ? makeCommandInternalError(envelope.command)
-              : resolvedError,
-          );
+          const reportedError = Schema.is(OrchestrationCommandTimeoutError)(resolvedError)
+            ? makeCommandInternalError(envelope.command)
+            : resolvedError;
+          if (envelope.protectedCommitResult !== null) {
+            yield* Deferred.fail(envelope.protectedCommitResult, reportedError);
+          }
+          if (Schema.is(OrchestrationCommandOutcomeUncertainError)(reportedError)) {
+            yield* recoverCommittedState(dispatchStartSequence);
+          } else {
+            yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
+              Effect.catch(() =>
+                Effect.logWarning(
+                  "failed to reconcile orchestration read model after unexpected worker failure",
+                ).pipe(
+                  Effect.annotateLogs({
+                    commandId: envelope.command.commandId,
+                    snapshotSequence: commandReadModel.snapshotSequence,
+                  }),
+                ),
+              ),
+            );
+          }
+          yield* Deferred.fail(envelope.result, reportedError);
         });
       }),
     );
@@ -710,6 +862,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* projectionPipeline.bootstrap;
 
   commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
+  lastPublishedEventSequence = commandReadModel.snapshotSequence;
 
   const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
   yield* Effect.forkScoped(worker);
@@ -727,17 +880,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const refreshCommandReadModel: OrchestrationEngineShape["refreshCommandReadModel"] = () =>
     maintenanceLock.withPermits(1)(refreshCommandReadModelFromProjectionState);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const enqueueDispatch = (
+    command: OrchestrationCommand,
+    revocation: Effect.Effect<unknown, unknown, never> | null,
+  ) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
+      const protectedCommitResult =
+        revocation === null
+          ? null
+          : yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       const executionState = yield* Ref.make<CommandExecutionState>("queued");
       yield* Queue.offer(commandQueue, {
         command,
         result,
+        protectedCommitResult,
+        revocation,
         executionState,
         deadlineAtMs: Date.now() + ORCHESTRATION_DISPATCH_TIMEOUT_MS,
       });
-      return yield* Deferred.await(result).pipe(
+      const awaitedResult = protectedCommitResult ?? result;
+      return yield* Deferred.await(awaitedResult).pipe(
         Effect.timeoutOption(`${ORCHESTRATION_DISPATCH_TIMEOUT_MS} millis`),
         Effect.flatMap((outcome) =>
           Option.match(outcome, {
@@ -759,7 +922,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                           commandType: command.type,
                           timeoutMs: ORCHESTRATION_DISPATCH_TIMEOUT_MS,
                         }),
-                        Effect.flatMap(() => Deferred.await(result)),
+                        Effect.flatMap(() => Deferred.await(awaitedResult)),
                       )
                     : Effect.logWarning(
                         "orchestration dispatch timed out before command started",
@@ -778,6 +941,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         ),
       );
     });
+
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+    enqueueDispatch(command, null);
+
+  const dispatchProtected: OrchestrationEngineShape["dispatchProtected"] = (command, revocation) =>
+    enqueueDispatch(command, revocation);
 
   // Used by the settings screen to rebuild local indexes without deleting chats.
   const repairState: OrchestrationEngineShape["repairState"] = () =>
@@ -874,6 +1043,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     refreshCommandReadModel,
     readEvents,
     dispatch,
+    dispatchProtected,
     repairState,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (Effect RPC, ProviderRuntimeIngestion, CheckpointReactor, etc.)

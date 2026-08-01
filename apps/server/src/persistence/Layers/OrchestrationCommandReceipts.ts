@@ -2,7 +2,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer } from "effect";
 
-import { toPersistenceSqlError } from "../Errors.ts";
+import { PersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 
 import {
   GetByCommandIdInput,
@@ -13,39 +13,6 @@ import {
 
 const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-
-  const upsertReceiptRow = SqlSchema.void({
-    Request: OrchestrationCommandReceipt,
-    execute: (receipt) =>
-      sql`
-        INSERT INTO orchestration_command_receipts (
-          command_id,
-          aggregate_kind,
-          aggregate_id,
-          accepted_at,
-          result_sequence,
-          status,
-          error
-        )
-        VALUES (
-          ${receipt.commandId},
-          ${receipt.aggregateKind},
-          ${receipt.aggregateId},
-          ${receipt.acceptedAt},
-          ${receipt.resultSequence},
-          ${receipt.status},
-          ${receipt.error}
-        )
-        ON CONFLICT (command_id)
-        DO UPDATE SET
-          aggregate_kind = excluded.aggregate_kind,
-          aggregate_id = excluded.aggregate_id,
-          accepted_at = excluded.accepted_at,
-          result_sequence = excluded.result_sequence,
-          status = excluded.status,
-          error = excluded.error
-      `,
-  });
 
   const findReceiptByCommandId = SqlSchema.findOneOption({
     Request: GetByCommandIdInput,
@@ -66,8 +33,39 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   });
 
   const upsert: OrchestrationCommandReceiptRepositoryShape["upsert"] = (receipt) =>
-    upsertReceiptRow(receipt).pipe(
-      Effect.mapError(toPersistenceSqlError("OrchestrationCommandReceiptRepository.upsert:query")),
+    sql<{ readonly commandId: string }>`
+      INSERT INTO orchestration_command_receipts (
+        command_id, aggregate_kind, aggregate_id, accepted_at,
+        result_sequence, status, error
+      ) VALUES (
+        ${receipt.commandId}, ${receipt.aggregateKind}, ${receipt.aggregateId},
+        ${receipt.acceptedAt}, ${receipt.resultSequence}, ${receipt.status}, ${receipt.error}
+      )
+      ON CONFLICT (command_id) DO UPDATE SET command_id = excluded.command_id
+      WHERE orchestration_command_receipts.aggregate_kind = excluded.aggregate_kind
+        AND orchestration_command_receipts.aggregate_id = excluded.aggregate_id
+        AND orchestration_command_receipts.accepted_at = excluded.accepted_at
+        AND orchestration_command_receipts.result_sequence = excluded.result_sequence
+        AND orchestration_command_receipts.status = excluded.status
+        AND orchestration_command_receipts.error IS excluded.error
+      RETURNING command_id AS "commandId"
+    `.pipe(
+      Effect.flatMap((rows) =>
+        rows.length === 1
+          ? Effect.void
+          : Effect.fail(
+              new PersistenceDecodeError({
+                operation: "OrchestrationCommandReceiptRepository.upsert",
+                issue:
+                  "A command receipt is immutable; the existing command id has a conflicting result.",
+              }),
+            ),
+      ),
+      Effect.mapError((error) =>
+        error instanceof PersistenceDecodeError
+          ? error
+          : toPersistenceSqlError("OrchestrationCommandReceiptRepository.upsert:query")(error),
+      ),
     );
 
   const getByCommandId: OrchestrationCommandReceiptRepositoryShape["getByCommandId"] = (input) =>

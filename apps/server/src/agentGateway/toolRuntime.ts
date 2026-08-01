@@ -7,10 +7,20 @@
  *
  * @module agentGateway/toolRuntime
  */
-import type { ProviderKind } from "@synara/contracts";
+import type { OrchestrationThreadShell, ProviderKind } from "@synara/contracts";
 import type { Effect } from "effect";
 
 import { createLogger } from "../logger.ts";
+import type {
+  ScientOperationAuthority,
+  ScientOperationEffectIdentity,
+  ScientOperationId,
+  ScientOperationRequestEnvelope,
+} from "../scientOperations/authority.ts";
+import type {
+  ScientOperationDurableIntent,
+  ScientOperationSafeReplay,
+} from "../persistence/Services/ScientOperationReceipts.ts";
 import {
   mcpToolResultError,
   mcpToolResultJson,
@@ -47,9 +57,21 @@ export interface ToolContext {
   readonly callerProjectId: string;
   readonly callerSessionKey: string;
   readonly callerProvider: ProviderKind;
-  readonly callerCapabilities: ReadonlySet<"thread:read" | "thread:write" | "automation:write">;
+  readonly operationAuthority: ScientOperationAuthority;
+  readonly operationEnvelope: ScientOperationRequestEnvelope;
+  readonly admittedCaller: OrchestrationThreadShell;
   readonly callerTurnId: string | null;
-  readonly assertCallerTurnActive: () => Effect.Effect<void, GatewayToolError>;
+  readonly requireCurrentOperationCaller: () => Effect.Effect<
+    OrchestrationThreadShell,
+    GatewayToolError
+  >;
+  readonly requireCurrentCallerTurn: () => Effect.Effect<
+    OrchestrationThreadShell,
+    GatewayToolError
+  >;
+  /** Exact-session revocation fence for a protected transactional commit. */
+  readonly operationRevocationFence: Effect.Effect<never, GatewayToolError>;
+  readonly recordOperationEffect: (effect: ScientOperationEffectIdentity) => void;
   readonly jsonRpcRequestId: JsonRpcId;
 }
 
@@ -60,8 +82,24 @@ export type ToolHandler = (
 
 export interface ToolEntry {
   readonly definition: McpToolDefinition;
+  readonly operation: ScientOperationId;
+  /** Decode this wire shape; the Scient operation registry performs domain canonicalization. */
+  readonly decodeInput: (args: Record<string, unknown>) => Record<string, unknown>;
+  readonly durableReplay?: {
+    readonly encode: (
+      result: McpToolCallResult,
+      canonicalInput: Readonly<Record<string, unknown>>,
+    ) => ScientOperationSafeReplay;
+    readonly decode: (
+      replay: ScientOperationSafeReplay,
+      canonicalInput: Readonly<Record<string, unknown>>,
+    ) => McpToolCallResult;
+  };
+  readonly prepareDurableIntent?: (
+    canonicalInput: Readonly<Record<string, unknown>>,
+    envelope: ScientOperationRequestEnvelope,
+  ) => ScientOperationDurableIntent;
   readonly handler: ToolHandler;
-  readonly requiresActiveTurn?: boolean;
 }
 
 export class GatewayToolError extends Error {

@@ -35,15 +35,23 @@ describe("makeAgentGatewaySessionRegistry", () => {
       expect(first.sessionKey).not.toBe(second.sessionKey);
     });
 
-    it("issues exactly the read + drive capabilities and never automation:write", () => {
+    it("issues exactly the wired operation capabilities and no automation power", () => {
       const registry = makeRegistry();
       const issued = registry.issue(THREAD, "claudeAgent");
 
-      expect(Array.from(issued.capabilities)).toEqual(["thread:read", "thread:write"]);
-      expect(issued.capabilities.has("thread:read")).toBe(true);
-      expect(issued.capabilities.has("thread:write")).toBe(true);
-      // No automation tool is wired, so automation:write is never minted.
-      expect(issued.capabilities.has("automation:write")).toBe(false);
+      expect(Array.from(issued.capabilities)).toEqual([
+        "project:context:read",
+        "thread:list",
+        "thread:read",
+        "thread:drive",
+      ]);
+      expect(issued.capabilities.includes("project:context:read")).toBe(true);
+      expect(issued.capabilities.includes("thread:list")).toBe(true);
+      expect(issued.capabilities.includes("thread:read")).toBe(true);
+      expect(issued.capabilities.includes("thread:drive")).toBe(true);
+      // No automation tool is wired, so automation:run is never minted.
+      expect(issued.capabilities.includes("automation:run")).toBe(false);
+      expect(Object.isFrozen(issued.capabilities)).toBe(true);
     });
   });
 
@@ -103,6 +111,36 @@ describe("makeAgentGatewaySessionRegistry", () => {
       registry.revoke(issued.token);
 
       expect(registry.verifyWriteAuthority(authority!)).toBe(false);
+    });
+  });
+
+  describe("acquireWriteLease", () => {
+    it("orders acquisition before revocation and makes release idempotent", () => {
+      const registry = makeRegistry();
+      const issued = registry.issue(THREAD, "claudeAgent");
+      const authority = registry.bindWriteAuthority(issued.token, "turn-1");
+      expect(authority).not.toBeNull();
+
+      const lease = registry.acquireWriteLease(authority!);
+      expect(lease?.sessionKey).toBe(issued.sessionKey);
+      registry.revoke(issued.token);
+
+      expect(registry.acquireWriteLease(authority!)).toBeNull();
+      expect(() => {
+        lease?.release();
+        lease?.release();
+      }).not.toThrow();
+    });
+
+    it("denies acquisition when revocation wins the ordering", () => {
+      const registry = makeRegistry();
+      const issued = registry.issue(THREAD, "claudeAgent");
+      const authority = registry.bindWriteAuthority(issued.token, "turn-1");
+      expect(authority).not.toBeNull();
+
+      registry.revoke(issued.token);
+
+      expect(registry.acquireWriteLease(authority!)).toBeNull();
     });
   });
 
