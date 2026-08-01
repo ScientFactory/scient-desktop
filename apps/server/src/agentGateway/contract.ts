@@ -37,6 +37,7 @@ export const SynaraGatewayErrorCode = Schema.Literals([
   "wait_timed_out",
   "idempotency_conflict",
   "gateway_busy",
+  "operation_outcome_uncertain",
   "operation_failed",
 ]);
 export type SynaraGatewayErrorCode = typeof SynaraGatewayErrorCode.Type;

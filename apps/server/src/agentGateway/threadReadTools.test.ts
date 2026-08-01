@@ -15,6 +15,12 @@ import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  beginScientOperation,
+  SCIENT_OPERATION_DEFINITIONS,
+  type ScientOperationAuthority,
+  type ScientOperationCapability,
+} from "../scientOperations/authority.ts";
 import { makeThreadReadTools } from "./threadReadTools.ts";
 import type { McpToolCallResult } from "./protocol.ts";
 import { gatewayToolFailureResult, type ToolContext } from "./toolRuntime.ts";
@@ -23,8 +29,7 @@ const CALLER_THREAD = "thread-caller";
 const CALLER_PROJECT = "project-1";
 const OTHER_PROJECT = "project-2";
 const ISO = "2026-01-01T00:00:00.000Z";
-
-type Capability = "thread:read" | "thread:write" | "automation:write";
+const TEST_READ_OPERATION = SCIENT_OPERATION_DEFINITIONS["thread.read"];
 
 interface Fakes {
   readonly projects?: ReadonlyArray<Record<string, unknown>>;
@@ -110,14 +115,49 @@ function makeSnapshotQuery(fakes: Fakes): ProjectionSnapshotQueryShape {
 }
 
 function makeContext(overrides?: Partial<ToolContext>): ToolContext {
+  const operationAuthority: ScientOperationAuthority = overrides?.operationAuthority ?? {
+    authorityId: "gateway-session:test",
+    generation: "gateway-session:test",
+    actor: {
+      kind: "provider-thread",
+      threadId: CALLER_THREAD,
+      provider: "claudeAgent",
+      sessionKey: "gateway-session:test",
+    },
+    projectIds: [CALLER_PROJECT],
+    capabilities: [
+      "project:context:read",
+      "thread:list",
+      "thread:read",
+    ] satisfies ReadonlyArray<ScientOperationCapability>,
+    issuedAt: 0,
+    expiresAt: null,
+    revokedAt: null,
+  };
+  const started = beginScientOperation({
+    authority: operationAuthority,
+    definition: TEST_READ_OPERATION,
+    operationId: "operation-test",
+    projectId: CALLER_PROJECT,
+    ingress: "provider-gateway",
+    semanticIdempotencyIdentity: "test",
+    payloadFingerprint: "test-payload",
+    receivedAt: 1,
+  });
+  if (!started.allow) throw new Error("Expected test operation authority to be allowed.");
   return {
     callerThreadId: CALLER_THREAD,
     callerProjectId: CALLER_PROJECT,
     callerSessionKey: "gateway-session:test",
     callerProvider: "claudeAgent",
-    callerCapabilities: new Set<Capability>(["thread:read"]),
+    operationAuthority,
+    operationEnvelope: started.envelope,
+    admittedCaller: shell(CALLER_THREAD),
     callerTurnId: null,
-    assertCallerTurnActive: () => Effect.void,
+    requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
+    requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),
+    operationRevocationFence: Effect.never,
+    recordOperationEffect: () => undefined,
     jsonRpcRequestId: 1,
     ...overrides,
   };
@@ -190,7 +230,10 @@ describe("scient_context", () => {
       },
     };
     const context = makeContext({
-      callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
+      operationAuthority: {
+        ...makeContext().operationAuthority,
+        capabilities: ["thread:read", "thread:drive"],
+      },
     });
     const body = jsonBody(await callTool(fakes, "scient_context", {}, context)) as {
       capabilities: Record<string, boolean>;
@@ -204,7 +247,10 @@ describe("scient_context", () => {
       threadShells: { [CALLER_THREAD]: shell(CALLER_THREAD, { latestTurn: null }) },
     };
     const context = makeContext({
-      callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
+      operationAuthority: {
+        ...makeContext().operationAuthority,
+        capabilities: ["thread:read", "thread:drive"],
+      },
     });
     const body = jsonBody(await callTool(fakes, "scient_context", {}, context)) as {
       capabilities: Record<string, boolean>;

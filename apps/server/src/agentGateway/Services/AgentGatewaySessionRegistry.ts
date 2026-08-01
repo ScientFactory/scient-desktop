@@ -12,12 +12,14 @@
 import type { ProviderKind, ThreadId } from "@synara/contracts";
 import { ServiceMap } from "effect";
 
+import type { ScientOperationCapability } from "../../scientOperations/authority.ts";
+
 export interface AgentGatewaySessionIdentity {
   readonly sessionKey: string;
   readonly threadId: ThreadId;
   readonly provider: ProviderKind;
   readonly issuedAt: number;
-  readonly capabilities: ReadonlySet<"thread:read" | "thread:write" | "automation:write">;
+  readonly capabilities: ReadonlyArray<ScientOperationCapability>;
 }
 
 export interface AgentGatewayIssuedSession extends AgentGatewaySessionIdentity {
@@ -39,11 +41,26 @@ export interface AgentGatewayWriteAuthority {
   readonly turnId: string;
 }
 
+export interface AgentGatewayWriteLease {
+  readonly sessionKey: string;
+  readonly release: () => void;
+}
+
 export interface AgentGatewaySessionRegistryShape {
   readonly issue: (threadId: ThreadId, provider: ProviderKind) => AgentGatewayIssuedSession;
   readonly verify: (token: string) => AgentGatewaySessionIdentity | null;
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
+  /**
+   * Performs ingress admission and lifetime bookkeeping for one write. It
+   * prevents new work after revocation and shields lease cleanup from caller
+   * interruption, but it does not authorize an effect to finish after
+   * revocation. Transactional tools must also carry the exact-session
+   * revocation fence into their commit boundary.
+   */
+  readonly acquireWriteLease: (
+    authority: AgentGatewayWriteAuthority,
+  ) => AgentGatewayWriteLease | null;
   readonly subscribeRevocations: (
     listener: (identity: AgentGatewaySessionIdentity) => void,
   ) => () => void;

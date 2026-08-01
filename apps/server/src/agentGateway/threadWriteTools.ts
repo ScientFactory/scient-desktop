@@ -5,8 +5,8 @@
  * in its own project: `scient_send_message` (queue or steer a turn) and
  * `scient_interrupt_thread` (stop the running turn). Both funnel through the
  * central {@link authorizeThreadDrive} policy (project scope + privilege and
- * worktree caps) and both are flagged `requiresActiveTurn`, so the transport
- * only admits them while the caller's own turn is live (see
+ * worktree caps). Their canonical Scient operation definitions require an
+ * active turn, so the transport only admits them while the caller's own turn is live (see
  * {@link makeAgentGatewayMcpTransport}). Cross-project and higher-privilege
  * drives are denied.
  *
@@ -31,6 +31,10 @@ import {
 import { Cause, Effect, Option } from "effect";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
+import {
+  OrchestrationCommandCancelledError,
+  OrchestrationCommandOutcomeUncertainError,
+} from "../orchestration/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
 import { mcpToolResultJson, type McpToolCallResult } from "./protocol.ts";
@@ -93,9 +97,6 @@ function idempotencyIdentity(sessionKey: string, requestId: string): string {
 export interface ThreadWriteToolsInput {
   readonly snapshotQuery: ProjectionSnapshotQueryShape;
   readonly orchestrationEngine: OrchestrationEngineShape;
-  readonly requireThreadShell: (
-    threadId: string,
-  ) => Effect.Effect<OrchestrationThreadShell, unknown, never>;
   /** Injectable clock (ISO-8601). Defaults to the wall clock. */
   readonly now?: () => string;
   /** Injectable id source for non-idempotent commands. Defaults to a UUID. */
@@ -105,8 +106,45 @@ export interface ThreadWriteToolsInput {
   ) => () => void;
 }
 
+function protectedThreadOperationState(thread: OrchestrationThreadShell) {
+  return {
+    projectId: thread.projectId,
+    runtimeMode: thread.runtimeMode,
+    envMode: thread.envMode ?? "local",
+    interactionMode: thread.interactionMode,
+    provider: thread.session?.providerName ?? thread.modelSelection.provider,
+    sessionStatus: thread.session?.status ?? null,
+    activeTurnId: thread.session?.activeTurnId ?? null,
+    latestTurnId: thread.latestTurn?.turnId ?? null,
+    latestTurnState: thread.latestTurn?.state ?? null,
+  };
+}
+
+function mapProtectedDispatchError(
+  error: unknown,
+  operation: string,
+  stableRequestIdSupplied = false,
+): GatewayToolError {
+  if (error instanceof OrchestrationCommandCancelledError) {
+    return new GatewayToolError(
+      "caller_session_inactive",
+      "This Scient write was revoked before its protected effect committed.",
+    );
+  }
+  if (error instanceof OrchestrationCommandOutcomeUncertainError) {
+    const message =
+      operation === "send_message_dispatch"
+        ? stableRequestIdSupplied
+          ? "Scient could not confirm whether this message committed. Reconcile the target thread before retrying; if a retry is necessary, reuse the exact original requestId."
+          : "Scient could not confirm whether this message committed. No requestId was supplied. Do not retry automatically; first reconcile the target thread and confirm the message is absent before deliberately creating a new send."
+        : "Scient could not confirm whether this interrupt committed. Reread the target thread and reconcile its active turn before deciding what to do next; do not retry this interrupt blindly.";
+    return new GatewayToolError("operation_outcome_uncertain", message);
+  }
+  return unexpectedGatewayToolError(error, { operation });
+}
+
 export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArray<ToolEntry> {
-  const { snapshotQuery, orchestrationEngine, requireThreadShell } = input;
+  const { snapshotQuery, orchestrationEngine } = input;
   const now = input.now ?? (() => new Date().toISOString());
   const randomId = input.randomId ?? randomUUID;
 
@@ -181,8 +219,37 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
       targetEnvMode: target.envMode ?? "local",
     });
 
+  const operationPrecondition = (
+    actor: OrchestrationThreadShell,
+    target: OrchestrationThreadShell,
+  ) => ({
+    actorThreadId: actor.id,
+    actor: protectedThreadOperationState(actor),
+    target: protectedThreadOperationState(target),
+  });
+
   const sendMessage: ToolEntry = {
-    requiresActiveTurn: true,
+    operation: "thread.message.send",
+    decodeInput: (args) => {
+      const threadId = readStringArg(args, "threadId", { required: true })!;
+      const message = readStringArg(args, "message", {
+        required: true,
+        maxUtf8Bytes: SEND_MESSAGE_MAX_UTF8_BYTES,
+      })!;
+      const mode = readStringArg(args, "mode") ?? "queue";
+      if (mode !== "queue" && mode !== "steer") {
+        throw new ToolInputError('Argument "mode" must be "queue" or "steer".');
+      }
+      const requestId = readStringArg(args, "requestId", {
+        maxUtf8Bytes: SEND_REQUEST_ID_MAX_UTF8_BYTES,
+      });
+      return {
+        threadId,
+        message,
+        mode,
+        ...(requestId === undefined ? {} : { requestId }),
+      };
+    },
     definition: {
       name: "scient_send_message",
       description:
@@ -285,7 +352,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
           }
 
           const attempt = yield* Effect.gen(function* () {
-            const caller = yield* requireThreadShell(context.callerThreadId);
+            const caller = context.admittedCaller;
             const target = yield* resolveTarget(threadId);
             const decision = authorizeDrive(context, caller, target, threadId);
             if (!decision.allow) {
@@ -300,28 +367,47 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
               requestId === undefined
                 ? randomId()
                 : idempotencyIdentity(context.callerSessionKey, requestId);
+            const commandId = CommandId.makeUnsafe(`agent:${commandSuffix}:send`);
             yield* orchestrationEngine
-              .dispatch({
-                type: "thread.turn.start",
-                commandId: CommandId.makeUnsafe(`agent:${commandSuffix}:send`),
-                threadId: target.id,
-                message: {
-                  messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
-                  role: "user",
-                  text: message,
-                  attachments: [],
+              .dispatchProtected(
+                {
+                  type: "thread.turn.start",
+                  commandId,
+                  threadId: target.id,
+                  message: {
+                    messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
+                    role: "user",
+                    text: message,
+                    attachments: [],
+                  },
+                  dispatchMode,
+                  dispatchSource: "agent",
+                  runtimeMode: target.runtimeMode,
+                  interactionMode: target.interactionMode,
+                  operationPrecondition: operationPrecondition(caller, target),
+                  createdAt: now(),
                 },
-                dispatchMode,
-                dispatchSource: "agent",
-                runtimeMode: target.runtimeMode,
-                interactionMode: target.interactionMode,
-                createdAt: now(),
-              })
+                context.operationRevocationFence,
+              )
               .pipe(
-                Effect.mapError((error) =>
-                  unexpectedGatewayToolError(error, { operation: "send_message_dispatch" }),
-                ),
+                Effect.mapError((error) => {
+                  if (error instanceof OrchestrationCommandOutcomeUncertainError) {
+                    context.recordOperationEffect({
+                      kind: "orchestration-command",
+                      identity: commandId,
+                    });
+                  }
+                  return mapProtectedDispatchError(
+                    error,
+                    "send_message_dispatch",
+                    requestId !== undefined,
+                  );
+                }),
               );
+            context.recordOperationEffect({
+              kind: "orchestration-command",
+              identity: commandId,
+            });
 
             return {
               payload: {
@@ -370,7 +456,10 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   };
 
   const interruptThread: ToolEntry = {
-    requiresActiveTurn: true,
+    operation: "thread.interrupt",
+    decodeInput: (args) => ({
+      threadId: readStringArg(args, "threadId", { required: true })!,
+    }),
     definition: {
       name: "scient_interrupt_thread",
       description:
@@ -388,7 +477,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
     handler: (args, context) =>
       Effect.gen(function* () {
         const threadId = readStringArg(args, "threadId", { required: true })!;
-        const caller = yield* requireThreadShell(context.callerThreadId);
+        const caller = context.admittedCaller;
         const target = yield* resolveTarget(threadId);
         const decision = authorizeDrive(context, caller, target, threadId);
         if (!decision.allow) {
@@ -406,22 +495,34 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             reason: "no_active_turn",
           });
         }
+        const commandId = CommandId.makeUnsafe(`agent:${target.id}:${runningTurnId}:interrupt`);
         yield* orchestrationEngine
-          .dispatch({
-            type: "thread.turn.interrupt",
-            // Pin to the observed turn so a retry (or a turn that ends first) can
-            // never interrupt a different, later turn; the id is deterministic so
-            // the receipt layer collapses duplicate interrupts of the same turn.
-            commandId: CommandId.makeUnsafe(`agent:${target.id}:${runningTurnId}:interrupt`),
-            threadId: target.id,
-            turnId: runningTurnId,
-            createdAt: now(),
-          })
+          .dispatchProtected(
+            {
+              type: "thread.turn.interrupt",
+              // Pin to the observed turn so a retry (or a turn that ends first) can
+              // never interrupt a different, later turn; the id is deterministic so
+              // the receipt layer collapses duplicate interrupts of the same turn.
+              commandId,
+              threadId: target.id,
+              turnId: runningTurnId,
+              operationPrecondition: operationPrecondition(caller, target),
+              createdAt: now(),
+            },
+            context.operationRevocationFence,
+          )
           .pipe(
-            Effect.mapError((error) =>
-              unexpectedGatewayToolError(error, { operation: "interrupt_thread_dispatch" }),
-            ),
+            Effect.mapError((error) => {
+              if (error instanceof OrchestrationCommandOutcomeUncertainError) {
+                context.recordOperationEffect({
+                  kind: "orchestration-command",
+                  identity: commandId,
+                });
+              }
+              return mapProtectedDispatchError(error, "interrupt_thread_dispatch");
+            }),
           );
+        context.recordOperationEffect({ kind: "orchestration-command", identity: commandId });
         return mcpToolResultJson({
           threadId: target.id,
           interrupted: true,

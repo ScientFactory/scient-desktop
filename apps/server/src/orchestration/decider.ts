@@ -89,6 +89,61 @@ export function reconcileGeneratedImageWarningText(
   return paragraphs.filter((paragraph) => paragraph.length > 0).join("\n\n");
 }
 
+function protectedThreadOperationState(thread: OrchestrationReadModel["threads"][number]) {
+  return {
+    projectId: thread.projectId,
+    runtimeMode: thread.runtimeMode,
+    envMode: thread.envMode ?? "local",
+    interactionMode: thread.interactionMode,
+    provider: thread.session?.providerName ?? thread.modelSelection.provider,
+    sessionStatus: thread.session?.status ?? null,
+    activeTurnId: thread.session?.activeTurnId ?? null,
+    latestTurnId: thread.latestTurn?.turnId ?? null,
+    latestTurnState: thread.latestTurn?.state ?? null,
+  };
+}
+
+function validateTrustedOperationPrecondition(input: {
+  readonly command: Extract<
+    OrchestrationCommand,
+    { type: "thread.turn.start" | "thread.turn.interrupt" }
+  >;
+  readonly readModel: OrchestrationReadModel;
+  readonly targetThread: OrchestrationReadModel["threads"][number];
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const expected = input.command.operationPrecondition;
+  if (expected === undefined) return Effect.void;
+  const actorThread = input.readModel.threads.find(
+    (thread) => thread.id === expected.actorThreadId,
+  );
+  if (actorThread === undefined) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Trusted operation actor '${expected.actorThreadId}' no longer exists.`,
+      }),
+    );
+  }
+  for (const [lane, expectedState, thread] of [
+    ["actor", expected.actor, actorThread],
+    ["target", expected.target, input.targetThread],
+  ] as const) {
+    const actual = protectedThreadOperationState(thread);
+    const mismatch = (Object.keys(expectedState) as Array<keyof typeof expectedState>).find(
+      (key) => expectedState[key] !== actual[key],
+    );
+    if (mismatch === undefined) continue;
+
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Trusted operation ${lane} precondition failed for '${thread.id}' at '${mismatch}'.`,
+      }),
+    );
+  }
+  return Effect.void;
+}
+
 function collectExistingMessageIds(readModel: OrchestrationReadModel) {
   return new Set(
     readModel.threads.flatMap((thread) => thread.messages.map((message) => message.id)),
@@ -1330,6 +1385,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* validateTrustedOperationPrecondition({ command, readModel, targetThread });
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1478,11 +1534,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      yield* validateTrustedOperationPrecondition({ command, readModel, targetThread });
       return {
         ...withEventBase({
           aggregateKind: "thread",

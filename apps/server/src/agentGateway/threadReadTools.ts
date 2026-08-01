@@ -49,7 +49,6 @@ import {
 
 const LIST_THREADS_DEFAULT_LIMIT = 50;
 const LIST_THREADS_MAX_LIMIT = 200;
-
 type WaitThreadState = "idle" | "pending" | "running" | "completed" | "error" | "interrupted";
 
 export interface ThreadReadToolsInput {
@@ -63,6 +62,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   const { snapshotQuery, requireThreadShell } = input;
 
   const contextTool: ToolEntry = {
+    operation: "project.context.read",
+    decodeInput: () => ({}),
     definition: {
       name: "scient_context",
       description:
@@ -89,19 +90,23 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
             projectId: caller.projectId,
           },
           capabilities: {
-            threadRead: context.callerCapabilities.has("thread:read"),
+            threadRead: context.operationAuthority.capabilities.includes("thread:read"),
             // Drive (scient_send_message / scient_interrupt_thread) needs the
             // write capability and is only usable while the caller's own turn is
             // active, so it is reported false without a live turn.
-            threadDrive: turnId !== null && context.callerCapabilities.has("thread:write"),
-            threadWait: context.callerCapabilities.has("thread:read"),
-            automations: turnId !== null && context.callerCapabilities.has("automation:write"),
+            threadDrive:
+              turnId !== null && context.operationAuthority.capabilities.includes("thread:drive"),
+            threadWait: context.operationAuthority.capabilities.includes("thread:read"),
+            automations:
+              turnId !== null && context.operationAuthority.capabilities.includes("automation:run"),
           },
         });
       }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   const listProjects: ToolEntry = {
+    operation: "project.list",
+    decodeInput: () => ({}),
     definition: {
       name: "scient_list_projects",
       description:
@@ -128,6 +133,20 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const listThreads: ToolEntry = {
+    operation: "thread.list",
+    decodeInput: (args) => ({
+      ...(readStringArg(args, "parentThreadId") === undefined
+        ? {}
+        : { parentThreadId: readStringArg(args, "parentThreadId") }),
+      includeArchived: readBooleanArg(args, "includeArchived") ?? false,
+      limit: Math.max(
+        1,
+        Math.min(
+          readNumberArg(args, "limit") ?? LIST_THREADS_DEFAULT_LIMIT,
+          LIST_THREADS_MAX_LIMIT,
+        ),
+      ),
+    }),
     definition: {
       name: "scient_list_threads",
       description:
@@ -179,6 +198,19 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const readThread: ToolEntry = {
+    operation: "thread.read",
+    decodeInput: (args) => ({
+      threadId: readStringArg(args, "threadId", { required: true })!,
+      ...(readStringArg(args, "cursor") === undefined
+        ? {}
+        : { cursor: readStringArg(args, "cursor") }),
+      ...(readNumberArg(args, "messageLimit") === undefined
+        ? {}
+        : { messageLimit: readNumberArg(args, "messageLimit") }),
+      ...(readNumberArg(args, "maxMessageChars") === undefined
+        ? {}
+        : { maxMessageChars: readNumberArg(args, "maxMessageChars") }),
+    }),
     definition: {
       name: "scient_read_thread",
       description:
@@ -245,6 +277,18 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const waitForThreads: ToolEntry = {
+    operation: "thread.wait",
+    decodeInput: (args) => {
+      const waitInput = decodeWaitForThreadsInput(args);
+      if (waitInput.runIds && waitInput.runIds.length !== waitInput.threadIds.length) {
+        throw new ToolInputError('Argument "runIds" must have the same length as "threadIds".');
+      }
+      return {
+        threadIds: [...waitInput.threadIds],
+        ...(waitInput.runIds === undefined ? {} : { runIds: [...waitInput.runIds] }),
+        timeoutMs: waitInput.timeoutMs ?? 30_000,
+      };
+    },
     definition: {
       name: "scient_wait_for_threads",
       description: `Wait for the pinned turns of 1–20 Scient threads in your project and return every outcome in input order. Assistant summaries are capped at ${WAIT_THREAD_SUMMARY_MAX_CHARS} characters; use each result's readThread call to page the full transcript. Timeouts only report progress; they never retry, replace, cancel, or create work. Only threads in your own project can be waited on.`,
@@ -321,7 +365,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
         // One shell-snapshot read per poll; index the pinned threads out of it.
         const readPinnedStates = () =>
-          snapshotQuery.getShellSnapshot().pipe(
+          context.requireCurrentOperationCaller().pipe(
+            Effect.flatMap(() => snapshotQuery.getShellSnapshot()),
             Effect.mapError((error) =>
               unexpectedGatewayToolError(error, { operation: "wait_threads_snapshot" }),
             ),

@@ -25,6 +25,7 @@ export function makeAgentGatewaySessionRegistry(options?: {
   const randomId = options?.randomId ?? randomUUID;
   const sessions = new Map<string, AgentGatewaySessionIdentity>();
   const sessionsByKey = new Map<string, AgentGatewaySessionIdentity>();
+  const activeWriteLeases = new Map<string, number>();
   const revocationListeners = new Set<(identity: AgentGatewaySessionIdentity) => void>();
 
   return {
@@ -36,19 +37,22 @@ export function makeAgentGatewaySessionRegistry(options?: {
       const issuedAt = now();
       const sessionKey = `gateway-session:${randomId()}`;
       const token = `sagw_session_${randomId()}`;
-      const identity: AgentGatewaySessionIdentity = {
+      const identity: AgentGatewaySessionIdentity = Object.freeze({
         sessionKey,
         threadId,
         provider,
         issuedAt,
-        // Least privilege: the gateway mints read + drive (send/interrupt), the
-        // capabilities the wired tools actually need. The drive capability is
-        // still gated per-request on an active caller turn (requiresActiveTurn)
-        // and the central drive policy. `automation:write` is deliberately not
-        // minted — no automation tool is wired yet, so granting it would be
-        // standing privilege with no consumer.
-        capabilities: new Set(["thread:read", "thread:write"]),
-      };
+        // Least privilege: mint only the four operation capabilities consumed
+        // by the wired project-context and thread tools. Drive is still gated
+        // per request on an active caller turn and the central drive policy.
+        // No automation, browser, file, record, or export power is minted.
+        capabilities: Object.freeze([
+          "project:context:read",
+          "thread:list",
+          "thread:read",
+          "thread:drive",
+        ] as const),
+      });
       sessions.set(token, identity);
       sessionsByKey.set(sessionKey, identity);
       return { token, ...identity };
@@ -81,6 +85,31 @@ export function makeAgentGatewaySessionRegistry(options?: {
         identity.threadId === authority.threadId &&
         identity.provider === authority.provider
       );
+    },
+    acquireWriteLease: (authority) => {
+      const identity = sessionsByKey.get(authority.sessionKey);
+      if (
+        identity === undefined ||
+        identity.threadId !== authority.threadId ||
+        identity.provider !== authority.provider
+      ) {
+        return null;
+      }
+      activeWriteLeases.set(
+        authority.sessionKey,
+        (activeWriteLeases.get(authority.sessionKey) ?? 0) + 1,
+      );
+      let released = false;
+      return Object.freeze({
+        sessionKey: authority.sessionKey,
+        release: () => {
+          if (released) return;
+          released = true;
+          const remaining = (activeWriteLeases.get(authority.sessionKey) ?? 1) - 1;
+          if (remaining <= 0) activeWriteLeases.delete(authority.sessionKey);
+          else activeWriteLeases.set(authority.sessionKey, remaining);
+        },
+      });
     },
     subscribeRevocations: (listener) => {
       revocationListeners.add(listener);

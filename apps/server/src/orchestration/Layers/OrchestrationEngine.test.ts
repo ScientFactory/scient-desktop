@@ -12,7 +12,9 @@ import {
   TurnId,
   type OrchestrationEvent,
 } from "@synara/contracts";
-import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -23,10 +25,15 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import {
+  OrchestrationCommandReceiptRepository,
+  type OrchestrationCommandReceiptRepositoryShape,
+} from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
-import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
+import { OrchestrationCommandOutcomeUncertainError } from "../Errors.ts";
+import { OrchestrationEngineLive, publishThenAdvanceCursor } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -93,7 +100,135 @@ function now() {
   return new Date().toISOString();
 }
 
+const makeCommitFinalizerGatePersistence = (
+  enteredFinalizer: Deferred.Deferred<void>,
+  releaseFinalizer: Deferred.Deferred<void>,
+  control: { armed: boolean; defectAfterCommit?: boolean },
+) =>
+  Layer.effect(
+    SqlClient.SqlClient,
+    Effect.gen(function* () {
+      const delegate = yield* SqlClient.SqlClient;
+      const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) => {
+        const transaction = delegate.withTransaction(effect);
+        if (!control.armed) return transaction;
+        return transaction.pipe(
+          Effect.flatMap((value) =>
+            Deferred.succeed(enteredFinalizer, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFinalizer)),
+              Effect.andThen(
+                Effect.suspend(() => {
+                  if (!control.defectAfterCommit) return Effect.succeed(value);
+                  control.defectAfterCommit = false;
+                  return Effect.die("Injected post-commit finalizer defect");
+                }),
+              ),
+            ),
+          ),
+          // Model Effect SQL's uninterruptible COMMIT finalizer while holding
+          // the successful result after the delegate has durably committed.
+          Effect.uninterruptible,
+        );
+      };
+      return new Proxy(delegate, {
+        get: (target, property, receiver) =>
+          property === "withTransaction"
+            ? withTransaction
+            : Reflect.get(target, property, receiver),
+      });
+    }),
+  ).pipe(Layer.provide(SqlitePersistenceMemory));
+
+const makeControllableReceiptRepository = (control: { failReads: boolean }) =>
+  Layer.effect(
+    OrchestrationCommandReceiptRepository,
+    Effect.gen(function* () {
+      const delegate = yield* OrchestrationCommandReceiptRepository;
+      return {
+        ...delegate,
+        getByCommandId: (input) =>
+          control.failReads
+            ? Effect.fail(
+                new PersistenceSqlError({
+                  operation: "test.receipt-reconciliation",
+                  detail: "Injected receipt read failure",
+                }),
+              )
+            : delegate.getByCommandId(input),
+      } satisfies OrchestrationCommandReceiptRepositoryShape;
+    }),
+  ).pipe(Layer.provide(OrchestrationCommandReceiptRepositoryLive));
+
+const makeControllableEventStore = (control: { failNextRead: boolean }) =>
+  Layer.effect(
+    OrchestrationEventStore,
+    Effect.gen(function* () {
+      const delegate = yield* OrchestrationEventStore;
+      return {
+        ...delegate,
+        readFromSequence: (sequenceExclusive, limit) => {
+          if (!control.failNextRead) {
+            return delegate.readFromSequence(sequenceExclusive, limit);
+          }
+          control.failNextRead = false;
+          return Stream.fail(
+            new PersistenceSqlError({
+              operation: "test.event-reconciliation",
+              detail: "Injected event replay failure",
+            }),
+          );
+        },
+      } satisfies OrchestrationEventStoreShape;
+    }),
+  ).pipe(Layer.provide(OrchestrationEventStoreLive));
+
 describe("OrchestrationEngine", () => {
+  it("cannot mark a reactor event delivered before an interrupted publication enqueues it", async () => {
+    const enteredPublication = await Effect.runPromise(Deferred.make<void>());
+    const releasePublication = await Effect.runPromise(Deferred.make<void>());
+    let published = false;
+    let cursor = 0;
+    const publication = publishThenAdvanceCursor(
+      Deferred.succeed(enteredPublication, undefined).pipe(
+        Effect.andThen(Deferred.await(releasePublication)),
+        Effect.andThen(
+          Effect.sync(() => {
+            published = true;
+          }),
+        ),
+      ),
+      () => {
+        cursor = 1;
+      },
+    );
+    const fiber = Effect.runFork(publication);
+
+    await Effect.runPromise(Deferred.await(enteredPublication));
+    let interruptionSettled = false;
+    const interrupted = Effect.runPromise(Fiber.interrupt(fiber)).finally(() => {
+      interruptionSettled = true;
+    });
+    await Promise.resolve();
+    expect(interruptionSettled).toBe(false);
+    expect(published).toBe(false);
+    expect(cursor).toBe(0);
+
+    await Effect.runPromise(Deferred.succeed(releasePublication, undefined));
+    await interrupted;
+    expect(published).toBe(true);
+    expect(cursor).toBe(1);
+
+    const defect = await Effect.runPromise(
+      Effect.exit(
+        publishThenAdvanceCursor(Effect.die("Injected publication defect"), () => {
+          cursor = 2;
+        }),
+      ),
+    );
+    expect(defect._tag).toBe("Failure");
+    expect(cursor).toBe(1);
+  });
+
   it("returns deterministic read models for repeated reads", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();
@@ -1081,6 +1216,543 @@ describe("OrchestrationEngine", () => {
 
     expect(result.sequence).toBe(2);
     expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+    await runtime.dispose();
+  });
+
+  it("rolls back a protected dispatch when revocation wins before commit", async () => {
+    let enteredTransaction = false;
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-revoked-before-commit");
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: (event) =>
+        event.commandId === protectedCommandId
+          ? Effect.sync(() => {
+              enteredTransaction = true;
+            }).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedOutcome = runtime.runPromise(
+      Effect.exit(
+        engine.dispatchProtected(
+          {
+            type: "project.create",
+            commandId: protectedCommandId,
+            projectId: asProjectId("project-protected-revoked-before-commit"),
+            title: "Protected",
+            workspaceRoot: "/tmp/project-protected-revoked-before-commit",
+            createdAt: now(),
+          },
+          Deferred.await(revocation),
+        ),
+      ),
+    );
+
+    await expect.poll(() => enteredTransaction).toBe(true);
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    expect((await protectedOutcome)._tag).toBe("Failure");
+
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-after-protected-revocation"),
+        projectId: asProjectId("project-after-protected-revocation"),
+        title: "After",
+        workspaceRoot: "/tmp/project-after-protected-revocation",
+        createdAt: now(),
+      }),
+    );
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([
+      CommandId.makeUnsafe("cmd-after-protected-revocation"),
+    ]);
+    await runtime.dispose();
+  });
+
+  it("returns a protected commit before deferred publication and ignores later revocation", async () => {
+    let enteredDeferredProjection = false;
+    let releaseDeferredProjection!: () => void;
+    const deferredGate = new Promise<void>((resolve) => {
+      releaseDeferredProjection = resolve;
+    });
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-committed");
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: (event) =>
+        event.commandId === protectedCommandId
+          ? Effect.sync(() => {
+              enteredDeferredProjection = true;
+            }).pipe(Effect.andThen(Effect.promise(() => deferredGate)))
+          : Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const committed = await runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-committed"),
+          title: "Committed",
+          workspaceRoot: "/tmp/project-protected-committed",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+    expect(committed.sequence).toBe(1);
+    await expect.poll(() => enteredDeferredProjection).toBe(true);
+
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    releaseDeferredProjection();
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-after-protected-commit"),
+        projectId: asProjectId("project-after-protected-commit"),
+        title: "After",
+        workspaceRoot: "/tmp/project-after-protected-commit",
+        createdAt: now(),
+      }),
+    );
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([
+      protectedCommandId,
+      CommandId.makeUnsafe("cmd-after-protected-commit"),
+    ]);
+    await runtime.dispose();
+  });
+
+  it("reconciles a protected commit when revocation wins during transaction finalization", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    let bootstrapRuns = 0;
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.sync(() => {
+        bootstrapRuns += 1;
+      }),
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.never,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(persistence),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-finalizer-race");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-finalizer-race"),
+          title: "Protected finalizer race",
+          workspaceRoot: "/tmp/project-protected-finalizer-race",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).resolves.toEqual({ sequence: 1 });
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([protectedCommandId]);
+    await expect.poll(() => bootstrapRuns).toBe(2);
+    await runtime.dispose();
+  });
+
+  it("reports an uncertain protected outcome when committed receipt reconciliation fails", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false };
+    const receiptControl = { failReads: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    const receiptRepository = makeControllableReceiptRepository(receiptControl);
+    let bootstrapRuns = 0;
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.sync(() => {
+        bootstrapRuns += 1;
+      }),
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.never,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(receiptRepository),
+        Layer.provide(persistence),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-receipt-read-failure");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-receipt-read-failure"),
+          title: "Protected uncertain result",
+          workspaceRoot: "/tmp/project-protected-receipt-read-failure",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    receiptControl.failReads = true;
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).rejects.toBeInstanceOf(
+      OrchestrationCommandOutcomeUncertainError,
+    );
+    await expect(protectedOutcome).rejects.toThrow("outcome is uncertain");
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([protectedCommandId]);
+    await expect.poll(() => bootstrapRuns).toBe(2);
+    await runtime.dispose();
+  });
+
+  it("refreshes committed projections when event reconciliation fails after commit", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false };
+    const eventControl = { failNextRead: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    const eventStore = makeControllableEventStore(eventControl);
+    const serverConfig = ServerConfig.layerTest(process.cwd(), {
+      prefix: "scient-orchestration-finalizer-recovery-test-",
+    });
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionPipelineLive),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(eventStore),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(persistence),
+        Layer.provideMerge(serverConfig),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-event-read-failure");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-event-read-failure"),
+          title: "Protected event recovery",
+          workspaceRoot: "/tmp/project-protected-event-read-failure",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    eventControl.failNextRead = true;
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).resolves.toEqual({ sequence: 1 });
+    await expect
+      .poll(async () => (await runtime.runPromise(engine.getReadModel())).snapshotSequence)
+      .toBe(1);
+    await expect(
+      runtime.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-after-event-reconciliation-failure"),
+          projectId: asProjectId("project-after-event-reconciliation-failure"),
+          title: "After recovery",
+          workspaceRoot: "/tmp/project-after-event-reconciliation-failure",
+          createdAt: now(),
+        }),
+      ),
+    ).resolves.toEqual({ sequence: 2 });
+    await runtime.dispose();
+  });
+
+  it("recovers committed state after a post-commit defect and failed event replay", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false, defectAfterCommit: true };
+    const eventControl = { failNextRead: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    const eventStore = makeControllableEventStore(eventControl);
+    const serverConfig = ServerConfig.layerTest(process.cwd(), {
+      prefix: "scient-orchestration-post-commit-defect-test-",
+    });
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionPipelineLive),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(eventStore),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(persistence),
+        Layer.provideMerge(serverConfig),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-post-commit-defect");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-post-commit-defect"),
+          title: "Protected post-commit defect",
+          workspaceRoot: "/tmp/project-protected-post-commit-defect",
+          createdAt: now(),
+        },
+        Effect.never,
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    eventControl.failNextRead = true;
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).resolves.toEqual({ sequence: 1 });
+    await expect
+      .poll(async () => (await runtime.runPromise(engine.getReadModel())).snapshotSequence)
+      .toBe(1);
+    finalizerGate.defectAfterCommit = false;
+    await expect(
+      runtime.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-after-post-commit-defect"),
+          projectId: asProjectId("project-after-post-commit-defect"),
+          title: "After post-commit recovery",
+          workspaceRoot: "/tmp/project-after-post-commit-defect",
+          createdAt: now(),
+        }),
+      ),
+    ).resolves.toEqual({ sequence: 2 });
+    await runtime.dispose();
+  });
+
+  it("does not replay an already-projected streaming message after deferred timeout", async () => {
+    let enteredDeferredProjection = false;
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: (event) =>
+        event.commandId === "cmd-streaming-delta-timeout"
+          ? Effect.sync(() => {
+              enteredDeferredProjection = true;
+            }).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+    };
+    const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(SqlitePersistenceMemory),
+      Layer.provideMerge(TestClock.layer()),
+    );
+    await Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const createdAt = now();
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-streaming-project"),
+        projectId: asProjectId("project-streaming-timeout"),
+        title: "Streaming timeout",
+        workspaceRoot: "/tmp/project-streaming-timeout",
+        createdAt,
+      });
+      const threadId = ThreadId.makeUnsafe("thread-streaming-timeout");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-streaming-thread"),
+        threadId,
+        projectId: asProjectId("project-streaming-timeout"),
+        title: "Streaming",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      const protectedResult = yield* engine.dispatchProtected(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.makeUnsafe("cmd-streaming-delta-timeout"),
+          threadId,
+          messageId: MessageId.makeUnsafe("message-streaming-timeout"),
+          delta: "A",
+          createdAt,
+        },
+        Effect.never,
+      );
+      expect(protectedResult).toEqual({ sequence: 3 });
+      yield* TestClock.withLive(Effect.sleep(10));
+      expect(enteredDeferredProjection).toBe(true);
+
+      yield* TestClock.adjust(Duration.seconds(46));
+      yield* TestClock.withLive(Effect.sleep(10));
+      const model = yield* engine.getReadModel();
+      expect(model.snapshotSequence).toBe(3);
+      const thread = model.threads.find((entry) => entry.id === threadId);
+      expect(thread?.messages).toHaveLength(1);
+      expect(thread?.messages[0]?.text).toBe("A");
+    }).pipe(Effect.provide(orchestrationLayer), Effect.scoped, Effect.runPromise);
+  });
+
+  it("does not change non-gateway dispatch semantics when its caller is interrupted", async () => {
+    let enteredTransaction = false;
+    let releaseTransaction!: () => void;
+    const transactionGate = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const firstCommandId = CommandId.makeUnsafe("cmd-interrupted-caller");
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: (event) =>
+        event.commandId === firstCommandId
+          ? Effect.sync(() => {
+              enteredTransaction = true;
+            }).pipe(Effect.andThen(Effect.promise(() => transactionGate)))
+          : Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: () => Effect.void,
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const createdAt = now();
+    const interruptedCaller = runtime.runFork(
+      engine.dispatch({
+        type: "project.create",
+        commandId: firstCommandId,
+        projectId: asProjectId("project-interrupted-caller"),
+        title: "Interrupted caller",
+        workspaceRoot: "/tmp/project-interrupted-caller",
+        createdAt,
+      }),
+    );
+
+    await expect.poll(() => enteredTransaction).toBe(true);
+    await Effect.runPromise(Fiber.interrupt(interruptedCaller));
+    releaseTransaction();
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-after-interrupted-caller"),
+        projectId: asProjectId("project-after-interrupted-caller"),
+        title: "After interrupted caller",
+        workspaceRoot: "/tmp/project-after-interrupted-caller",
+        createdAt,
+      }),
+    );
+
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([
+      firstCommandId,
+      CommandId.makeUnsafe("cmd-after-interrupted-caller"),
+    ]);
     await runtime.dispose();
   });
 
