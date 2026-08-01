@@ -22,6 +22,7 @@ import { Keybindings } from "./keybindings";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
+import { ProviderRuntimeIngestionService } from "./orchestration/Services/ProviderRuntimeIngestion";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor";
 import { reconcileRestartStuckTurns } from "./orchestration/startupTurnReconciliation";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper";
@@ -77,6 +78,7 @@ export const createEffectServer = Effect.fn(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const orchestrationReactor = yield* OrchestrationReactor;
   const providerSessionReaper = yield* ProviderSessionReaper;
+  const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
   const runtimeStartup = yield* ServerRuntimeStartup;
   const serverSettings = yield* ServerSettingsService;
   const threadDeletionReactor = yield* ThreadDeletionReactor;
@@ -150,6 +152,7 @@ export const createEffectServer = Effect.fn(function* () {
   // died, so they can never complete on their own) before clients can observe
   // the stale "Working" state.
   yield* reconcileRestartStuckTurns;
+  yield* providerRuntimeIngestion.reconcileGeneratedImagesAtStartup;
   yield* runtimeStartup.markCommandReady;
 
   yield* lifecycleEvents.publish({

@@ -24,6 +24,9 @@ export interface ProviderRuntimeIngestionShape {
    */
   readonly start: Effect.Effect<void, never, Scope.Scope>;
 
+  /** Recover bounded durable generated-image references after stuck turns are reconciled. */
+  readonly reconcileGeneratedImagesAtStartup: Effect.Effect<void>;
+
   /**
    * Resolves when the internal processing queue is empty and idle.
    * Intended for test use to replace timing-sensitive sleeps.

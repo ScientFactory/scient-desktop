@@ -1,11 +1,475 @@
-import { ThreadId } from "@synara/contracts";
+import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@synara/contracts";
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
   cleanupSucceededUnlessInterrupted,
+  hasUnsettledSameCascadeDescendants,
   logCleanupCauseUnlessInterrupted,
+  providerCleanupCanPurgeImmediately,
+  resolveDeletedThreadProviderCleanup,
+  runStartupPurgeProgressPasses,
+  waitForDeletedSubagentSettlement,
 } from "./ThreadDeletionReactor";
+
+function cleanupReadModel(
+  threads: Array<{
+    readonly id: ThreadId;
+    readonly parentThreadId?: ThreadId;
+    readonly activeTurnId?: TurnId;
+    readonly status?: "starting" | "running" | "ready" | "interrupted";
+    readonly projectId?: ProjectId;
+    readonly archivedAt?: string;
+    readonly deletedAt?: string;
+  }>,
+): OrchestrationReadModel {
+  return {
+    threads: threads.map((thread) => ({
+      id: thread.id,
+      projectId: thread.projectId ?? ProjectId.makeUnsafe("project-lifecycle"),
+      archivedAt: thread.archivedAt ?? null,
+      deletedAt: thread.deletedAt ?? null,
+      ...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId } : {}),
+      session:
+        thread.activeTurnId || thread.status
+          ? {
+              threadId: thread.id,
+              status: thread.status ?? "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: thread.activeTurnId,
+              lastError: null,
+              updatedAt: "2026-07-31T08:00:00.000Z",
+            }
+          : null,
+    })) as unknown as OrchestrationReadModel["threads"],
+  } as OrchestrationReadModel;
+}
+
+describe("resolveDeletedThreadProviderCleanup", () => {
+  it("stops an ordinary thread session directly", () => {
+    const threadId = ThreadId.makeUnsafe("thread-root");
+
+    expect(
+      resolveDeletedThreadProviderCleanup(cleanupReadModel([{ id: threadId }]), threadId),
+    ).toEqual({ kind: "stop-session", threadId });
+  });
+
+  it("interrupts an active subagent turn through its provider-owning parent", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("subagent:thread-parent:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: parentId },
+          { id: childId, parentThreadId: parentId, activeTurnId: turnId },
+        ]),
+        childId,
+      ),
+    ).toEqual({
+      kind: "interrupt-subagent-turn",
+      threadId: parentId,
+      turnId,
+      providerThreadId: "provider-child",
+    });
+  });
+
+  it("routes a nested active subagent through the highest reachable provider owner", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const grandchildId = ThreadId.makeUnsafe(
+      "subagent:subagent:thread-root:provider-child:provider-grandchild",
+    );
+    const turnId = TurnId.makeUnsafe("turn-grandchild");
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId },
+          { id: childId, parentThreadId: rootId },
+          { id: grandchildId, parentThreadId: childId, activeTurnId: turnId },
+        ]),
+        grandchildId,
+      ),
+    ).toEqual({
+      kind: "interrupt-subagent-turn",
+      threadId: rootId,
+      turnId,
+      providerThreadId: "provider-grandchild",
+    });
+  });
+
+  it("routes through ancestors atomically soft-deleted by the same cascade", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    const deletedAt = "2026-07-31T08:05:00.000Z";
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, deletedAt },
+          { id: childId, parentThreadId: rootId, activeTurnId: turnId, deletedAt },
+        ]),
+        childId,
+      ),
+    ).toEqual({
+      kind: "interrupt-subagent-turn",
+      threadId: rootId,
+      turnId,
+      providerThreadId: "provider-child",
+    });
+  });
+
+  it("defers through an older unrelated ancestor tombstone", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, deletedAt: "2026-07-31T08:04:00.000Z" },
+          {
+            id: childId,
+            parentThreadId: rootId,
+            activeTurnId: turnId,
+            deletedAt: "2026-07-31T08:05:00.000Z",
+          },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+  });
+
+  it("defers active subagent purge for missing or corrupt lineage", () => {
+    const childId = ThreadId.makeUnsafe("subagent:missing:provider-child");
+    const cycleId = ThreadId.makeUnsafe("subagent:child:cycle");
+    const turnId = TurnId.makeUnsafe("turn-child");
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          {
+            id: childId,
+            parentThreadId: ThreadId.makeUnsafe("missing"),
+            activeTurnId: turnId,
+          },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: childId, parentThreadId: cycleId, activeTurnId: turnId },
+          { id: cycleId, parentThreadId: childId },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+  });
+
+  it("defers cleanup when any provider-owner ancestor crosses a lifecycle boundary", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const grandchildId = ThreadId.makeUnsafe(
+      "subagent:subagent:thread-root:provider-child:provider-grandchild",
+    );
+    const turnId = TurnId.makeUnsafe("turn-grandchild");
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, projectId: ProjectId.makeUnsafe("project-other") },
+          { id: childId, parentThreadId: rootId },
+          { id: grandchildId, parentThreadId: childId, activeTurnId: turnId },
+        ]),
+        grandchildId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: grandchildId });
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, archivedAt: "2026-07-31T08:00:00.000Z" },
+          { id: childId, parentThreadId: rootId, activeTurnId: turnId },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+  });
+
+  it("keeps routing interrupted subagents with an unsettled active turn through their owner", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("subagent:thread-parent:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    const readModel = cleanupReadModel([
+      { id: parentId },
+      {
+        id: childId,
+        parentThreadId: parentId,
+        activeTurnId: turnId,
+        status: "interrupted",
+      },
+    ]);
+
+    expect(resolveDeletedThreadProviderCleanup(readModel, childId)).toEqual({
+      kind: "interrupt-subagent-turn",
+      threadId: parentId,
+      turnId,
+      providerThreadId: "provider-child",
+    });
+  });
+
+  it("keeps a child tombstone while its provider-owning parent can emit late events", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("subagent:thread-parent:provider-child");
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: parentId },
+          { id: childId, parentThreadId: parentId, status: "running" },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([{ id: childId, parentThreadId: parentId, status: "ready" }]),
+        childId,
+      ),
+    ).toEqual({ kind: "stop-session", threadId: childId });
+  });
+});
+
+describe("providerCleanupCanPurgeImmediately", () => {
+  it("keeps active subagent tombstones through interrupt acknowledgement or uncertain lineage", () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    expect(
+      providerCleanupCanPurgeImmediately({
+        kind: "interrupt-subagent-turn",
+        threadId: ThreadId.makeUnsafe("parent"),
+        turnId: TurnId.makeUnsafe("turn-child"),
+        providerThreadId: "child",
+      }),
+    ).toBe(false);
+    expect(providerCleanupCanPurgeImmediately({ kind: "defer-active-subagent", threadId })).toBe(
+      false,
+    );
+    expect(providerCleanupCanPurgeImmediately({ kind: "stop-session", threadId })).toBe(true);
+  });
+});
+
+describe("hasUnsettledSameCascadeDescendants", () => {
+  it("holds the provider owner until its atomically deleted active child settles", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const deletedAt = "2026-07-31T08:05:00.000Z";
+    const activeReadModel = cleanupReadModel([
+      { id: rootId, deletedAt },
+      {
+        id: childId,
+        parentThreadId: rootId,
+        activeTurnId: TurnId.makeUnsafe("turn-child"),
+        deletedAt,
+      },
+    ]);
+    expect(hasUnsettledSameCascadeDescendants(activeReadModel, rootId)).toBe(true);
+
+    const settledReadModel = cleanupReadModel([
+      { id: rootId, deletedAt },
+      { id: childId, parentThreadId: rootId, deletedAt },
+    ]);
+    expect(hasUnsettledSameCascadeDescendants(settledReadModel, rootId)).toBe(false);
+  });
+
+  it("treats running without an active turn id as unsettled", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const deletedAt = "2026-07-31T08:05:00.000Z";
+
+    expect(
+      hasUnsettledSameCascadeDescendants(
+        cleanupReadModel([
+          { id: rootId, deletedAt },
+          { id: childId, parentThreadId: rootId, deletedAt, status: "running" },
+        ]),
+        rootId,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not let an unrelated deletion timestamp hold the owner", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    expect(
+      hasUnsettledSameCascadeDescendants(
+        cleanupReadModel([
+          { id: rootId, deletedAt: "2026-07-31T08:05:00.000Z" },
+          {
+            id: childId,
+            parentThreadId: rootId,
+            activeTurnId: TurnId.makeUnsafe("turn-child"),
+            deletedAt: "2026-07-31T08:04:00.000Z",
+          },
+        ]),
+        rootId,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("waitForDeletedSubagentSettlement", () => {
+  it("observes terminal settlement in-process before allowing purge", async () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    let reads = 0;
+    const settled = await Effect.runPromise(
+      waitForDeletedSubagentSettlement({
+        threadId,
+        attempts: 3,
+        intervalMs: 0,
+        getReadModel: () => {
+          reads += 1;
+          return Effect.succeed(
+            cleanupReadModel([
+              {
+                id: threadId,
+                ...(reads < 2 ? { activeTurnId: turnId } : {}),
+              },
+            ]),
+          );
+        },
+      }),
+    );
+    expect(settled).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  it("times out safely when no terminal settlement arrives", async () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    const settled = await Effect.runPromise(
+      waitForDeletedSubagentSettlement({
+        threadId,
+        attempts: 2,
+        intervalMs: 0,
+        getReadModel: () =>
+          Effect.succeed(cleanupReadModel([{ id: threadId, activeTurnId: turnId }])),
+      }),
+    );
+    expect(settled).toBe(false);
+  });
+
+  it("waits through running state before a delayed turn id arrives", async () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    let reads = 0;
+    const settled = await Effect.runPromise(
+      waitForDeletedSubagentSettlement({
+        threadId,
+        attempts: 3,
+        intervalMs: 0,
+        getReadModel: () => {
+          reads += 1;
+          return Effect.succeed(
+            cleanupReadModel([
+              reads === 1
+                ? { id: threadId, status: "running" }
+                : reads === 2
+                  ? {
+                      id: threadId,
+                      status: "running",
+                      activeTurnId: TurnId.makeUnsafe("turn-delayed"),
+                    }
+                  : { id: threadId, status: "ready" },
+            ]),
+          );
+        },
+      }),
+    );
+    expect(settled).toBe(true);
+    expect(reads).toBe(3);
+  });
+});
+
+describe("runStartupPurgeProgressPasses", () => {
+  it("refreshes a child-before-parent read model before the next purge pass", async () => {
+    const remainingThreadIds = new Set(["child", "parent"]);
+    let commandReadModelThreadIds = new Set(remainingThreadIds);
+    const attemptedThreadIds: string[] = [];
+    let refreshCount = 0;
+
+    const result = await Effect.runPromise(
+      runStartupPurgeProgressPasses({
+        purgePass: () =>
+          Effect.sync(() => {
+            let purgedCount = 0;
+            for (const threadId of remainingThreadIds) {
+              attemptedThreadIds.push(threadId);
+              if (threadId === "child" && commandReadModelThreadIds.has("parent")) continue;
+              remainingThreadIds.delete(threadId);
+              purgedCount += 1;
+            }
+            return purgedCount;
+          }),
+        afterProgressPass: () =>
+          Effect.sync(() => {
+            refreshCount += 1;
+            commandReadModelThreadIds = new Set(remainingThreadIds);
+          }),
+      }),
+    );
+
+    expect(result).toEqual({ purgedCount: 2, reachedPassLimit: false });
+    expect(attemptedThreadIds).toEqual(["child", "parent", "child"]);
+    expect(refreshCount).toBe(2);
+    expect(remainingThreadIds.size).toBe(0);
+  });
+
+  it("retries a deferred root after a root-first pass purges its child", async () => {
+    const remainingThreadIds = new Set(["root", "child"]);
+    const attemptedThreadIds: string[] = [];
+
+    const result = await Effect.runPromise(
+      runStartupPurgeProgressPasses({
+        purgePass: () =>
+          Effect.sync(() => {
+            let purgedCount = 0;
+            for (const threadId of remainingThreadIds) {
+              attemptedThreadIds.push(threadId);
+              if (threadId === "root" && remainingThreadIds.has("child")) continue;
+              remainingThreadIds.delete(threadId);
+              purgedCount += 1;
+            }
+            return purgedCount;
+          }),
+      }),
+    );
+
+    expect(result).toEqual({ purgedCount: 2, reachedPassLimit: false });
+    expect(attemptedThreadIds).toEqual(["root", "child", "root"]);
+    expect(remainingThreadIds.size).toBe(0);
+  });
+
+  it("stops immediately when a pass makes no progress", async () => {
+    let passes = 0;
+    const result = await Effect.runPromise(
+      runStartupPurgeProgressPasses({
+        purgePass: () =>
+          Effect.sync(() => {
+            passes += 1;
+            return 0;
+          }),
+      }),
+    );
+
+    expect(result).toEqual({ purgedCount: 0, reachedPassLimit: false });
+    expect(passes).toBe(1);
+  });
+});
 
 describe("logCleanupCauseUnlessInterrupted", () => {
   const threadId = ThreadId.makeUnsafe("thread-deletion-reactor-test");

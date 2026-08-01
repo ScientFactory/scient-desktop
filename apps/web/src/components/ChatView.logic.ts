@@ -1,5 +1,6 @@
 import {
   ProjectId,
+  type MessageId,
   ThreadId,
   type ModelSelection,
   type ModelSlug,
@@ -9,6 +10,7 @@ import {
   type ServerProviderAuthStatus,
   type ThreadId as ThreadIdType,
 } from "@synara/contracts";
+
 import { normalizeModelSlug } from "@synara/shared/model";
 import { buildSynaraBranchName } from "@synara/shared/git";
 import { isGenericChatThreadTitle } from "@synara/shared/chatThreads";
@@ -44,6 +46,16 @@ import {
 import { localSubagentThreadId } from "./ChatView.selectors";
 import type { ProviderModelOption } from "../providerModelOptions";
 import type { ComposerVoiceCompletionIntent } from "./chat/composerVoiceState";
+
+export function collectOwnedBlobUserMessageIds(input: {
+  readonly optimisticMessageIds: ReadonlySet<MessageId>;
+  readonly handoffPreviewUrlsByMessageId: Readonly<Record<string, readonly string[]>>;
+}): ReadonlySet<MessageId> {
+  return new Set([
+    ...input.optimisticMessageIds,
+    ...Object.keys(input.handoffPreviewUrlsByMessageId).map((id) => id as MessageId),
+  ]);
+}
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "scient:last-invoked-script-by-project";
 export const DISMISSED_PROVIDER_HEALTH_BANNERS_KEY = "scient:dismissed-provider-health-banners";

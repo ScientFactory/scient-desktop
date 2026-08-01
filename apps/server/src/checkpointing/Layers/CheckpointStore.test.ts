@@ -2,15 +2,34 @@
 // Purpose: Verifies filesystem checkpoint store behavior around expensive Git capture work.
 // Layer: Checkpointing tests.
 // Exports: Vitest coverage for CheckpointStoreLive.
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Fiber, Layer, ManagedRuntime, Option } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CheckpointStoreLive } from "./CheckpointStore.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
+import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import { GitCommandError } from "../../git/Errors.ts";
 import { CheckpointRef } from "@synara/contracts";
+import { ServerConfig } from "../../config.ts";
+
+const TEMP_INDEX_COMMAND_PREFIX = "-c core.splitIndex=false ";
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   const started = Date.now();
@@ -26,6 +45,53 @@ const gitCoreLayer = (
   withActionLock: GitCoreShape["withActionLock"] = (_cwd, effect) => effect,
 ) => Layer.succeed(GitCore, { execute, withActionLock } as unknown as GitCoreShape);
 
+const gitCoreIntegrationLayer = GitCoreLive.pipe(
+  Layer.provide(
+    ServerConfig.layerTest(process.cwd(), {
+      prefix: "scient-checkpoint-index-test-",
+    }),
+  ),
+  Layer.provide(NodeServices.layer),
+);
+const checkpointIntegrationLayer = CheckpointStoreLive.pipe(
+  Layer.provide(gitCoreIntegrationLayer),
+  Layer.provide(NodeServices.layer),
+);
+
+function runGit(cwd: string, args: ReadonlyArray<string>): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function initializeRepository(cwd: string): void {
+  runGit(cwd, ["init", "--quiet"]);
+  runGit(cwd, ["config", "user.name", "Scient Test"]);
+  runGit(cwd, ["config", "user.email", "scient-test@example.invalid"]);
+}
+
+function resolveWorkingIndexPath(cwd: string): string {
+  const raw = runGit(cwd, ["rev-parse", "--git-path", "index"]);
+  return isAbsolute(raw) ? raw : resolve(cwd, raw);
+}
+
+function readSharedIndexes(gitDir: string): ReadonlyMap<string, Buffer> {
+  return new Map(
+    readdirSync(gitDir)
+      .filter((name) => name.startsWith("sharedindex."))
+      .map((name) => [name, readFileSync(join(gitDir, name))]),
+  );
+}
+
+function checkpointTempDirectories(): ReadonlyArray<string> {
+  return readdirSync(tmpdir())
+    .filter((name) => name.startsWith("scient-fs-checkpoint-"))
+    .toSorted();
+}
+
 describe("CheckpointStoreLive", () => {
   let runtime: ManagedRuntime.ManagedRuntime<CheckpointStore, unknown> | null = null;
 
@@ -36,6 +102,467 @@ describe("CheckpointStoreLive", () => {
     runtime = null;
   });
 
+  it("seeds the throwaway index from Git's resolved working index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-seed-test-"));
+    const cwd = join(tempRoot, "repo");
+    const gitDir = join(cwd, ".git");
+    mkdirSync(gitDir, { recursive: true });
+    const liveIndexPath = join(gitDir, "index");
+    writeFileSync(liveIndexPath, "working-index-stat-cache");
+    let capturedSeed = "";
+    const execute = vi.fn<GitCoreShape["execute"]>((input) => {
+      const args = input.args.join(" ");
+      if (args === "rev-parse --show-toplevel") {
+        return Effect.succeed({ code: 0, stdout: `${cwd}\n`, stderr: "" });
+      }
+      if (args === "rev-parse --git-path index") {
+        return Effect.succeed({ code: 0, stdout: ".git/index\n", stderr: "" });
+      }
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}update-index --no-split-index`) {
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      }
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}ls-files -v -z`) {
+        return Effect.succeed({ code: 0, stdout: "H tracked.txt\0", stderr: "" });
+      }
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
+        capturedSeed = readFileSync(input.env?.GIT_INDEX_FILE ?? "", "utf8");
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      }
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
+        return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
+      }
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
+        return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
+      }
+      if (args.startsWith("update-ref ")) {
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      }
+      throw new Error(`Unexpected git args: ${args}`);
+    });
+    runtime = ManagedRuntime.make(
+      CheckpointStoreLive.pipe(
+        Layer.provide(gitCoreLayer(execute)),
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      await runtime.runPromise(
+        store.captureCheckpoint({
+          cwd,
+          checkpointRef: CheckpointRef.makeUnsafe("refs/scient-checkpoints/thread/stat-cache"),
+        }),
+      );
+
+      expect(capturedSeed).toBe("working-index-stat-cache");
+      expect(readFileSync(liveIndexPath, "utf8")).toBe("working-index-stat-cache");
+      const temporaryIndexCalls = execute.mock.calls
+        .map(([call]) => call)
+        .filter((call) => call.env?.GIT_INDEX_FILE !== undefined);
+      expect(temporaryIndexCalls.length).toBeGreaterThan(0);
+      expect(
+        temporaryIndexCalls.every(
+          (call) => call.args[0] === "-c" && call.args[1] === "core.splitIndex=false",
+        ),
+      ).toBe(true);
+      expect(
+        execute.mock.calls.some(([call]) => call.args.join(" ") === "rev-parse --verify HEAD"),
+      ).toBe(false);
+      expect(
+        execute.mock.calls.some(
+          ([call]) => call.args.join(" ") === `${TEMP_INDEX_COMMAND_PREFIX}read-tree HEAD`,
+        ),
+      ).toBe(false);
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["missing", "copy-failure", "normalization-failure"] as const)(
+    "falls back to HEAD when the working index is %s",
+    async (mode) => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-fallback-test-"));
+      const cwd = join(tempRoot, "repo");
+      mkdirSync(cwd, { recursive: true });
+      const indexPath = join(
+        cwd,
+        mode === "missing"
+          ? "missing-index"
+          : mode === "copy-failure"
+            ? "index-directory"
+            : "copied-index",
+      );
+      if (mode === "copy-failure") {
+        mkdirSync(indexPath);
+      } else if (mode === "normalization-failure") {
+        writeFileSync(indexPath, "unusable copied index");
+      }
+      const commands: string[] = [];
+      const execute = vi.fn<GitCoreShape["execute"]>((input) => {
+        const args = input.args.join(" ");
+        commands.push(args);
+        if (args === "rev-parse --show-toplevel") {
+          return Effect.succeed({ code: 0, stdout: `${cwd}\n`, stderr: "" });
+        }
+        if (args === "rev-parse --git-path index") {
+          return Effect.succeed({ code: 0, stdout: `${indexPath}\n`, stderr: "" });
+        }
+        if (args === `${TEMP_INDEX_COMMAND_PREFIX}update-index --no-split-index`) {
+          if (mode === "normalization-failure") {
+            return Effect.fail(
+              new GitCommandError({
+                operation: input.operation,
+                command: "git update-index --no-split-index",
+                cwd,
+                detail: "invalid index metadata",
+              }),
+            );
+          }
+          return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+        }
+        if (args === "rev-parse --verify HEAD") {
+          return Effect.succeed({ code: 0, stdout: "head-oid\n", stderr: "" });
+        }
+        if (
+          args === `${TEMP_INDEX_COMMAND_PREFIX}read-tree HEAD` ||
+          args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`
+        ) {
+          return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+        }
+        if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
+          return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
+        }
+        if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
+          return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
+        }
+        if (args.startsWith("update-ref ")) {
+          return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+        }
+        throw new Error(`Unexpected git args: ${args}`);
+      });
+      runtime = ManagedRuntime.make(
+        CheckpointStoreLive.pipe(
+          Layer.provide(gitCoreLayer(execute)),
+          Layer.provide(NodeServices.layer),
+        ),
+      );
+
+      try {
+        const store = await runtime.runPromise(Effect.service(CheckpointStore));
+        await runtime.runPromise(
+          store.captureCheckpoint({
+            cwd,
+            checkpointRef: CheckpointRef.makeUnsafe(
+              `refs/scient-checkpoints/thread/${mode}-fallback`,
+            ),
+          }),
+        );
+        const readTree = `${TEMP_INDEX_COMMAND_PREFIX}read-tree HEAD`;
+        const add = `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`;
+        expect(commands).toContain(readTree);
+        expect(commands.indexOf(readTree)).toBeLessThan(commands.indexOf(add));
+      } finally {
+        await runtime.dispose();
+        runtime = null;
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("captures an unborn repository without creating its live index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-unborn-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    writeFileSync(join(repo, "first.txt"), "first content\n");
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    expect(existsSync(liveIndexPath)).toBe(false);
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/unborn-index-fallback",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:first.txt`])).toBe("first content");
+      expect(existsSync(liveIndexPath)).toBe(false);
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves staged and unstaged capture content without changing the live index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-parity-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    writeFileSync(join(repo, "tracked.txt"), "base\n");
+    writeFileSync(join(repo, "mixed.txt"), "base\n");
+    runGit(repo, ["add", "tracked.txt", "mixed.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+
+    writeFileSync(join(repo, "tracked.txt"), "unstaged tracked\n");
+    writeFileSync(join(repo, "mixed.txt"), "staged version\n");
+    runGit(repo, ["add", "mixed.txt"]);
+    writeFileSync(join(repo, "mixed.txt"), "staged and then unstaged\n");
+    writeFileSync(join(repo, "untracked.txt"), "untracked content\n");
+
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    const indexBefore = readFileSync(liveIndexPath);
+    const statusBefore = runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/staged-unstaged-parity",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe("unstaged tracked");
+      expect(runGit(repo, ["show", `${checkpointRef}:mixed.txt`])).toBe("staged and then unstaged");
+      expect(runGit(repo, ["show", `${checkpointRef}:untracked.txt`])).toBe("untracked content");
+      expect(readFileSync(liveIndexPath)).toEqual(indexBefore);
+      expect(runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe(
+        statusBefore,
+      );
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rehashes a same-size rewrite whose timestamp still matches the live index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-racy-index-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    const trackedPath = join(repo, "tracked.txt");
+    writeFileSync(trackedPath, "before\n");
+    const racyTimestamp = new Date(1_000);
+    utimesSync(trackedPath, racyTimestamp, racyTimestamp);
+    runGit(repo, ["add", "tracked.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    runGit(repo, ["config", "core.trustctime", "false"]);
+    runGit(repo, ["config", "core.checkStat", "minimal"]);
+
+    const originalStat = statSync(trackedPath);
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    utimesSync(liveIndexPath, originalStat.atime, originalStat.mtime);
+    writeFileSync(trackedPath, "after!\n");
+    utimesSync(trackedPath, originalStat.atime, originalStat.mtime);
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/racy-same-size-rewrite",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe("after!");
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run a clean filter for an untouched tracked file", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-filter-scope-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    const filteredPath = join(repo, "filtered.txt");
+    writeFileSync(filteredPath, "untouched\n");
+    utimesSync(filteredPath, new Date(1_000), new Date(1_000));
+    writeFileSync(join(repo, "changed.txt"), "before\n");
+    runGit(repo, ["add", "filtered.txt", "changed.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    writeFileSync(join(repo, ".gitattributes"), "filtered.txt filter=must-not-run\n");
+    runGit(repo, ["add", ".gitattributes"]);
+    runGit(repo, ["commit", "--quiet", "-m", "attributes"]);
+    runGit(repo, ["config", "filter.must-not-run.clean", "scient-filter-must-not-run"]);
+    runGit(repo, ["config", "filter.must-not-run.required", "true"]);
+    writeFileSync(join(repo, "changed.txt"), "after\n");
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/untouched-filter",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:changed.txt`])).toBe("after");
+      expect(runGit(repo, ["show", `${checkpointRef}:filtered.txt`])).toBe("untouched");
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back from a nested cwd without leaking staged content outside that workspace", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-nested-cwd-test-"));
+    const repo = join(tempRoot, "repo");
+    const nested = join(repo, "nested");
+    mkdirSync(nested, { recursive: true });
+    initializeRepository(repo);
+    writeFileSync(join(repo, "outside.txt"), "outside base\n");
+    writeFileSync(join(nested, "inside.txt"), "inside base\n");
+    runGit(repo, ["add", "outside.txt", "nested/inside.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+
+    writeFileSync(join(repo, "outside.txt"), "outside staged secret\n");
+    runGit(repo, ["add", "outside.txt"]);
+    writeFileSync(join(nested, "inside.txt"), "inside workspace change\n");
+
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    const indexBefore = readFileSync(liveIndexPath);
+    const statusBefore = runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
+    const tempDirectoriesBefore = checkpointTempDirectories();
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/nested-cwd-boundary",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: nested, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:nested/inside.txt`])).toBe(
+        "inside workspace change",
+      );
+      expect(runGit(repo, ["show", `${checkpointRef}:outside.txt`])).toBe("outside base");
+      expect(readFileSync(liveIndexPath)).toEqual(indexBefore);
+      expect(runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe(
+        statusBefore,
+      );
+      expect(checkpointTempDirectories()).toEqual(tempDirectoriesBefore);
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["assume-unchanged", "skip-worktree"] as const)(
+    "falls back without inheriting the live index's %s behavior",
+    async (flag) => {
+      const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-index-flag-test-"));
+      const repo = join(tempRoot, "repo");
+      mkdirSync(repo);
+      initializeRepository(repo);
+      writeFileSync(join(repo, "tracked.txt"), "base\n");
+      runGit(repo, ["add", "tracked.txt"]);
+      runGit(repo, ["commit", "--quiet", "-m", "base"]);
+      runGit(repo, ["update-index", `--${flag}`, "tracked.txt"]);
+      writeFileSync(join(repo, "tracked.txt"), `${flag} content\n`);
+
+      const liveIndexPath = resolveWorkingIndexPath(repo);
+      const indexBefore = readFileSync(liveIndexPath);
+      runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+      try {
+        const store = await runtime.runPromise(Effect.service(CheckpointStore));
+        const checkpointRef = CheckpointRef.makeUnsafe(
+          `refs/scient-checkpoints/thread/${flag}-fallback`,
+        );
+        await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+        expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe(`${flag} content`);
+        expect(readFileSync(liveIndexPath)).toEqual(indexBefore);
+      } finally {
+        await runtime.dispose();
+        runtime = null;
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("disables configured split-index writes for every temporary index command", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-split-index-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    writeFileSync(join(repo, "tracked.txt"), "base\n");
+    runGit(repo, ["add", "tracked.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    runGit(repo, ["config", "core.splitIndex", "true"]);
+    runGit(repo, ["update-index", "--split-index"]);
+    writeFileSync(join(repo, "tracked.txt"), "split-index content\n");
+
+    const gitDir = runGit(repo, ["rev-parse", "--absolute-git-dir"]);
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    const indexBefore = readFileSync(liveIndexPath);
+    const sharedIndexesBefore = readSharedIndexes(gitDir);
+    expect(sharedIndexesBefore.size).toBeGreaterThan(0);
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/split-index-seed",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe("split-index content");
+      expect(readFileSync(liveIndexPath)).toEqual(indexBefore);
+      expect(readSharedIndexes(gitDir)).toEqual(sharedIndexesBefore);
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the linked worktree's exact index without changing either live index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-worktree-test-"));
+    const repo = join(tempRoot, "repo");
+    const linked = join(tempRoot, "linked");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    writeFileSync(join(repo, "tracked.txt"), "base\n");
+    runGit(repo, ["add", "tracked.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    runGit(repo, ["worktree", "add", "--quiet", "-b", "checkpoint-linked", linked]);
+    writeFileSync(join(linked, "tracked.txt"), "linked worktree content\n");
+
+    const mainIndexPath = resolveWorkingIndexPath(repo);
+    const linkedIndexPath = resolveWorkingIndexPath(linked);
+    expect(linkedIndexPath).not.toBe(mainIndexPath);
+    const mainIndexBefore = readFileSync(mainIndexPath);
+    const linkedIndexBefore = readFileSync(linkedIndexPath);
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/linked-worktree-index",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: linked, checkpointRef }));
+
+      expect(runGit(linked, ["show", `${checkpointRef}:tracked.txt`])).toBe(
+        "linked worktree content",
+      );
+      expect(readFileSync(mainIndexPath)).toEqual(mainIndexBefore);
+      expect(readFileSync(linkedIndexPath)).toEqual(linkedIndexBefore);
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("deduplicates concurrent captures for the same checkpoint ref", async () => {
     let releaseAdd: (() => void) | undefined;
     const addGate = new Promise<void>((resolve) => {
@@ -43,16 +570,19 @@ describe("CheckpointStoreLive", () => {
     });
     const execute = vi.fn<GitCoreShape["execute"]>((input) => {
       const args = input.args.join(" ");
+      if (args === "rev-parse --show-toplevel") {
+        return Effect.succeed({ code: 1, stdout: "", stderr: "missing index" });
+      }
       if (args === "rev-parse --verify HEAD") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         return Effect.promise(() => addGate).pipe(Effect.as({ code: 0, stdout: "", stderr: "" }));
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -76,13 +606,19 @@ describe("CheckpointStoreLive", () => {
 
         const first = yield* store.captureCheckpoint(input).pipe(Effect.forkChild);
         yield* Effect.promise(() =>
-          waitFor(() => execute.mock.calls.some(([call]) => call.args.join(" ") === "add -A -- .")),
+          waitFor(() =>
+            execute.mock.calls.some(
+              ([call]) => call.args.join(" ") === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`,
+            ),
+          ),
         );
         const second = yield* store.captureCheckpoint(input).pipe(Effect.forkChild);
         yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 25)));
 
         expect(
-          execute.mock.calls.filter(([call]) => call.args.join(" ") === "add -A -- ."),
+          execute.mock.calls.filter(
+            ([call]) => call.args.join(" ") === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`,
+          ),
         ).toHaveLength(1);
 
         releaseAdd?.();
@@ -96,20 +632,23 @@ describe("CheckpointStoreLive", () => {
     let addCalls = 0;
     const execute = vi.fn<GitCoreShape["execute"]>((input) => {
       const args = input.args.join(" ");
+      if (args === "rev-parse --show-toplevel") {
+        return Effect.succeed({ code: 1, stdout: "", stderr: "missing index" });
+      }
       if (args === "rev-parse --verify HEAD") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         addCalls += 1;
         if (addCalls === 1) {
           return Effect.never;
         }
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -166,16 +705,19 @@ describe("CheckpointStoreLive", () => {
       if (args === `rev-parse --verify --quiet ${missingRef}^{commit}`) {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
+      if (args === "rev-parse --show-toplevel") {
+        return Effect.succeed({ code: 1, stdout: "", stderr: "missing index" });
+      }
       if (args === "rev-parse --verify HEAD") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -200,14 +742,14 @@ describe("CheckpointStoreLive", () => {
           checkpointRef: CheckpointRef.makeUnsafe(existingRef),
           skipIfExists: true,
         });
-        expect(captureArgs("add -A -- .")).toHaveLength(0);
+        expect(captureArgs(`${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`)).toHaveLength(0);
 
         yield* store.captureCheckpoint({
           cwd: "/repo",
           checkpointRef: CheckpointRef.makeUnsafe(missingRef),
           skipIfExists: true,
         });
-        expect(captureArgs("add -A -- .")).toHaveLength(1);
+        expect(captureArgs(`${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`)).toHaveLength(1);
         expect(captureArgs(`update-ref ${missingRef} commit-oid`)).toHaveLength(1);
       }),
     );
