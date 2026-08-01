@@ -344,6 +344,7 @@ describe("thread subtree lifecycle decisions", () => {
       "sequence"
     >;
     expect(retryEvent.type).toBe("thread.message-edit-resend-requested");
+    expect(retryEvent).toMatchObject({ payload: { editMode: "interrupted-tail" } });
   });
 
   it("rejects an active child edit while its shared parent is busy", async () => {
@@ -390,7 +391,12 @@ describe("thread subtree lifecycle decisions", () => {
     >;
     expect(event).toMatchObject({
       type: "thread.message-edit-resend-requested",
-      payload: { threadId: CHILD, messageId: tailMessageId, rollbackTurnCount: 0 },
+      payload: {
+        threadId: CHILD,
+        messageId: tailMessageId,
+        editMode: "active-tail",
+        rollbackTurnCount: 0,
+      },
     });
   });
 

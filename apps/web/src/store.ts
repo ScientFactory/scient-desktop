@@ -1628,11 +1628,13 @@ function normalizeLatestTurn(
       ? previous.sourceProposedPlan
       : incoming.sourceProposedPlan
     : undefined;
+  const previousRequestMessageId = previous?.requestMessageId ?? null;
+  const incomingRequestMessageId = incoming.requestMessageId ?? null;
 
   if (
     previous &&
     previous.turnId === incoming.turnId &&
-    previous.requestMessageId === incoming.requestMessageId &&
+    previousRequestMessageId === incomingRequestMessageId &&
     previous.state === incoming.state &&
     previous.requestedAt === incoming.requestedAt &&
     previous.startedAt === incoming.startedAt &&
@@ -1645,7 +1647,7 @@ function normalizeLatestTurn(
 
   return {
     turnId: incoming.turnId,
-    ...(incoming.requestMessageId ? { requestMessageId: incoming.requestMessageId } : {}),
+    requestMessageId: incomingRequestMessageId,
     state: incoming.state,
     requestedAt: incoming.requestedAt,
     startedAt: incoming.startedAt,

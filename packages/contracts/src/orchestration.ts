@@ -1813,6 +1813,8 @@ export const ThreadMessageEditResendRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  // Optional for append-only event compatibility; current deciders always emit it.
+  editMode: Schema.optional(Schema.Literals(["rollback", "active-tail", "interrupted-tail"])),
   rollbackTurnCount: Schema.optional(NonNegativeInt),
   removedTurnIds: Schema.optional(Schema.Array(TurnId)),
   modelSelection: Schema.optional(ModelSelection),

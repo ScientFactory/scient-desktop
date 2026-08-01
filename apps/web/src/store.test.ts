@@ -3604,6 +3604,32 @@ describe("store read model sync", () => {
     );
   });
 
+  it("normalizes absent and null latest-turn request identities without object churn", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const latestTurn = {
+      turnId: TurnId.makeUnsafe("turn-without-request-id"),
+      requestMessageId: null,
+      state: "interrupted" as const,
+      requestedAt: "2026-02-27T00:00:00.000Z",
+      startedAt: null,
+      completedAt: "2026-02-27T00:00:02.000Z",
+      assistantMessageId: null,
+    };
+    const initialState = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(makeReadModelThread({ latestTurn })),
+    );
+    const previousLatestTurn = initialState.threadTurnStateById?.[threadId]?.latestTurn;
+
+    const next = syncServerThreadDetailHotPath(
+      initialState,
+      makeReadModelThread({ latestTurn: { ...latestTurn, requestMessageId: undefined } }),
+    );
+
+    expect(next.threadTurnStateById?.[threadId]?.latestTurn).toBe(previousLatestTurn);
+    expect(next.threadTurnStateById?.[threadId]?.latestTurn?.requestMessageId).toBeNull();
+  });
+
   it("updates sidebar summaries during hot-path thread renames", () => {
     const threadId = ThreadId.makeUnsafe("thread-1");
     const initialState = syncServerReadModel(

@@ -534,16 +534,18 @@ describe("ProviderCommandReactor", () => {
   async function seedRollbackTarget(
     harness: Awaited<ReturnType<typeof createHarness>>,
     input: {
+      readonly threadId?: ThreadId;
       readonly messageId: MessageId;
       readonly turnId: TurnId;
       readonly createdAt: string;
     },
   ) {
+    const threadId = input.threadId ?? ThreadId.makeUnsafe("thread-1");
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.messages.import",
         commandId: CommandId.makeUnsafe(`cmd-import-${input.messageId}`),
-        threadId: ThreadId.makeUnsafe("thread-1"),
+        threadId,
         messages: [
           {
             messageId: input.messageId,
@@ -560,7 +562,7 @@ describe("ProviderCommandReactor", () => {
       harness.engine.dispatch({
         type: "thread.message.assistant.complete",
         commandId: CommandId.makeUnsafe(`cmd-assistant-complete-${input.messageId}`),
-        threadId: ThreadId.makeUnsafe("thread-1"),
+        threadId,
         messageId: MessageId.makeUnsafe(`assistant-${input.messageId}`),
         turnId: input.turnId,
         createdAt: input.createdAt,
@@ -2096,6 +2098,31 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-import-stopped-unanswered-prefix"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("stopped-unanswered-earlier-user"),
+            role: "user",
+            text: "Earlier retained question",
+            createdAt: "2026-08-01T07:59:58.000Z",
+            updatedAt: "2026-08-01T07:59:58.000Z",
+          },
+          {
+            messageId: asMessageId("stopped-unanswered-earlier-assistant"),
+            role: "assistant",
+            text: "Earlier retained answer",
+            createdAt: "2026-08-01T07:59:59.000Z",
+            updatedAt: "2026-08-01T07:59:59.000Z",
+          },
+        ],
+        createdAt: "2026-08-01T07:59:59.000Z",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.makeUnsafe("cmd-original-unanswered-turn"),
         threadId: ThreadId.makeUnsafe("thread-1"),
@@ -2158,15 +2185,16 @@ describe("ProviderCommandReactor", () => {
       requestedAt: providerStartedAt,
     });
     expect(stoppedThread?.session?.status).toBe("stopped");
-    expect(stoppedThread?.messages[0]?.createdAt).toBe(requestedAt);
-    expect(stoppedThread?.messages).toMatchObject([
-      {
-        id: "user-message-stopped-unanswered",
-        role: "user",
-        text: "old unanswered prompt",
-        turnId: null,
-      },
-    ]);
+    expect(
+      stoppedThread?.messages.find((message) => message.id === "user-message-stopped-unanswered")
+        ?.createdAt,
+    ).toBe(requestedAt);
+    expect(stoppedThread?.messages.at(-1)).toMatchObject({
+      id: "user-message-stopped-unanswered",
+      role: "user",
+      text: "old unanswered prompt",
+      turnId: null,
+    });
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.message.edit-and-resend",
@@ -2182,18 +2210,79 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.rollbackConversation).not.toHaveBeenCalled();
-    expectSkillAwareProviderInput(
-      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
-      "edited unanswered prompt",
-    );
+    expect(harness.clearSessionResumeCursor).toHaveBeenCalledWith({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+    });
+    const resentInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)
+      ?.input;
+    expect(resentInput).toContain("<thread_context>");
+    expect(resentInput).toContain("Earlier retained question");
+    expect(resentInput).toContain("Earlier retained answer");
+    expect(resentInput).not.toContain("old unanswered prompt");
+    expect(resentInput).toContain("<latest_user_message>\nedited unanswered prompt");
+    expect(resentInput).toContain('<scient_builtin_skills enabled="true">');
+    expect(resentInput).toContain('id="scient.skill-authoring"');
 
     const resentModel = await Effect.runPromise(harness.engine.getReadModel());
     const resentThread = resentModel.threads.find(
       (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
     );
     expect(resentThread?.messages.map((message) => message.text)).toEqual([
+      "Earlier retained question",
+      "Earlier retained answer",
       "edited unanswered prompt",
     ]);
+  });
+
+  it("keeps ordinary stopped completed-message edits on the rollback path", async () => {
+    const harness = await createHarness({ conversationRollback: "restart-session" });
+    const now = "2026-08-01T08:10:00.000Z";
+    await seedRollbackTarget(harness, {
+      messageId: asMessageId("stopped-completed-edit-target"),
+      turnId: asTurnId("turn-stopped-completed-edit"),
+      createdAt: now,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-stopped-completed-session"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-edit-stopped-completed"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: asMessageId("stopped-completed-edit-target"),
+        text: "edited completed prompt",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.rollbackConversation.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.rollbackConversation).toHaveBeenCalledWith({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      numTurns: 1,
+    });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "edited completed prompt",
+    );
   });
 
   it("restarts Droid edits and bootstraps only the retained transcript", async () => {
@@ -6470,6 +6559,119 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     harness.setRuntimeSessionTurnState({ threadId: "thread-1", status: "ready" });
+
+    const gateThreadId = ThreadId.makeUnsafe("thread-provider-edit-worker-gate");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-create-provider-edit-worker-gate"),
+        threadId: gateThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Provider edit worker gate",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+    await seedRollbackTarget(harness, {
+      threadId: gateThreadId,
+      messageId: asMessageId("parent-edit-worker-gate"),
+      turnId: asTurnId("turn-parent-edit-worker-gate"),
+      createdAt: now,
+    });
+    let releaseRollback!: () => void;
+    const rollbackGate = new Promise<void>((resolve) => {
+      releaseRollback = resolve;
+    });
+    harness.rollbackConversation.mockImplementationOnce(() => Effect.promise(() => rollbackGate));
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-block-provider-edit-worker"),
+        threadId: gateThreadId,
+        messageId: asMessageId("parent-edit-worker-gate"),
+        text: "release the provider edit worker",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.rollbackConversation.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-child-edit-accepted-before-parent-race"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        messageId: asMessageId("message-subagent-stop-in-flight"),
+        text: "accepted child edit that must not disappear",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-parent-busy-after-child-edit-accepted"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-parent-busy-after-child-edit-accepted"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    releaseRollback();
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      return (
+        readModel.threads
+          .find((entry) => entry.id === "subagent:thread-1:child-provider-1")
+          ?.session?.lastError?.includes("became busy before the edited message") === true
+      );
+    });
+    const racedModel = await Effect.runPromise(harness.engine.getReadModel());
+    const racedChild = racedModel.threads.find(
+      (entry) => entry.id === "subagent:thread-1:child-provider-1",
+    );
+    expect(racedChild?.session?.status).toBe("interrupted");
+    expect(racedChild?.messages.at(-1)?.text).toBe("child work in flight");
+    expect(
+      harness.sendTurn.mock.calls.some((call) =>
+        (call[0] as { input?: string } | undefined)?.input?.includes(
+          "accepted child edit that must not disappear",
+        ),
+      ),
+    ).toBe(false);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-parent-ready-after-accepted-edit-race"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    harness.setRuntimeSessionTurnState({ threadId: "thread-1", status: "ready" });
+    const sendCountBeforeRetry = harness.sendTurn.mock.calls.length;
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.message.edit-and-resend",
@@ -6482,7 +6684,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === sendCountBeforeRetry + 1);
     expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
     expect(harness.stopSession).not.toHaveBeenCalled();
   });
