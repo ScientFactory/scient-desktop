@@ -6406,9 +6406,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn).not.toHaveBeenCalled();
     const rejectedModel = await Effect.runPromise(harness.engine.getReadModel());
     expect(
-      rejectedModel.threads.find(
-        (entry) => entry.id === "subagent:thread-1:child-provider-1",
-      ),
+      rejectedModel.threads.find((entry) => entry.id === "subagent:thread-1:child-provider-1"),
     ).toEqual(settledChild);
 
     for (const parentStatus of ["starting", "running"] as const) {

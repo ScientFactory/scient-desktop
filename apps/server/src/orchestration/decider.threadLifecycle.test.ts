@@ -301,10 +301,7 @@ describe("thread subtree lifecycle decisions", () => {
               interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
               createdAt: NOW,
             },
-            readModel: makeReadModel([
-              makeThread({ id: PARENT, sessionStatus }),
-              child,
-            ]),
+            readModel: makeReadModel([makeThread({ id: PARENT, sessionStatus }), child]),
           }),
         ),
       ).rejects.toThrow("shared parent session is busy");
@@ -328,10 +325,7 @@ describe("thread subtree lifecycle decisions", () => {
       Effect.runPromise(
         decideOrchestrationCommand({
           command,
-          readModel: makeReadModel([
-            makeThread({ id: PARENT, sessionStatus: "starting" }),
-            child,
-          ]),
+          readModel: makeReadModel([makeThread({ id: PARENT, sessionStatus: "starting" }), child]),
         }),
       ),
     ).rejects.toThrow("shared parent session is busy");
@@ -342,10 +336,7 @@ describe("thread subtree lifecycle decisions", () => {
           ...command,
           commandId: CommandId.makeUnsafe("cmd-retry-synthetic-child"),
         },
-        readModel: makeReadModel([
-          makeThread({ id: PARENT, sessionStatus: "ready" }),
-          child,
-        ]),
+        readModel: makeReadModel([makeThread({ id: PARENT, sessionStatus: "ready" }), child]),
       }),
     );
     const retryEvent = (Array.isArray(retry) ? retry[0] : retry) as Omit<
@@ -370,10 +361,7 @@ describe("thread subtree lifecycle decisions", () => {
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
             createdAt: NOW,
           },
-          readModel: makeReadModel([
-            makeThread({ id: PARENT, sessionStatus: "running" }),
-            thread,
-          ]),
+          readModel: makeReadModel([makeThread({ id: PARENT, sessionStatus: "running" }), thread]),
         }),
       ),
     ).rejects.toThrow("shared parent session is busy");
@@ -393,10 +381,7 @@ describe("thread subtree lifecycle decisions", () => {
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           createdAt: NOW,
         },
-        readModel: makeReadModel([
-          makeThread({ id: PARENT, sessionStatus: "running" }),
-          thread,
-        ]),
+        readModel: makeReadModel([makeThread({ id: PARENT, sessionStatus: "running" }), thread]),
       }),
     );
     const event = (Array.isArray(result) ? result[0] : result) as Omit<
