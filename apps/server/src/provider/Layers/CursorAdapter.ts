@@ -82,6 +82,7 @@ import {
   forkAcpTurnIdleWatchdog,
   resolveAcpTurnIdleTimeoutMs,
 } from "../acp/AcpTurnIdleWatchdog.ts";
+import { forkProviderNotificationDrain } from "../acp/ProviderNotificationDrain.ts";
 import {
   applyCursorAcpModelSelection,
   buildCursorCliModelListCommand,
@@ -139,6 +140,7 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
 export interface CursorAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly sessionRuntimeFactory?: typeof makeCursorAcpRuntime;
 }
 
 interface PendingApproval {
@@ -696,7 +698,7 @@ export function makeCursorAdapter(
               : {}),
           };
 
-          const acp = yield* makeCursorAcpRuntime({
+          const acp = yield* (options?.sessionRuntimeFactory ?? makeCursorAcpRuntime)({
             cursorSettings: effectiveCursorSettings,
             childProcessSpawner,
             cwd,
@@ -1067,7 +1069,7 @@ export function makeCursorAdapter(
                 }
               }),
             ),
-          ).pipe(Effect.forkChild);
+          ).pipe(forkProviderNotificationDrain(sessionScope));
 
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
