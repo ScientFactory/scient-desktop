@@ -2181,11 +2181,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.rollbackConversation).toHaveBeenCalledTimes(1);
-    expect(harness.rollbackConversation).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      numTurns: 1,
-    });
+    expect(harness.rollbackConversation).not.toHaveBeenCalled();
     expectSkillAwareProviderInput(
       (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
       "edited unanswered prompt",

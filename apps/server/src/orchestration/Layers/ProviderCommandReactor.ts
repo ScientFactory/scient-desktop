@@ -2409,6 +2409,7 @@ const make = Effect.gen(function* () {
       providerThread?.session?.status === "running"
         ? (providerThread.session.activeTurnId ?? null)
         : null;
+    const providerSessionIsStopped = providerThread?.session?.status === "stopped";
     const isQueuedMessageEdit = yield* hasQueuedTurnStart(
       event.payload.threadId,
       event.payload.messageId,
@@ -2445,7 +2446,7 @@ const make = Effect.gen(function* () {
     }
 
     yield* processMessageEditResendPayload(event.payload, {
-      ...(isQueuedMessageEdit ? { skipProviderRollback: true } : {}),
+      ...(isQueuedMessageEdit || providerSessionIsStopped ? { skipProviderRollback: true } : {}),
       preserveQueuedTurns: isQueuedMessageEdit,
       preserveThreadSession: isQueuedMessageEdit,
       activeTurnId,

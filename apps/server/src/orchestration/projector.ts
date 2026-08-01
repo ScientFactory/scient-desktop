@@ -1098,19 +1098,23 @@ export function projectEvent(
           }
 
           const rollback = rollbackThreadMessagesFromMessage(thread.messages, payload.messageId);
-          if (rollback.messages === thread.messages) {
+          const removedTurnIds = new Set([
+            ...rollback.removedTurnIds,
+            ...(payload.removedTurnIds ?? []),
+          ]);
+          if (rollback.messages === thread.messages && removedTurnIds.size === 0) {
             return nextBase;
           }
 
           const checkpoints = thread.checkpoints
-            .filter((checkpoint) => !rollback.removedTurnIds.has(checkpoint.turnId))
+            .filter((checkpoint) => !removedTurnIds.has(checkpoint.turnId))
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
             .slice(-MAX_THREAD_CHECKPOINTS);
           const proposedPlans = thread.proposedPlans
-            .filter((plan) => plan.turnId === null || !rollback.removedTurnIds.has(plan.turnId))
+            .filter((plan) => plan.turnId === null || !removedTurnIds.has(plan.turnId))
             .slice(-200);
           const activities = thread.activities.filter(
-            (activity) => activity.turnId === null || !rollback.removedTurnIds.has(activity.turnId),
+            (activity) => activity.turnId === null || !removedTurnIds.has(activity.turnId),
           );
           const latestCheckpoint = checkpoints.at(-1) ?? null;
 
