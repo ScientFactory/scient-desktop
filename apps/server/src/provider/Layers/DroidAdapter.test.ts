@@ -1,15 +1,21 @@
 import { TurnId } from "@synara/contracts";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
   isDroidNestedTaskToolCall,
   isRenderableDroidAssistantDelta,
+  makeDroidAdapter,
   resolveDroidSessionCwd,
   resolveDroidPermissionPolicy,
   scopeDroidRuntimeItemIdForTurn,
   scopeDroidToolCallStateForTurn,
   shouldIgnoreDroidInterrupt,
 } from "./DroidAdapter.ts";
+import {
+  observeAdapterNotificationLifecycle,
+  ProviderNotificationAdapterTestLayer,
+} from "./ProviderNotificationDrain.testSupport.ts";
 
 const serverConfig = {
   cwd: "/server/cwd",
@@ -128,5 +134,31 @@ describe("DroidAdapter runtime event scoping", () => {
     expect(shouldIgnoreDroidInterrupt(oldTurnId, undefined)).toBe(true);
     expect(shouldIgnoreDroidInterrupt(newTurnId, newTurnId)).toBe(false);
     expect(shouldIgnoreDroidInterrupt(undefined, newTurnId)).toBe(false);
+  });
+});
+
+describe("DroidAdapter notification drain lifetime", () => {
+  it("delivers post-start notifications and bounds replacement, stop, and startup failure", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        observeAdapterNotificationLifecycle({
+          provider: "droid",
+          makeAdapter: (sessionRuntimeFactory) => makeDroidAdapter({}, { sessionRuntimeFactory }),
+        }).pipe(Effect.provide(ProviderNotificationAdapterTestLayer)),
+      ),
+    );
+
+    expect(result).toEqual({
+      firstEventProvider: "droid",
+      firstEventDelta: "late-first",
+      firstScopeClosed: true,
+      replacementEventProvider: "droid",
+      replacementEventDelta: "late-replacement",
+      replacementScopeClosed: true,
+      sessionPresentAfterStop: false,
+      failedStart: true,
+      failedScopeClosed: true,
+      failedSessionPresent: false,
+    });
   });
 });
