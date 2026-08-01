@@ -19,10 +19,13 @@ describe("061_ScientOperationReceipts", () => {
       `;
       assert.deepEqual(before, []);
 
-      const upgraded = yield* runMigrations();
+      const upgraded = yield* runMigrations({ toMigrationInclusive: 61 });
       assert.deepEqual(upgraded, [[61, "ScientOperationReceipts"]]);
-      assert.deepEqual(yield* runMigrations(), []);
-      assert.deepEqual(migrationEntries.at(-1)?.slice(0, 2), [61, "ScientOperationReceipts"]);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 61 }), []);
+      assert.deepEqual(migrationEntries.find(([id]) => id === 61)?.slice(0, 2), [
+        61,
+        "ScientOperationReceipts",
+      ]);
 
       yield* sql`
         INSERT INTO scient_operation_claims (
