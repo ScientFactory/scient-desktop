@@ -118,6 +118,65 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-timeline-row-kind="message"');
   }, 10_000);
 
+  it("renders durable assistant image attachments with the shared preview control", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-assistant-image",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("assistant-message-image"),
+              role: "assistant",
+              text: "Here is the image.",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-attachment-id",
+                  name: "generated-image.png",
+                  mimeType: "image/png",
+                  sizeBytes: 12,
+                  previewUrl: "/attachments/thread-attachment-id",
+                },
+              ],
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Preview generated-image.png"');
+    expect(markup).toContain('src="/attachments/thread-attachment-id"');
+    expect(markup).toContain("Here is the image.");
+  });
+
+  it("corrects a settled image only for the tail while the reader remains at the end", async () => {
+    const { shouldCorrectTimelineForSettledImage } = await import("./MessagesTimeline");
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: true })).toBe(true);
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: false, isAtEnd: true })).toBe(false);
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: false })).toBe(false);
+  });
   it("renders assistant math through the shared markdown renderer", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

@@ -24,10 +24,10 @@ describe("GeneratedMarkdownImage download feedback", () => {
       <GeneratedMarkdownImage src="/tmp/generated.png" alt="Generated chart" cwd="/tmp" />,
     );
 
-    await page.getByRole("link", { name: "Download generated image" }).click();
+    await page.getByRole("link", { name: "Download Generated chart" }).click();
 
     await expect
-      .element(page.getByRole("alert"))
-      .toHaveTextContent("The generated file is unavailable.");
+      .element(page.getByText("Could not download image: The generated file is unavailable."))
+      .toBeVisible();
   });
 });

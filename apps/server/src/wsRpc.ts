@@ -201,6 +201,16 @@ function toWsRpcError(cause: unknown, fallbackMessage: string) {
       });
 }
 
+export function tryWsRpcPromise<A>(
+  evaluate: () => Promise<A>,
+  fallbackMessage: string,
+): Effect.Effect<A, WsRpcError> {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (cause) => toWsRpcError(cause, fallbackMessage),
+  });
+}
+
 const failLiveUiStreamForSnapshotResync = (report: LiveUiStreamDropReport) =>
   Effect.fail(
     new WsRpcError({
@@ -784,12 +794,18 @@ export const makeWsRpcLayer = () =>
           rpcEffect(devServerManager.list, "Failed to list dev servers"),
         [WS_METHODS.projectsRepositorySourceStatuses]: () =>
           rpcEffect(
-            Effect.tryPromise(() => getRepositorySourceStatuses()),
+            tryWsRpcPromise(
+              () => getRepositorySourceStatuses(),
+              "Failed to inspect repository sources",
+            ),
             "Failed to inspect repository sources",
           ),
         [WS_METHODS.projectsCloneSource]: (input) =>
           rpcEffect(
-            Effect.tryPromise(() => cloneProjectSource(input, config.homeDir)),
+            tryWsRpcPromise(
+              () => cloneProjectSource(input, config.homeDir),
+              "Failed to clone repository",
+            ),
             "Failed to clone repository",
           ),
         [WS_METHODS.subscribeProjectDevServerEvents]: () =>

@@ -16,6 +16,7 @@ import type {
   OrchestrationThread,
   OrchestrationThreadShell,
   CheckpointRef,
+  MessageId,
   ProjectId,
   ProjectKind,
   ThreadId,
@@ -53,9 +54,25 @@ export interface ProjectionThreadCheckpointContextOptions {
   readonly includeFileChangeActivityPayloads?: boolean;
 }
 
-export interface ProjectionGeneratedImageActivityRecord {
-  readonly kind: string;
-  readonly payload: unknown;
+export interface ProjectionGeneratedImageReferenceRecord {
+  readonly sourcePath: string;
+  readonly provenanceKey: string;
+  readonly sourceKind: "codex" | "studio" | null;
+  readonly sourceProviderThreadId: string | null;
+}
+
+export interface ProjectionTurnGeneratedImageStartupReferenceRecord extends ProjectionGeneratedImageReferenceRecord {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly attachmentId: string;
+  readonly createdAt: string;
+}
+
+export interface ProjectionTurnlessGeneratedImageReferenceRecord extends ProjectionGeneratedImageReferenceRecord {
+  readonly threadId: ThreadId;
+  readonly targetMessageId: MessageId;
+  readonly attachmentId: string;
+  readonly createdAt: string;
 }
 
 export interface ProjectionFullThreadDiffContext {
@@ -150,18 +167,41 @@ export interface ProjectionSnapshotQueryShape {
     options?: ProjectionThreadCheckpointContextOptions,
   ) => Effect.Effect<Option.Option<ProjectionThreadCheckpointContext>, ProjectionRepositoryError>;
 
-  /**
-   * Read the durable generated-image records for one turn. This narrow query is
-   * intentionally independent of the bounded thread-detail activity window so
-   * long turns and server restarts can still materialize transcript references.
-   */
-  readonly listGeneratedImageActivitiesByTurn: (
+  /** Read trusted internal generated-image references for one turn in first-seen order. */
+  readonly listGeneratedImageReferencesByTurn: (
     threadId: ThreadId,
     turnId: TurnId,
   ) => Effect.Effect<
-    ReadonlyArray<ProjectionGeneratedImageActivityRecord>,
+    ReadonlyArray<ProjectionGeneratedImageReferenceRecord>,
     ProjectionRepositoryError
   >;
+
+  /** Read the bounded unresolved terminal-turn reference startup ledger. */
+  readonly listTurnGeneratedImageReferencesForStartup: () => Effect.Effect<
+    ReadonlyArray<ProjectionTurnGeneratedImageStartupReferenceRecord>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read trusted turnless references for one deterministic assistant-message target. */
+  readonly listTurnlessGeneratedImageReferencesByTarget: (
+    threadId: ThreadId,
+    targetMessageId: MessageId,
+  ) => Effect.Effect<
+    ReadonlyArray<ProjectionTurnlessGeneratedImageReferenceRecord>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read the bounded trusted turnless-reference startup recovery ledger. */
+  readonly listTurnlessGeneratedImageReferences: () => Effect.Effect<
+    ReadonlyArray<ProjectionTurnlessGeneratedImageReferenceRecord>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read the last assistant message for a turn in authoritative event sequence order. */
+  readonly getLatestAssistantMessageIdByTurn: (
+    threadId: ThreadId,
+    turnId: TurnId,
+  ) => Effect.Effect<Option.Option<MessageId>, ProjectionRepositoryError>;
 
   /**
    * Read the narrow context needed to diff a whole thread through one checkpoint.

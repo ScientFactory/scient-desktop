@@ -3,7 +3,7 @@
 // Layer: Chat composer presentation
 // Depends on: composer draft image metadata, shared chip styles, and expanded image preview helpers.
 
-import { memo } from "react";
+import { memo, type MouseEvent } from "react";
 import { WindowIcon } from "~/lib/icons";
 import { type ComposerImageAttachment } from "../../composerDraftStore";
 import { normalizeComposerImageSource } from "../../lib/composerImageSource";
@@ -32,8 +32,10 @@ export const ComposerImageAttachmentChip = memo(function ComposerImageAttachment
 }: ComposerImageAttachmentChipProps) {
   // Normalize here so a legacy "appshot" provenance still renders as an AppSnap.
   const appSnapSource = normalizeComposerImageSource(image.source) ?? null;
-  const previewImage = () => {
-    const preview = buildExpandedImagePreview(images, image.id);
+  const previewImage = (event: MouseEvent<HTMLButtonElement>) => {
+    const preview = buildExpandedImagePreview(images, image.id, {
+      returnFocus: event.currentTarget,
+    });
     if (!preview) return;
     onExpandImage(preview);
   };
