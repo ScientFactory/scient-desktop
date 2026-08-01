@@ -347,10 +347,16 @@ describe("CheckpointStoreLive", () => {
     initializeRepository(repo);
     const trackedPath = join(repo, "tracked.txt");
     writeFileSync(trackedPath, "before\n");
+    const racyTimestamp = new Date(1_000);
+    utimesSync(trackedPath, racyTimestamp, racyTimestamp);
     runGit(repo, ["add", "tracked.txt"]);
     runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    runGit(repo, ["config", "core.trustctime", "false"]);
+    runGit(repo, ["config", "core.checkStat", "minimal"]);
 
     const originalStat = statSync(trackedPath);
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    utimesSync(liveIndexPath, originalStat.atime, originalStat.mtime);
     writeFileSync(trackedPath, "after!\n");
     utimesSync(trackedPath, originalStat.atime, originalStat.mtime);
     runtime = ManagedRuntime.make(checkpointIntegrationLayer);
