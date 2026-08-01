@@ -42,23 +42,23 @@ describe("ScientProjectInitializationDialog", () => {
     );
 
     const setupChoice = page.getByRole("button", { name: /^Set up a Scient project/ });
-    const emptyChoice = page.getByRole("button", { name: /^Open an empty project/ });
+    const openOnlyChoice = page.getByRole("button", { name: /^Open without setup/ });
     await expect.element(setupChoice).toBeVisible();
-    await expect.element(emptyChoice).toBeVisible();
+    await expect.element(openOnlyChoice).toBeVisible();
 
     const setupButton = await setupChoice.element();
-    const emptyButton = await emptyChoice.element();
+    const openOnlyButton = await openOnlyChoice.element();
     const popup = document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
     const setupRect = setupButton.getBoundingClientRect();
-    const emptyRect = emptyButton.getBoundingClientRect();
+    const openOnlyRect = openOnlyButton.getBoundingClientRect();
     const popupRect = popup?.getBoundingClientRect();
 
     expect(popupRect?.width).toBeLessThanOrEqual(580);
     expect(popupRect?.height).toBeLessThan(200);
     expect(setupRect.height).toBeGreaterThanOrEqual(72);
     expect(setupRect.height).toBeLessThan(100);
-    expect(Math.abs(setupRect.top - emptyRect.top)).toBeLessThan(1);
-    expect(Math.abs(setupRect.height - emptyRect.height)).toBeLessThan(1);
+    expect(Math.abs(setupRect.top - openOnlyRect.top)).toBeLessThan(1);
+    expect(Math.abs(setupRect.height - openOnlyRect.height)).toBeLessThan(1);
   });
 
   it("applies setup directly from the initial project choice", async () => {
@@ -83,17 +83,20 @@ describe("ScientProjectInitializationDialog", () => {
     expect(onDecision).toHaveBeenCalledWith("apply");
   });
 
-  it("keeps opening without setup as a separate direct choice", async () => {
+  it("describes opening without setup as non-destructive for an existing folder", async () => {
     const onDecision = vi.fn();
     render(
       <ScientProjectInitializationDialog
-        preview={readyPreview()}
+        preview={readyPreview({ folderState: "existing-uninitialized" })}
         error={null}
         onDecision={onDecision}
       />,
     );
 
-    await page.getByRole("button", { name: /^Open an empty project/ }).click();
+    await expect
+      .element(page.getByText("Keep this folder and its contents as they are.", { exact: true }))
+      .toBeVisible();
+    await page.getByRole("button", { name: /^Open without setup/ }).click();
 
     expect(onDecision).toHaveBeenCalledOnce();
     expect(onDecision).toHaveBeenCalledWith("open-only");

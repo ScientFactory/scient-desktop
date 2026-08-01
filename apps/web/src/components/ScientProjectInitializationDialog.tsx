@@ -95,10 +95,10 @@ function ReadyProjectChoice(props: {
             </span>
             <span className="min-w-0">
               <span className="block text-sm font-semibold leading-5 text-foreground">
-                Open an empty project
+                Open without setup
               </span>
               <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                Write your own agent instructions later.
+                Keep this folder and its contents as they are.
               </span>
             </span>
           </button>
