@@ -37,11 +37,13 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  isSessionBusyForArchive,
 } from "../session-logic";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import {
   buildThreadHierarchyIndex,
   collectSubagentDescendants,
+  collectSubagentSubtreeRoots,
 } from "@synara/shared/threadHierarchy";
 
 export {
@@ -1598,6 +1600,29 @@ export function collectSelectedThreadSubtreeRoots<T extends ParentLinkedThread>(
     }
     return true;
   });
+}
+
+export function partitionProjectArchiveSubtrees<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId" | "session">,
+>(threads: readonly T[]): {
+  readonly archivableSubtrees: readonly (readonly T[])[];
+  readonly busyCount: number;
+} {
+  const projectSubtrees: T[][] = [];
+  for (const root of collectSubagentSubtreeRoots(threads)) {
+    projectSubtrees.push([root].concat(collectSubagentDescendants(threads, root.id)));
+  }
+  const archivableSubtrees = projectSubtrees.filter((subtree) =>
+    subtree.every((thread) => !isSessionBusyForArchive(thread.session)),
+  );
+  const archivableCount = archivableSubtrees.reduce(
+    (count, subtree) => count + subtree.length,
+    0,
+  );
+  return {
+    archivableSubtrees,
+    busyCount: threads.length - archivableCount,
+  };
 }
 
 export function getProjectSortTimestamp(

@@ -141,7 +141,6 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   isSessionBusyForArchive,
-  isThreadRunningTurn,
 } from "../session-logic";
 import {
   gitRemoveWorktreeMutationOptions,
@@ -232,6 +231,7 @@ import {
   sidebarThreadFamilyRegionId,
   type SidebarThreadFamilyScope,
 } from "./SidebarThreadFamilyDisclosure";
+import { SidebarPinnedThreadMainAction } from "./SidebarPinnedThreadMainAction";
 import {
   SidebarStatusTrailingGlyph,
   SidebarThreadTrailingIndicators,
@@ -341,6 +341,7 @@ import {
   nestVisibleSidebarThreadRows,
   groupSidebarThreadsByProjectId,
   partitionSidebarThreadsByProjectIds,
+  partitionProjectArchiveSubtrees,
   isLatestPinnedProjectMutation,
   isLatestPinnedThreadMutation,
   pruneProjectThreadListPagingForCollapsedProjects,
@@ -449,7 +450,7 @@ interface SidebarBulkThreadActivityInput {
   projectName: string;
   completedCount: number;
   failureCount: number;
-  skippedRunningCount?: number;
+  skippedBusyCount?: number;
 }
 
 /**
@@ -477,14 +478,14 @@ function showSidebarTransientAlert(
 export function createSidebarBulkThreadActivity(
   input: SidebarBulkThreadActivityInput,
 ): PublishActivityInput | null {
-  const skippedRunningCount = input.skippedRunningCount ?? 0;
-  if (input.completedCount === 0 && input.failureCount === 0 && skippedRunningCount === 0) {
+  const skippedBusyCount = input.skippedBusyCount ?? 0;
+  if (input.completedCount === 0 && input.failureCount === 0 && skippedBusyCount === 0) {
     return null;
   }
 
   const operationPastTense = input.operation === "archive" ? "archived" : "deleted";
   const operationTitle = input.operation === "archive" ? "Archived" : "Deleted";
-  const incomplete = input.failureCount > 0 || skippedRunningCount > 0;
+  const incomplete = input.failureCount > 0 || skippedBusyCount > 0;
   const details: string[] = [];
   if (input.completedCount > 0) {
     details.push(
@@ -496,9 +497,11 @@ export function createSidebarBulkThreadActivity(
       `${input.failureCount} ${pluralize(input.failureCount, "thread")} could not be ${operationPastTense}.`,
     );
   }
-  if (skippedRunningCount > 0) {
+  if (skippedBusyCount > 0) {
     details.push(
-      `${skippedRunningCount} running ${pluralize(skippedRunningCount, "thread was", "threads were")} skipped.`,
+      skippedBusyCount === 1
+        ? "1 thread was skipped because its subtree had a starting or active session."
+        : `${skippedBusyCount} threads were skipped because their subtrees had starting or active sessions.`,
     );
   }
 
@@ -511,7 +514,7 @@ export function createSidebarBulkThreadActivity(
         ? input.completedCount > 0
           ? "warning"
           : "error"
-        : skippedRunningCount > 0
+        : skippedBusyCount > 0
           ? "warning"
           : "success",
     title:
@@ -3640,8 +3643,8 @@ export default function Sidebar() {
 
   /**
    * Archive every non-archived thread for a given project in one pass.
-   * Skips (and reports) threads with a running session since the server
-   * rejects archiving an active turn. Confirms the batch once up-front
+   * Skips (and reports) whole subtrees with a starting or active session since
+   * the server rejects archiving them. Confirms the batch once up-front
    * rather than prompting per-thread to avoid dialog spam on large projects.
    */
   const archiveAllThreadsInProject = useCallback(
@@ -3658,26 +3661,19 @@ export default function Sidebar() {
         return;
       }
 
-      const projectSubtrees = collectSubagentSubtreeRoots(projectThreads).map((root) => [
-        root,
-        ...collectSubagentDescendants(projectThreads, root.id),
-      ]);
-      const archivableSubtrees = projectSubtrees.filter(
-        (subtree) => subtree.length > 0 && subtree.every((thread) => !isThreadRunningTurn(thread)),
-      );
+      const { archivableSubtrees, busyCount } = partitionProjectArchiveSubtrees(projectThreads);
       const archivableCount = archivableSubtrees.reduce(
         (count, subtree) => count + subtree.length,
         0,
       );
-      const runningCount = projectThreads.length - archivableCount;
 
       if (archivableSubtrees.length === 0) {
         showSidebarTransientError({
           title: "Cannot archive threads",
           description:
-            runningCount === 1
-              ? "The only conversation in this project belongs to a subtree with a running turn. Stop it before archiving."
-              : `All ${runningCount} conversations in this project belong to subtrees with running turns. Stop them before archiving.`,
+            busyCount === 1
+              ? "The only conversation in this project belongs to a subtree with a starting or active session. Wait for startup or stop it before archiving."
+              : `All ${busyCount} conversations in this project belong to subtrees with starting or active sessions. Wait for startup or stop them before archiving.`,
         });
         return;
       }
@@ -3689,10 +3685,10 @@ export default function Sidebar() {
         `Archive ${archivableCount} ${pluralize(archivableCount, "thread")} in "${project.name}"?`,
         "Archived threads are hidden from the sidebar but can be restored later.",
       ];
-      if (runningCount > 0) {
+      if (busyCount > 0) {
         archiveLines.push(
           "",
-          `${runningCount} ${pluralize(runningCount, "conversation belongs", "conversations belong")} to an active subtree and will be skipped.`,
+          `${busyCount} ${pluralize(busyCount, "conversation belongs", "conversations belong")} to a subtree with a starting or active session and will be skipped.`,
         );
       }
       const archiveConfirmed = api
@@ -3733,7 +3729,7 @@ export default function Sidebar() {
         projectName: project.name,
         completedCount: archivedCount,
         failureCount,
-        skippedRunningCount: runningCount,
+        skippedBusyCount: busyCount,
       });
       if (activity) activityManager.publish(activity);
     },
@@ -5918,11 +5914,11 @@ export default function Sidebar() {
               });
             }}
           >
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+            <SidebarPinnedThreadMainAction
+              projectLabel={projectLabel}
+              hasTrailingStatusGlyph={hasTrailingStatusGlyph}
               onPointerDown={(event) => primeThreadActivation(event, thread.id)}
-              onClick={() => activateThreadFromSidebarIntent(thread.id)}
+              onActivate={() => activateThreadFromSidebarIntent(thread.id)}
               onDoubleClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -5969,7 +5965,7 @@ export default function Sidebar() {
                   Pending
                 </span>
               ) : null}
-            </button>
+            </SidebarPinnedThreadMainAction>
             {canToggleSubagents ? (
               <SidebarThreadFamilyDisclosureButton
                 childCount={childCount}
@@ -5979,23 +5975,6 @@ export default function Sidebar() {
                 className="border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] text-[color:var(--color-text-foreground-secondary)] hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[color:var(--color-text-foreground)]"
                 onToggle={() => toggleSubagentParent(thread.id)}
               />
-            ) : null}
-            {projectLabel ? (
-              // Right-aligned project context for the flattened pinned list. The title
-              // (flex-1) pushes it to the content edge, so it shows in full when the row
-              // has room and only truncates under real pressure, shifting left as the
-              // trailing reserve grows on hover/status. When a live status glyph occupies
-              // the trailing slot (e.g. the running spinner), the absolute cluster reaches
-              // a few px past the reserve — a small margin keeps the folder name from
-              // touching the worktree chip. It costs no space when the row is idle.
-              <span
-                className={cn(
-                  "max-w-[40%] shrink-0 truncate text-right text-[length:var(--app-font-size-ui-meta,10px)] text-muted-foreground/38 transition-[margin] duration-150 ease-out",
-                  hasTrailingStatusGlyph && "mr-2",
-                )}
-              >
-                {projectLabel}
-              </span>
             ) : null}
             <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center">
               {renderThreadRowTrailingCluster({

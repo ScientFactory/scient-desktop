@@ -30,6 +30,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   partitionSidebarThreadsByProjectIds,
+  partitionProjectArchiveSubtrees,
   isLatestPinnedThreadMutation,
   isLoopbackHostname,
   isDuplicateProjectCreateError,
@@ -1843,6 +1844,67 @@ describe("partitionSidebarThreadsByProjectIds", () => {
 
     expect(partitioned.nonStudioThreads.map((thread) => thread.id)).toEqual(["thread-project"]);
     expect(partitioned.studioThreads.map((thread) => thread.id)).toEqual(["thread-studio"]);
+  });
+});
+
+function makeArchiveSession(
+  orchestrationStatus: NonNullable<SidebarThreadSummary["session"]>["orchestrationStatus"],
+  activeTurnId?: NonNullable<SidebarThreadSummary["session"]>["activeTurnId"],
+): NonNullable<SidebarThreadSummary["session"]> {
+  return {
+    provider: "codex",
+    status: orchestrationStatus === "running" ? "running" : "ready",
+    ...(activeTurnId === undefined ? {} : { activeTurnId }),
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    orchestrationStatus,
+  };
+}
+
+describe("partitionProjectArchiveSubtrees", () => {
+
+  it("skips a whole subtree when a descendant session is starting", () => {
+    const root = makeSidebarThreadSummary({ id: ThreadId.makeUnsafe("root-starting") });
+    const child = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("child-starting"),
+      parentThreadId: root.id,
+      session: makeArchiveSession("starting"),
+    });
+
+    expect(partitionProjectArchiveSubtrees([root, child])).toEqual({
+      archivableSubtrees: [],
+      busyCount: 2,
+    });
+  });
+
+  it("treats a running session without an active turn id as busy", () => {
+    const running = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("running-before-turn-projection"),
+      session: makeArchiveSession("running"),
+    });
+
+    expect(partitionProjectArchiveSubtrees([running])).toEqual({
+      archivableSubtrees: [],
+      busyCount: 1,
+    });
+  });
+
+  it("keeps an independent idle subtree archivable", () => {
+    const busyRoot = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("busy-root"),
+      session: makeArchiveSession("starting"),
+    });
+    const idleRoot = makeSidebarThreadSummary({ id: ThreadId.makeUnsafe("idle-root") });
+    const idleChild = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("idle-child"),
+      parentThreadId: idleRoot.id,
+      session: makeArchiveSession("idle"),
+    });
+
+    expect(partitionProjectArchiveSubtrees([busyRoot, idleRoot, idleChild])).toEqual({
+      archivableSubtrees: [[idleRoot, idleChild]],
+      busyCount: 1,
+    });
   });
 });
 

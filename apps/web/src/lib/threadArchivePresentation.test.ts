@@ -5,6 +5,8 @@ import {
   archivedThreadDeleteActionLabel,
   archivedThreadDeleteProgressMessage,
   archivedThreadDeleteSuccessMessage,
+  archivedWorktreeDeleteBlockedMessage,
+  archivedWorktreeDeleteSuccessMessage,
   archivedThreadRestoreAccessibleLabel,
   archivedThreadRestoreActionLabel,
   archivedThreadRestoreProgressMessage,
@@ -71,6 +73,18 @@ describe("thread archive presentation", () => {
     );
     expect(archivedThreadDeleteSuccessMessage(3)).toBe(
       "3 archived conversations were permanently removed.",
+    );
+  });
+
+  it("reports the actual safe worktree deletion scope and refused descendants", () => {
+    expect(archivedWorktreeDeleteSuccessMessage("Feature worktree", 3)).toBe(
+      "Feature worktree was removed and 3 archived conversations were deleted.",
+    );
+    expect(archivedWorktreeDeleteSuccessMessage("Feature worktree", 1)).toBe(
+      "Feature worktree was removed and 1 archived conversation was deleted.",
+    );
+    expect(archivedWorktreeDeleteBlockedMessage("Feature worktree", 2)).toBe(
+      "Could not safely delete Feature worktree. 2 descendant conversations fall outside the archived conversations linked to this worktree. Archive or relink them, then retry.",
     );
   });
 });

@@ -74,3 +74,23 @@ export function archivedThreadDeleteSuccessMessage(conversationCount: number): s
     ? `${conversationCount} archived conversations were permanently removed.`
     : "The archived thread was permanently removed.";
 }
+
+export function archivedWorktreeDeleteBlockedMessage(
+  worktreeName: string,
+  unexpectedConversationCount: number,
+): string {
+  const conversations =
+    unexpectedConversationCount === 1
+      ? "1 descendant conversation falls"
+      : `${unexpectedConversationCount} descendant conversations fall`;
+  return `Could not safely delete ${worktreeName}. ${conversations} outside the archived conversations linked to this worktree. Archive or relink them, then retry.`;
+}
+
+export function archivedWorktreeDeleteSuccessMessage(
+  worktreeName: string,
+  deletedConversationCount: number,
+): string {
+  return deletedConversationCount > 0
+    ? `${worktreeName} was removed and ${deletedConversationCount} archived ${deletedConversationCount === 1 ? "conversation was" : "conversations were"} deleted.`
+    : `${worktreeName} was removed.`;
+}

@@ -13,6 +13,7 @@ import {
   archivedThreadDeleteConfirmation,
   buildArchivedThreadFamilyScopes,
   buildArchivedThreadDeletionFamilies,
+  buildArchivedWorktreeDeletionPlan,
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "./archivedThreadDelete";
@@ -21,6 +22,23 @@ const PROJECT_ID = ProjectId.makeUnsafe("project-archived-delete");
 
 function snapshotThread(threadId: ThreadId, parentThreadId: ThreadId | null = null) {
   return { id: threadId, parentThreadId, projectId: PROJECT_ID };
+}
+
+function worktreeSnapshotThread(
+  threadId: ThreadId,
+  parentThreadId: ThreadId | null,
+  options: {
+    readonly archived?: boolean;
+    readonly worktreePath?: string | null;
+    readonly associatedWorktreePath?: string | null;
+  } = {},
+) {
+  return {
+    ...snapshotThread(threadId, parentThreadId),
+    archivedAt: options.archived === false ? null : "2026-08-01T00:00:00.000Z",
+    worktreePath: options.worktreePath ?? null,
+    associatedWorktreePath: options.associatedWorktreePath ?? null,
+  };
 }
 
 describe("archivedThreadDeleteConfirmation", () => {
@@ -169,6 +187,101 @@ describe("deleteArchivedThreadFromClient", () => {
         snapshotThreads: [snapshotThread(parent), snapshotThread(child, parent)],
       }),
     ).toEqual([{ rootThreadId: parent, descendantThreadIds: [child] }]);
+  });
+
+  it("honors a selected ancestor through an omitted intermediate and emits one command", async () => {
+    const parent = ThreadId.makeUnsafe("thread-selected-parent");
+    const omittedChild = ThreadId.makeUnsafe("thread-omitted-child");
+    const selectedGrandchild = ThreadId.makeUnsafe("thread-selected-grandchild");
+    const snapshotThreads = [
+      snapshotThread(parent),
+      snapshotThread(omittedChild, parent),
+      snapshotThread(selectedGrandchild, omittedChild),
+    ];
+    const dispatchCommand = vi.fn().mockResolvedValue({ sequence: 11 });
+    const removeDeletedThreadFromClientState = vi.fn();
+
+    expect(
+      buildArchivedThreadDeletionFamilies({
+        selectedThreadIds: [parent, selectedGrandchild],
+        snapshotThreads,
+      }),
+    ).toEqual([
+      {
+        rootThreadId: parent,
+        descendantThreadIds: [selectedGrandchild, omittedChild],
+      },
+    ]);
+
+    await deleteArchivedThreadsFromClient({
+      api: archivedDeleteApi(dispatchCommand),
+      threadIds: [parent, selectedGrandchild],
+      snapshotThreads,
+      removeDeletedThreadFromClientState,
+    });
+
+    expect(dispatchCommand).toHaveBeenCalledOnce();
+    expect(dispatchCommand).toHaveBeenCalledWith({
+      type: "thread.delete",
+      commandId: expect.any(String),
+      threadId: parent,
+      cascadeDescendants: true,
+      expectedDescendantThreadIds: [selectedGrandchild, omittedChild],
+    });
+    expect(removeDeletedThreadFromClientState.mock.calls).toEqual([
+      [selectedGrandchild],
+      [omittedChild],
+      [parent],
+    ]);
+  });
+
+  it.each([
+    {
+      name: "unlinked archived",
+      child: (child: ThreadId, parent: ThreadId) => worktreeSnapshotThread(child, parent),
+    },
+    {
+      name: "live linked",
+      child: (child: ThreadId, parent: ThreadId) =>
+        worktreeSnapshotThread(child, parent, { archived: false, worktreePath: "/target" }),
+    },
+    {
+      name: "other-worktree archived",
+      child: (child: ThreadId, parent: ThreadId) =>
+        worktreeSnapshotThread(child, parent, { worktreePath: "/other" }),
+    },
+  ])("refuses a selected worktree root with a $name descendant", ({ child: makeChild }) => {
+    const parent = ThreadId.makeUnsafe("thread-worktree-parent");
+    const child = ThreadId.makeUnsafe("thread-outside-child");
+    const plan = buildArchivedWorktreeDeletionPlan({
+      worktreePath: "/target",
+      snapshotThreads: [
+        worktreeSnapshotThread(parent, null, { worktreePath: "/target" }),
+        makeChild(child, parent),
+      ],
+    });
+
+    expect(plan.families).toEqual([{ rootThreadId: parent, descendantThreadIds: [child] }]);
+    expect(plan.threadIds).toEqual([child, parent]);
+    expect(plan.linkedArchivedThreadIds).toEqual([parent]);
+    expect(plan.unexpectedDescendantThreadIds).toEqual([child]);
+  });
+
+  it("counts the unique destructive union when every descendant is linked and archived", () => {
+    const parent = ThreadId.makeUnsafe("thread-linked-parent");
+    const child = ThreadId.makeUnsafe("thread-linked-child");
+    const plan = buildArchivedWorktreeDeletionPlan({
+      worktreePath: " /target ",
+      snapshotThreads: [
+        worktreeSnapshotThread(parent, null, { worktreePath: "/target" }),
+        worktreeSnapshotThread(child, parent, { associatedWorktreePath: "/target" }),
+      ],
+    });
+
+    expect(plan.threadIds).toEqual([child, parent]);
+    expect(plan.linkedArchivedThreadIds).toEqual([parent, child]);
+    expect(plan.linkedActiveThreadCount).toBe(0);
+    expect(plan.unexpectedDescendantThreadIds).toEqual([]);
   });
 
   it("reconciles a complete independent family when a later family fails", async () => {

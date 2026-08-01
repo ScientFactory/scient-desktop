@@ -396,6 +396,39 @@ describe("waitForDeletedSubagentSettlement", () => {
 });
 
 describe("runStartupPurgeProgressPasses", () => {
+  it("refreshes a child-before-parent read model before the next purge pass", async () => {
+    const remainingThreadIds = new Set(["child", "parent"]);
+    let commandReadModelThreadIds = new Set(remainingThreadIds);
+    const attemptedThreadIds: string[] = [];
+    let refreshCount = 0;
+
+    const result = await Effect.runPromise(
+      runStartupPurgeProgressPasses({
+        purgePass: () =>
+          Effect.sync(() => {
+            let purgedCount = 0;
+            for (const threadId of remainingThreadIds) {
+              attemptedThreadIds.push(threadId);
+              if (threadId === "child" && commandReadModelThreadIds.has("parent")) continue;
+              remainingThreadIds.delete(threadId);
+              purgedCount += 1;
+            }
+            return purgedCount;
+          }),
+        afterProgressPass: () =>
+          Effect.sync(() => {
+            refreshCount += 1;
+            commandReadModelThreadIds = new Set(remainingThreadIds);
+          }),
+      }),
+    );
+
+    expect(result).toEqual({ purgedCount: 2, reachedPassLimit: false });
+    expect(attemptedThreadIds).toEqual(["child", "parent", "child"]);
+    expect(refreshCount).toBe(2);
+    expect(remainingThreadIds.size).toBe(0);
+  });
+
   it("retries a deferred root after a root-first pass purges its child", async () => {
     const remainingThreadIds = new Set(["root", "child"]);
     const attemptedThreadIds: string[] = [];

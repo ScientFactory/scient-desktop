@@ -33,6 +33,7 @@ const STARTUP_PURGE_MAX_PROGRESS_PASSES = 1_000;
 export const runStartupPurgeProgressPasses = Effect.fn("runStartupPurgeProgressPasses")(
   function* (input: {
     readonly purgePass: () => Effect.Effect<number, unknown>;
+    readonly afterProgressPass?: (() => Effect.Effect<void, unknown>) | undefined;
     readonly maxPasses?: number;
   }) {
     const maxPasses = Math.max(1, input.maxPasses ?? STARTUP_PURGE_MAX_PROGRESS_PASSES);
@@ -43,6 +44,7 @@ export const runStartupPurgeProgressPasses = Effect.fn("runStartupPurgeProgressP
       if (passPurgedCount === 0) {
         return { purgedCount, reachedPassLimit: false } as const;
       }
+      yield* input.afterProgressPass?.() ?? Effect.void;
     }
     return { purgedCount, reachedPassLimit: true } as const;
   },
@@ -421,10 +423,8 @@ const make = Effect.gen(function* () {
               profileStatsArchive.purgeSoftDeletedManualThreads({
                 beforePurge: (threadId) => cleanupThreadBeforePurge(ThreadId.makeUnsafe(threadId)),
               }),
+            afterProgressPass: () => refreshCommandReadModelAfterPurge("startup-sweep"),
           }),
-        ),
-        Effect.tap(({ purgedCount }) =>
-          purgedCount > 0 ? refreshCommandReadModelAfterPurge("startup-sweep") : Effect.void,
         ),
         Effect.flatMap(({ purgedCount, reachedPassLimit }) =>
           reachedPassLimit
