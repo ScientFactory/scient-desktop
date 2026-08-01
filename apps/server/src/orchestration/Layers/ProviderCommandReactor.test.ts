@@ -17,6 +17,7 @@ import {
   ApprovalRequestId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
   EventId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -6644,6 +6645,7 @@ describe("ProviderCommandReactor", () => {
       (entry) => entry.id === "subagent:thread-1:child-provider-1",
     );
     expect(racedChild?.session?.status).toBe("interrupted");
+    expect(racedChild?.session?.lastErrorClass).toBe(EDIT_RESEND_PARENT_BUSY_ERROR_CLASS);
     expect(racedChild?.messages.at(-1)?.text).toBe("child work in flight");
     expect(
       harness.sendTurn.mock.calls.some((call) =>

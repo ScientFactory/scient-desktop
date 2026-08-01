@@ -37,6 +37,7 @@ import type { ForkProvenance } from "./forkProvenance";
 interface ChatTranscriptPaneProps {
   activeThreadId: string;
   threadError?: string | null;
+  threadErrorClass?: string | null;
   activeTurnId?: TurnId | null;
   interruptedTurn?: { readonly messageId: string; readonly turnId: string } | null;
   activeTurnInProgress: boolean;
@@ -100,6 +101,7 @@ interface ChatTranscriptPaneProps {
 export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   activeThreadId,
   threadError,
+  threadErrorClass,
   activeTurnId,
   interruptedTurn,
   activeTurnInProgress,
@@ -210,6 +212,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             key={activeThreadId}
             activeThreadId={activeThreadId as ThreadId}
             {...(threadError !== undefined ? { threadError } : {})}
+            {...(threadErrorClass !== undefined ? { threadErrorClass } : {})}
             hasMessages={hasMessages}
             isWorking={isWorking}
             worktreeSetup={worktreeSetup}

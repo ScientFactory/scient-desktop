@@ -489,6 +489,8 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+export const EDIT_RESEND_PARENT_BUSY_ERROR_CLASS = "edit_resend_parent_busy";
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,

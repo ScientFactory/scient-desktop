@@ -4,6 +4,7 @@
 // Exports: MessagesTimeline
 
 import {
+  EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
   type MessageId,
   type ProviderMentionReference,
   ThreadId,
@@ -403,6 +404,7 @@ function WorktreeSetupCard({ steps }: { steps: ReadonlyArray<WorktreeSetupStep> 
 interface MessagesTimelineProps {
   activeThreadId?: ThreadId;
   threadError?: string | null;
+  threadErrorClass?: string | null;
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
@@ -480,6 +482,7 @@ interface MessagesTimelineProps {
 export const MessagesTimeline = memo(function MessagesTimeline({
   activeThreadId = DEFAULT_TIMELINE_THREAD_ID,
   threadError = null,
+  threadErrorClass = null,
   hasMessages,
   isWorking,
   activeTurnInProgress,
@@ -1010,27 +1013,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.id === pendingUserMessageEdit.messageId,
     );
     if (!pendingRow || pendingRow.kind !== "message") {
-      useUserMessageEditDraftStore
-        .getState()
-        .clear(activeThreadId, pendingUserMessageEdit.messageId);
-      setEditingUserMessageId((current) =>
-        current === pendingUserMessageEdit.messageId ? null : current,
-      );
+      // Detail hydration can temporarily omit rows while switching threads. The
+      // authoritative delete path clears this store; absence alone is not deletion.
       return;
     }
     if (pendingUserMessageEdit.phase === "dispatching") {
       return;
     }
-    if (threadError) {
-      useUserMessageEditDraftStore
-        .getState()
-        .markRejected(activeThreadId, pendingUserMessageEdit.messageId);
-      setEditingUserMessageId(pendingUserMessageEdit.messageId);
-      return;
-    }
     if (
       pendingUserMessageEdit.phase === "accepted" &&
-      pendingRow.message.text !== pendingUserMessageEdit.originalText
+      (pendingRow.message.text !== pendingUserMessageEdit.originalText ||
+        (pendingRow.message.completedAt ?? pendingRow.message.createdAt) !==
+          pendingUserMessageEdit.originalRevision)
     ) {
       useUserMessageEditDraftStore
         .getState()
@@ -1040,8 +1034,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       );
       return;
     }
+    if (
+      threadError &&
+      threadErrorClass === EDIT_RESEND_PARENT_BUSY_ERROR_CLASS &&
+      pendingUserMessageEdit.phase === "accepted"
+    ) {
+      useUserMessageEditDraftStore
+        .getState()
+        .markRejected(activeThreadId, pendingUserMessageEdit.messageId);
+      setEditingUserMessageId(pendingUserMessageEdit.messageId);
+      return;
+    }
     setEditingUserMessageId(pendingUserMessageEdit.messageId);
-  }, [activeThreadId, pendingUserMessageEdit, rows, threadError]);
+  }, [activeThreadId, pendingUserMessageEdit, rows, threadError, threadErrorClass]);
 
   const submitUserMessageEdit = useCallback(
     async (messageId: MessageId, text: string) => {
@@ -1062,6 +1067,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         messageId,
         draftText: nextText,
         originalText: originalRow.message.text,
+        originalRevision: originalRow.message.completedAt ?? originalRow.message.createdAt,
       });
       setSubmittingEditedUserMessageId(messageId);
       try {
@@ -2633,12 +2639,12 @@ const UserMessageEditForm = memo(function UserMessageEditForm(props: {
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    if (!textarea) {
+    if (!textarea || props.disabled) {
       return;
     }
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }, []);
+  }, [props.disabled]);
 
   useEffect(() => {
     const textarea = textareaRef.current;

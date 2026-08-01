@@ -17,6 +17,7 @@ describe("userMessageEditDraftStore", () => {
       messageId: MESSAGE_ID,
       draftText: "replacement text",
       originalText: "original text",
+      originalRevision: "2026-08-01T08:00:00.000Z",
     });
     store.markRejected(THREAD_ID, MESSAGE_ID);
     store.markAccepted(THREAD_ID, MESSAGE_ID);
@@ -25,6 +26,7 @@ describe("userMessageEditDraftStore", () => {
       messageId: MESSAGE_ID,
       draftText: "replacement text",
       originalText: "original text",
+      originalRevision: "2026-08-01T08:00:00.000Z",
       phase: "rejected",
     });
   });
@@ -35,12 +37,14 @@ describe("userMessageEditDraftStore", () => {
       messageId: MESSAGE_ID,
       draftText: "first replacement",
       originalText: "original text",
+      originalRevision: "2026-08-01T08:00:00.000Z",
     });
     const newerMessageId = MessageId.makeUnsafe("message-edit-draft-newer");
     store.begin(THREAD_ID, {
       messageId: newerMessageId,
       draftText: "newer replacement",
       originalText: "newer original",
+      originalRevision: "2026-08-01T08:00:01.000Z",
     });
     store.clear(THREAD_ID, MESSAGE_ID);
 

@@ -5,6 +5,7 @@ export interface PendingUserMessageEditDraft {
   messageId: MessageId;
   draftText: string;
   originalText: string;
+  originalRevision: string;
   phase: "dispatching" | "accepted" | "rejected";
 }
 

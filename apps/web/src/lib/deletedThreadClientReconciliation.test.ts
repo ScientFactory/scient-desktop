@@ -3,10 +3,11 @@
 // Layer: Web orchestration helper tests
 
 import type { NativeApi, ThreadBrowserState } from "@synara/contracts";
-import { ThreadId } from "@synara/contracts";
+import { MessageId, ThreadId } from "@synara/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useBrowserStateStore } from "../browserStateStore";
+import { useUserMessageEditDraftStore } from "../userMessageEditDraftStore";
 import { createMemoryStorage } from "./storage";
 
 import {
@@ -64,6 +65,7 @@ beforeEach(() => {
 
 afterEach(() => {
   useBrowserStateStore.setState({ threadStatesByThreadId: {}, recentHistoryByThreadId: {} });
+  useUserMessageEditDraftStore.getState().clearAll();
   globalThis.localStorage = originalLocalStorage;
 });
 
@@ -135,6 +137,12 @@ describe("reconcileDeletedThreadsFromClient", () => {
     const threadB = ThreadId.makeUnsafe("thread-delete-b");
     const removeDeletedThreadFromClientState = vi.fn();
     const api = cleanupApi({ getState: async ({ threadId }) => browserState(threadId) });
+    useUserMessageEditDraftStore.getState().begin(threadA, {
+      messageId: MessageId.makeUnsafe("message-delete-draft"),
+      draftText: "replacement text",
+      originalText: "original text",
+      originalRevision: "2026-08-01T08:00:00.000Z",
+    });
 
     await reconcileDeletedThreadsFromClient({
       api,
@@ -148,5 +156,6 @@ describe("reconcileDeletedThreadsFromClient", () => {
       threadB,
     ]);
     expect(removeDeletedThreadFromClientState.mock.calls).toEqual([[threadA], [threadB]]);
+    expect(useUserMessageEditDraftStore.getState().draftsByThreadId[threadA]).toBeUndefined();
   });
 });

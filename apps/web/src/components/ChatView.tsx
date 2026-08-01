@@ -12077,6 +12077,7 @@ export default function ChatView({
                   <ChatTranscriptPane
                     activeThreadId={activeThread.id}
                     threadError={activeThread.error}
+                    threadErrorClass={activeThread.session?.lastErrorClass ?? null}
                     activeTurnId={activeThread.session?.activeTurnId ?? null}
                     interruptedTurn={interruptedTurnEditContext({
                       latestTurn: activeThread.latestTurn,
