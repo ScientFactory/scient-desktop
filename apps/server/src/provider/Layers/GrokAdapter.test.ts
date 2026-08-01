@@ -7,6 +7,7 @@ import { TurnId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  forkGrokNotificationDrain,
   isGrokContextCompactionToolCall,
   isRenderableGrokAssistantDelta,
   mergeGrokModelDescriptors,
@@ -14,6 +15,11 @@ import {
   scopeGrokRuntimeItemIdForTurn,
   scopeGrokToolCallStateForTurn,
 } from "./GrokAdapter.ts";
+import {
+  observeNotificationDrainAbandonedStart,
+  observeNotificationDrainLifetime,
+  observeNotificationDrainReplacement,
+} from "./ProviderNotificationDrain.testSupport.ts";
 
 describe("GrokAdapter runtime event scoping", () => {
   it("makes reused ACP assistant segment ids unique per DP turn", () => {
@@ -144,5 +150,33 @@ describe("GrokAdapter runtime event scoping", () => {
         "high",
       ]);
     }
+  });
+});
+
+describe("GrokAdapter notification drain lifetime", () => {
+  it("keeps draining after the start caller completes and stops at session teardown", async () => {
+    await expect(observeNotificationDrainLifetime(forkGrokNotificationDrain)).resolves.toEqual({
+      deliveredAfterCallerCompleted: true,
+      interruptedBeforeSessionTeardown: false,
+      interruptedAfterSessionTeardown: true,
+    });
+  });
+
+  it("interrupts a stopped session drain without silencing its replacement", async () => {
+    await expect(observeNotificationDrainReplacement(forkGrokNotificationDrain)).resolves.toEqual({
+      stoppedDrainDelivered: false,
+      stoppedDrainInterrupted: true,
+      replacementDrainDelivered: true,
+      replacementDrainInterruptedAfterTeardown: true,
+    });
+  });
+
+  it("interrupts the drain when startup fails before session ownership transfers", async () => {
+    await expect(
+      observeNotificationDrainAbandonedStart(forkGrokNotificationDrain),
+    ).resolves.toEqual({
+      deliveredAfterStartupFailure: false,
+      interruptedByStartupCleanup: true,
+    });
   });
 });

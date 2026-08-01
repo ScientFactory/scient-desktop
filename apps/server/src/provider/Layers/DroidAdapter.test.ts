@@ -2,6 +2,7 @@ import { TurnId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  forkDroidNotificationDrain,
   isDroidNestedTaskToolCall,
   isRenderableDroidAssistantDelta,
   resolveDroidSessionCwd,
@@ -10,6 +11,11 @@ import {
   scopeDroidToolCallStateForTurn,
   shouldIgnoreDroidInterrupt,
 } from "./DroidAdapter.ts";
+import {
+  observeNotificationDrainAbandonedStart,
+  observeNotificationDrainLifetime,
+  observeNotificationDrainReplacement,
+} from "./ProviderNotificationDrain.testSupport.ts";
 
 const serverConfig = {
   cwd: "/server/cwd",
@@ -128,5 +134,33 @@ describe("DroidAdapter runtime event scoping", () => {
     expect(shouldIgnoreDroidInterrupt(oldTurnId, undefined)).toBe(true);
     expect(shouldIgnoreDroidInterrupt(newTurnId, newTurnId)).toBe(false);
     expect(shouldIgnoreDroidInterrupt(undefined, newTurnId)).toBe(false);
+  });
+});
+
+describe("DroidAdapter notification drain lifetime", () => {
+  it("keeps draining after the start caller completes and stops at session teardown", async () => {
+    await expect(observeNotificationDrainLifetime(forkDroidNotificationDrain)).resolves.toEqual({
+      deliveredAfterCallerCompleted: true,
+      interruptedBeforeSessionTeardown: false,
+      interruptedAfterSessionTeardown: true,
+    });
+  });
+
+  it("interrupts a stopped session drain without silencing its replacement", async () => {
+    await expect(observeNotificationDrainReplacement(forkDroidNotificationDrain)).resolves.toEqual({
+      stoppedDrainDelivered: false,
+      stoppedDrainInterrupted: true,
+      replacementDrainDelivered: true,
+      replacementDrainInterruptedAfterTeardown: true,
+    });
+  });
+
+  it("interrupts the drain when startup fails before session ownership transfers", async () => {
+    await expect(
+      observeNotificationDrainAbandonedStart(forkDroidNotificationDrain),
+    ).resolves.toEqual({
+      deliveredAfterStartupFailure: false,
+      interruptedByStartupCleanup: true,
+    });
   });
 });

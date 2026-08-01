@@ -165,6 +165,10 @@ const GROK_PLAN_MODE_PROMPT_PREFIX = [
   "When ready, create the final implementation plan.",
 ].join("\n");
 
+// Notification drains belong to the transferred provider session, not to the
+// short-lived fiber that starts it.
+export const forkGrokNotificationDrain: typeof Effect.forkIn = Effect.forkIn;
+
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   Stream.runFold(
     stream,
@@ -1525,7 +1529,7 @@ export function makeGrokAdapter(
                 ),
               ),
             ),
-          ).pipe(Effect.forkChild);
+          ).pipe(forkGrokNotificationDrain(sessionScope));
 
           ctx.notificationFiber = notificationFiber;
           sessions.set(input.threadId, ctx);

@@ -129,6 +129,10 @@ const CURSOR_PLAN_MODE_PROMPT_PREFIX = [
   "When ready, create the final implementation plan.",
 ].join("\n");
 
+// Notification drains belong to the transferred provider session, not to the
+// short-lived fiber that starts it.
+export const forkCursorNotificationDrain: typeof Effect.forkIn = Effect.forkIn;
+
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   Stream.runFold(
     stream,
@@ -1067,7 +1071,7 @@ export function makeCursorAdapter(
                 }
               }),
             ),
-          ).pipe(Effect.forkChild);
+          ).pipe(forkCursorNotificationDrain(sessionScope));
 
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
