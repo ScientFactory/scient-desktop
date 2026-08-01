@@ -1512,7 +1512,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
               if (joined === "--version") {
                 return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
               }
-              if (joined === "login status" || joined === "login status --json") {
+              if (joined === "-c mcp_servers={} login status") {
                 return { stdout: '{"authenticated":true}\n', stderr: "", code: 0 };
               }
               throw new Error(`Unexpected args: ${joined}`);
@@ -1914,8 +1914,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            return { stdout: "Logged in\n", stderr: "", code: 0 };
           }),
         ),
       ),
@@ -1984,8 +1984,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             assert.strictEqual(command, "/custom/bin/codex");
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            return { stdout: "Logged in\n", stderr: "", code: 0 };
           }),
         ),
       ),
@@ -2006,7 +2006,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             if (commandLine.includes('"--version"')) {
               return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
             }
-            if (commandLine.includes('"login" "status"')) {
+            if (commandLine.includes('"-c" "mcp_servers={}" "login" "status"')) {
               return { stdout: "Logged in\n", stderr: "", code: 0 };
             }
             throw new Error(`Unexpected args: ${args.join(" ")}`);
@@ -2047,11 +2047,9 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             assert.strictEqual(env?.CODEX_HOME, expectedCodexHome);
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status") {
-              sawLoginStatusProbe = true;
-              return { stdout: "Logged in\n", stderr: "", code: 0 };
-            }
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            sawLoginStatusProbe = true;
+            return { stdout: "Logged in\n", stderr: "", code: 0 };
           }),
         ),
       );
@@ -2109,10 +2107,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status") {
-              return { stdout: "", stderr: "Not logged in. Run codex login.", code: 1 };
-            }
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            return { stdout: "", stderr: "Not logged in. Run codex login.", code: 1 };
           }),
         ),
       ),
@@ -2135,9 +2131,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status")
-              return { stdout: "Not logged in\n", stderr: "", code: 1 };
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            return { stdout: "Not logged in\n", stderr: "", code: 1 };
           }),
         ),
       ),
@@ -2160,10 +2155,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status") {
-              return { stdout: "", stderr: "error: unknown command 'login'", code: 2 };
-            }
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            return { stdout: "", stderr: "error: unknown command 'login'", code: 2 };
           }),
         ),
       ),
@@ -2238,9 +2231,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            if (joined === "login status")
-              return { stdout: "Not logged in\n", stderr: "", code: 1 };
-            throw new Error(`Unexpected args: ${joined}`);
+            assert.deepStrictEqual(args, ["-c", "mcp_servers={}", "login", "status"]);
+            return { stdout: "Not logged in\n", stderr: "", code: 1 };
           }),
         ),
       ),
