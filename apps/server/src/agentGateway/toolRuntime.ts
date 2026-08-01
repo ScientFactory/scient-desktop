@@ -17,6 +17,10 @@ import type {
   ScientOperationId,
   ScientOperationRequestEnvelope,
 } from "../scientOperations/authority.ts";
+import type {
+  ScientOperationDurableIntent,
+  ScientOperationSafeReplay,
+} from "../persistence/Services/ScientOperationReceipts.ts";
 import {
   mcpToolResultError,
   mcpToolResultJson,
@@ -81,6 +85,20 @@ export interface ToolEntry {
   readonly operation: ScientOperationId;
   /** Decode this wire shape; the Scient operation registry performs domain canonicalization. */
   readonly decodeInput: (args: Record<string, unknown>) => Record<string, unknown>;
+  readonly durableReplay?: {
+    readonly encode: (
+      result: McpToolCallResult,
+      canonicalInput: Readonly<Record<string, unknown>>,
+    ) => ScientOperationSafeReplay;
+    readonly decode: (
+      replay: ScientOperationSafeReplay,
+      canonicalInput: Readonly<Record<string, unknown>>,
+    ) => McpToolCallResult;
+  };
+  readonly prepareDurableIntent?: (
+    canonicalInput: Readonly<Record<string, unknown>>,
+    envelope: ScientOperationRequestEnvelope,
+  ) => ScientOperationDurableIntent;
   readonly handler: ToolHandler;
 }
 

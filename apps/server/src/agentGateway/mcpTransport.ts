@@ -165,6 +165,19 @@ export function makeAgentGatewayMcpTransport(input: {
             operation: tool.operation,
             projectId: context.callerProjectId,
             ingress: "provider-gateway",
+            ...(context.callerTurnId === null
+              ? {}
+              : { providerAuthorizingTurnId: context.callerTurnId }),
+            ...(context.callerTurnId === null
+              ? {}
+              : {
+                  semanticIdempotencyScope: {
+                    kind: "provider-turn" as const,
+                    provider: context.callerProvider,
+                    callerThreadId: context.callerThreadId,
+                    callerTurnId: context.callerTurnId,
+                  },
+                }),
             domainInput: decoded.value,
             admit: admissionEffect,
             execute: (canonicalInput, executionContext) => {
@@ -188,9 +201,18 @@ export function makeAgentGatewayMcpTransport(input: {
               );
             },
             releaseRead: () => context.requireCurrentOperationCaller().pipe(Effect.asVoid),
+            releaseReplay: () =>
+              (operation.admission === "write-authority"
+                ? context.requireCurrentCallerTurn()
+                : context.requireCurrentOperationCaller()
+              ).pipe(Effect.asVoid),
             runTransactionalWrite: (effect) => context.runTransactionalWrite(effect),
             revocationFence: context.revocationFence,
             resultErrorCode: toolResultErrorCode,
+            ...(tool.durableReplay === undefined ? {} : { durableReplay: tool.durableReplay }),
+            ...(tool.prepareDurableIntent === undefined
+              ? {}
+              : { prepareDurableIntent: tool.prepareDurableIntent }),
           });
 
           switch (outcome.kind) {
@@ -222,6 +244,13 @@ export function makeAgentGatewayMcpTransport(input: {
                 request.id,
                 gatewayToolErrorResult(new GatewayToolError(outcome.code, outcome.message)),
               );
+            case "durability-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolErrorResult(new GatewayToolError(outcome.code, outcome.message)),
+              );
+            case "replayed":
+              return jsonRpcResult(request.id, outcome.result);
             case "finished":
               return jsonRpcResult(
                 request.id,

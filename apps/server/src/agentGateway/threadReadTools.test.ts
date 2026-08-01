@@ -140,7 +140,6 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     operationId: "operation-test",
     projectId: CALLER_PROJECT,
     ingress: "provider-gateway",
-    semanticIdempotencyIdentity: "test",
     payloadFingerprint: "test-payload",
     receivedAt: 1,
   });

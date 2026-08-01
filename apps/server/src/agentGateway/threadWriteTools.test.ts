@@ -19,7 +19,7 @@ import {
   SCIENT_OPERATION_DEFINITIONS,
   type ScientOperationAuthority,
 } from "../scientOperations/authority.ts";
-import { makeScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
+import { makeEphemeralScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import type { McpToolCallResult } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -116,6 +116,18 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     projectId: CALLER_PROJECT,
     ingress: "provider-gateway",
     semanticIdempotencyIdentity: "test",
+    semanticIdempotencyScope: {
+      kind: "provider-turn",
+      provider:
+        operationAuthority.actor.kind === "provider-thread"
+          ? operationAuthority.actor.provider
+          : "claudeAgent",
+      callerThreadId:
+        operationAuthority.actor.kind === "provider-thread"
+          ? operationAuthority.actor.threadId
+          : CALLER_THREAD,
+      callerTurnId: overrides?.callerTurnId ?? "turn-caller",
+    },
     payloadFingerprint: "test-payload",
     receivedAt: 1,
   });
@@ -278,8 +290,10 @@ describe("scient_send_message", () => {
       },
     });
     expect(command.createdAt).toBe(ISO);
-    expect(command.commandId).toBe("agent:rand-id:send");
-    expect(command.message.messageId).toBe("agent:rand-id:message");
+    expect(command.commandId).toMatch(/^scient-operation:v2:[0-9a-f]{64}:thread-send$/);
+    expect(command.message.messageId).toBe(
+      command.commandId.replace(/:thread-send$/, ":thread-message"),
+    );
   });
 
   it("passes steer mode through to the dispatch", async () => {
@@ -358,10 +372,10 @@ describe("scient_send_message", () => {
       deduplicated: true,
     });
     expect(commands).toHaveLength(1);
-    // Idempotent sends derive a bounded deterministic identity from the exact
-    // provider session plus request id.
-    expect(commands[0].commandId).toMatch(/^agent:[0-9a-f]{32}:send$/);
-    expect(commands[0].message.messageId).toBe(commands[0].commandId.replace(/:send$/, ":message"));
+    expect(commands[0].commandId).toMatch(/^scient-operation:v2:[0-9a-f]{64}:thread-send$/);
+    expect(commands[0].message.messageId).toBe(
+      commands[0].commandId.replace(/:thread-send$/, ":thread-message"),
+    );
   });
 
   it("single-flights concurrent retries with the same requestId and fingerprint", async () => {
@@ -458,7 +472,7 @@ describe("scient_send_message", () => {
       tools,
       instructions: "test",
       requireThreadShell,
-      operationExecutor: makeScientOperationExecutor(),
+      operationExecutor: makeEphemeralScientOperationExecutor(),
     });
     const request = Effect.runPromise(
       transport({
@@ -700,20 +714,22 @@ describe("scient_send_message", () => {
     expect(commands).toHaveLength(2);
   });
 
-  it("does not share dedup across replacement provider sessions on one thread", async () => {
+  it("keeps one durable command identity across replacement sessions in the same turn", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     await call(
       "scient_send_message",
-      { threadId: TARGET_THREAD, message: "first session", requestId: "same" },
+      { threadId: TARGET_THREAD, message: "same message", requestId: "same" },
       makeContext({ callerSessionKey: "gateway-session:first" }),
     );
     await call(
       "scient_send_message",
-      { threadId: TARGET_THREAD, message: "replacement session", requestId: "same" },
+      { threadId: TARGET_THREAD, message: "same message", requestId: "same" },
       makeContext({ callerSessionKey: "gateway-session:replacement" }),
     );
     expect(commands).toHaveLength(2);
-    expect(commands[0].commandId).not.toBe(commands[1].commandId);
+    // Direct handler calls bypass the durable executor's cross-session replay,
+    // but the orchestration command identity remains one final dedup fence.
+    expect(commands[0].commandId).toBe(commands[1].commandId);
   });
 
   it.each([
@@ -813,12 +829,13 @@ describe("scient_send_message", () => {
           }),
         ),
     });
+    const context = makeContext({
+      recordOperationEffect: (effect) => effects.push(effect),
+    });
     const result = await call(
       "scient_send_message",
       { threadId: TARGET_THREAD, message: "x" },
-      makeContext({
-        recordOperationEffect: (effect) => effects.push(effect),
-      }),
+      context,
     );
     expect(result.isError).toBe(true);
     const error = jsonBody(result).error as { code: string; message: string };
@@ -826,7 +843,12 @@ describe("scient_send_message", () => {
     expect(error.message).toContain("No requestId was supplied");
     expect(error.message).toContain("Do not retry automatically");
     expect(error.message).toContain("confirm the message is absent");
-    expect(effects).toEqual([{ kind: "orchestration-command", identity: "agent:rand-id:send" }]);
+    expect(effects).toEqual([
+      {
+        kind: "orchestration-command",
+        identity: `scient-operation:v2:${context.operationEnvelope.idempotency.claimKey}:thread-send`,
+      },
+    ]);
   });
 
   it("requires the exact original requestId when retrying an uncertain idempotent send", async () => {
