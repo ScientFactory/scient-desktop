@@ -55,7 +55,7 @@ function ReadyProjectChoice(props: {
         <DialogDescription>Choose how you want to use this folder in Scient.</DialogDescription>
       </DialogHeader>
 
-      <DialogPanel className="space-y-2.5 pt-1">
+      <DialogPanel className="space-y-2.5 !pt-1">
         <InitializationError error={props.error} />
 
         <div className="grid gap-2.5 sm:grid-cols-2">
@@ -95,10 +95,10 @@ function ReadyProjectChoice(props: {
             </span>
             <span className="min-w-0">
               <span className="block text-sm font-semibold leading-5 text-foreground">
-                Open an empty project
+                Open without setup
               </span>
               <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                Write your own agent instructions later.
+                Keep this folder and its contents as they are.
               </span>
             </span>
           </button>
