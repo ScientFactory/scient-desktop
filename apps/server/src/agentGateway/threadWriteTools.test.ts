@@ -19,6 +19,7 @@ import {
   SCIENT_OPERATION_DEFINITIONS,
   type ScientOperationAuthority,
 } from "../scientOperations/authority.ts";
+import { makeScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import type { McpToolCallResult } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -457,6 +458,7 @@ describe("scient_send_message", () => {
       tools,
       instructions: "test",
       requireThreadShell,
+      operationExecutor: makeScientOperationExecutor(),
     });
     const request = Effect.runPromise(
       transport({

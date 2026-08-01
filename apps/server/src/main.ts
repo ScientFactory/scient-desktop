@@ -23,6 +23,7 @@ import {
 } from "./config";
 import { AgentGatewayLive } from "./agentGateway/Layers/AgentGateway";
 import { AgentGatewayCredentialsWithSecretsLive } from "./agentGateway/Layers/AgentGatewayCredentials";
+import { ScientOperationExecutorLive } from "./scientOperations/Layers/ScientOperationExecutor";
 import { fixPath, resolveBaseDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
@@ -316,6 +317,7 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(agentGatewayCredentialsLayer),
+    Layer.provideMerge(ScientOperationExecutorLive),
   );
 
   return Layer.empty.pipe(

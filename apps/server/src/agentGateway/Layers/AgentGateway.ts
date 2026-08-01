@@ -15,6 +15,7 @@ import { Effect, Layer, Option } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ScientOperationExecutor } from "../../scientOperations/Services/ScientOperationExecutor.ts";
 import { SYNARA_GATEWAY_HARNESS_POLICY } from "../harnessPolicy.ts";
 import { makeAgentGatewayMcpTransport } from "../mcpTransport.ts";
 import { AgentGateway, type AgentGatewayShape } from "../Services/AgentGateway.ts";
@@ -26,6 +27,7 @@ export const makeAgentGateway = Effect.gen(function* () {
   const credentials = yield* AgentGatewayCredentials;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const operationExecutor = yield* ScientOperationExecutor;
 
   const requireThreadShell = (threadId: string) =>
     snapshotQuery.getThreadShellById(ThreadId.makeUnsafe(threadId)).pipe(
@@ -53,6 +55,7 @@ export const makeAgentGateway = Effect.gen(function* () {
       tools,
       instructions: SYNARA_GATEWAY_HARNESS_POLICY,
       requireThreadShell,
+      operationExecutor,
     }),
   } satisfies AgentGatewayShape;
 });

@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { ScientOperationResultReceipt } from "../scientOperations/authority.ts";
+import { makeScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -193,10 +194,12 @@ function makeTransport(cfg?: {
     tools: cfg?.tools ?? [echoTool, writeTool],
     instructions: "TEST_INSTRUCTIONS",
     requireThreadShell: () => Effect.succeed(requireShell),
-    ...(cfg?.randomId === undefined ? {} : { randomId: cfg.randomId }),
-    ...(cfg?.recordOperationReceipt === undefined
-      ? {}
-      : { recordOperationReceipt: cfg.recordOperationReceipt }),
+    operationExecutor: makeScientOperationExecutor({
+      ...(cfg?.randomId === undefined ? {} : { randomId: cfg.randomId }),
+      ...(cfg?.recordOperationReceipt === undefined
+        ? {}
+        : { recordReceipt: cfg.recordOperationReceipt }),
+    }),
   });
 }
 
