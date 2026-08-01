@@ -7706,6 +7706,8 @@ export default function Sidebar() {
                       onClick={handleStartAddProject}
                       tooltip="Add project"
                       tooltipSide="right"
+                      tooltipDelay={150}
+                      tooltipAlignOffset={-3}
                     />,
                   )}
 
