@@ -3,10 +3,12 @@
 // Layer: Web orchestration helper tests
 
 import type { NativeApi, ThreadBrowserState } from "@synara/contracts";
-import { ThreadId } from "@synara/contracts";
+import { EventId, MessageId, ThreadId } from "@synara/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useBrowserStateStore } from "../browserStateStore";
+import { clearDeletedThreadEditDrafts } from "../store";
+import { useUserMessageEditDraftStore } from "../userMessageEditDraftStore";
 import { createMemoryStorage } from "./storage";
 
 import {
@@ -64,6 +66,7 @@ beforeEach(() => {
 
 afterEach(() => {
   useBrowserStateStore.setState({ threadStatesByThreadId: {}, recentHistoryByThreadId: {} });
+  useUserMessageEditDraftStore.getState().clearAll();
   globalThis.localStorage = originalLocalStorage;
 });
 
@@ -135,6 +138,13 @@ describe("reconcileDeletedThreadsFromClient", () => {
     const threadB = ThreadId.makeUnsafe("thread-delete-b");
     const removeDeletedThreadFromClientState = vi.fn();
     const api = cleanupApi({ getState: async ({ threadId }) => browserState(threadId) });
+    useUserMessageEditDraftStore.getState().begin(threadA, {
+      messageId: MessageId.makeUnsafe("message-delete-draft"),
+      draftText: "replacement text",
+      originalText: "original text",
+      originalRevision: "2026-08-01T08:00:00.000Z",
+      attemptCreatedAt: "2026-08-01T08:00:01.000Z",
+    });
 
     await reconcileDeletedThreadsFromClient({
       api,
@@ -148,5 +158,38 @@ describe("reconcileDeletedThreadsFromClient", () => {
       threadB,
     ]);
     expect(removeDeletedThreadFromClientState.mock.calls).toEqual([[threadA], [threadB]]);
+    expect(useUserMessageEditDraftStore.getState().draftsByThreadId[threadA]).toBeUndefined();
+  });
+
+  it("clears an edit draft when an authoritative delete event reaches the store", () => {
+    const threadId = ThreadId.makeUnsafe("thread-delete-event-draft");
+    useUserMessageEditDraftStore.getState().begin(threadId, {
+      messageId: MessageId.makeUnsafe("message-delete-event-draft"),
+      draftText: "replacement text",
+      originalText: "original text",
+      originalRevision: "2026-08-01T08:00:00.000Z",
+      attemptCreatedAt: "2026-08-01T08:00:01.000Z",
+    });
+
+    clearDeletedThreadEditDrafts([
+      {
+        type: "thread.deleted",
+        sequence: 2,
+        eventId: EventId.makeUnsafe("event-delete-thread-draft"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-08-01T08:00:02.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: {
+          threadId,
+          deletedAt: "2026-08-01T08:00:02.000Z",
+        },
+      },
+    ]);
+
+    expect(useUserMessageEditDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 });

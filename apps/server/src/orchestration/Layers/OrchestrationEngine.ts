@@ -358,8 +358,35 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           compareProjectionMessageOrderValues(left.createdAt, left.id, right.createdAt, right.id),
         )
       : overlaidMessages;
+    const persistedLatestTurn = thread.latestTurn;
+    const hotLatestTurn = existingThread?.latestTurn ?? null;
+    const mergedLatestTurn =
+      hotLatestTurn !== null && persistedLatestTurn?.turnId === hotLatestTurn.turnId
+        ? {
+            ...persistedLatestTurn,
+            ...hotLatestTurn,
+            // Projection turns retain the original request identity/time while
+            // provider session events may arrive later and advance lifecycle.
+            requestMessageId:
+              hotLatestTurn.requestMessageId ?? persistedLatestTurn.requestMessageId ?? null,
+            requestedAt: persistedLatestTurn.requestedAt,
+            assistantMessageId:
+              hotLatestTurn.assistantMessageId ?? persistedLatestTurn.assistantMessageId,
+          }
+        : hotLatestTurn;
+    // Persisted detail fills history that is intentionally absent from the hot
+    // command model after restart. Only keep the hot lifecycle fields that may
+    // have advanced ahead of the asynchronous projection (for example, Stop
+    // followed immediately by Edit and resend); the persisted detail remains
+    // authoritative for its fuller activity and checkpoint history.
     const mergedThread = {
       ...thread,
+      ...(existingThread === undefined
+        ? {}
+        : {
+            latestTurn: mergedLatestTurn,
+            session: existingThread.session,
+          }),
       messages: mergedMessages,
     };
     const hasThread = existingThread !== undefined;

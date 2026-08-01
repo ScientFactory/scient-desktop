@@ -43,7 +43,10 @@ import {
   getRecommendedDefaultModelSelection,
   normalizeModelSlug,
 } from "@synara/shared/model";
-import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
+import {
+  interruptedTurnEditContext,
+  resolveTailUserMessageEditTarget,
+} from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
 import {
@@ -9103,7 +9106,7 @@ export default function ChatView({
   }
 
   const onEditUserMessage = useCallback(
-    async (messageId: MessageId, text: string): Promise<boolean> => {
+    async (messageId: MessageId, text: string, attemptCreatedAt: string): Promise<boolean> => {
       const api = readNativeApi();
       if (!api || !activeThread || !isServerThread || isRevertingCheckpoint) {
         return false;
@@ -9115,6 +9118,11 @@ export default function ChatView({
           activeThread.session?.orchestrationStatus === "running"
             ? (activeThread.session.activeTurnId ?? null)
             : null,
+        interruptedTurn: interruptedTurnEditContext({
+          latestTurn: activeThread.latestTurn,
+          sessionStatus: activeThread.session?.orchestrationStatus,
+          sessionActiveTurnId: activeThread.session?.activeTurnId,
+        }),
       });
       if (!editTarget.editable) {
         setThreadError(activeThread.id, "Only the latest rollbackable user message can be edited.");
@@ -9137,7 +9145,7 @@ export default function ChatView({
 
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
-      const messageCreatedAt = new Date().toISOString();
+      const messageCreatedAt = attemptCreatedAt;
       const editedTextWithOriginalContext = appendOriginalComposerPromptBlocks({
         editedPrompt: text,
         originalPrompt: originalMessage.text,
@@ -12068,7 +12076,15 @@ export default function ChatView({
                 <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                   <ChatTranscriptPane
                     activeThreadId={activeThread.id}
+                    threadError={activeThread.error}
+                    threadErrorClass={activeThread.session?.lastErrorClass ?? null}
+                    threadSessionUpdatedAt={activeThread.session?.updatedAt ?? null}
                     activeTurnId={activeThread.session?.activeTurnId ?? null}
+                    interruptedTurn={interruptedTurnEditContext({
+                      latestTurn: activeThread.latestTurn,
+                      sessionStatus: activeThread.session?.orchestrationStatus,
+                      sessionActiveTurnId: activeThread.session?.activeTurnId,
+                    })}
                     agentActivityDetail={openAgentActivityDetail}
                     hasMessages={timelineEntries.length > 0}
                     isWorking={isWorking}

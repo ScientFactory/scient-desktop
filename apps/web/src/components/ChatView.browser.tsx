@@ -5,6 +5,7 @@ import {
   AutomationId,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
   type AutomationCreateInput,
   type AutomationDefinition,
   EventId,
@@ -80,6 +81,7 @@ import {
 } from "../test/effectRpcWebSocketMock";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
 import { useOptimisticUserMessageStore } from "../optimisticUserMessageStore";
+import { useUserMessageEditDraftStore } from "../userMessageEditDraftStore";
 import { transientAlertManager } from "../notifications/transientAlert";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { resetRetainedThreadDetailSubscriptionsForTests } from "../threadDetailSubscriptionRetention";
@@ -480,6 +482,52 @@ function createSnapshotForTargetUser(options: {
       },
     ],
     updatedAt: NOW_ISO,
+  };
+}
+
+function createSnapshotWithStoppedUnansweredPrompt(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-stopped-unanswered-filler" as MessageId,
+    targetText: "earlier prompt",
+  });
+  const requestedAt = "2026-08-01T08:00:00.000Z";
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            messages: [
+              ...thread.messages,
+              {
+                id: "msg-user-stopped-unanswered" as MessageId,
+                role: "user" as const,
+                text: "old stopped prompt",
+                turnId: null,
+                streaming: false,
+                source: "native" as const,
+                createdAt: requestedAt,
+                updatedAt: requestedAt,
+              },
+            ],
+            latestTurn: {
+              turnId: "turn-stopped-unanswered" as TurnId,
+              requestMessageId: "msg-user-stopped-unanswered" as MessageId,
+              state: "interrupted" as const,
+              requestedAt,
+              startedAt: requestedAt,
+              completedAt: "2026-08-01T08:00:01.000Z",
+              assistantMessageId: null,
+            },
+            session: {
+              ...thread.session!,
+              status: "stopped" as const,
+              activeTurnId: null,
+              updatedAt: "2026-08-01T08:00:01.000Z",
+            },
+          }
+        : thread,
+    ),
   };
 }
 
@@ -2098,6 +2146,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       temporaryThreadIds: {},
     });
     useOptimisticUserMessageStore.getState().clearAll();
+    useUserMessageEditDraftStore.getState().clearAll();
     useTerminalStateStore.setState({
       terminalStateByThreadId: {},
     });
@@ -2109,6 +2158,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterEach(async () => {
     useOptimisticUserMessageStore.getState().clearAll();
+    useUserMessageEditDraftStore.getState().clearAll();
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
     resetRetainedThreadDetailSubscriptionsForTests();
@@ -7000,6 +7050,324 @@ describe("ChatView timeline estimator parity (full app)", () => {
         bytes: new Uint8Array([1, 2, 3, 4]),
       });
       useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("edits and resends a stopped prompt before any assistant answer exists", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithStoppedUnansweredPrompt(),
+    });
+
+    try {
+      const editButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Edit message"]'),
+        "Unable to find Edit for the stopped unanswered prompt.",
+      );
+      editButton.click();
+      const editTextArea = page.getByRole("textbox", { name: "Edit message" });
+      await editTextArea.fill("edited stopped prompt");
+      const editForm = editTextArea.element().closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+
+      await vi.waitFor(() => {
+        const editCommands = wsRequests
+          .map(readDispatchedCommand)
+          .filter((command) => command?.type === "thread.message.edit-and-resend");
+        expect(editCommands).toHaveLength(1);
+        expect(editCommands[0]).toMatchObject({
+          threadId: THREAD_ID,
+          messageId: "msg-user-stopped-unanswered",
+          text: expect.stringContaining("edited stopped prompt"),
+        });
+      });
+
+      const acceptedEdit = wsRequests
+        .map(readDispatchedCommand)
+        .find((command) => command?.type === "thread.message.edit-and-resend");
+      expect(acceptedEdit?.type).toBe("thread.message.edit-and-resend");
+      const acceptedText = acceptedEdit?.text;
+      if (
+        acceptedEdit?.type !== "thread.message.edit-and-resend" ||
+        typeof acceptedText !== "string"
+      ) {
+        throw new Error("Missing accepted edit command.");
+      }
+      const acceptedAt = "2026-08-01T08:00:02.000Z";
+      const acceptedSnapshot: OrchestrationReadModel = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                messages: thread.messages.map((message) =>
+                  message.id === acceptedEdit.messageId
+                    ? { ...message, text: acceptedText, updatedAt: acceptedAt }
+                    : message,
+                ),
+                session: {
+                  ...thread.session!,
+                  lastError: "A parent-busy rejection arrived after the replacement committed.",
+                  lastErrorClass: EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
+                  updatedAt: acceptedAt,
+                },
+                updatedAt: acceptedAt,
+              }
+            : thread,
+        ),
+        updatedAt: acceptedAt,
+      };
+      fixture = { ...fixture, snapshot: acceptedSnapshot };
+      useStore.getState().syncServerReadModel(acceptedSnapshot);
+
+      await vi.waitFor(() => {
+        expect(document.querySelector('textarea[aria-label="Edit message"]')).toBeNull();
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a late-rejected edit recoverable without replaying it", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithStoppedUnansweredPrompt(),
+    });
+    const replacementText = "replacement retained after the parent becomes busy";
+    const rejection =
+      "The shared parent session became busy before the edited message could be resent. Your original message was not changed; wait for the parent to finish, then retry the edit.";
+
+    try {
+      await page.getByRole("button", { name: "Edit message" }).click();
+      const editTextArea = page.getByRole("textbox", { name: "Edit message" });
+      await editTextArea.fill(replacementText);
+      const editForm = editTextArea.element().closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+
+      await vi.waitFor(() => {
+        const editCommands = wsRequests
+          .map(readDispatchedCommand)
+          .filter((command) => command?.type === "thread.message.edit-and-resend");
+        expect(editCommands).toHaveLength(1);
+        expect(editTextArea.element()).toBeDisabled();
+      });
+
+      const firstEditCommand = wsRequests
+        .map(readDispatchedCommand)
+        .find((command) => command?.type === "thread.message.edit-and-resend");
+      if (firstEditCommand?.type !== "thread.message.edit-and-resend") {
+        throw new Error("Missing first edit command.");
+      }
+      const firstEditCreatedAt = firstEditCommand.createdAt;
+      if (typeof firstEditCreatedAt !== "string") {
+        throw new Error("Missing first edit command timestamp.");
+      }
+
+      const unrelatedAt = "2026-08-01T08:00:01.500Z";
+      const unrelatedErrorSnapshot: OrchestrationReadModel = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                session: {
+                  ...thread.session!,
+                  lastError: "An unrelated provider check failed.",
+                  lastErrorClass: "provider_error",
+                  updatedAt: unrelatedAt,
+                },
+                updatedAt: unrelatedAt,
+              }
+            : thread,
+        ),
+        updatedAt: unrelatedAt,
+      };
+      fixture = { ...fixture, snapshot: unrelatedErrorSnapshot };
+      useStore.getState().syncServerReadModel(unrelatedErrorSnapshot);
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("An unrelated provider check failed.");
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]?.phase).toBe(
+          "accepted",
+        );
+        expect(page.getByRole("textbox", { name: "Edit message" }).element()).toBeDisabled();
+      });
+
+      const rejectedAt = firstEditCreatedAt;
+      const rejectedSnapshot: OrchestrationReadModel = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                session: {
+                  ...thread.session!,
+                  lastError: rejection,
+                  lastErrorClass: EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
+                  updatedAt: rejectedAt,
+                },
+                updatedAt: rejectedAt,
+              }
+            : thread,
+        ),
+        updatedAt: rejectedAt,
+      };
+      fixture = { ...fixture, snapshot: rejectedSnapshot };
+      useStore.getState().syncServerReadModel(rejectedSnapshot);
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain(rejection);
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]?.phase).toBe(
+          "rejected",
+        );
+        const recoveredEdit = page.getByRole("textbox", { name: "Edit message" }).element();
+        expect(recoveredEdit).not.toBeDisabled();
+        expect(recoveredEdit).toHaveValue(replacementText);
+        expect(document.activeElement).toBe(recoveredEdit);
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .filter((command) => command?.type === "thread.message.edit-and-resend"),
+        ).toHaveLength(1);
+      });
+
+      const recoveredEdit = page.getByRole("textbox", { name: "Edit message" });
+      recoveredEdit.element().closest("form")!.requestSubmit();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .filter((command) => command?.type === "thread.message.edit-and-resend"),
+        ).toHaveLength(2);
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]?.phase).toBe(
+          "accepted",
+        );
+        expect(recoveredEdit.element()).toBeDisabled();
+      });
+
+      const retryCommand = wsRequests
+        .map(readDispatchedCommand)
+        .filter((command) => command?.type === "thread.message.edit-and-resend")
+        .at(-1);
+      if (retryCommand?.type !== "thread.message.edit-and-resend") {
+        throw new Error("Missing retry edit command.");
+      }
+      const retryCreatedAt = retryCommand.createdAt;
+      const retryText = retryCommand.text;
+      if (typeof retryCreatedAt !== "string" || typeof retryText !== "string") {
+        throw new Error("Missing retry edit command details.");
+      }
+      expect(retryCreatedAt).not.toBe(firstEditCreatedAt);
+
+      const staleRetrySnapshot: OrchestrationReadModel = {
+        ...rejectedSnapshot,
+        snapshotSequence: rejectedSnapshot.snapshotSequence + 1,
+      };
+      fixture = { ...fixture, snapshot: staleRetrySnapshot };
+      useStore.getState().syncServerReadModel(staleRetrySnapshot);
+
+      await vi.waitFor(() => {
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]?.phase).toBe(
+          "accepted",
+        );
+        expect(recoveredEdit.element()).toBeDisabled();
+      });
+
+      const retrySucceededAt = new Date(Date.parse(retryCreatedAt) + 1).toISOString();
+      const retrySucceededSnapshot: OrchestrationReadModel = {
+        ...staleRetrySnapshot,
+        snapshotSequence: staleRetrySnapshot.snapshotSequence + 1,
+        threads: staleRetrySnapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                messages: thread.messages.map((message) =>
+                  message.id === retryCommand.messageId
+                    ? { ...message, text: retryText, updatedAt: retrySucceededAt }
+                    : message,
+                ),
+                updatedAt: retrySucceededAt,
+              }
+            : thread,
+        ),
+        updatedAt: retrySucceededAt,
+      };
+      fixture = { ...fixture, snapshot: retrySucceededSnapshot };
+      useStore.getState().syncServerReadModel(retrySucceededSnapshot);
+
+      await vi.waitFor(() => {
+        expect(document.querySelector('textarea[aria-label="Edit message"]')).toBeNull();
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .filter((command) => command?.type === "thread.message.edit-and-resend"),
+        ).toHaveLength(2);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("confirms an unchanged resend through the message revision", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithStoppedUnansweredPrompt(),
+    });
+
+    try {
+      const requestStart = wsRequests.length;
+      await page.getByRole("button", { name: "Edit message" }).click();
+      const editTextArea = page.getByRole("textbox", { name: "Edit message" });
+      expect(editTextArea).toHaveValue("old stopped prompt");
+      const editForm = editTextArea.element().closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .slice(requestStart)
+            .map(readDispatchedCommand)
+            .filter((command) => command?.type === "thread.message.edit-and-resend"),
+        ).toHaveLength(1);
+      });
+
+      const confirmedAt = "2026-08-01T08:00:03.000Z";
+      const confirmedSnapshot: OrchestrationReadModel = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                messages: thread.messages.map((message) =>
+                  message.id === "msg-user-stopped-unanswered"
+                    ? { ...message, updatedAt: confirmedAt }
+                    : message,
+                ),
+                updatedAt: confirmedAt,
+              }
+            : thread,
+        ),
+        updatedAt: confirmedAt,
+      };
+      fixture = { ...fixture, snapshot: confirmedSnapshot };
+      useStore.getState().syncServerReadModel(confirmedSnapshot);
+
+      await vi.waitFor(() => {
+        expect(document.querySelector('textarea[aria-label="Edit message"]')).toBeNull();
+        expect(useUserMessageEditDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      });
+    } finally {
       await mounted.cleanup();
     }
   });

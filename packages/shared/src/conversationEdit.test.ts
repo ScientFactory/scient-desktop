@@ -2,11 +2,49 @@ import { describe, expect, it } from "vitest";
 
 import {
   collectTailTurnIds,
+  interruptedTurnEditContext,
   resolveLatestTailUserMessageEditTarget,
   resolveTailUserMessageEditTarget,
 } from "./conversationEdit";
 
 describe("conversationEdit", () => {
+  it("identifies only settled interrupted sessions as unanswered edit candidates", () => {
+    const latestTurn = {
+      turnId: "turn-interrupted",
+      requestMessageId: "user-interrupted",
+      state: "interrupted",
+    };
+
+    expect(interruptedTurnEditContext({ latestTurn, sessionStatus: "stopped" })).toEqual({
+      messageId: "user-interrupted",
+      turnId: "turn-interrupted",
+    });
+    expect(interruptedTurnEditContext({ latestTurn, sessionStatus: "interrupted" })).toEqual({
+      messageId: "user-interrupted",
+      turnId: "turn-interrupted",
+    });
+    expect(interruptedTurnEditContext({ latestTurn, sessionStatus: "ready" })).toBeNull();
+    expect(
+      interruptedTurnEditContext({
+        latestTurn,
+        sessionStatus: "interrupted",
+        sessionActiveTurnId: "turn-interrupted",
+      }),
+    ).toBeNull();
+    expect(
+      interruptedTurnEditContext({
+        latestTurn: { ...latestTurn, assistantMessageId: "assistant-output" },
+        sessionStatus: "stopped",
+      }),
+    ).toBeNull();
+    expect(
+      interruptedTurnEditContext({
+        latestTurn: { ...latestTurn, state: "completed" },
+        sessionStatus: "stopped",
+      }),
+    ).toBeNull();
+  });
+
   it("collects unique turn ids from a target message through the tail", () => {
     expect(
       collectTailTurnIds({
@@ -52,6 +90,53 @@ describe("conversationEdit", () => {
       rollbackTurnCount: 0,
       removedTurnIds: [],
     });
+  });
+
+  it("allows editing an interrupted tail prompt that never received assistant output", () => {
+    expect(
+      resolveTailUserMessageEditTarget({
+        messages: [
+          {
+            id: "user-interrupted",
+            role: "user",
+            source: "native",
+            turnId: null,
+            createdAt: "2026-08-01T08:00:00.000Z",
+          },
+        ],
+        messageId: "user-interrupted",
+        interruptedTurn: {
+          messageId: "user-interrupted",
+          turnId: "turn-interrupted",
+        },
+      }),
+    ).toMatchObject({
+      editable: true,
+      mode: "interrupted-tail",
+      rollbackTurnCount: 1,
+      removedTurnIds: ["turn-interrupted"],
+    });
+  });
+
+  it("does not treat an unrelated metadata-free tail message as the interrupted prompt", () => {
+    expect(
+      resolveTailUserMessageEditTarget({
+        messages: [
+          {
+            id: "user-imported",
+            role: "user",
+            source: "native",
+            turnId: null,
+            createdAt: "2026-07-31T08:00:00.000Z",
+          },
+        ],
+        messageId: "user-imported",
+        interruptedTurn: {
+          messageId: "different-message",
+          turnId: "turn-interrupted",
+        },
+      }),
+    ).toEqual({ editable: false, reason: "missing-turn-metadata" });
   });
 
   it("rejects older native user messages", () => {

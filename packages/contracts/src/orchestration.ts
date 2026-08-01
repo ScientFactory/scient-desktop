@@ -489,6 +489,8 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+export const EDIT_RESEND_PARENT_BUSY_ERROR_CLASS = "edit_resend_parent_busy";
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -554,6 +556,7 @@ export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.T
 
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
+  requestMessageId: Schema.optional(Schema.NullOr(MessageId)),
   state: OrchestrationLatestTurnState,
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
@@ -692,6 +695,7 @@ export const OrchestrationThread = Schema.Struct({
   lastKnownPr: Schema.optional(Schema.NullOr(OrchestrationThreadPullRequest)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
+  pendingTurnMessageId: Schema.optional(Schema.NullOr(MessageId)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   latestUserMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   hasPendingApprovals: Schema.optional(Schema.Boolean),
@@ -1811,6 +1815,8 @@ export const ThreadMessageEditResendRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  // Optional for append-only event compatibility; current deciders always emit it.
+  editMode: Schema.optional(Schema.Literals(["rollback", "active-tail", "interrupted-tail"])),
   rollbackTurnCount: Schema.optional(NonNegativeInt),
   removedTurnIds: Schema.optional(Schema.Array(TurnId)),
   modelSelection: Schema.optional(ModelSelection),

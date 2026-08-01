@@ -6,6 +6,7 @@ import {
   type ChatAttachment,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
   EventId,
   type ModelSelection,
   MessageId,
@@ -2291,7 +2292,9 @@ const make = Effect.gen(function* () {
             messageIndex: originalThread.messages.findIndex(
               (message) => message.id === payload.messageId,
             ),
-            mode: payload.rollbackTurnCount > 0 ? ("rollback" as const) : ("active" as const),
+            mode:
+              payload.editMode ??
+              (payload.rollbackTurnCount > 0 ? ("rollback" as const) : ("active-tail" as const)),
             rollbackTurnCount: payload.rollbackTurnCount,
             removedTurnIds: payload.removedTurnIds,
           }
@@ -2400,6 +2403,21 @@ const make = Effect.gen(function* () {
     yield* providerService.stopSession({ threadId: input.threadId });
   });
 
+  const prepareStoppedInterruptedEdit = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+  }) {
+    clearPendingContextBootstraps(input.threadId);
+    suppressContextBootstrapOnNextStartThreadIds.delete(input.threadId);
+    if (providerService.clearSessionResumeCursor) {
+      yield* providerService.clearSessionResumeCursor({ threadId: input.threadId });
+    } else {
+      yield* providerService.stopSession({ threadId: input.threadId });
+    }
+    // The interrupted prompt is removed before replay. A fresh provider session
+    // must still receive the retained conversation prefix exactly once.
+    rollbackContextBootstrapThreadIds.add(input.threadId);
+  });
+
   const processMessageEditResendRequested = Effect.fnUntraced(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.message-edit-resend-requested" }>,
   ) {
@@ -2409,10 +2427,44 @@ const make = Effect.gen(function* () {
       providerThread?.session?.status === "running"
         ? (providerThread.session.activeTurnId ?? null)
         : null;
+    const providerSessionIsStopped = providerThread?.session?.status === "stopped";
+    const editMode =
+      event.payload.editMode ??
+      ((event.payload.rollbackTurnCount ?? 0) > 0 ? "rollback" : "active-tail");
     const isQueuedMessageEdit = yield* hasQueuedTurnStart(
       event.payload.threadId,
       event.payload.messageId,
     );
+    if (
+      thread &&
+      providerThread &&
+      providerThread.id !== thread.id &&
+      (providerThread.session?.status === "starting" ||
+        providerThread.session?.status === "running") &&
+      !isQueuedMessageEdit
+    ) {
+      const detail =
+        "The shared parent session became busy before the edited message could be resent. Your original message was not changed; wait for the parent to finish, then retry the edit.";
+      yield* Effect.logInfo("rejecting subagent edit after its shared parent became busy", {
+        threadId: thread.id,
+        parentThreadId: providerThread.id,
+      });
+      yield* setThreadSession({
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: thread.session?.status ?? "error",
+          providerName: thread.session?.providerName ?? thread.modelSelection.provider,
+          runtimeMode: event.payload.runtimeMode,
+          activeTurnId: thread.session?.activeTurnId ?? null,
+          lastError: detail,
+          lastErrorClass: EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
+          updatedAt: event.payload.createdAt,
+        },
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
     if (thread && !isQueuedMessageEdit) {
       yield* setThreadSession({
         threadId: event.payload.threadId,
@@ -2444,8 +2496,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    if (providerSessionIsStopped && editMode === "interrupted-tail") {
+      yield* prepareStoppedInterruptedEdit({ threadId: event.payload.threadId });
+    }
+
     yield* processMessageEditResendPayload(event.payload, {
-      ...(isQueuedMessageEdit ? { skipProviderRollback: true } : {}),
+      ...(isQueuedMessageEdit || (providerSessionIsStopped && editMode === "interrupted-tail")
+        ? { skipProviderRollback: true }
+        : {}),
       preserveQueuedTurns: isQueuedMessageEdit,
       preserveThreadSession: isQueuedMessageEdit,
       activeTurnId,

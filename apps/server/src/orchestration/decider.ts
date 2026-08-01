@@ -21,6 +21,7 @@ import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { doThreadMarkerRangesOverlap } from "@synara/shared/threadMarkers";
 import {
   collectTailTurnIds,
+  interruptedTurnEditContext,
   resolveTailUserMessageEditTarget,
 } from "@synara/shared/conversationEdit";
 import { Effect } from "effect";
@@ -148,6 +149,31 @@ function collectExistingMessageIds(readModel: OrchestrationReadModel) {
   return new Set(
     readModel.threads.flatMap((thread) => thread.messages.map((message) => message.id)),
   );
+}
+
+function resolveSharedProviderParentThread(
+  readModel: OrchestrationReadModel,
+  thread: OrchestrationReadModel["threads"][number],
+) {
+  if (thread.parentThreadId) {
+    return readModel.threads.find((candidate) => candidate.id === thread.parentThreadId);
+  }
+  const rawThreadId = thread.id as string;
+  if (!rawThreadId.startsWith("subagent:")) {
+    return undefined;
+  }
+  return readModel.threads
+    .filter(
+      (candidate) =>
+        candidate.id !== thread.id && rawThreadId.startsWith(`subagent:${candidate.id}:`),
+    )
+    .toSorted((left, right) => (right.id as string).length - (left.id as string).length)[0];
+}
+
+function isProviderSessionBusyForChildEdit(
+  session: OrchestrationReadModel["threads"][number]["session"] | undefined,
+) {
+  return session?.status === "starting" || session?.status === "running";
 }
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
@@ -1679,11 +1705,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         messageId: command.messageId,
         activeTurnId:
           thread.session?.status === "running" ? (thread.session.activeTurnId ?? null) : null,
+        interruptedTurn: interruptedTurnEditContext({
+          latestTurn: thread.latestTurn,
+          sessionStatus: thread.session?.status,
+          sessionActiveTurnId: thread.session?.activeTurnId,
+        }),
       });
       if (!editTarget.editable) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Only the latest rollbackable user message can be edited and resent (${editTarget.reason}).`,
+        });
+      }
+      const parentThread = resolveSharedProviderParentThread(readModel, thread);
+      const isQueuedTailEdit =
+        editTarget.mode === "active-tail" &&
+        thread.latestTurn?.state === "running" &&
+        thread.latestTurn.requestMessageId != null &&
+        thread.latestTurn.requestMessageId !== command.messageId;
+      if (!isQueuedTailEdit && isProviderSessionBusyForChildEdit(parentThread?.session)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A subagent message cannot be edited while its shared parent session is busy.",
         });
       }
       return {
@@ -1698,6 +1741,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           text: command.text,
+          editMode: editTarget.mode,
           rollbackTurnCount: editTarget.rollbackTurnCount,
           removedTurnIds: editTarget.removedTurnIds.map((turnId) => TurnId.makeUnsafe(turnId)),
           ...(command.modelSelection !== undefined
