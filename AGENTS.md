@@ -3,12 +3,21 @@
 ## Task Completion Requirements
 
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) for branch, verification,
-  self-review, and pull-request evidence requirements.
+  Quality Review, Integration Readiness Review, human UI review, and
+  pull-request evidence requirements.
+- Before cross-repository work, read the [repository family](README.md#repository-family).
+  Keep each repository's changes on separate branches, worktrees, commits, and
+  pull requests, and state dependencies explicitly.
 - Run focused checks while iterating. Bundle heavyweight workspace checks into
   one final verification pass once the change is stable instead of rerunning
   the full set after every edit.
 - Before considering a code task verified or a pull request ready, run the
-  relevant baseline and scope-specific checks from `CONTRIBUTING.md`.
+  relevant baseline and scope-specific checks from `CONTRIBUTING.md` and
+  complete Quality Review.
+- Before merge, complete Integration Readiness Review against the exact current
+  candidate. Use independent read-only reviewers when they add confidence, and
+  never substitute automated or agent-operated evidence for required human UI
+  review.
 - If the user explicitly requests code-only work or declines verification,
   report which checks were skipped and do not describe the result as verified
   or review-ready.
@@ -18,6 +27,44 @@
 - Do not run the mutating formatter across unrelated files. Use
   `bun run fmt:check` for verification and scope any formatting fix to the task.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
+
+## Stacked Pull Requests
+
+Follow the stacked-pull-request governance in `CONTRIBUTING.md`. Use a stack
+only for one linear dependency chain; unrelated changes belong in separate
+stacks or ordinary pull requests against `main`.
+
+- Read and follow the installed `gh-stack` skill before operating a stack.
+- Use one dedicated worktree and one coordinator for all structural stack
+  operations. Other agents may inspect exact heads read-only, but must not run
+  concurrent `init`, `add`, `sync`, `rebase`, `submit`, or merge operations on
+  the same stack.
+- Fetch `origin`, inspect overlapping branches, pull requests, and worktrees,
+  and verify `main` exactly equals `origin/main` before `gh stack init`. A stale
+  local trunk silently creates every layer from the wrong base.
+- Keep commands non-interactive: provide branch names to `init`, `add`, and
+  `checkout`; use `gh stack submit --auto`; and always use
+  `gh stack view --json`.
+- Because Stacked Pull Requests is a public-preview feature, fail closed when
+  extension output contradicts live GitHub state. Stop repeated mutations,
+  verify exact refs with `git ls-remote` and pull-request or stack state with
+  `gh api`, and use the Stacks REST API only after independently confirming
+  the intended order, bases, heads, and draft state.
+- Set `rerere.enabled=true` and `remote.pushDefault=origin` in the owning
+  repository before initializing a stack.
+- Stage and commit paths deliberately with ordinary Git. Do not use a stack
+  shortcut that stages unrelated work.
+- If a lower layer changes, commit on that layer, cascade the update with
+  `gh stack rebase --upstack`, and re-run invalidated verification on every
+  affected exact head.
+- Only the stack coordinator may allow `gh stack` to force-with-lease its
+  owned stack branches. Never manually force-push, bypass a lease failure, or
+  rewrite a protected, donor, ordinary-PR, or actively owned branch.
+- Do not use `gh pr merge` for a stack. After exact-head checks and review are
+  complete, use `gh stack merge STACK_OR_PR_NUMBER --yes --squash`.
+- Keep release promotion separate. A feature stack may land on `main`; it must
+  never publish a release or bypass the protected `main` to `release/stable`
+  promotion and validation flow.
 
 ## Project Snapshot
 

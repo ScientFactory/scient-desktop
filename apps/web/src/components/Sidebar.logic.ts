@@ -37,8 +37,14 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  isSessionBusyForArchive,
 } from "../session-logic";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
+import {
+  buildThreadHierarchyIndex,
+  collectSubagentDescendants,
+  collectSubagentSubtreeRoots,
+} from "@synara/shared/threadHierarchy";
 
 export {
   extractDuplicateProjectCreateProjectId,
@@ -888,6 +894,12 @@ export interface SidebarThreadTreeRow<
   isExpanded: boolean;
 }
 
+export interface SidebarThreadTreeNode<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+> extends SidebarThreadTreeRow<T> {
+  children: SidebarThreadTreeNode<T>[];
+}
+
 function collectForcedExpandedParentIds<
   T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
 >(threadById: Map<T["id"], T>, forceVisibleThreadId: T["id"] | undefined): Set<T["id"]> {
@@ -906,23 +918,43 @@ function collectForcedExpandedParentIds<
   return forcedParentIds;
 }
 
-// Build the project-local parent/child thread tree while preserving sort order from the input list.
-export function buildProjectThreadTree<
+// Build the complete project-local parent/child forest while preserving input sort order.
+// Visibility is a separate flattening step so the UI can keep a closed disclosure shell
+// mounted long enough to animate its previously visible children out.
+export function buildProjectThreadForest<
   T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
 >(input: {
   threads: readonly T[];
   expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
   forceVisibleThreadId?: T["id"] | undefined;
-}): SidebarThreadTreeRow<T>[] {
-  const { expandedParentThreadIds, forceVisibleThreadId, threads } = input;
+  rootThreadIds?: ReadonlySet<T["id"]> | undefined;
+}): SidebarThreadTreeNode<T>[] {
+  const { expandedParentThreadIds, forceVisibleThreadId, rootThreadIds, threads } = input;
   const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
   const childrenByParentId = new Map<T["id"], T[]>();
   const roots: T[] = [];
 
   for (const thread of threads) {
     const parentThreadId = thread.parentThreadId ?? null;
-    if (!parentThreadId || !threadById.has(parentThreadId)) {
+    if (rootThreadIds !== undefined) {
+      if (rootThreadIds.has(thread.id)) {
+        roots.push(thread);
+      }
+      if (parentThreadId !== null) {
+        const siblings = childrenByParentId.get(parentThreadId) ?? [];
+        siblings.push(thread);
+        childrenByParentId.set(parentThreadId, siblings);
+      }
+      continue;
+    }
+    if (!parentThreadId) {
       roots.push(thread);
+      continue;
+    }
+    // A subagent is reachable through its parent. If that parent is archived,
+    // deleted, or absent from this view, keep the child out of the root list
+    // instead of presenting it as an unrelated top-level conversation.
+    if (!threadById.has(parentThreadId)) {
       continue;
     }
     const siblings = childrenByParentId.get(parentThreadId) ?? [];
@@ -931,36 +963,82 @@ export function buildProjectThreadTree<
   }
 
   const forcedExpandedParentIds = collectForcedExpandedParentIds(threadById, forceVisibleThreadId);
-  const orderedRows: SidebarThreadTreeRow<T>[] = [];
+  const renderedThreadIds = new Set<T["id"]>();
 
-  const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
+  const visit = (
+    thread: T,
+    depth: number,
+    rootThreadId: T["id"],
+  ): SidebarThreadTreeNode<T> | null => {
+    if (renderedThreadIds.has(thread.id)) return null;
+    renderedThreadIds.add(thread.id);
     const childThreads = childrenByParentId.get(thread.id) ?? [];
     const isExpanded =
       childThreads.length > 0 &&
       (expandedParentThreadIds?.has(thread.id) === true || forcedExpandedParentIds.has(thread.id));
 
-    orderedRows.push({
+    const node: SidebarThreadTreeNode<T> = {
       thread,
       depth,
       rootThreadId,
       childCount: childThreads.length,
       isExpanded,
-    });
-
-    if (!isExpanded) {
-      return;
-    }
-
+      children: [],
+    };
     for (const child of childThreads) {
-      visit(child, depth + 1, rootThreadId);
+      const childNode = visit(child, depth + 1, rootThreadId);
+      if (childNode) node.children.push(childNode);
     }
+    return node;
   };
 
+  const forest: SidebarThreadTreeNode<T>[] = [];
   for (const root of roots) {
-    visit(root, 0, root.id);
+    const rootNode = visit(root, 0, root.id);
+    if (rootNode) forest.push(rootNode);
   }
 
-  return orderedRows;
+  return forest;
+}
+
+export function flattenVisibleSidebarThreadForest<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(forest: readonly SidebarThreadTreeNode<T>[]): SidebarThreadTreeRow<T>[] {
+  const rows: SidebarThreadTreeRow<T>[] = [];
+  const visit = (node: SidebarThreadTreeNode<T>) => {
+    const { children: _children, ...row } = node;
+    rows.push(row);
+    if (!node.isExpanded) return;
+    for (const child of node.children) visit(child);
+  };
+  for (const root of forest) visit(root);
+  return rows;
+}
+
+export function nestVisibleSidebarThreadRows<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(rows: readonly SidebarThreadTreeRow<T>[]): SidebarThreadTreeNode<T>[] {
+  const nodeById = new Map<T["id"], SidebarThreadTreeNode<T>>();
+  const roots: SidebarThreadTreeNode<T>[] = [];
+  for (const row of rows) {
+    const node: SidebarThreadTreeNode<T> = { ...row, children: [] };
+    nodeById.set(row.thread.id, node);
+    const parentThreadId = row.thread.parentThreadId ?? null;
+    const parent = parentThreadId === null ? null : nodeById.get(parentThreadId);
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+// Build the currently visible project tree rows for ordering, paging, and shortcuts.
+export function buildProjectThreadTree<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(input: Parameters<typeof buildProjectThreadForest<T>>[0]): SidebarThreadTreeRow<T>[] {
+  return flattenVisibleSidebarThreadForest(buildProjectThreadForest(input));
 }
 
 export function getVisibleSidebarEntriesForPreview<
@@ -1033,6 +1111,63 @@ export function getPinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
   return getPinnedItems(threads, pinnedThreadIds);
 }
 
+// A pin owns the complete visible conversation family. Descendants stay under
+// the pinned root even when they are not independently pinned, so active work
+// cannot disappear between the pinned and project sections.
+export function getPinnedThreadRowsForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(
+  threads: readonly T[],
+  pinnedThreadIds: readonly T["id"][],
+  options?: {
+    readonly expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
+    readonly forceVisibleThreadId?: T["id"] | undefined;
+  },
+): SidebarThreadTreeRow<T>[] {
+  return flattenVisibleSidebarThreadForest(
+    getPinnedThreadForestForSidebar(threads, pinnedThreadIds, options),
+  );
+}
+
+export function getPinnedThreadForestForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(
+  threads: readonly T[],
+  pinnedThreadIds: readonly T["id"][],
+  options?: {
+    readonly expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
+    readonly forceVisibleThreadId?: T["id"] | undefined;
+  },
+): SidebarThreadTreeNode<T>[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const pinnedThreadIdSet = new Set(pinnedThreadIds);
+  const hasPinnedAncestor = (thread: T) => {
+    const visitedThreadIds = new Set<T["id"]>([thread.id]);
+    let parentThreadId = thread.parentThreadId ?? null;
+    while (parentThreadId !== null) {
+      if (pinnedThreadIdSet.has(parentThreadId)) return true;
+      if (visitedThreadIds.has(parentThreadId)) return false;
+      visitedThreadIds.add(parentThreadId);
+      parentThreadId = threadById.get(parentThreadId)?.parentThreadId ?? null;
+    }
+    return false;
+  };
+  const rootThreadIds = new Set<T["id"]>();
+  for (const pinnedThreadId of pinnedThreadIds) {
+    const root = threadById.get(pinnedThreadId);
+    if (root && !hasPinnedAncestor(root)) {
+      rootThreadIds.add(root.id);
+    }
+  }
+
+  return buildProjectThreadForest({
+    threads,
+    rootThreadIds,
+    expandedParentThreadIds: options?.expandedParentThreadIds,
+    forceVisibleThreadId: options?.forceVisibleThreadId,
+  });
+}
+
 // Resolve the visible pinned ids from server state, local legacy pins, and pending user clicks.
 export function derivePinnedThreadIdsForSidebar<T extends Pick<Thread, "id" | "isPinned">>(input: {
   readonly threads: readonly T[];
@@ -1094,16 +1229,22 @@ export function orderPinnedProjectsForSidebar<T extends Pick<Project, "id">>(
 }
 
 // Hide globally pinned rows from the per-project lists so the sidebar doesn't duplicate chats.
-export function getUnpinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
-  threads: readonly T[],
-  pinnedThreadIds: readonly T["id"][],
-): T[] {
+export function getUnpinnedThreadsForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(threads: readonly T[], pinnedThreadIds: readonly T["id"][]): T[] {
   if (pinnedThreadIds.length === 0) {
     return [...threads];
   }
 
-  const pinnedThreadIdSet = new Set(pinnedThreadIds);
-  return threads.filter((thread) => !pinnedThreadIdSet.has(thread.id));
+  const hierarchy = buildThreadHierarchyIndex(threads);
+  const pinnedFamilyThreadIds = new Set<T["id"]>();
+  for (const pinnedThreadId of pinnedThreadIds) {
+    pinnedFamilyThreadIds.add(pinnedThreadId);
+    for (const descendant of hierarchy.collectDescendants(pinnedThreadId)) {
+      pinnedFamilyThreadIds.add(descendant.id);
+    }
+  }
+  return threads.filter((thread) => !pinnedFamilyThreadIds.has(thread.id));
 }
 
 // Only prune persisted pins after the thread snapshot has hydrated.
@@ -1402,6 +1543,85 @@ export function getFallbackThreadIdAfterDelete<
       sortOrder,
     )[0]?.id ?? null
   );
+}
+
+interface ParentLinkedThread {
+  readonly id: ThreadId;
+  readonly parentThreadId?: ThreadId | null | undefined;
+}
+
+export function resolveSubtreeRouteThreadId<T extends ParentLinkedThread>(input: {
+  readonly threads: readonly T[];
+  readonly rootThreadId: ThreadId;
+  readonly routeThreadId: ThreadId | null;
+}): ThreadId | null {
+  if (input.routeThreadId === null) return null;
+  const subtreeIds = new Set<ThreadId>([
+    input.rootThreadId,
+    ...collectSubagentDescendants(input.threads, input.rootThreadId).map((thread) => thread.id),
+  ]);
+  return subtreeIds.has(input.routeThreadId) ? input.routeThreadId : null;
+}
+
+export function resolveArchiveSelection<T extends ParentLinkedThread>(
+  threads: readonly T[],
+  selectedThreadIds: ReadonlySet<ThreadId>,
+): { readonly rootThreadIds: ThreadId[]; readonly subtreeThreadIds: ThreadId[] } {
+  const rootThreadIds = threads
+    .filter(
+      (thread) => selectedThreadIds.has(thread.id) && (thread.parentThreadId ?? null) === null,
+    )
+    .map((thread) => thread.id);
+  const subtreeThreadIds = [
+    ...new Set<ThreadId>(
+      rootThreadIds.flatMap((rootThreadId) => [
+        rootThreadId,
+        ...collectSubagentDescendants(threads, rootThreadId).map((thread) => thread.id),
+      ]),
+    ),
+  ];
+  return { rootThreadIds, subtreeThreadIds };
+}
+
+export function collectSelectedThreadSubtreeRoots<T extends ParentLinkedThread>(
+  threads: readonly T[],
+  selectedThreadIds: ReadonlySet<ThreadId>,
+): T[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  return threads.filter((thread) => {
+    if (!selectedThreadIds.has(thread.id)) return false;
+    const visited = new Set<ThreadId>([thread.id]);
+    let parentThreadId = thread.parentThreadId ?? null;
+    while (parentThreadId !== null) {
+      if (selectedThreadIds.has(parentThreadId)) return false;
+      if (visited.has(parentThreadId)) break;
+      visited.add(parentThreadId);
+      parentThreadId = threadById.get(parentThreadId)?.parentThreadId ?? null;
+    }
+    return true;
+  });
+}
+
+export function partitionProjectArchiveSubtrees<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId" | "session">,
+>(
+  threads: readonly T[],
+): {
+  readonly archivableSubtrees: readonly (readonly T[])[];
+  readonly busyCount: number;
+} {
+  const projectSubtrees: T[][] = [];
+  for (const root of collectSubagentSubtreeRoots(threads)) {
+    projectSubtrees.push([root].concat(collectSubagentDescendants(threads, root.id)));
+  }
+  const archivableSubtrees = projectSubtrees.filter((subtree) =>
+    subtree.every((thread) => !isSessionBusyForArchive(thread.session)),
+  );
+  const archivableCount = archivableSubtrees.reduce((count, subtree) => count + subtree.length, 0);
+  return {
+    archivableSubtrees,
+    busyCount: threads.length - archivableCount,
+  };
 }
 
 export function getProjectSortTimestamp(

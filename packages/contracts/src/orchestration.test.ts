@@ -299,6 +299,27 @@ it.effect("keeps generic conversation rollback internal-only", () =>
   }),
 );
 
+it.effect("keeps generated-image recovery references internal-only", () =>
+  Effect.gen(function* () {
+    const referenceCommand = {
+      type: "thread.generated-image.reference.record",
+      commandId: "cmd-image-reference",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      attachmentId: "thread-1-attachment-1",
+      provenanceKey: "call-1",
+      sourcePath: "/trusted/generated.png",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const clientResult = yield* Effect.exit(decodeClientOrchestrationCommand(referenceCommand));
+    assert.strictEqual(clientResult._tag, "Failure");
+
+    const parsedInternal = yield* decodeOrchestrationCommand(referenceCommand);
+    assert.strictEqual(parsedInternal.type, "thread.generated-image.reference.record");
+  }),
+);
+
 it.effect("trims branded ids and command string fields at decode boundaries", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreateCommand({
@@ -461,6 +482,29 @@ it.effect("decodes thread archive and unarchive commands", () =>
   }),
 );
 
+it.effect("decodes explicit descendant cascading for thread deletion", () =>
+  Effect.gen(function* () {
+    const single = yield* decodeOrchestrationCommand({
+      type: "thread.delete",
+      commandId: "cmd-delete-single",
+      threadId: "thread-1",
+    });
+    const subtree = yield* decodeOrchestrationCommand({
+      type: "thread.delete",
+      commandId: "cmd-delete-subtree",
+      threadId: "thread-1",
+      cascadeDescendants: true,
+      expectedDescendantThreadIds: ["thread-child"],
+    });
+
+    assert.strictEqual(single.type, "thread.delete");
+    assert.strictEqual(single.cascadeDescendants, undefined);
+    assert.strictEqual(subtree.type, "thread.delete");
+    assert.strictEqual(subtree.cascadeDescendants, true);
+    assert.deepStrictEqual(subtree.expectedDescendantThreadIds, ["thread-child"]);
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({
@@ -536,6 +580,31 @@ it.effect("strips client-sent dispatcher provenance from thread.turn.start comma
       dispatchMode: "queue",
       dispatchOrigin: "automation",
       dispatchSource: "agent",
+      operationPrecondition: {
+        actorThreadId: "thread-actor",
+        actor: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: "running",
+          activeTurnId: "turn-actor",
+          latestTurnId: "turn-actor",
+          latestTurnState: "running",
+        },
+        target: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: null,
+          activeTurnId: null,
+          latestTurnId: null,
+          latestTurnState: null,
+        },
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -543,6 +612,46 @@ it.effect("strips client-sent dispatcher provenance from thread.turn.start comma
     assert.strictEqual(command.type, "thread.turn.start");
     assert.strictEqual("dispatchOrigin" in command, false);
     assert.strictEqual("dispatchSource" in command, false);
+    assert.strictEqual("operationPrecondition" in command, false);
+  }),
+);
+
+it.effect("strips trusted operation preconditions from client interrupt commands", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.interrupt",
+      commandId: "cmd-client-interrupt",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      operationPrecondition: {
+        actorThreadId: "thread-actor",
+        actor: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: "running",
+          activeTurnId: "turn-actor",
+          latestTurnId: "turn-actor",
+          latestTurnState: "running",
+        },
+        target: {
+          projectId: "project-1",
+          runtimeMode: "full-access",
+          envMode: "local",
+          interactionMode: "default",
+          provider: "codex",
+          sessionStatus: "running",
+          activeTurnId: "turn-1",
+          latestTurnId: "turn-1",
+          latestTurnState: "running",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.turn.interrupt");
+    assert.strictEqual("operationPrecondition" in command, false);
   }),
 );
 

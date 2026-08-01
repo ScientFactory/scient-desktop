@@ -49,6 +49,7 @@ import { deriveThreadSummaryMetadata } from "@synara/shared/threadSummary";
 import { getThreadFromState, getThreadsFromState } from "./threadDerivation";
 import { toAttachmentPreviewUrl } from "./lib/wsHttpUrl";
 import { isStalePendingRequestFailureDetail } from "./lib/pendingInteraction";
+import { useUserMessageEditDraftStore } from "./userMessageEditDraftStore";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -293,6 +294,7 @@ function latestTurnsEqual(left: Thread["latestTurn"], right: Thread["latestTurn"
   if (left == null || right == null) return false;
   return (
     left.turnId === right.turnId &&
+    left.requestMessageId === right.requestMessageId &&
     left.state === right.state &&
     left.requestedAt === right.requestedAt &&
     left.startedAt === right.startedAt &&
@@ -1627,10 +1629,13 @@ function normalizeLatestTurn(
       ? previous.sourceProposedPlan
       : incoming.sourceProposedPlan
     : undefined;
+  const previousRequestMessageId = previous?.requestMessageId ?? null;
+  const incomingRequestMessageId = incoming.requestMessageId ?? null;
 
   if (
     previous &&
     previous.turnId === incoming.turnId &&
+    previousRequestMessageId === incomingRequestMessageId &&
     previous.state === incoming.state &&
     previous.requestedAt === incoming.requestedAt &&
     previous.startedAt === incoming.startedAt &&
@@ -1643,6 +1648,7 @@ function normalizeLatestTurn(
 
   return {
     turnId: incoming.turnId,
+    requestMessageId: incomingRequestMessageId,
     state: incoming.state,
     requestedAt: incoming.requestedAt,
     startedAt: incoming.startedAt,
@@ -2699,6 +2705,9 @@ function buildLatestTurn(params: {
       : params.sourceProposedPlan;
   return {
     turnId: params.turnId,
+    ...(params.previous?.turnId === params.turnId && params.previous.requestMessageId
+      ? { requestMessageId: params.previous.requestMessageId }
+      : {}),
     state: params.state,
     requestedAt: params.requestedAt,
     startedAt: params.startedAt,
@@ -4583,6 +4592,14 @@ interface AppStore extends AppState {
   setThreadWorkspace: (threadId: ThreadId, patch: ThreadWorkspacePatch) => void;
 }
 
+export function clearDeletedThreadEditDrafts(events: ReadonlyArray<OrchestrationEvent>): void {
+  for (const event of events) {
+    if (event.type === "thread.deleted") {
+      useUserMessageEditDraftStore.getState().clear(event.payload.threadId);
+    }
+  }
+}
+
 export const useStore = create<AppStore>((set) => ({
   ...readPersistedState(),
   syncServerShellSnapshot: (snapshot) => set((state) => syncServerShellSnapshot(state, snapshot)),
@@ -4591,14 +4608,19 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => syncServerThreadDetailHotPath(state, thread)),
   syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
   applyShellEvent: (event) => set((state) => applyShellEvent(state, event)),
-  applyOrchestrationEvents: (events) => set((state) => applyOrchestrationEvents(state, events)),
-  applyOrchestrationEventsHotPath: (events) =>
+  applyOrchestrationEvents: (events) => {
+    clearDeletedThreadEditDrafts(events);
+    set((state) => applyOrchestrationEvents(state, events));
+  },
+  applyOrchestrationEventsHotPath: (events) => {
+    clearDeletedThreadEditDrafts(events);
     set((state) =>
       applyOrchestrationEventsHotPath(state, events, {
         updateThreadArray: false,
         updateSidebarSummary: false,
       }),
-    ),
+    );
+  },
   removeDeletedProjectFromClientState: (projectId) =>
     set((state) => removeDeletedProjectFromClientState(state, projectId)),
   removeDeletedThreadFromClientState: (threadId) =>

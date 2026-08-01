@@ -89,6 +89,7 @@ import {
   forkAcpTurnIdleWatchdog,
   resolveAcpTurnIdleTimeoutMs,
 } from "../acp/AcpTurnIdleWatchdog.ts";
+import { forkProviderNotificationDrain } from "../acp/ProviderNotificationDrain.ts";
 import {
   applyDroidAcpInteractionMode,
   applyDroidAcpModelSelection,
@@ -246,6 +247,7 @@ function makeDroidAcpRuntimeLoggers(
 export interface DroidAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly sessionRuntimeFactory?: typeof makeDroidAcpRuntime;
 }
 
 interface PendingApproval {
@@ -883,7 +885,7 @@ export function makeDroidAdapter(
             binaryPath: effectiveDroidSettings.binaryPath ?? "droid",
           });
 
-          const acp = yield* makeDroidAcpRuntime({
+          const acp = yield* (options?.sessionRuntimeFactory ?? makeDroidAcpRuntime)({
             droidSettings: effectiveDroidSettings,
             childProcessSpawner,
             cwd,
@@ -1287,7 +1289,7 @@ export function makeDroidAdapter(
                 ),
               ),
             ),
-          ).pipe(Effect.forkChild);
+          ).pipe(forkProviderNotificationDrain(sessionScope));
 
           ctx.notificationFiber = notificationFiber;
           sessions.set(input.threadId, ctx);

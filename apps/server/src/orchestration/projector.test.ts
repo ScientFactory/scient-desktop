@@ -1,8 +1,12 @@
 import {
+  CheckpointRef,
   CommandId,
   EventId,
+  MessageId,
+  OrchestrationProposedPlanId,
   ProjectId,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
 } from "@synara/contracts";
 import { Effect } from "effect";
@@ -1663,6 +1667,107 @@ describe("orchestration projector", () => {
       "activity-late",
     ]);
     expect(afterReplacement.threads[0]?.activities[1]?.summary).toBe("late updated");
+  });
+
+  it("removes explicit interrupted-turn state when the user message has no turn id", async () => {
+    const requestedAt = "2026-08-01T08:00:00.000Z";
+    const completedAt = "2026-08-01T08:00:01.000Z";
+    const requestMessageId = MessageId.makeUnsafe("message-stopped-unanswered");
+    const turnId = TurnId.makeUnsafe("turn-stopped-unanswered");
+    const running = await projectThreadWithRunningTurn({
+      createdAt: requestedAt,
+      startedAt: requestedAt,
+    });
+    const seeded = {
+      ...running,
+      threads: running.threads.map((thread) => ({
+        ...thread,
+        messages: [
+          {
+            id: requestMessageId,
+            role: "user" as const,
+            text: "stopped prompt",
+            turnId: null,
+            streaming: false,
+            source: "native" as const,
+            createdAt: requestedAt,
+            updatedAt: requestedAt,
+          },
+        ],
+        proposedPlans: [
+          {
+            id: OrchestrationProposedPlanId.makeUnsafe("plan-stopped-unanswered"),
+            turnId,
+            planMarkdown: "Interrupted plan",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: requestedAt,
+            updatedAt: completedAt,
+          },
+        ],
+        activities: [
+          {
+            id: EventId.makeUnsafe("activity-stopped-unanswered"),
+            tone: "tool" as const,
+            kind: "tool.completed",
+            summary: "Interrupted tool",
+            payload: {},
+            turnId,
+            createdAt: completedAt,
+          },
+        ],
+        checkpoints: [
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.makeUnsafe(
+              "refs/synara/checkpoints/thread-1/turn/turn-stopped-unanswered",
+            ),
+            status: "ready" as const,
+            files: [],
+            assistantMessageId: null,
+            completedAt,
+          },
+        ],
+        latestTurn: {
+          turnId,
+          requestMessageId,
+          state: "interrupted" as const,
+          requestedAt,
+          startedAt: requestedAt,
+          completedAt,
+          assistantMessageId: null,
+        },
+      })),
+    };
+
+    const next = await Effect.runPromise(
+      projectEvent(
+        seeded,
+        makeEvent({
+          sequence: 3,
+          type: "thread.conversation-rolled-back",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: completedAt,
+          commandId: "cmd-rollback-stopped-unanswered",
+          payload: {
+            threadId: "thread-1",
+            messageId: requestMessageId,
+            numTurns: 1,
+            removedTurnIds: [turnId],
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]).toMatchObject({
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      latestTurn: null,
+    });
   });
 
   it("caps message and checkpoint retention for long-lived threads", async () => {

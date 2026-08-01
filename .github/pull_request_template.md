@@ -16,23 +16,25 @@
 
 ## Manual Verification
 
-<!-- Record environment, starting state, steps, and observed result. Write "Not applicable" with a reason when no user-facing behavior changed. -->
+<!-- Record candidate, human reviewer, environment, steps, and result, or explain why this is not applicable. -->
 
 ## UI Evidence
 
-<!-- Add before/after screenshots for visible changes and a recording for motion or interaction. Remove when not applicable. -->
+<!-- Add before/after screenshots and, when needed, a recording. Automated or agent-operated evidence does not replace human review. -->
+
+- [ ] A human inspected the rendered candidate UI, or this PR has no user-visible UI or interaction change
 
 ## Known Limitations Or Deferrals
 
 <!-- State remaining gaps or write "None." -->
 
-## Author Self-Review
+## Quality Review
 
-- [ ] I reviewed the complete final diff, not only individual commits
-- [ ] Every changed file belongs to the stated outcome
-- [ ] I considered existing primitives and important failure or recovery paths
-- [ ] Tests and documentation match the implemented behavior
-- [ ] I removed temporary logging, debugging artifacts, secrets, and unrelated changes
+<!-- Record findings and dispositions, or "No material findings." Review reuse, quality, and efficiency as starting points rather than limits. -->
+
+## Integration Readiness Review
+
+<!-- Record reviewed head, reviewer arrangement, verdict, unresolved findings, and evidence gaps. -->
 
 ## Integration And Release Impact
 

@@ -36,7 +36,11 @@ import type { ForkProvenance } from "./forkProvenance";
 
 interface ChatTranscriptPaneProps {
   activeThreadId: string;
+  threadError?: string | null;
+  threadErrorClass?: string | null;
+  threadSessionUpdatedAt?: string | null;
   activeTurnId?: TurnId | null;
+  interruptedTurn?: { readonly messageId: string; readonly turnId: string } | null;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   agentActivityDetail?: AgentActivityDetail | null;
@@ -58,6 +62,7 @@ interface ChatTranscriptPaneProps {
   onTogglePinMessage?: (messageId: MessageId) => void;
   threadMarkers?: readonly ThreadMarker[];
   enteringUserMessageIds?: ComponentProps<typeof MessagesTimeline>["enteringUserMessageIds"];
+  ownedBlobUserMessageIds?: ComponentProps<typeof MessagesTimeline>["ownedBlobUserMessageIds"];
   markdownCwd: string | undefined;
   onExpandTimelineImage: (preview: ExpandedImagePreview) => void;
   onMessagesClickCapture: MouseEventHandler<HTMLDivElement>;
@@ -78,7 +83,11 @@ interface ChatTranscriptPaneProps {
   onOpenAutomation?: ComponentProps<typeof MessagesTimeline>["onOpenAutomation"];
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: ComponentProps<typeof MessagesTimeline>["onUndoTurnFiles"];
-  onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  onEditUserMessage?: (
+    messageId: MessageId,
+    text: string,
+    attemptCreatedAt: string,
+  ) => boolean | Promise<boolean>;
   onForkFromMessage?: (messageId: MessageId) => void;
   forkableMessageIds?: ReadonlySet<MessageId>;
   onScrollToBottom: () => void;
@@ -96,7 +105,11 @@ interface ChatTranscriptPaneProps {
 
 export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   activeThreadId,
+  threadError,
+  threadErrorClass,
+  threadSessionUpdatedAt,
   activeTurnId,
+  interruptedTurn,
   activeTurnInProgress,
   activeTurnStartedAt,
   agentActivityDetail,
@@ -118,6 +131,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   onTogglePinMessage,
   threadMarkers,
   enteringUserMessageIds,
+  ownedBlobUserMessageIds,
   markdownCwd,
   onExpandTimelineImage,
   onMessagesClickCapture,
@@ -202,10 +216,15 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
         ) : (
           <MessagesTimeline
             key={activeThreadId}
+            activeThreadId={activeThreadId as ThreadId}
+            {...(threadError !== undefined ? { threadError } : {})}
+            {...(threadErrorClass !== undefined ? { threadErrorClass } : {})}
+            {...(threadSessionUpdatedAt !== undefined ? { threadSessionUpdatedAt } : {})}
             hasMessages={hasMessages}
             isWorking={isWorking}
             worktreeSetup={worktreeSetup}
             activeTurnId={activeTurnId ?? null}
+            interruptedTurn={interruptedTurn ?? null}
             activeTurnInProgress={activeTurnInProgress}
             activeTurnStartedAt={activeTurnStartedAt}
             listRef={listRef}
@@ -216,6 +235,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             {...(onTogglePinMessage ? { onTogglePinMessage } : {})}
             {...(threadMarkers ? { threadMarkers } : {})}
             {...(enteringUserMessageIds ? { enteringUserMessageIds } : {})}
+            {...(ownedBlobUserMessageIds ? { ownedBlobUserMessageIds } : {})}
             timelineEntries={timelineEntries}
             {...(forkProvenance ? { forkProvenance } : {})}
             turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}

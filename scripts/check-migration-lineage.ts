@@ -176,12 +176,12 @@ export const RELEASED_DEPENDENCY_GRAPH_ALLOWANCES = new Set<string>([
 ]);
 
 // Digest of every version tag reachable from origin/release/stable at the
-// v0.5.13 release boundary, encoded as sorted `tag\0commit\n` records.
+// v0.5.14 release boundary, encoded as sorted `tag\0commit\n` records.
 // A tag-triggered run may add exactly one new tag at HEAD; the manifest must be
 // advanced after publication so subsequent branch runs preserve that release.
-const protectedReleaseTagCount = 79;
+const protectedReleaseTagCount = 80;
 const protectedReleaseTagDigest =
-  "4ed6ced392c2b5bb0f1720e410567907db14f34cc0945bec6bccb5187359c095";
+  "7f2841bdc31adb51d83bf5b7ced256fb5ee993225a2ebc73448a40962261718d";
 const runtimeResolutionEvidencePath = "@scient/migration-runtime-resolution";
 
 const numberedTypeScriptModulePattern = /^\d{3}_.+\.ts$/u;

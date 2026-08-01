@@ -4,6 +4,22 @@ Scient is a local-first desktop workspace for working with the AI agents and sub
 
 It brings chats, terminals, browser previews, diffs, branches, provider sessions, and handoffs into one focused workspace so you can run agent work without juggling a dozen windows.
 
+## Repository family
+
+- [`ScientFactory/Scient`](https://github.com/ScientFactory/Scient) owns product
+  policy, architecture, cross-repository planning, and operating procedures.
+- [`ScientFactory/scient-desktop`](https://github.com/ScientFactory/scient-desktop)
+  owns this desktop application.
+- [`ScientFactory/scient-agent`](https://github.com/ScientFactory/scient-agent)
+  owns the native-agent source foundation.
+- [`ScientFactory/ScientFactory-website`](https://github.com/ScientFactory/ScientFactory-website)
+  owns the public website and download experience.
+
+Internal contributors may keep these independent repositories as sibling
+checkouts in one plain local workspace for shared read context. Cross-repository
+changes still require separate branches, worktrees, commits, and pull requests,
+with dependencies stated explicitly.
+
 ## What it does
 
 - Use the AI accounts you already pay for: Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, Kilo Code, and Pi.

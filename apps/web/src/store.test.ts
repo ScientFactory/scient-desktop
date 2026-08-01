@@ -2061,7 +2061,7 @@ describe("store pure functions", () => {
 });
 
 describe("store read model sync", () => {
-  it("adds the desktop bridge token to server attachment preview URLs", () => {
+  it("adds the desktop bridge token to assistant attachment preview URLs during hydration", () => {
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const testWindow = {
       location: { origin: "scient://app" },
@@ -2079,8 +2079,8 @@ describe("store read model sync", () => {
         messages: [
           {
             id: MessageId.makeUnsafe("message-with-image"),
-            role: "user",
-            text: "see image",
+            role: "assistant",
+            text: "generated image",
             attachments: [
               {
                 type: "image",
@@ -3570,6 +3570,64 @@ describe("store read model sync", () => {
       title: "Original title",
       archivedAt: null,
     });
+  });
+
+  it("hydrates the exact request message identity for an otherwise unchanged latest turn", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const turnId = TurnId.makeUnsafe("turn-stopped-unanswered");
+    const requestMessageId = MessageId.makeUnsafe("message-stopped-unanswered");
+    const latestTurn = {
+      turnId,
+      state: "interrupted" as const,
+      requestedAt: "2026-02-27T00:00:00.000Z",
+      startedAt: "2026-02-27T00:00:01.000Z",
+      completedAt: "2026-02-27T00:00:02.000Z",
+      assistantMessageId: null,
+    };
+    const initialState = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(makeReadModelThread({ latestTurn })),
+    );
+
+    const next = syncServerThreadDetailHotPath(
+      initialState,
+      makeReadModelThread({
+        latestTurn: {
+          ...latestTurn,
+          requestMessageId,
+        },
+      }),
+    );
+
+    expect(next.threadTurnStateById?.[threadId]?.latestTurn?.requestMessageId).toBe(
+      requestMessageId,
+    );
+  });
+
+  it("normalizes absent and null latest-turn request identities without object churn", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const latestTurn = {
+      turnId: TurnId.makeUnsafe("turn-without-request-id"),
+      requestMessageId: null,
+      state: "interrupted" as const,
+      requestedAt: "2026-02-27T00:00:00.000Z",
+      startedAt: null,
+      completedAt: "2026-02-27T00:00:02.000Z",
+      assistantMessageId: null,
+    };
+    const initialState = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(makeReadModelThread({ latestTurn })),
+    );
+    const previousLatestTurn = initialState.threadTurnStateById?.[threadId]?.latestTurn;
+
+    const next = syncServerThreadDetailHotPath(
+      initialState,
+      makeReadModelThread({ latestTurn: { ...latestTurn, requestMessageId: undefined } }),
+    );
+
+    expect(next.threadTurnStateById?.[threadId]?.latestTurn).toBe(previousLatestTurn);
+    expect(next.threadTurnStateById?.[threadId]?.latestTurn?.requestMessageId).toBeNull();
   });
 
   it("updates sidebar summaries during hot-path thread renames", () => {

@@ -489,6 +489,8 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+export const EDIT_RESEND_PARENT_BUSY_ERROR_CLASS = "edit_resend_parent_busy";
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -554,6 +556,7 @@ export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.T
 
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
+  requestMessageId: Schema.optional(Schema.NullOr(MessageId)),
   state: OrchestrationLatestTurnState,
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
@@ -692,6 +695,7 @@ export const OrchestrationThread = Schema.Struct({
   lastKnownPr: Schema.optional(Schema.NullOr(OrchestrationThreadPullRequest)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
+  pendingTurnMessageId: Schema.optional(Schema.NullOr(MessageId)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   latestUserMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   hasPendingApprovals: Schema.optional(Schema.Boolean),
@@ -976,6 +980,9 @@ const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
   threadId: ThreadId,
+  cascadeDescendants: Schema.optional(Schema.Boolean),
+  expectedDescendantThreadIds: Schema.optional(Schema.Array(ThreadId)),
+  expectedReadModelSequence: Schema.optional(NonNegativeInt),
 });
 
 const ThreadArchiveCommand = Schema.Struct({
@@ -1099,6 +1106,24 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const TrustedThreadOperationStatePrecondition = Schema.Struct({
+  projectId: ProjectId,
+  runtimeMode: RuntimeMode,
+  envMode: ThreadEnvironmentMode,
+  interactionMode: ProviderInteractionMode,
+  provider: TrimmedNonEmptyString,
+  sessionStatus: Schema.NullOr(OrchestrationSessionStatus),
+  activeTurnId: Schema.NullOr(TurnId),
+  latestTurnId: Schema.NullOr(TurnId),
+  latestTurnState: Schema.NullOr(OrchestrationLatestTurnState),
+});
+
+const TrustedThreadOperationPrecondition = Schema.Struct({
+  actorThreadId: ThreadId,
+  actor: TrustedThreadOperationStatePrecondition,
+  target: TrustedThreadOperationStatePrecondition,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1124,6 +1149,12 @@ export const ThreadTurnStartCommand = Schema.Struct({
   // Set only by trusted server-side dispatchers. ClientThreadTurnStartCommand
   // omits this field, so decoding strips any spoofed value.
   dispatchSource: Schema.optional(MessageDispatchSource),
+  // Trusted server-side callers may pin the exact authorization-relevant
+  // actor and target state they inspected. The decider checks this against the same
+  // authoritative read model used to commit the command, closing the gap
+  // between an adapter's policy check and the persisted effect. The client
+  // command schema deliberately omits this field.
+  operationPrecondition: Schema.optional(TrustedThreadOperationPrecondition),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
@@ -1158,6 +1189,15 @@ const ClientThreadTurnStartCommand = Schema.Struct({
 });
 
 const ThreadTurnInterruptCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.interrupt"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  operationPrecondition: Schema.optional(TrustedThreadOperationPrecondition),
+  createdAt: IsoDateTime,
+});
+
+const ClientThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -1305,7 +1345,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
-  ThreadTurnInterruptCommand,
+  ClientThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -1347,6 +1387,34 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+const ThreadMessageAssistantAttachmentsAddCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.assistant.attachments.add"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  attachments: Schema.Array(ChatImageAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
+  omittedImageCount: Schema.optional(NonNegativeInt),
+  failedImageCount: Schema.optional(NonNegativeInt),
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+const ThreadGeneratedImageReferenceRecordCommand = Schema.Struct({
+  type: Schema.Literal("thread.generated-image.reference.record"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  targetMessageId: Schema.optional(MessageId),
+  attachmentId: TrimmedNonEmptyString,
+  provenanceKey: TrimmedNonEmptyString,
+  sourcePath: TrimmedNonEmptyString,
+  sourceKind: Schema.optional(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -1397,6 +1465,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessagesImportCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageAssistantAttachmentsAddCommand,
+  ThreadGeneratedImageReferenceRecordCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1449,6 +1519,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.generated-image-reference-recorded",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1744,6 +1815,8 @@ export const ThreadMessageEditResendRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  // Optional for append-only event compatibility; current deciders always emit it.
+  editMode: Schema.optional(Schema.Literals(["rollback", "active-tail", "interrupted-tail"])),
   rollbackTurnCount: Schema.optional(NonNegativeInt),
   removedTurnIds: Schema.optional(Schema.Array(TurnId)),
   modelSelection: Schema.optional(ModelSelection),
@@ -1784,6 +1857,18 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
 export const ThreadActivityAppendedPayload = Schema.Struct({
   threadId: ThreadId,
   activity: OrchestrationThreadActivity,
+});
+
+export const ThreadGeneratedImageReferenceRecordedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  targetMessageId: Schema.optional(MessageId),
+  attachmentId: TrimmedNonEmptyString,
+  provenanceKey: TrimmedNonEmptyString,
+  sourcePath: TrimmedNonEmptyString,
+  sourceKind: Schema.optional(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
 });
 
 export const OrchestrationEventMetadata = Schema.Struct({
@@ -1977,6 +2062,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.generated-image-reference-recorded"),
+    payload: ThreadGeneratedImageReferenceRecordedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

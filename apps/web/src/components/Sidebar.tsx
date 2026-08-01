@@ -5,8 +5,6 @@
 import {
   ArchiveIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   ClockIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -43,6 +41,7 @@ import { TbArrowsDiagonal, TbArrowsDiagonalMinimize2 } from "react-icons/tb";
 import { LuFolderPlus } from "react-icons/lu";
 import { IoFilter } from "react-icons/io5";
 import {
+  Fragment,
   useCallback,
   useEffect,
   lazy,
@@ -92,6 +91,10 @@ import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { pluralize } from "@synara/shared/text";
 import { localServerAddressLabel, localServerMatchesRun } from "@synara/shared/localServers";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
+import {
+  collectSubagentDescendants,
+  collectSubagentSubtreeRoots,
+} from "@synara/shared/threadHierarchy";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
@@ -101,11 +104,12 @@ import {
 } from "../appSettings";
 import { isElectron } from "../env";
 import { showConfirmDialogFallback } from "../confirmDialogFallback";
+import { useKanbanUiStore } from "../kanbanUiStore";
 import { formatRelativeTime } from "../lib/relativeTime";
 import { isMacPlatform, newCommandId, newThreadId, randomUUID } from "../lib/utils";
 import {
   cleanupDeletedThreadBrowserState,
-  reconcileDeletedThreadFromClient,
+  reconcileDeletedThreadsFromClient,
   removeDeletedThreadsFromClientState,
 } from "../lib/deletedThreadClientReconciliation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
@@ -136,7 +140,7 @@ import {
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
-  isThreadRunningTurn,
+  isSessionBusyForArchive,
 } from "../session-logic";
 import {
   gitRemoveWorktreeMutationOptions,
@@ -169,6 +173,11 @@ import {
   isThreadAlreadyUnarchivedError,
   unarchiveThreadFromClient,
 } from "../lib/threadArchive";
+import {
+  threadArchiveAccessibleLabel,
+  threadArchiveActionLabel,
+  threadArchiveToastTitle,
+} from "../lib/threadArchivePresentation";
 import { isHomeChatContainerProject, prewarmHomeChatProject } from "../lib/chatProjects";
 import {
   collectStudioProjectIds,
@@ -216,6 +225,13 @@ import { SidebarRowHoverActions } from "./SidebarRowHoverActions";
 import { SidebarSectionToolbar } from "./SidebarSectionToolbar";
 import { SidebarGlyph, sidebarGlyphClass, SIDEBAR_TRAILING_ICON_CLASS } from "./sidebarGlyphs";
 import { ThreadPinToggleButton } from "./ThreadPinToggleButton";
+import {
+  SidebarThreadFamilyDisclosureButton,
+  SidebarThreadFamilyDisclosureRegion,
+  sidebarThreadFamilyRegionId,
+  type SidebarThreadFamilyScope,
+} from "./SidebarThreadFamilyDisclosure";
+import { SidebarPinnedThreadMainAction } from "./SidebarPinnedThreadMainAction";
 import {
   SidebarStatusTrailingGlyph,
   SidebarThreadTrailingIndicators,
@@ -314,20 +330,25 @@ import {
   findDeepestWorkspaceRootMatch,
   findWorkspaceRootMatch,
   getFallbackThreadIdAfterDelete,
-  getPinnedThreadsForSidebar,
+  collectSelectedThreadSubtreeRoots,
+  getPinnedThreadRowsForSidebar,
   getUnpinnedThreadsForSidebar,
   orderPinnedProjectsForSidebar,
   pullRequestRepositoryConfigFingerprint,
   getNextVisibleSidebarThreadId,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarEntriesForPreview,
+  nestVisibleSidebarThreadRows,
   groupSidebarThreadsByProjectId,
   partitionSidebarThreadsByProjectIds,
+  partitionProjectArchiveSubtrees,
   isLatestPinnedProjectMutation,
   isLatestPinnedThreadMutation,
   pruneProjectThreadListPagingForCollapsedProjects,
   recoverExistingAddProjectTarget,
   resolveNewThreadInWorkspaceAction,
+  resolveArchiveSelection,
+  resolveSubtreeRouteThreadId,
   resolvePullRequestReviewBadge,
   resolveSidebarThreadListPaging,
   DEBUG_FEATURE_FLAGS_MENU_STORAGE_KEY,
@@ -342,6 +363,7 @@ import {
   resolveThreadStatusPill,
   validateNewThreadInWorkspaceAction,
   type SidebarDerivedProjectData,
+  type SidebarThreadTreeNode,
   type SidebarActionBadge,
   type SidebarView,
   shouldShowDebugFeatureFlagsMenu,
@@ -428,7 +450,7 @@ interface SidebarBulkThreadActivityInput {
   projectName: string;
   completedCount: number;
   failureCount: number;
-  skippedRunningCount?: number;
+  skippedBusyCount?: number;
 }
 
 /**
@@ -456,14 +478,14 @@ function showSidebarTransientAlert(
 export function createSidebarBulkThreadActivity(
   input: SidebarBulkThreadActivityInput,
 ): PublishActivityInput | null {
-  const skippedRunningCount = input.skippedRunningCount ?? 0;
-  if (input.completedCount === 0 && input.failureCount === 0 && skippedRunningCount === 0) {
+  const skippedBusyCount = input.skippedBusyCount ?? 0;
+  if (input.completedCount === 0 && input.failureCount === 0 && skippedBusyCount === 0) {
     return null;
   }
 
   const operationPastTense = input.operation === "archive" ? "archived" : "deleted";
   const operationTitle = input.operation === "archive" ? "Archived" : "Deleted";
-  const incomplete = input.failureCount > 0 || skippedRunningCount > 0;
+  const incomplete = input.failureCount > 0 || skippedBusyCount > 0;
   const details: string[] = [];
   if (input.completedCount > 0) {
     details.push(
@@ -475,9 +497,11 @@ export function createSidebarBulkThreadActivity(
       `${input.failureCount} ${pluralize(input.failureCount, "thread")} could not be ${operationPastTense}.`,
     );
   }
-  if (skippedRunningCount > 0) {
+  if (skippedBusyCount > 0) {
     details.push(
-      `${skippedRunningCount} running ${pluralize(skippedRunningCount, "thread was", "threads were")} skipped.`,
+      skippedBusyCount === 1
+        ? "1 thread was skipped because its subtree had a starting or active session."
+        : `${skippedBusyCount} threads were skipped because their subtrees had starting or active sessions.`,
     );
   }
 
@@ -490,7 +514,7 @@ export function createSidebarBulkThreadActivity(
         ? input.completedCount > 0
           ? "warning"
           : "error"
-        : skippedRunningCount > 0
+        : skippedBusyCount > 0
           ? "warning"
           : "success",
     title:
@@ -1900,13 +1924,28 @@ export default function Sidebar() {
   // Only one segment's pinned threads are ever rendered at a time, so derive a single
   // memo from the already-partitioned active list instead of computing both segments'
   // pinned lists on every render (hooks can't be conditional, but the inputs can be).
-  const pinnedThreads = useMemo(
+  const pinnedThreadRows = useMemo(
     () =>
-      getPinnedThreadsForSidebar(
+      getPinnedThreadRowsForSidebar(
         isOnStudio ? studioSidebarDisplayThreads : nonStudioSidebarDisplayThreads,
         pinnedThreadIds,
+        {
+          expandedParentThreadIds: expandedSubagentParentIds,
+          forceVisibleThreadId: visualActiveSidebarThreadId ?? undefined,
+        },
       ),
-    [isOnStudio, nonStudioSidebarDisplayThreads, pinnedThreadIds, studioSidebarDisplayThreads],
+    [
+      expandedSubagentParentIds,
+      isOnStudio,
+      nonStudioSidebarDisplayThreads,
+      pinnedThreadIds,
+      studioSidebarDisplayThreads,
+      visualActiveSidebarThreadId,
+    ],
+  );
+  const pinnedThreads = useMemo(
+    () => pinnedThreadRows.map((row) => row.thread),
+    [pinnedThreadRows],
   );
   useEffect(() => {
     sidebarThreadSummaryByIdRef.current = sidebarThreadSummaryById;
@@ -3121,6 +3160,7 @@ export default function Sidebar() {
       threadId: ThreadId,
       opts: {
         deletedThreadIds?: ReadonlySet<ThreadId>;
+        expectedDescendantThreadIds?: readonly ThreadId[];
         reconcileDeletedThread?: boolean;
         worktreeCleanupMode?: "prompt" | "skip";
       } = {},
@@ -3130,14 +3170,26 @@ export default function Sidebar() {
       const state = useStore.getState();
       const thread = getThreadFromState(state, threadId);
       if (!thread) return;
-      const threadProject = projectById.get(thread.projectId);
       const allThreads = getThreadsFromState(state);
+      const threadById = new Map(allThreads.map((candidate) => [candidate.id, candidate] as const));
+      const expectedDescendantThreadIds =
+        opts.expectedDescendantThreadIds ??
+        collectSubagentDescendants(allThreads, threadId).map((candidate) => candidate.id);
+      const subtreeThreadIds = new Set<ThreadId>([threadId, ...expectedDescendantThreadIds]);
+      const subtreeThreads = [
+        thread,
+        ...expectedDescendantThreadIds.flatMap((descendantId) => {
+          const descendant = threadById.get(descendantId);
+          return descendant ? [descendant] : [];
+        }),
+      ];
+      const threadProject = projectById.get(thread.projectId);
       // When bulk-deleting, exclude the other threads being deleted so
       // getOrphanedWorktreePathForThread correctly detects that no surviving
       // threads will reference this worktree.
-      const deletedIds = opts.deletedThreadIds;
+      const deletedIds = new Set([...(opts.deletedThreadIds ?? []), ...subtreeThreadIds]);
       const survivingThreads =
-        deletedIds && deletedIds.size > 0
+        deletedIds.size > 0
           ? allThreads.filter((t) => t.id === threadId || !deletedIds.has(t.id))
           : allThreads;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(survivingThreads, threadId);
@@ -3158,59 +3210,56 @@ export default function Sidebar() {
           ].join("\n"),
         ));
 
-      if (thread.session && thread.session.status !== "closed") {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-      }
-
-      try {
-        terminalRuntimeRegistry.disposeThread(threadId);
-        await api.terminal.close({ threadId, deleteHistory: true });
-      } catch {
-        // Terminal may already be closed
-      }
-
-      const allDeletedIds = deletedIds ?? new Set<ThreadId>();
-      const shouldNavigateToFallback = routeThreadId === threadId;
+      const allDeletedIds = deletedIds;
+      const routeThreadIsDeleted = routeThreadId ? allDeletedIds.has(routeThreadId) : false;
+      const deletedRouteThreadId = routeThreadIsDeleted && routeThreadId ? routeThreadId : threadId;
+      const shouldNavigateToFallback = routeThreadIsDeleted;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
         threads: sidebarThreads,
-        deletedThreadId: threadId,
+        deletedThreadId: deletedRouteThreadId,
         deletedThreadIds: allDeletedIds,
         sortOrder: appSettings.sidebarThreadSortOrder,
       });
       const activeSplitViewId = routeSearch.splitViewId ?? null;
       const deletedPaneInActiveSplit = activeSplitView
-        ? resolveSplitViewPaneIdForThread(activeSplitView, threadId)
+        ? resolveSplitViewPaneIdForThread(activeSplitView, deletedRouteThreadId)
         : null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
         threadId,
+        cascadeDescendants: true,
+        expectedDescendantThreadIds,
       });
+      try {
+        await api.terminal.close({ threadId, deleteHistory: true });
+      } catch {
+        // Terminal may already be closed.
+      }
       if (opts.reconcileDeletedThread ?? true) {
-        await reconcileDeletedThreadFromClient({
+        await reconcileDeletedThreadsFromClient({
           api,
-          threadId,
+          threadIds: [...subtreeThreadIds],
           removeDeletedThreadFromClientState:
             useStore.getState().removeDeletedThreadFromClientState,
         });
       } else {
         // Bulk callers defer row removal, but main-process browser ownership
         // must be closed before this helper can remove an orphaned worktree.
-        await cleanupDeletedThreadBrowserState(api, threadId);
+        for (const deletedThreadId of subtreeThreadIds) {
+          await cleanupDeletedThreadBrowserState(api, deletedThreadId);
+        }
       }
-      unpinThread(threadId);
-      clearComposerDraftForThread(threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
-      clearTerminalState(threadId);
-      removeThreadFromSplitViews(threadId);
-      clearTemporaryThread(threadId);
+      for (const deletedThread of subtreeThreads) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(deletedThread.id);
+        terminalRuntimeRegistry.disposeThread(deletedThread.id);
+        unpinThread(deletedThread.id);
+        clearComposerDraftForThread(deletedThread.id);
+        clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
+        clearTerminalState(deletedThread.id);
+        removeThreadFromSplitViews(deletedThread.id);
+        clearTemporaryThread(deletedThread.id);
+      }
 
       if (activeSplitViewId && deletedPaneInActiveSplit) {
         const nextActiveSplitView =
@@ -3336,22 +3385,37 @@ export default function Sidebar() {
     async (threadId: ThreadId) => {
       const thread = sidebarThreadSummaryById[threadId];
       if (!thread) return;
+      const confirmedDescendantThreadIds = collectSubagentDescendants(sidebarThreads, threadId).map(
+        (candidate) => candidate.id,
+      );
+      const conversationCount = confirmedDescendantThreadIds.length + 1;
 
       if (appSettings.confirmThreadDelete) {
         const api = readNativeApi();
-        const confirmationMessage = [
-          `Delete thread "${thread.title}"?`,
-          "This permanently clears conversation history for this thread.",
-        ].join("\n");
+        const confirmationMessage =
+          conversationCount === 1
+            ? [
+                `Delete thread "${thread.title}"?`,
+                "This permanently clears conversation history for this thread.",
+              ].join("\n")
+            : [
+                `Delete "${thread.title}" and its ${conversationCount - 1} sub-agent conversations?`,
+                `This permanently clears all ${conversationCount} conversation histories.`,
+              ].join("\n");
         const confirmed = api
           ? await api.dialogs.confirm(confirmationMessage)
           : await showConfirmDialogFallback(confirmationMessage);
         if (!confirmed) return;
       }
 
-      await deleteThread(threadId);
+      await deleteThread(
+        threadId,
+        appSettings.confirmThreadDelete
+          ? { expectedDescendantThreadIds: confirmedDescendantThreadIds }
+          : {},
+      );
     },
-    [appSettings.confirmThreadDelete, deleteThread, sidebarThreadSummaryById],
+    [appSettings.confirmThreadDelete, deleteThread, sidebarThreadSummaryById, sidebarThreads],
   );
 
   /**
@@ -3359,35 +3423,55 @@ export default function Sidebar() {
    * Archived threads are hidden from the sidebar but can be restored later.
    */
   const archiveThread = useCallback(
-    async (threadId: ThreadId): Promise<boolean> => {
+    async (
+      threadId: ThreadId,
+    ): Promise<{
+      readonly archivedRouteThreadId: ThreadId | null;
+      readonly conversationCount: number;
+    } | null> => {
       const api = readNativeApi();
-      if (!api) return false;
-      const thread = getThreadFromState(useStore.getState(), threadId);
-      if (!thread) return false;
+      if (!api) return null;
+      const currentThreads = getThreadsFromState(useStore.getState());
+      const thread = currentThreads.find((candidate) => candidate.id === threadId);
+      if (!thread) return null;
 
-      // Cannot archive a running thread
-      if (isThreadRunningTurn(thread)) {
+      const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
+      const runningCount = subtreeThreads.filter((candidate) =>
+        isSessionBusyForArchive(candidate.session),
+      ).length;
+      if (runningCount > 0) {
         showSidebarTransientError({
           title: "Cannot archive",
-          description: "Stop the running session before archiving this thread.",
+          description:
+            runningCount === 1
+              ? "Wait for startup or stop the active turn in this conversation subtree before archiving it."
+              : `Wait for startup or stop the ${runningCount} active sessions in this conversation subtree before archiving it.`,
         });
-        return false;
+        return null;
       }
 
       const pendingThreadIds = archivePendingThreadIdsRef.current;
-      if (pendingThreadIds.has(threadId)) return false;
+      if (pendingThreadIds.has(threadId)) return null;
 
       pendingThreadIds.add(threadId);
       try {
         await archiveThreadFromClient(api.orchestration, threadId);
+        for (const subtreeThread of subtreeThreads) {
+          useKanbanUiStore.getState().clearOptimisticDispatch(subtreeThread.id);
+        }
+        const archivedRouteThreadId = resolveSubtreeRouteThreadId({
+          threads: currentThreads,
+          rootThreadId: threadId,
+          routeThreadId,
+        });
 
         // Navigate away before surfacing Undo so a quick restore cannot be
         // overwritten by the fallback route change for the archived thread.
-        if (routeThreadId === threadId) {
+        if (archivedRouteThreadId !== null) {
           const fallbackThreadId = getFallbackThreadIdAfterDelete({
             threads: sidebarThreads,
-            deletedThreadId: threadId,
-            deletedThreadIds: new Set<ThreadId>(),
+            deletedThreadId: archivedRouteThreadId,
+            deletedThreadIds: new Set(subtreeThreads.map((candidate) => candidate.id)),
             sortOrder: appSettings.sidebarThreadSortOrder,
           });
           if (fallbackThreadId) {
@@ -3401,7 +3485,7 @@ export default function Sidebar() {
           }
         }
 
-        return true;
+        return { archivedRouteThreadId, conversationCount: subtreeThreads.length };
       } finally {
         pendingThreadIds.delete(threadId);
       }
@@ -3421,7 +3505,10 @@ export default function Sidebar() {
   // Serializes restore attempts per thread so repeated Undo clicks do not race
   // into duplicate unarchive commands.
   const restoreArchivedThreadFromSnackbar = useCallback(
-    async (input: { threadId: ThreadId; returnToThreadOnUndo: boolean }): Promise<boolean> => {
+    async (input: {
+      threadId: ThreadId;
+      returnToThreadIdOnUndo: ThreadId | null;
+    }): Promise<boolean> => {
       const activityKey = `sidebar:archive-restore:thread:${input.threadId}`;
       const pendingThreadIds = archiveUndoPendingThreadIdsRef.current;
       if (pendingThreadIds.has(input.threadId)) return false;
@@ -3451,10 +3538,10 @@ export default function Sidebar() {
           }
         }
         activityManager.remove(activityKey);
-        if (input.returnToThreadOnUndo) {
+        if (input.returnToThreadIdOnUndo !== null) {
           void navigate({
             to: "/$threadId",
-            params: { threadId: input.threadId },
+            params: { threadId: input.returnToThreadIdOnUndo },
             replace: true,
           });
         }
@@ -3479,18 +3566,22 @@ export default function Sidebar() {
 
   // Archiving navigates away from its row, so the dedicated bottom snackbar owns Undo.
   const showArchiveUndoSnackbar = useCallback(
-    (threadId: ThreadId, options?: { returnToThreadOnUndo?: boolean }) => {
+    (
+      threadId: ThreadId,
+      conversationCount: number,
+      options?: { returnToThreadIdOnUndo?: ThreadId | null },
+    ) => {
       // Use a fresh instance id so Base UI never revives a closing toast with
       // stale local state such as a pending Undo button.
       const toastId = `archive-undo:${threadId}:${randomUUID()}`;
       showUndoSnackbar({
         id: toastId,
-        title: "Thread archived",
+        title: threadArchiveToastTitle(conversationCount),
         timeout: ARCHIVE_UNDO_SNACKBAR_DURATION_MS,
         onUndo: () =>
           restoreArchivedThreadFromSnackbar({
             threadId,
-            returnToThreadOnUndo: options?.returnToThreadOnUndo === true,
+            returnToThreadIdOnUndo: options?.returnToThreadIdOnUndo ?? null,
           }),
       });
     },
@@ -3502,10 +3593,11 @@ export default function Sidebar() {
   const archiveThreadWithUndo = useCallback(
     async (threadId: ThreadId) => {
       try {
-        const returnToThreadOnUndo = routeThreadId === threadId;
-        const archived = await archiveThread(threadId);
-        if (archived) {
-          showArchiveUndoSnackbar(threadId, { returnToThreadOnUndo });
+        const result = await archiveThread(threadId);
+        if (result) {
+          showArchiveUndoSnackbar(threadId, result.conversationCount, {
+            returnToThreadIdOnUndo: result.archivedRouteThreadId,
+          });
         }
       } catch (error) {
         showSidebarTransientError({
@@ -3514,7 +3606,7 @@ export default function Sidebar() {
         });
       }
     },
-    [archiveThread, routeThreadId, showArchiveUndoSnackbar],
+    [archiveThread, showArchiveUndoSnackbar],
   );
 
   // Context-menu archive still honors the opt-in `confirmThreadArchive` dialog
@@ -3523,11 +3615,14 @@ export default function Sidebar() {
     async (threadId: ThreadId) => {
       const thread = sidebarThreadSummaryById[threadId];
       if (!thread) return;
+      const conversationCount = collectSubagentDescendants(sidebarThreads, threadId).length + 1;
 
       if (appSettings.confirmThreadArchive) {
         const api = readNativeApi();
         const confirmationMessage = [
-          `Archive thread "${thread.title}"?`,
+          conversationCount === 1
+            ? `Archive thread "${thread.title}"?`
+            : `Archive "${thread.title}" with its ${conversationCount - 1} sub-agent conversations?`,
           "Archived threads are hidden from the sidebar but can be restored later.",
         ].join("\n");
         const confirmed = api
@@ -3538,13 +3633,18 @@ export default function Sidebar() {
 
       await archiveThreadWithUndo(threadId);
     },
-    [appSettings.confirmThreadArchive, archiveThreadWithUndo, sidebarThreadSummaryById],
+    [
+      appSettings.confirmThreadArchive,
+      archiveThreadWithUndo,
+      sidebarThreadSummaryById,
+      sidebarThreads,
+    ],
   );
 
   /**
    * Archive every non-archived thread for a given project in one pass.
-   * Skips (and reports) threads with a running session since the server
-   * rejects archiving an active turn. Confirms the batch once up-front
+   * Skips (and reports) whole subtrees with a starting or active session since
+   * the server rejects archiving them. Confirms the batch once up-front
    * rather than prompting per-thread to avoid dialog spam on large projects.
    */
   const archiveAllThreadsInProject = useCallback(
@@ -3561,16 +3661,19 @@ export default function Sidebar() {
         return;
       }
 
-      const archivableThreads = projectThreads.filter((thread) => !isThreadRunningTurn(thread));
-      const runningCount = projectThreads.length - archivableThreads.length;
+      const { archivableSubtrees, busyCount } = partitionProjectArchiveSubtrees(projectThreads);
+      const archivableCount = archivableSubtrees.reduce(
+        (count, subtree) => count + subtree.length,
+        0,
+      );
 
-      if (archivableThreads.length === 0) {
+      if (archivableSubtrees.length === 0) {
         showSidebarTransientError({
           title: "Cannot archive threads",
           description:
-            runningCount === 1
-              ? "The only thread in this project is running. Stop it before archiving."
-              : `All ${runningCount} threads in this project are running. Stop them before archiving.`,
+            busyCount === 1
+              ? "The only conversation in this project belongs to a subtree with a starting or active session. Wait for startup or stop it before archiving."
+              : `All ${busyCount} conversations in this project belong to subtrees with starting or active sessions. Wait for startup or stop them before archiving.`,
         });
         return;
       }
@@ -3579,13 +3682,13 @@ export default function Sidebar() {
       // `appSettings.confirmThreadArchive` (default `false`) is scoped to
       // single-thread archiving where the user explicitly picked one row.
       const archiveLines = [
-        `Archive ${archivableThreads.length} ${pluralize(archivableThreads.length, "thread")} in "${project.name}"?`,
+        `Archive ${archivableCount} ${pluralize(archivableCount, "thread")} in "${project.name}"?`,
         "Archived threads are hidden from the sidebar but can be restored later.",
       ];
-      if (runningCount > 0) {
+      if (busyCount > 0) {
         archiveLines.push(
           "",
-          `${runningCount} running ${pluralize(runningCount, "thread is", "threads are")} currently active and will be skipped.`,
+          `${busyCount} ${pluralize(busyCount, "conversation belongs", "conversations belong")} to a subtree with a starting or active session and will be skipped.`,
         );
       }
       const archiveConfirmed = api
@@ -3595,18 +3698,20 @@ export default function Sidebar() {
 
       let archivedCount = 0;
       let failureCount = 0;
-      for (const thread of archivableThreads) {
+      for (const subtree of archivableSubtrees) {
+        const root = subtree[0];
+        if (!root) continue;
         try {
-          const archived = await archiveThread(thread.id);
+          const archived = await archiveThread(root.id);
           if (archived) {
-            archivedCount += 1;
+            archivedCount += subtree.length;
           } else {
-            failureCount += 1;
+            failureCount += subtree.length;
           }
         } catch (error) {
-          failureCount += 1;
+          failureCount += subtree.length;
           console.error("Failed to archive thread during bulk archive", {
-            threadId: thread.id,
+            threadId: root.id,
             projectId,
             error,
           });
@@ -3614,7 +3719,9 @@ export default function Sidebar() {
       }
 
       // Clear any transient selection that pointed at just-archived rows.
-      removeFromSelection(archivableThreads.map((thread) => thread.id));
+      removeFromSelection(
+        archivableSubtrees.flatMap((subtree) => subtree.map((thread) => thread.id)),
+      );
 
       const activity = createSidebarBulkThreadActivity({
         operation: "archive",
@@ -3622,7 +3729,7 @@ export default function Sidebar() {
         projectName: project.name,
         completedCount: archivedCount,
         failureCount,
-        skippedRunningCount: runningCount,
+        skippedBusyCount: busyCount,
       });
       if (activity) activityManager.publish(activity);
     },
@@ -3657,9 +3764,8 @@ export default function Sidebar() {
 
       // Re-derive at execution time. Project removal may have waited for an admitted
       // project operation to finish, and its thread must join this deletion set.
-      const projectThreads = getThreadsFromState(useStore.getState()).filter(
-        (thread) => thread.projectId === projectId,
-      );
+      const currentThreads = getThreadsFromState(useStore.getState());
+      const projectThreads = currentThreads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length === 0) {
         return {
           deletedCount: 0,
@@ -3669,11 +3775,19 @@ export default function Sidebar() {
         };
       }
 
+      const deletionTargets = collectSubagentSubtreeRoots(projectThreads).map((root) => [
+        root,
+        ...collectSubagentDescendants(currentThreads, root.id),
+      ]);
+      const deletedIds = new Set<ThreadId>(
+        deletionTargets.flatMap((subtree) => subtree.map((thread) => thread.id)),
+      );
+      const totalDeletionCount = deletedIds.size;
       const deleteConfirmationMessage =
         options?.confirmMessage === undefined
           ? [
-              `Delete ${projectThreads.length} ${pluralize(projectThreads.length, "thread")} in "${project.name}"?`,
-              "This permanently clears conversation history for these threads.",
+              `Delete ${totalDeletionCount} ${pluralize(totalDeletionCount, "conversation")} in "${project.name}"?`,
+              "This permanently clears those conversations and their sub-agent histories.",
             ].join("\n")
           : options.confirmMessage;
       if (deleteConfirmationMessage !== null) {
@@ -3682,25 +3796,27 @@ export default function Sidebar() {
         if (!deleteConfirmed) return null;
       }
 
-      const deletedIds = new Set<ThreadId>(projectThreads.map((thread) => thread.id));
       const successfullyDeletedIds: ThreadId[] = [];
       let deletedCount = 0;
       let failureCount = 0;
-      for (const thread of projectThreads) {
+      for (const subtree of deletionTargets) {
+        const root = subtree[0];
+        if (!root) continue;
         try {
-          await deleteThread(thread.id, {
+          await deleteThread(root.id, {
             deletedThreadIds: deletedIds,
+            expectedDescendantThreadIds: subtree.slice(1).map((thread) => thread.id),
             reconcileDeletedThread: false,
             ...(options?.worktreeCleanupMode
               ? { worktreeCleanupMode: options.worktreeCleanupMode }
               : {}),
           });
-          successfullyDeletedIds.push(thread.id);
-          deletedCount += 1;
+          successfullyDeletedIds.push(...subtree.map((thread) => thread.id));
+          deletedCount += subtree.length;
         } catch (error) {
-          failureCount += 1;
+          failureCount += subtree.length;
           console.error("Failed to delete thread during bulk delete", {
-            threadId: thread.id,
+            threadId: root.id,
             projectId,
             error,
           });
@@ -3727,7 +3843,7 @@ export default function Sidebar() {
       return {
         deletedCount,
         failureCount,
-        totalCount: projectThreads.length,
+        totalCount: totalDeletionCount,
         projectName: project.name,
       };
     },
@@ -3814,8 +3930,23 @@ export default function Sidebar() {
             : []),
           { id: "copy-thread-id", label: "Copy Thread ID" },
           ...(options?.extraItems ?? []),
-          { id: "archive", label: "Archive", separatorBefore: true },
-          { id: "delete", label: "Delete", destructive: true },
+          ...(thread.parentThreadId
+            ? []
+            : [
+                {
+                  id: "archive",
+                  label: threadArchiveActionLabel(
+                    collectSubagentDescendants(sidebarThreads, thread.id).length + 1,
+                  ),
+                  separatorBefore: true,
+                },
+              ]),
+          {
+            id: "delete",
+            label: "Delete",
+            destructive: true,
+            ...(thread.parentThreadId ? { separatorBefore: true } : {}),
+          },
         ],
         position,
       );
@@ -4021,6 +4152,7 @@ export default function Sidebar() {
       projectCwdById,
       resolveThreadStatusForSidebar,
       sidebarThreadSummaryById,
+      sidebarThreads,
       toggleThreadPinned,
     ],
   );
@@ -4031,11 +4163,19 @@ export default function Sidebar() {
       const ids = [...selectedThreadIds];
       if (ids.length === 0) return;
       const count = ids.length;
+      const archiveSelection = resolveArchiveSelection(sidebarThreads, new Set(ids));
 
       const clicked = await api.contextMenu.show(
         [
           { id: "mark-unread", label: `Mark unread (${count})` },
-          { id: "archive", label: `Archive (${count})` },
+          ...(archiveSelection.rootThreadIds.length > 0
+            ? [
+                {
+                  id: "archive" as const,
+                  label: `Archive (${archiveSelection.subtreeThreadIds.length})`,
+                },
+              ]
+            : []),
           { id: "delete", label: `Delete (${count})`, destructive: true },
         ],
         position,
@@ -4051,41 +4191,57 @@ export default function Sidebar() {
       }
 
       if (clicked === "archive") {
+        const archiveCount = archiveSelection.subtreeThreadIds.length;
         if (appSettings.confirmThreadArchive) {
           const confirmed = await api.dialogs.confirm(
             [
-              `Archive ${count} ${pluralize(count, "thread")}?`,
+              `Archive ${archiveCount} ${pluralize(archiveCount, "conversation")}?`,
               "Archived threads are hidden from the sidebar but can be restored later.",
             ].join("\n"),
           );
           if (!confirmed) return;
         }
 
-        for (const id of ids) {
+        for (const id of archiveSelection.rootThreadIds) {
           await archiveThread(id);
         }
-        removeFromSelection(ids);
+        removeFromSelection(archiveSelection.subtreeThreadIds);
         return;
       }
 
       if (clicked !== "delete") return;
 
+      const deletionRoots = collectSelectedThreadSubtreeRoots(sidebarThreads, new Set(ids));
+      const deletionTargets = deletionRoots.map((root) => [
+        root,
+        ...collectSubagentDescendants(sidebarThreads, root.id),
+      ]);
+      const deletedIds = new Set<ThreadId>(
+        deletionTargets.flatMap((subtree) => subtree.map((thread) => thread.id)),
+      );
+      const deletionCount = deletedIds.size;
+
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
           [
-            `Delete ${count} ${pluralize(count, "thread")}?`,
-            "This permanently clears conversation history for these threads.",
+            `Delete ${deletionCount} ${pluralize(deletionCount, "conversation")}?`,
+            "This permanently clears the selected conversations and their sub-agent histories.",
           ].join("\n"),
         );
         if (!confirmed) return;
       }
 
-      const deletedIds = new Set<ThreadId>(ids);
       const successfullyDeletedIds: ThreadId[] = [];
       try {
-        for (const id of ids) {
-          await deleteThread(id, { deletedThreadIds: deletedIds, reconcileDeletedThread: false });
-          successfullyDeletedIds.push(id);
+        for (const subtree of deletionTargets) {
+          const root = subtree[0];
+          if (!root) continue;
+          await deleteThread(root.id, {
+            deletedThreadIds: deletedIds,
+            expectedDescendantThreadIds: subtree.slice(1).map((thread) => thread.id),
+            reconcileDeletedThread: false,
+          });
+          successfullyDeletedIds.push(...subtree.map((thread) => thread.id));
         }
       } finally {
         if (successfullyDeletedIds.length > 0) {
@@ -4106,6 +4262,7 @@ export default function Sidebar() {
       deleteThread,
       markThreadUnread,
       removeFromSelection,
+      sidebarThreads,
       selectedThreadIds,
     ],
   );
@@ -5461,12 +5618,14 @@ export default function Sidebar() {
     },
   ) {
     const compact = options?.compact === true;
+    const conversationCount = collectSubagentDescendants(sidebarThreads, threadId).length + 1;
+    const archiveLabel = threadArchiveAccessibleLabel(conversationCount);
 
     return (
       <SidebarIconButton
         icon={HiOutlineArchiveBox}
-        label="Archive thread"
-        title="Archive thread"
+        label={archiveLabel}
+        title={archiveLabel}
         data-testid={`thread-archive-${threadId}`}
         size={compact ? "sm" : "md"}
         // Match the pin and the right-side meta chips (shared trailing-icon size); subagent
@@ -5490,6 +5649,7 @@ export default function Sidebar() {
     threadId: ThreadId;
     toneClassName: string;
     isPinned: boolean;
+    isSubagentThread: boolean;
     includePinToggle?: boolean;
     compact?: boolean;
   }) {
@@ -5511,9 +5671,11 @@ export default function Sidebar() {
               }}
             />
           ) : null}
-          {renderThreadArchiveAction(input.threadId, input.toneClassName, {
-            compact,
-          })}
+          {input.isSubagentThread
+            ? null
+            : renderThreadArchiveAction(input.threadId, input.toneClassName, {
+                compact,
+              })}
         </div>
       </SidebarRowHoverActions>
     );
@@ -5589,7 +5751,7 @@ export default function Sidebar() {
           <span className={SIDEBAR_SECTION_LABEL_CLASS_NAME}>Pinned</span>
         </div>
         <div className="flex flex-col gap-0.5">
-          {pinnedThreads.map((thread) => renderPinnedThreadRow(thread))}
+          {renderPinnedThreadFamilyNodes(nestVisibleSidebarThreadRows(pinnedThreadRows))}
         </div>
       </div>
     );
@@ -5651,7 +5813,12 @@ export default function Sidebar() {
     );
   }
 
-  function renderPinnedThreadRow(thread: SidebarThreadSummary) {
+  function renderPinnedThreadRow(
+    thread: SidebarThreadSummary,
+    depth = 0,
+    childCount = 0,
+    isExpanded = false,
+  ) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
     const terminalStatus = terminalStatusFromThreadState({
@@ -5672,6 +5839,7 @@ export default function Sidebar() {
     });
     const threadStatus = resolveThreadStatusForSidebar(thread);
     const isSubagentThread = Boolean(thread.parentThreadId);
+    const isPinned = pinnedThreadIdSet.has(thread.id);
     const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
     const leadingPrStatus =
       isSubagentThread || thread.forkSourceThreadId || thread.sidechatSourceThreadId
@@ -5687,6 +5855,8 @@ export default function Sidebar() {
     // hair of clearance so it stops kissing the worktree chip — see the margin below.
     const hasTrailingStatusGlyph = Boolean(threadStatus) || Boolean(threadJumpLabel);
     const showThreadProviderAvatar = !isGenericChatThreadTitle(thread.title);
+    const canToggleSubagents = childCount > 0;
+    const disclosureRegionId = sidebarThreadFamilyRegionId("pinned", thread.id);
     const hoverAnchorId = createSidebarThreadHoverAnchorId({
       scope: "pinned",
       threadId: thread.id,
@@ -5710,8 +5880,6 @@ export default function Sidebar() {
             />
           ) : null}
           <div
-            role="button"
-            tabIndex={0}
             data-thread-item
             className={cn(
               SIDEBAR_HEADER_ROW_CLASS_NAME,
@@ -5730,20 +5898,14 @@ export default function Sidebar() {
                 ? SIDEBAR_ROW_ACTIVE_CLASS_NAME
                 : cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
             )}
-            onPointerDown={(event) => primeThreadActivation(event, thread.id)}
-            onClick={() => activateThreadFromSidebarIntent(thread.id)}
-            onDoubleClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              openRenameThreadDialog(thread.id);
-            }}
-            onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                activateThreadFromSidebarIntent(thread.id);
-              }
-            }}
+            style={
+              depth > 0
+                ? {
+                    marginLeft: `${Math.min(depth, 4) * 10}px`,
+                    width: `calc(100% - ${Math.min(depth, 4) * 10}px)`,
+                  }
+                : undefined
+            }
             onContextMenu={(event) => {
               event.preventDefault();
               void handleThreadContextMenu(thread.id, {
@@ -5752,18 +5914,29 @@ export default function Sidebar() {
               });
             }}
           >
-            {threadEntryPoint === "terminal" ? (
-              <SidebarGlyph icon={TerminalIcon} variant="chrome" />
-            ) : showThreadProviderAvatar ? (
-              <ProviderAvatarWithTerminal
-                provider={thread.session?.provider ?? thread.modelSelection.provider}
-                handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
-                handoffTooltip={handoffBadgeLabel}
-                terminalStatus={terminalStatus}
-                terminalCount={terminalCount}
-              />
-            ) : null}
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+            <SidebarPinnedThreadMainAction
+              projectLabel={projectLabel}
+              hasTrailingStatusGlyph={hasTrailingStatusGlyph}
+              onPointerDown={(event) => primeThreadActivation(event, thread.id)}
+              onActivate={() => activateThreadFromSidebarIntent(thread.id)}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openRenameThreadDialog(thread.id);
+              }}
+              onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
+            >
+              {threadEntryPoint === "terminal" ? (
+                <SidebarGlyph icon={TerminalIcon} variant="chrome" />
+              ) : showThreadProviderAvatar ? (
+                <ProviderAvatarWithTerminal
+                  provider={thread.session?.provider ?? thread.modelSelection.provider}
+                  handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
+                  handoffTooltip={handoffBadgeLabel}
+                  terminalStatus={terminalStatus}
+                  terminalCount={terminalCount}
+                />
+              ) : null}
               <span
                 className={cn(
                   "min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui,12px)] leading-5",
@@ -5792,23 +5965,16 @@ export default function Sidebar() {
                   Pending
                 </span>
               ) : null}
-            </div>
-            {projectLabel ? (
-              // Right-aligned project context for the flattened pinned list. The title
-              // (flex-1) pushes it to the content edge, so it shows in full when the row
-              // has room and only truncates under real pressure, shifting left as the
-              // trailing reserve grows on hover/status. When a live status glyph occupies
-              // the trailing slot (e.g. the running spinner), the absolute cluster reaches
-              // a few px past the reserve — a small margin keeps the folder name from
-              // touching the worktree chip. It costs no space when the row is idle.
-              <span
-                className={cn(
-                  "max-w-[40%] shrink-0 truncate text-right text-[length:var(--app-font-size-ui-meta,10px)] text-muted-foreground/38 transition-[margin] duration-150 ease-out",
-                  hasTrailingStatusGlyph && "mr-2",
-                )}
-              >
-                {projectLabel}
-              </span>
+            </SidebarPinnedThreadMainAction>
+            {canToggleSubagents ? (
+              <SidebarThreadFamilyDisclosureButton
+                childCount={childCount}
+                controls={disclosureRegionId}
+                open={isExpanded}
+                threadTitle={thread.title}
+                className="border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] text-[color:var(--color-text-foreground-secondary)] hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[color:var(--color-text-foreground)]"
+                onToggle={() => toggleSubagentParent(thread.id)}
+              />
             ) : null}
             <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center">
               {renderThreadRowTrailingCluster({
@@ -5821,7 +5987,8 @@ export default function Sidebar() {
                 hoverActions: renderThreadHoverActions({
                   threadId: thread.id,
                   toneClassName: "text-muted-foreground/42",
-                  isPinned: true,
+                  isPinned,
+                  isSubagentThread,
                   compact: isSubagentThread,
                 }),
               })}
@@ -5831,6 +5998,31 @@ export default function Sidebar() {
         {renderThreadHoverCardPopup(thread, hoverAnchorId)}
       </Tooltip>
     );
+  }
+
+  function renderPinnedThreadFamilyNodes(
+    nodes: readonly SidebarThreadTreeNode<SidebarThreadSummary>[],
+  ): ReactNode {
+    return nodes.map((node) => {
+      const regionId = sidebarThreadFamilyRegionId("pinned", node.thread.id);
+      return (
+        <Fragment key={node.thread.id}>
+          {renderPinnedThreadRow(node.thread, node.depth, node.childCount, node.isExpanded)}
+          {node.childCount > 0 ? (
+            <SidebarThreadFamilyDisclosureRegion
+              id={regionId}
+              open={node.isExpanded}
+              threadTitle={node.thread.title}
+              className="w-full"
+            >
+              <div className="flex flex-col gap-0.5">
+                {renderPinnedThreadFamilyNodes(node.children)}
+              </div>
+            </SidebarThreadFamilyDisclosureRegion>
+          ) : null}
+        </Fragment>
+      );
+    });
   }
 
   function renderThreadRow(
@@ -5843,6 +6035,7 @@ export default function Sidebar() {
     // their top-level rows align flush like pinned rows instead of the indented
     // column used for project-nested threads.
     topLevel = false,
+    disclosureScope: SidebarThreadFamilyScope = topLevel ? "chat" : "project",
   ) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
@@ -5898,7 +6091,7 @@ export default function Sidebar() {
       visibleThreadJumpLabelPartsByThreadId.get(thread.id) ?? EMPTY_SHORTCUT_PARTS;
     // Untouched draft chat threads are intentionally text-only until they get a real title.
     const showThreadProviderAvatar = !isGenericChatThreadTitle(thread.title);
-    const childCountLabel = `${childCount} ${pluralize(childCount, "subagent")}`;
+    const disclosureRegionId = sidebarThreadFamilyRegionId(disclosureScope, thread.id);
     const toggleButtonClassName = isHighlighted
       ? "border-[color:var(--color-border)] bg-[var(--color-background-button-secondary)] text-[var(--color-text-foreground-secondary)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[var(--color-text-foreground)]"
       : "border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] text-[var(--color-text-foreground-secondary)] hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[var(--color-text-foreground)]";
@@ -5926,7 +6119,7 @@ export default function Sidebar() {
             {...SIDEBAR_HOVER_CARD_TRIGGER_PROPS}
             render={
               <SidebarMenuSubButton
-                render={<div role="button" tabIndex={0} />}
+                render={<div />}
                 data-thread-entry-point={threadEntryPoint}
                 size="sm"
                 isActive={isActive}
@@ -5959,24 +6152,6 @@ export default function Sidebar() {
                     );
                   }
                 }}
-                onClick={(event) => {
-                  handleThreadClick(event, thread.id, orderedProjectThreadIds, {
-                    isActive,
-                    canToggleSubagents,
-                  });
-                }}
-                onPointerDown={(event) => primeThreadActivation(event, thread.id)}
-                onDoubleClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openRenameThreadDialog(thread.id);
-                }}
-                onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  activateThreadFromSidebarIntent(thread.id);
-                }}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   if (selectedThreadIds.size > 0 && selectedThreadIds.has(thread.id)) {
@@ -5997,36 +6172,50 @@ export default function Sidebar() {
               />
             }
           >
-            {isSubagentThread ? (
-              <span
-                aria-hidden="true"
-                className="relative inline-flex h-3.5 w-[18px] shrink-0 items-center"
-                style={{ marginLeft: `${subagentIndentPx}px` }}
-              >
-                <span className="absolute left-1.5 top-0 bottom-0 w-px rounded-full bg-border/35" />
-                <span className="absolute left-1.5 top-1/2 h-px w-2.5 -translate-y-1/2 bg-border/35" />
-                <span
-                  className="absolute left-1.5 top-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full"
-                  style={{ backgroundColor: subagentPresentation?.accentColor }}
-                />
-              </span>
-            ) : threadEntryPoint === "terminal" ? (
-              <SidebarGlyph icon={TerminalIcon} variant="chrome" />
-            ) : showThreadProviderAvatar ? (
-              <ProviderAvatarWithTerminal
-                provider={thread.session?.provider ?? thread.modelSelection.provider}
-                handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
-                handoffTooltip={handoffBadgeLabel}
-                terminalStatus={terminalStatus}
-                terminalCount={terminalCount}
-              />
-            ) : null}
-            <div
+            <button
+              type="button"
               className={cn(
                 "flex min-w-0 flex-1 items-center text-left",
                 isSubagentThread ? "gap-[5px]" : "gap-1.5",
               )}
+              onClick={(event) => {
+                handleThreadClick(event, thread.id, orderedProjectThreadIds, {
+                  isActive,
+                  canToggleSubagents,
+                });
+              }}
+              onPointerDown={(event) => primeThreadActivation(event, thread.id)}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openRenameThreadDialog(thread.id);
+              }}
+              onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
             >
+              {isSubagentThread ? (
+                <span
+                  aria-hidden="true"
+                  className="relative inline-flex h-3.5 w-[18px] shrink-0 items-center"
+                  style={{ marginLeft: `${subagentIndentPx}px` }}
+                >
+                  <span className="absolute left-1.5 top-0 bottom-0 w-px rounded-full bg-border/35" />
+                  <span className="absolute left-1.5 top-1/2 h-px w-2.5 -translate-y-1/2 bg-border/35" />
+                  <span
+                    className="absolute left-1.5 top-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+                    style={{ backgroundColor: subagentPresentation?.accentColor }}
+                  />
+                </span>
+              ) : threadEntryPoint === "terminal" ? (
+                <SidebarGlyph icon={TerminalIcon} variant="chrome" />
+              ) : showThreadProviderAvatar ? (
+                <ProviderAvatarWithTerminal
+                  provider={thread.session?.provider ?? thread.modelSelection.provider}
+                  handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
+                  handoffTooltip={handoffBadgeLabel}
+                  terminalStatus={terminalStatus}
+                  terminalCount={terminalCount}
+                />
+              ) : null}
               <span
                 className={cn(
                   "min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui,12px)]",
@@ -6059,33 +6248,17 @@ export default function Sidebar() {
                   Pending
                 </span>
               ) : null}
-            </div>
+            </button>
             <div className="ml-auto flex shrink-0 items-center gap-1.5 pr-1">
               {canToggleSubagents ? (
-                <button
-                  type="button"
-                  data-thread-selection-safe
-                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${childCountLabel}`}
-                  title={childCountLabel}
-                  className={cn(
-                    "inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-full border px-[5px] transition-colors",
-                    toggleButtonClassName,
-                  )}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    toggleSubagentParent(thread.id);
-                  }}
-                >
-                  <span className="text-[9px] font-medium leading-none tabular-nums">
-                    {childCount}
-                  </span>
-                  {isExpanded ? (
-                    <SidebarGlyph icon={ChevronDownIcon} variant="chevron" />
-                  ) : (
-                    <SidebarGlyph icon={ChevronRightIcon} variant="chevron" />
-                  )}
-                </button>
+                <SidebarThreadFamilyDisclosureButton
+                  childCount={childCount}
+                  controls={disclosureRegionId}
+                  open={isExpanded}
+                  threadTitle={thread.title}
+                  className={toggleButtonClassName}
+                  onToggle={() => toggleSubagentParent(thread.id)}
+                />
               ) : null}
               {showCompactMeta && isTemporaryThread && !thread.sidechatSourceThreadId ? (
                 <Tooltip>
@@ -6116,6 +6289,7 @@ export default function Sidebar() {
                   threadId: thread.id,
                   toneClassName: secondaryMetaClass,
                   isPinned,
+                  isSubagentThread,
                   compact: isSubagentThread,
                 }),
               })}
@@ -6127,28 +6301,42 @@ export default function Sidebar() {
     );
   }
 
-  function renderChatItem(row: (typeof visibleChatThreadRows)[number]) {
-    return renderThreadRow(
-      row.thread,
-      visibleChatThreadIds,
-      row.depth,
-      row.childCount,
-      row.isExpanded,
-      true,
-    );
-  }
-
-  function renderStudioChatItem(row: (typeof studioChatThreadRows)[number]) {
-    // Studio rows are a flat top-level list like home Chats: the indented column
-    // is reserved for project-nested threads.
-    return renderThreadRow(
-      row.thread,
-      studioChatThreadIds,
-      row.depth,
-      row.childCount,
-      row.isExpanded,
-      true,
-    );
+  function renderThreadFamilyNodes(
+    nodes: readonly SidebarThreadTreeNode<SidebarThreadSummary>[],
+    orderedThreadIds: readonly ThreadId[],
+    scope: SidebarThreadFamilyScope,
+    topLevel: boolean,
+  ): ReactNode {
+    return nodes.map((node) => {
+      const regionId = sidebarThreadFamilyRegionId(scope, node.thread.id);
+      return (
+        <Fragment key={node.thread.id}>
+          {renderThreadRow(
+            node.thread,
+            orderedThreadIds,
+            node.depth,
+            node.childCount,
+            node.isExpanded,
+            topLevel,
+            scope,
+          )}
+          {node.childCount > 0 ? (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarThreadFamilyDisclosureRegion
+                id={regionId}
+                open={node.isExpanded}
+                threadTitle={node.thread.title}
+                className="w-full"
+              >
+                <SidebarMenuSub className="mx-0 my-0 w-full translate-x-0 gap-0.5 border-l-0 px-0 py-0">
+                  {renderThreadFamilyNodes(node.children, orderedThreadIds, scope, topLevel)}
+                </SidebarMenuSub>
+              </SidebarThreadFamilyDisclosureRegion>
+            </SidebarMenuSubItem>
+          ) : null}
+        </Fragment>
+      );
+    });
   }
 
   function renderProjectItem(
@@ -6403,14 +6591,19 @@ export default function Sidebar() {
                   ))}
                 </>
               ) : null}
-              {visibleEntries.map((entry) =>
-                renderThreadRow(
-                  entry.thread,
-                  orderedProjectThreadIds,
-                  entry.depth,
-                  entry.childCount,
-                  entry.isExpanded,
+              {renderThreadFamilyNodes(
+                nestVisibleSidebarThreadRows(
+                  visibleEntries.map((entry) => ({
+                    thread: entry.thread,
+                    depth: entry.depth,
+                    rootThreadId: entry.rootRowId,
+                    childCount: entry.childCount,
+                    isExpanded: entry.isExpanded,
+                  })),
                 ),
+                orderedProjectThreadIds,
+                "project",
+                false,
               )}
 
               {(canShowMoreThreads || canShowLessThreads) && (
@@ -7454,7 +7647,12 @@ export default function Sidebar() {
                   )}
                   <SidebarMenu ref={attachProjectListAutoAnimateRef} className="gap-1">
                     {studioChatThreadRows.length > 0 ? (
-                      studioChatThreadRows.map((row) => renderStudioChatItem(row))
+                      renderThreadFamilyNodes(
+                        nestVisibleSidebarThreadRows(studioChatThreadRows),
+                        studioChatThreadIds,
+                        "studio",
+                        true,
+                      )
                     ) : (
                       <div className="px-2 pt-4 text-center text-[length:var(--app-font-size-ui,12px)] text-muted-foreground/58">
                         {threadsHydrated ? "No studio chats yet" : "Loading Studio..."}
@@ -7508,6 +7706,8 @@ export default function Sidebar() {
                       onClick={handleStartAddProject}
                       tooltip="Add project"
                       tooltipSide="right"
+                      tooltipDelay={150}
+                      tooltipAlignOffset={-3}
                     />,
                   )}
 
@@ -7631,7 +7831,12 @@ export default function Sidebar() {
                     className={cn("gap-1", disclosureContentClassName(chatSectionExpanded))}
                   >
                     {visibleChatThreadRows.length > 0 ? (
-                      renderedChatEntries.map((entry) => renderChatItem(entry.row))
+                      renderThreadFamilyNodes(
+                        nestVisibleSidebarThreadRows(renderedChatEntries.map((entry) => entry.row)),
+                        visibleChatThreadIds,
+                        "chat",
+                        true,
+                      )
                     ) : (
                       <div className="px-2 py-2 text-[length:var(--app-font-size-ui,12px)] text-muted-foreground/48">
                         No chats yet

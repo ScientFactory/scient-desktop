@@ -4,15 +4,17 @@
 
 import "../../index.css";
 
-import { MessageId } from "@synara/contracts";
+import { MessageId, ThreadId } from "@synara/contracts";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { MessagesTimeline } from "./MessagesTimeline";
 import type { deriveTimelineEntries } from "../../session-logic";
+import { useUserMessageEditDraftStore } from "../../userMessageEditDraftStore";
 
 type TimelineEntries = ReturnType<typeof deriveTimelineEntries>;
+const HYDRATING_THREAD_ID = ThreadId.makeUnsafe("thread-hydrating-edit-draft");
 
 function userEntry(id: string, text: string): TimelineEntries[number] {
   return {
@@ -91,6 +93,7 @@ function HydratingTimeline() {
       </button>
       <div style={{ height: 420 }}>
         <MessagesTimeline
+          activeThreadId={HYDRATING_THREAD_ID}
           hasMessages={entries.length > 0}
           isWorking={false}
           activeTurnInProgress={false}
@@ -117,6 +120,7 @@ function HydratingTimeline() {
 
 describe("MessagesTimeline message enter animation", () => {
   afterEach(() => {
+    useUserMessageEditDraftStore.getState().clearAll();
     document.body.innerHTML = "";
   });
 
@@ -151,6 +155,32 @@ describe("MessagesTimeline message enter animation", () => {
             ?.classList.contains("chat-message-send-enter"),
         )
         .toBe(false);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("retains a rejected edit while thread detail is temporarily empty", async () => {
+    useUserMessageEditDraftStore.getState().begin(HYDRATING_THREAD_ID, {
+      messageId: MessageId.makeUnsafe("hydrated-user-message"),
+      draftText: "replacement kept through hydration",
+      originalText: "Loaded from history.",
+      originalRevision: "2026-03-17T19:12:28.000Z",
+      attemptCreatedAt: "2026-03-17T19:12:29.000Z",
+    });
+    useUserMessageEditDraftStore
+      .getState()
+      .markRejected(HYDRATING_THREAD_ID, MessageId.makeUnsafe("hydrated-user-message"));
+    const screen = await render(<HydratingTimeline />);
+
+    try {
+      expect(
+        useUserMessageEditDraftStore.getState().draftsByThreadId[HYDRATING_THREAD_ID],
+      ).toBeDefined();
+      await screen.getByRole("button", { name: "Load saved message" }).click();
+      const recoveredEdit = screen.getByRole("textbox", { name: "Edit message" });
+      await expect.element(recoveredEdit).toHaveValue("replacement kept through hydration");
+      await expect.element(recoveredEdit).toHaveFocus();
     } finally {
       await screen.unmount();
     }

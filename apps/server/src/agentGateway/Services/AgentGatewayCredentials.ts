@@ -14,6 +14,7 @@ import { ServiceMap } from "effect";
 import type {
   AgentGatewaySessionIdentity,
   AgentGatewayWriteAuthority,
+  AgentGatewayWriteLease,
 } from "./AgentGatewaySessionRegistry.ts";
 
 export interface AgentGatewayMcpConnection {
@@ -38,6 +39,10 @@ export interface AgentGatewayCredentialsShape {
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   /** Recheck that a previously bound authority still belongs to a live session. */
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
+  /** Acquire ingress admission and lifetime bookkeeping for one bounded write. */
+  readonly acquireWriteLease: (
+    authority: AgentGatewayWriteAuthority,
+  ) => AgentGatewayWriteLease | null;
   /** Subscribe to exact provider-session revocation for lifecycle-owned caches. */
   readonly subscribeSessionRevocations: (
     listener: (identity: AgentGatewaySessionIdentity) => void,

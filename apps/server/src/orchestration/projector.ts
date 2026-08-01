@@ -759,6 +759,7 @@ export function projectEvent(
               ...modelSelectionPatch,
               runtimeMode: payload.runtimeMode,
               interactionMode: payload.interactionMode,
+              pendingTurnMessageId: payload.messageId,
               updatedAt: payload.createdAt,
             }),
           };
@@ -872,6 +873,10 @@ export function projectEvent(
                   ? thread.latestTurn
                   : {
                       turnId: session.activeTurnId,
+                      requestMessageId:
+                        thread.latestTurn?.turnId === session.activeTurnId
+                          ? (thread.latestTurn.requestMessageId ?? null)
+                          : (thread.pendingTurnMessageId ?? null),
                       state: "running",
                       requestedAt:
                         thread.latestTurn?.turnId === session.activeTurnId
@@ -888,6 +893,10 @@ export function projectEvent(
                           : null,
                     }
                 : settleLatestTurnForSessionStatus(thread.latestTurn, session),
+            pendingTurnMessageId:
+              session.status === "running" && session.activeTurnId !== null
+                ? null
+                : thread.pendingTurnMessageId,
             updatedAt: event.occurredAt,
           }),
         };
@@ -1089,19 +1098,23 @@ export function projectEvent(
           }
 
           const rollback = rollbackThreadMessagesFromMessage(thread.messages, payload.messageId);
-          if (rollback.messages === thread.messages) {
+          const removedTurnIds = new Set([
+            ...rollback.removedTurnIds,
+            ...(payload.removedTurnIds ?? []),
+          ]);
+          if (rollback.messages === thread.messages && removedTurnIds.size === 0) {
             return nextBase;
           }
 
           const checkpoints = thread.checkpoints
-            .filter((checkpoint) => !rollback.removedTurnIds.has(checkpoint.turnId))
+            .filter((checkpoint) => !removedTurnIds.has(checkpoint.turnId))
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
             .slice(-MAX_THREAD_CHECKPOINTS);
           const proposedPlans = thread.proposedPlans
-            .filter((plan) => plan.turnId === null || !rollback.removedTurnIds.has(plan.turnId))
+            .filter((plan) => plan.turnId === null || !removedTurnIds.has(plan.turnId))
             .slice(-200);
           const activities = thread.activities.filter(
-            (activity) => activity.turnId === null || !rollback.removedTurnIds.has(activity.turnId),
+            (activity) => activity.turnId === null || !removedTurnIds.has(activity.turnId),
           );
           const latestCheckpoint = checkpoints.at(-1) ?? null;
 
@@ -1153,6 +1166,9 @@ export function projectEvent(
           };
         }),
       );
+
+    case "thread.generated-image-reference-recorded":
+      return Effect.succeed(nextBase);
 
     default:
       return Effect.succeed(nextBase);

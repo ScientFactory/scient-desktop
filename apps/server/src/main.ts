@@ -23,6 +23,11 @@ import {
 } from "./config";
 import { AgentGatewayLive } from "./agentGateway/Layers/AgentGateway";
 import { AgentGatewayCredentialsWithSecretsLive } from "./agentGateway/Layers/AgentGatewayCredentials";
+import {
+  ScientOperationExecutorDisabled,
+  ScientOperationExecutorLive,
+} from "./scientOperations/Layers/ScientOperationExecutor";
+import { ScientOperationReceiptRepositoryLive } from "./persistence/Layers/ScientOperationReceipts";
 import { fixPath, resolveBaseDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
@@ -305,6 +310,13 @@ const LayerLive = (input: CliInput) => {
   // gated at runtime by `config.agentGatewayEnabled`; when disabled, no tokens
   // are minted and the route 404s, so these layers stay inert.
   const agentGatewayCredentialsLayer = AgentGatewayCredentialsWithSecretsLive;
+  const scientOperationExecutorLayer = Layer.unwrap(
+    Effect.map(Effect.service(ServerConfig), (config) =>
+      config.agentGatewayEnabled
+        ? ScientOperationExecutorLive.pipe(Layer.provideMerge(ScientOperationReceiptRepositoryLive))
+        : ScientOperationExecutorDisabled,
+    ),
+  );
   // Bundle the same memoized runtime-services and provider layers used at the
   // top level (Effect memoizes by reference, so this adds no duplicate
   // construction). The read tools need `ProjectionSnapshotQuery` from the
@@ -316,6 +328,7 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(agentGatewayCredentialsLayer),
+    Layer.provideMerge(scientOperationExecutorLayer),
   );
 
   return Layer.empty.pipe(

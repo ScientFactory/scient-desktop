@@ -13,6 +13,13 @@ import { ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  makeScientOperationAuthority,
+  SCIENT_OPERATION_DEFINITIONS,
+  ScientOperationInputError,
+  type ScientOperationAuthority,
+} from "../scientOperations/authority.ts";
+import type { ScientOperationExecutorShape } from "../scientOperations/Services/ScientOperationExecutor.ts";
 import type { AgentGatewayShape } from "./Services/AgentGateway.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
 import { extractBearerToken } from "./bearerToken.ts";
@@ -26,6 +33,7 @@ import {
   JSON_RPC_METHOD_NOT_FOUND,
   parseMcpMessage,
   type JsonRpcRequest,
+  type McpToolCallResult,
 } from "./protocol.ts";
 import { errorText } from "./toolInput.ts";
 import {
@@ -34,9 +42,39 @@ import {
   gatewayToolErrorResult,
   type ToolContext,
   type ToolEntry,
+  ToolInputError,
 } from "./toolRuntime.ts";
 
 const MCP_MAX_BATCH_MESSAGES = 50;
+
+type ToolRequestBaseContext = Omit<
+  ToolContext,
+  | "admittedCaller"
+  | "jsonRpcRequestId"
+  | "operationEnvelope"
+  | "operationRevocationFence"
+  | "recordOperationEffect"
+> & {
+  readonly revocationFence: Effect.Effect<never, GatewayToolError>;
+  readonly runTransactionalWrite: <A, E>(
+    effect: Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E | GatewayToolError>;
+};
+
+function toolResultErrorCode(result: {
+  readonly content: ReadonlyArray<{ readonly text: string }>;
+  readonly isError?: boolean;
+}): string | null {
+  if (!result.isError) return null;
+  try {
+    const parsed = JSON.parse(result.content[0]?.text ?? "null") as {
+      readonly error?: { readonly code?: unknown };
+    };
+    return typeof parsed.error?.code === "string" ? parsed.error.code : "tool_error";
+  } catch {
+    return "tool_error";
+  }
+}
 
 export function makeAgentGatewayMcpTransport(input: {
   readonly credentials: AgentGatewayCredentialsShape;
@@ -46,10 +84,12 @@ export function makeAgentGatewayMcpTransport(input: {
   readonly requireThreadShell: (
     threadId: string,
   ) => Effect.Effect<OrchestrationThreadShell, unknown>;
+  readonly operationExecutor: ScientOperationExecutorShape;
 }): AgentGatewayShape["handleMcpPost"] {
+  const operationExecutor = input.operationExecutor;
   const toolsByName = new Map(input.tools.map((tool) => [tool.definition.name, tool]));
 
-  const handleRequest = (request: JsonRpcRequest, context: Omit<ToolContext, "jsonRpcRequestId">) =>
+  const handleRequest = (request: JsonRpcRequest, context: ToolRequestBaseContext) =>
     Effect.gen(function* () {
       switch (request.method) {
         case "initialize":
@@ -81,49 +121,142 @@ export function makeAgentGatewayMcpTransport(input: {
             typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)
               ? (rawArgs as Record<string, unknown>)
               : {};
-          const requiredCapability = tool.requiresActiveTurn
-            ? toolName.includes("automation")
-              ? "automation:write"
-              : "thread:write"
-            : "thread:read";
-          if (!context.callerCapabilities.has(requiredCapability)) {
+          const operation = SCIENT_OPERATION_DEFINITIONS[tool.operation];
+          const canonicalizeDomainInput = operation.canonicalizeInput;
+          if (canonicalizeDomainInput === null) {
             return jsonRpcResult(
               request.id,
               gatewayToolErrorResult(
                 new GatewayToolError(
-                  "capability_denied",
-                  `This provider session is not authorized for ${requiredCapability}.`,
-                  { requiredCapability },
+                  "operation_not_available",
+                  "This Scient operation does not yet have an executable domain-input contract.",
                 ),
               ),
             );
           }
-          const invocationContext: ToolContext = {
-            ...context,
-            jsonRpcRequestId: request.id,
-          };
-          if (tool.requiresActiveTurn) {
-            const authorityError = yield* context.assertCallerTurnActive().pipe(
-              Effect.match({
-                onFailure: (error) => error,
-                onSuccess: () => null,
+          const decoded = yield* Effect.try({
+            try: () => tool.decodeInput(args),
+            catch: (error) => error,
+          }).pipe(
+            Effect.match({
+              onFailure: (error) => ({ ok: false as const, error }),
+              onSuccess: (value) => ({ ok: true as const, value }),
+            }),
+          );
+          if (!decoded.ok) {
+            return jsonRpcResult(
+              request.id,
+              gatewayToolFailureResult(decoded.error, {
+                operation: "decode_tool_input",
+                toolName,
               }),
             );
-            if (authorityError !== null) {
-              return jsonRpcResult(request.id, gatewayToolErrorResult(authorityError));
-            }
           }
-          const result = yield* Effect.suspend(() => tool.handler(args, invocationContext)).pipe(
-            Effect.catchDefect((defect) =>
-              Effect.succeed(
-                gatewayToolFailureResult(defect, {
-                  operation: "tool_handler_defect",
-                  toolName,
+          const admissionEffect =
+            operation.admission === "write-authority"
+              ? context.requireCurrentCallerTurn()
+              : context.requireCurrentOperationCaller();
+          const outcome = yield* operationExecutor.execute<
+            McpToolCallResult,
+            OrchestrationThreadShell,
+            GatewayToolError
+          >({
+            authority: context.operationAuthority,
+            operation: tool.operation,
+            projectId: context.callerProjectId,
+            ingress: "provider-gateway",
+            ...(context.callerTurnId === null
+              ? {}
+              : { providerAuthorizingTurnId: context.callerTurnId }),
+            ...(context.callerTurnId === null
+              ? {}
+              : {
+                  semanticIdempotencyScope: {
+                    kind: "provider-turn" as const,
+                    provider: context.callerProvider,
+                    callerThreadId: context.callerThreadId,
+                    callerTurnId: context.callerTurnId,
+                  },
                 }),
-              ),
-            ),
-          );
-          return jsonRpcResult(request.id, result);
+            domainInput: decoded.value,
+            admit: admissionEffect,
+            execute: (canonicalInput, executionContext) => {
+              const invocationContext: ToolContext = {
+                ...context,
+                admittedCaller: executionContext.admission,
+                operationEnvelope: executionContext.envelope,
+                operationRevocationFence: context.revocationFence,
+                recordOperationEffect: executionContext.recordEffect,
+                jsonRpcRequestId: request.id,
+              };
+              return Effect.suspend(() => tool.handler(canonicalInput, invocationContext)).pipe(
+                Effect.catchDefect((defect) =>
+                  Effect.succeed(
+                    gatewayToolFailureResult(defect, {
+                      operation: "tool_handler_defect",
+                      toolName,
+                    }),
+                  ),
+                ),
+              );
+            },
+            releaseRead: () => context.requireCurrentOperationCaller().pipe(Effect.asVoid),
+            releaseReplay: () =>
+              (operation.admission === "write-authority"
+                ? context.requireCurrentCallerTurn()
+                : context.requireCurrentOperationCaller()
+              ).pipe(Effect.asVoid),
+            runTransactionalWrite: (effect) => context.runTransactionalWrite(effect),
+            revocationFence: context.revocationFence,
+            resultErrorCode: toolResultErrorCode,
+            ...(tool.durableReplay === undefined ? {} : { durableReplay: tool.durableReplay }),
+            ...(tool.prepareDurableIntent === undefined
+              ? {}
+              : { prepareDurableIntent: tool.prepareDurableIntent }),
+          });
+
+          switch (outcome.kind) {
+            case "input-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolFailureResult(
+                  outcome.error instanceof ScientOperationInputError
+                    ? new ToolInputError(outcome.error.message)
+                    : outcome.error,
+                  { operation: "canonicalize_tool_input", toolName },
+                ),
+              );
+            case "authority-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolErrorResult(
+                  new GatewayToolError(
+                    outcome.decision.code,
+                    outcome.decision.message,
+                    outcome.decision.details,
+                  ),
+                ),
+              );
+            case "admission-rejected":
+              return jsonRpcResult(request.id, gatewayToolErrorResult(outcome.error));
+            case "execution-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolErrorResult(new GatewayToolError(outcome.code, outcome.message)),
+              );
+            case "durability-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolErrorResult(new GatewayToolError(outcome.code, outcome.message)),
+              );
+            case "replayed":
+              return jsonRpcResult(request.id, outcome.result);
+            case "finished":
+              return jsonRpcResult(
+                request.id,
+                outcome.error === null ? outcome.result : gatewayToolFailureResult(outcome.error),
+              );
+          }
         }
         default:
           return jsonRpcError(
@@ -174,12 +307,70 @@ export function makeAgentGatewayMcpTransport(input: {
         };
       }
       const callerProjectId = callerThread.value.projectId;
+      const operationAuthority: ScientOperationAuthority = makeScientOperationAuthority({
+        authorityId: callerSession.sessionKey,
+        generation: callerSession.sessionKey,
+        actor: {
+          kind: "provider-thread",
+          threadId: callerThreadId,
+          provider: callerSession.provider,
+          sessionKey: callerSession.sessionKey,
+        },
+        projectIds: [callerProjectId],
+        capabilities: callerSession.capabilities,
+        issuedAt: callerSession.issuedAt,
+        expiresAt: null,
+        revokedAt: null,
+      });
       const callerWriteAuthority =
         callerThread.value.latestTurn?.state === "running"
           ? input.credentials.bindWriteAuthority(token, callerThread.value.latestTurn.turnId)
           : null;
-      const assertCallerTurnActive = () =>
+      const requireCurrentOperationCaller = () =>
         Effect.gen(function* () {
+          const liveSession = input.credentials.verifySession(token);
+          if (
+            liveSession === null ||
+            liveSession.sessionKey !== operationAuthority.generation ||
+            liveSession.threadId !== callerSession.threadId ||
+            liveSession.provider !== callerSession.provider
+          ) {
+            return yield* Effect.fail(
+              new GatewayToolError(
+                "caller_session_inactive",
+                "This Scient operation was rejected because its provider-session authority is no longer active.",
+                { callerThreadId },
+              ),
+            );
+          }
+          const liveCaller = yield* input
+            .requireThreadShell(callerThreadId)
+            .pipe(
+              Effect.mapError(
+                () =>
+                  new GatewayToolError(
+                    "caller_session_inactive",
+                    "This Scient operation was rejected because its caller thread could no longer be verified.",
+                    { callerThreadId },
+                  ),
+              ),
+            );
+          const liveProvider =
+            liveCaller.session?.providerName ?? liveCaller.modelSelection.provider;
+          if (liveCaller.projectId !== callerProjectId || liveProvider !== callerSession.provider) {
+            return yield* Effect.fail(
+              new GatewayToolError(
+                "caller_session_inactive",
+                "This Scient operation was rejected because its caller scope or provider ownership changed.",
+                { callerThreadId },
+              ),
+            );
+          }
+          return liveCaller;
+        });
+      const requireCurrentCallerTurn = () =>
+        Effect.gen(function* () {
+          const caller = yield* requireCurrentOperationCaller();
           if (callerWriteAuthority === null) {
             return yield* Effect.fail(
               new GatewayToolError(
@@ -198,18 +389,6 @@ export function makeAgentGatewayMcpTransport(input: {
               ),
             );
           }
-          const caller = yield* input
-            .requireThreadShell(callerThreadId)
-            .pipe(
-              Effect.mapError(
-                (error) =>
-                  new GatewayToolError(
-                    "caller_turn_inactive",
-                    "This Scient write was rejected because the caller thread could no longer be verified.",
-                    { callerThreadId },
-                  ),
-              ),
-            );
           if (
             caller.latestTurn?.state !== "running" ||
             caller.latestTurn.turnId !== callerWriteAuthority.turnId
@@ -227,15 +406,68 @@ export function makeAgentGatewayMcpTransport(input: {
               ),
             );
           }
+          return caller;
         });
-      const context: Omit<ToolContext, "jsonRpcRequestId"> = {
+      const runTransactionalWrite = <A, E>(
+        effect: Effect.Effect<A, E>,
+      ): Effect.Effect<A, E | GatewayToolError> =>
+        Effect.suspend((): Effect.Effect<A, E | GatewayToolError> => {
+          if (callerWriteAuthority === null) {
+            return Effect.fail(
+              new GatewayToolError(
+                "caller_turn_inactive",
+                "This Scient write was rejected because no caller turn was active when the MCP request arrived.",
+                { callerThreadId },
+              ),
+            );
+          }
+          const lease = input.credentials.acquireWriteLease(callerWriteAuthority);
+          if (lease === null) {
+            return Effect.fail(
+              new GatewayToolError(
+                "caller_session_inactive",
+                "This Scient write was rejected because its provider-session authority was revoked before the authoritative write began.",
+                { callerThreadId },
+              ),
+            );
+          }
+          return Effect.uninterruptible(effect).pipe(Effect.ensuring(Effect.sync(lease.release)));
+        });
+      const revocationFence = Effect.callback<never, GatewayToolError>((resume) => {
+        const cancelled = () =>
+          Effect.fail(
+            new GatewayToolError(
+              "caller_session_inactive",
+              "This Scient operation was cancelled because its provider-session authority was revoked.",
+              { callerThreadId },
+            ),
+          );
+        let unsubscribe: (() => void) | null = null;
+        unsubscribe = input.credentials.subscribeSessionRevocations((identity) => {
+          if (identity.sessionKey !== callerSession.sessionKey) return;
+          unsubscribe?.();
+          resume(cancelled());
+        });
+        // Subscribe before re-verifying so revocation cannot slip between the
+        // initial bearer check and installation of the in-flight fence.
+        const live = input.credentials.verifySession(token);
+        if (live === null || live.sessionKey !== callerSession.sessionKey) {
+          unsubscribe();
+          resume(cancelled());
+        }
+        return Effect.sync(() => unsubscribe?.());
+      });
+      const context: ToolRequestBaseContext = {
         callerThreadId,
         callerProjectId,
         callerSessionKey: callerSession.sessionKey,
         callerProvider: callerSession.provider,
-        callerCapabilities: callerSession.capabilities,
+        operationAuthority,
         callerTurnId: callerWriteAuthority?.turnId ?? null,
-        assertCallerTurnActive,
+        requireCurrentOperationCaller,
+        requireCurrentCallerTurn,
+        runTransactionalWrite,
+        revocationFence,
       };
 
       const rawMessages = Array.isArray(requestInput.body)

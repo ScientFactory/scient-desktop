@@ -1,11 +1,12 @@
 // FILE: conversationEdit.ts
 // Purpose: Shared policy for deciding whether a user message can be edited and replayed.
 // Layer: Shared orchestration utility
-// Exports: collectTailTurnIds, resolveTailUserMessageEditTarget, resolveLatestTailUserMessageEditTarget
+// Exports: interruptedTurnEditContext, collectTailTurnIds, resolveTailUserMessageEditTarget, resolveLatestTailUserMessageEditTarget
 
 type TurnMessageLike<TTurnId extends string = string> = {
   readonly id: string;
   readonly turnId?: TTurnId | null | undefined;
+  readonly createdAt?: string | undefined;
 };
 
 type EditableMessageLike = TurnMessageLike & {
@@ -18,7 +19,7 @@ export type TailUserMessageEditTarget =
       readonly editable: true;
       readonly messageId: string;
       readonly messageIndex: number;
-      readonly mode: "rollback" | "active-tail";
+      readonly mode: "rollback" | "active-tail" | "interrupted-tail";
       readonly rollbackTurnCount: number;
       readonly removedTurnIds: ReadonlyArray<string>;
     }
@@ -64,11 +65,44 @@ function findLatestNativeUserMessageIndex(messages: ReadonlyArray<EditableMessag
   return -1;
 }
 
+export function interruptedTurnEditContext(input: {
+  readonly latestTurn?:
+    | {
+        readonly turnId: string;
+        readonly requestMessageId?: string | null | undefined;
+        readonly state: string;
+        readonly assistantMessageId?: string | null | undefined;
+      }
+    | null
+    | undefined;
+  readonly sessionStatus?: string | null | undefined;
+  readonly sessionActiveTurnId?: string | null | undefined;
+}): { readonly messageId: string; readonly turnId: string } | null {
+  return input.latestTurn?.state === "interrupted" &&
+    !input.latestTurn.assistantMessageId &&
+    input.latestTurn.requestMessageId &&
+    !input.sessionActiveTurnId &&
+    (input.sessionStatus === "interrupted" || input.sessionStatus === "stopped")
+    ? {
+        messageId: input.latestTurn.requestMessageId,
+        turnId: input.latestTurn.turnId,
+      }
+    : null;
+}
+
 // Edits are only safe at the tail: either replay the last concrete turn, or replace the active prompt.
 export function resolveTailUserMessageEditTarget(input: {
   readonly messages: ReadonlyArray<EditableMessageLike>;
   readonly messageId: string;
   readonly activeTurnId?: string | null | undefined;
+  /**
+   * Identifies a settled interrupted turn whose user prompt never acquired
+   * concrete turn metadata because no assistant message was emitted.
+   */
+  readonly interruptedTurn?:
+    | { readonly messageId: string; readonly turnId: string }
+    | null
+    | undefined;
 }): TailUserMessageEditTarget {
   const messageIndex = input.messages.findIndex((message) => message.id === input.messageId);
   if (messageIndex < 0) {
@@ -118,12 +152,27 @@ export function resolveTailUserMessageEditTarget(input: {
     };
   }
 
+  if (input.interruptedTurn?.messageId === message.id) {
+    return {
+      editable: true,
+      messageId: message.id,
+      messageIndex,
+      mode: "interrupted-tail",
+      rollbackTurnCount: 1,
+      removedTurnIds: [input.interruptedTurn.turnId],
+    };
+  }
+
   return { editable: false, reason: "missing-turn-metadata" };
 }
 
 export function resolveLatestTailUserMessageEditTarget(input: {
   readonly messages: ReadonlyArray<EditableMessageLike>;
   readonly activeTurnId?: string | null | undefined;
+  readonly interruptedTurn?:
+    | { readonly messageId: string; readonly turnId: string }
+    | null
+    | undefined;
 }): TailUserMessageEditTarget {
   const latestNativeUserIndex = findLatestNativeUserMessageIndex(input.messages);
   const latestNativeUserMessage = input.messages[latestNativeUserIndex];
@@ -134,5 +183,6 @@ export function resolveLatestTailUserMessageEditTarget(input: {
     messages: input.messages,
     messageId: latestNativeUserMessage.id,
     activeTurnId: input.activeTurnId,
+    interruptedTurn: input.interruptedTurn,
   });
 }

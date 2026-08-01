@@ -6,6 +6,7 @@ import type {
   ThreadMarker,
 } from "@synara/contracts";
 import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   MAX_PINNED_PROJECTS,
   PINNED_MESSAGES_MAX_COUNT,
   THREAD_MARKERS_MAX_COUNT,
@@ -16,9 +17,11 @@ import {
   deriveAssociatedWorktreeMetadata,
   deriveAssociatedWorktreeMetadataPatch,
 } from "@synara/shared/threadWorkspace";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { doThreadMarkerRangesOverlap } from "@synara/shared/threadMarkers";
 import {
   collectTailTurnIds,
+  interruptedTurnEditContext,
   resolveTailUserMessageEditTarget,
 } from "@synara/shared/conversationEdit";
 import { Effect } from "effect";
@@ -33,6 +36,7 @@ import { resolveNextForkTitle } from "./forkTitle.ts";
 import { validateImportedMessageIds, validateMessageForkImport } from "./messageFork.ts";
 import { resolveStableMessageTurnId } from "./messageTurnId.ts";
 import {
+  findThreadById,
   listActiveProjectsByWorkspaceRoot,
   listThreadsByProjectId,
   requireProject,
@@ -43,6 +47,9 @@ import {
   requireThreadAbsent,
   requireThreadArchived,
   requireThreadNotArchived,
+  requireThreadSubtreeIdle,
+  requireThreadSubtreeNotStarting,
+  requireValidThreadParent,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -51,11 +58,122 @@ const STUDIO_PROJECT_KIND_SET = new Set<ProjectKind>(["studio"]);
 // Kinds that claim exclusive ownership of a workspace root. Chat containers are excluded: they
 // use placeholder roots (e.g. the home dir) that legitimately coexist with real projects.
 const WORKSPACE_OWNING_PROJECT_KIND_SET = new Set<ProjectKind>(["project", "studio"]);
+const GENERATED_IMAGE_WARNING_PARAGRAPH =
+  /^(?:A|One) generated image could not be displayed because Scient could not safely store it\.$|^\d+ generated images could not be displayed because Scient could not safely store them\.$|^Additional generated (?:image was|images were) omitted because chat messages support at most \d+ attachments\.$|^Additional \d+ generated images were omitted because chat messages support at most \d+ attachments\.$/u;
+
+export function reconcileGeneratedImageWarningText(
+  text: string,
+  omittedImageCount: number,
+  failedImageCount: number,
+): string {
+  const paragraphs = text
+    .split("\n\n")
+    .filter((paragraph) => !GENERATED_IMAGE_WARNING_PARAGRAPH.test(paragraph.trim()));
+  if (omittedImageCount === 1) {
+    paragraphs.push(
+      `Additional generated image was omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    );
+  } else if (omittedImageCount > 1) {
+    paragraphs.push(
+      `Additional ${omittedImageCount} generated images were omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    );
+  }
+  if (failedImageCount === 1) {
+    paragraphs.push(
+      "One generated image could not be displayed because Scient could not safely store it.",
+    );
+  } else if (failedImageCount > 1) {
+    paragraphs.push(
+      `${failedImageCount} generated images could not be displayed because Scient could not safely store them.`,
+    );
+  }
+  return paragraphs.filter((paragraph) => paragraph.length > 0).join("\n\n");
+}
+
+function protectedThreadOperationState(thread: OrchestrationReadModel["threads"][number]) {
+  return {
+    projectId: thread.projectId,
+    runtimeMode: thread.runtimeMode,
+    envMode: thread.envMode ?? "local",
+    interactionMode: thread.interactionMode,
+    provider: thread.session?.providerName ?? thread.modelSelection.provider,
+    sessionStatus: thread.session?.status ?? null,
+    activeTurnId: thread.session?.activeTurnId ?? null,
+    latestTurnId: thread.latestTurn?.turnId ?? null,
+    latestTurnState: thread.latestTurn?.state ?? null,
+  };
+}
+
+function validateTrustedOperationPrecondition(input: {
+  readonly command: Extract<
+    OrchestrationCommand,
+    { type: "thread.turn.start" | "thread.turn.interrupt" }
+  >;
+  readonly readModel: OrchestrationReadModel;
+  readonly targetThread: OrchestrationReadModel["threads"][number];
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const expected = input.command.operationPrecondition;
+  if (expected === undefined) return Effect.void;
+  const actorThread = input.readModel.threads.find(
+    (thread) => thread.id === expected.actorThreadId,
+  );
+  if (actorThread === undefined) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Trusted operation actor '${expected.actorThreadId}' no longer exists.`,
+      }),
+    );
+  }
+  for (const [lane, expectedState, thread] of [
+    ["actor", expected.actor, actorThread],
+    ["target", expected.target, input.targetThread],
+  ] as const) {
+    const actual = protectedThreadOperationState(thread);
+    const mismatch = (Object.keys(expectedState) as Array<keyof typeof expectedState>).find(
+      (key) => expectedState[key] !== actual[key],
+    );
+    if (mismatch === undefined) continue;
+
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Trusted operation ${lane} precondition failed for '${thread.id}' at '${mismatch}'.`,
+      }),
+    );
+  }
+  return Effect.void;
+}
 
 function collectExistingMessageIds(readModel: OrchestrationReadModel) {
   return new Set(
     readModel.threads.flatMap((thread) => thread.messages.map((message) => message.id)),
   );
+}
+
+function resolveSharedProviderParentThread(
+  readModel: OrchestrationReadModel,
+  thread: OrchestrationReadModel["threads"][number],
+) {
+  if (thread.parentThreadId) {
+    return readModel.threads.find((candidate) => candidate.id === thread.parentThreadId);
+  }
+  const rawThreadId = thread.id as string;
+  if (!rawThreadId.startsWith("subagent:")) {
+    return undefined;
+  }
+  return readModel.threads
+    .filter(
+      (candidate) =>
+        candidate.id !== thread.id && rawThreadId.startsWith(`subagent:${candidate.id}:`),
+    )
+    .toSorted((left, right) => (right.id as string).length - (left.id as string).length)[0];
+}
+
+function isProviderSessionBusyForChildEdit(
+  session: OrchestrationReadModel["threads"][number]["session"] | undefined,
+) {
+  return session?.status === "starting" || session?.status === "running";
 }
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
@@ -153,7 +271,9 @@ function validateProjectPinLimit(input: {
   }
 
   const excludeProjectIds = new Set<string>([input.projectId, ...(input.staleProjectIds ?? [])]);
-  const pinnedProjectCount = countPinnedProjects(input.readModel, { excludeProjectIds });
+  const pinnedProjectCount = countPinnedProjects(input.readModel, {
+    excludeProjectIds,
+  });
   if (pinnedProjectCount < MAX_PINNED_PROJECTS) {
     return Effect.void;
   }
@@ -437,6 +557,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         readModel,
         command,
         threadId: command.threadId,
+      });
+      yield* requireValidThreadParent({
+        readModel,
+        command,
+        threadId: command.threadId,
+        projectId: command.projectId,
+        parentThreadId: command.parentThreadId ?? null,
       });
       return {
         ...withEventBase({
@@ -759,12 +886,70 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const rootThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
+      const liveProjectThreads = readModel.threads.filter(
+        (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+      );
+      const liveDescendantThreadIds = collectSubagentDescendants(
+        liveProjectThreads,
+        command.threadId,
+      ).map((thread) => thread.id);
+      if (command.cascadeDescendants === true) {
+        yield* requireThreadSubtreeNotStarting({
+          readModel,
+          command,
+          threadId: command.threadId,
+        });
+        const descendantThreadIds = liveDescendantThreadIds.toReversed();
+        const expectedThreadIds = command.expectedDescendantThreadIds;
+        const expectedSet = new Set(expectedThreadIds ?? []);
+        const actualSet = new Set(descendantThreadIds);
+        if (
+          (command.expectedReadModelSequence !== undefined &&
+            command.expectedReadModelSequence !== readModel.snapshotSequence) ||
+          expectedThreadIds === undefined ||
+          expectedSet.size !== expectedThreadIds.length ||
+          expectedSet.size !== actualSet.size ||
+          descendantThreadIds.some((threadId) => !expectedSet.has(threadId))
+        ) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail:
+                "The conversation subtree changed before deletion. Refresh it and confirm the updated scope.",
+            }),
+          );
+        }
+        return [...descendantThreadIds, command.threadId].map(
+          (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt,
+              commandId: command.commandId,
+            }),
+            type: "thread.deleted",
+            payload: {
+              threadId,
+              deletedAt: occurredAt,
+            },
+          }),
+        );
+      }
+      if (liveDescendantThreadIds.length > 0) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail:
+              "This conversation has live sub-agent descendants. Refresh it and confirm deletion of the complete family.",
+          }),
+        );
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -786,51 +971,89 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireThreadSubtreeIdle({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const rootThread = findThreadById(readModel, command.threadId);
+      const descendantThreadIds = collectSubagentDescendants(
+        readModel.threads.filter(
+          (thread) =>
+            thread.deletedAt === null &&
+            rootThread !== undefined &&
+            thread.projectId === rootThread.projectId,
+        ),
+        command.threadId,
+      )
+        .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) === null)
+        .map((thread) => thread.id);
+      return [...descendantThreadIds, command.threadId].map(
+        (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.archived",
+          payload: {
+            threadId,
+            archivedAt: occurredAt,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.archived",
-        payload: {
-          threadId: command.threadId,
-          archivedAt: occurredAt,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.unarchive": {
-      yield* requireThreadArchived({
+      const rootThread = yield* requireThreadArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const descendantThreadIds = collectSubagentDescendants(
+        readModel.threads.filter(
+          (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+        ),
+        command.threadId,
+      )
+        .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) !== null)
+        .map((thread) => thread.id);
+      return [...descendantThreadIds, command.threadId].map(
+        (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unarchived",
+          payload: {
+            threadId,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.unarchived",
-        payload: {
-          threadId: command.threadId,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (command.parentThreadId !== undefined) {
+        yield* requireValidThreadParent({
+          readModel,
+          command,
+          threadId: command.threadId,
+          projectId: thread.projectId,
+          parentThreadId: command.parentThreadId,
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -1188,6 +1411,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* validateTrustedOperationPrecondition({ command, readModel, targetThread });
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1336,11 +1560,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      yield* validateTrustedOperationPrecondition({ command, readModel, targetThread });
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1480,11 +1705,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         messageId: command.messageId,
         activeTurnId:
           thread.session?.status === "running" ? (thread.session.activeTurnId ?? null) : null,
+        interruptedTurn: interruptedTurnEditContext({
+          latestTurn: thread.latestTurn,
+          sessionStatus: thread.session?.status,
+          sessionActiveTurnId: thread.session?.activeTurnId,
+        }),
       });
       if (!editTarget.editable) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Only the latest rollbackable user message can be edited and resent (${editTarget.reason}).`,
+        });
+      }
+      const parentThread = resolveSharedProviderParentThread(readModel, thread);
+      const isQueuedTailEdit =
+        editTarget.mode === "active-tail" &&
+        thread.latestTurn?.state === "running" &&
+        thread.latestTurn.requestMessageId != null &&
+        thread.latestTurn.requestMessageId !== command.messageId;
+      if (!isQueuedTailEdit && isProviderSessionBusyForChildEdit(parentThread?.session)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A subagent message cannot be edited while its shared parent session is busy.",
         });
       }
       return {
@@ -1499,6 +1741,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           text: command.text,
+          editMode: editTarget.mode,
           rollbackTurnCount: editTarget.rollbackTurnCount,
           removedTurnIds: editTarget.removedTurnIds.map((turnId) => TurnId.makeUnsafe(turnId)),
           ...(command.modelSelection !== undefined
@@ -1539,11 +1782,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.set": {
-      const thread = yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
+      const thread = findThreadById(readModel, command.threadId);
+      if (!thread) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not exist for command '${command.type}'.`,
+        });
+      }
+      const isDeletedThreadTerminalSettlement =
+        thread.deletedAt !== null &&
+        command.session.activeTurnId === null &&
+        (command.session.status === "ready" ||
+          command.session.status === "interrupted" ||
+          command.session.status === "stopped" ||
+          command.session.status === "error");
+      if (thread.deletedAt !== null && !isDeletedThreadTerminalSettlement) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Deleted thread '${command.threadId}' only accepts terminal session settlement.`,
+        });
+      }
       const sessionEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1558,6 +1816,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      if (isDeletedThreadTerminalSettlement) return sessionEvent;
       const settlement = collectAssistantMessagesToSettle({
         thread,
         nextSession: command.session,
@@ -1684,6 +1943,96 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.message.assistant.attachments.add": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingMessage = thread.messages.find((message) => message.id === command.messageId);
+      if (existingMessage && existingMessage.role !== "assistant") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Cannot add assistant attachments to non-assistant message '${command.messageId}'.`,
+        });
+      }
+      const existingAttachments = existingMessage?.attachments ?? [];
+      const existingIds = new Set(existingAttachments.map((attachment) => attachment.id));
+      const additions = command.attachments.filter((attachment) => !existingIds.has(attachment.id));
+      const attachments = [...existingAttachments, ...additions].slice(
+        0,
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+      );
+      const omittedCount =
+        existingAttachments.length +
+        additions.length -
+        attachments.length +
+        (command.omittedImageCount ?? 0);
+      const existingText = existingMessage?.text ?? "";
+      const text = reconcileGeneratedImageWarningText(
+        existingText,
+        omittedCount,
+        command.failedImageCount ?? 0,
+      );
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "assistant",
+          text,
+          attachments,
+          turnId: resolveStableMessageTurnId({
+            existingTurnId: existingMessage?.turnId,
+            incomingTurnId: command.turnId,
+          }),
+          // Adding an attachment must never reopen a message that already settled.
+          streaming: existingMessage?.streaming ?? false,
+          source: existingMessage?.source ?? "native",
+          createdAt: existingMessage?.createdAt ?? command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.generated-image.reference.record": {
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      if ((command.turnId === undefined) === (command.targetMessageId === undefined)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Generated-image references must target exactly one turn or assistant message.",
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.generated-image-reference-recorded",
+        payload: {
+          threadId: command.threadId,
+          ...(command.turnId ? { turnId: command.turnId } : {}),
+          ...(command.targetMessageId ? { targetMessageId: command.targetMessageId } : {}),
+          attachmentId: command.attachmentId,
+          provenanceKey: command.provenanceKey,
+          sourcePath: command.sourcePath,
+          ...(command.sourceKind ? { sourceKind: command.sourceKind } : {}),
+          ...(command.sourceProviderThreadId
+            ? { sourceProviderThreadId: command.sourceProviderThreadId }
+            : {}),
+          createdAt: command.createdAt,
         },
       };
     }

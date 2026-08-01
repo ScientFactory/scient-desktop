@@ -118,6 +118,65 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-timeline-row-kind="message"');
   }, 10_000);
 
+  it("renders durable assistant image attachments with the shared preview control", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-assistant-image",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("assistant-message-image"),
+              role: "assistant",
+              text: "Here is the image.",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-attachment-id",
+                  name: "generated-image.png",
+                  mimeType: "image/png",
+                  sizeBytes: 12,
+                  previewUrl: "/attachments/thread-attachment-id",
+                },
+              ],
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Preview generated-image.png"');
+    expect(markup).toContain('src="/attachments/thread-attachment-id"');
+    expect(markup).toContain("Here is the image.");
+  });
+
+  it("corrects a settled image only for the tail while the reader remains at the end", async () => {
+    const { shouldCorrectTimelineForSettledImage } = await import("./MessagesTimeline");
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: true })).toBe(true);
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: false, isAtEnd: true })).toBe(false);
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: false })).toBe(false);
+  });
   it("renders assistant math through the shared markdown renderer", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -594,6 +653,54 @@ describe("MessagesTimeline", () => {
     expect(editButtonMarkup).not.toContain('disabled=""');
     expect(markup).not.toContain('title="Edit message"');
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Revert to this message"/);
+  });
+
+  it("keeps edit available after an unanswered turn is interrupted", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const requestedAt = "2026-08-01T08:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        interruptedTurn={{
+          messageId: "message-user-interrupted",
+          turnId: "turn-user-interrupted",
+        }}
+        timelineEntries={[
+          {
+            id: "entry-user-interrupted",
+            kind: "message",
+            createdAt: requestedAt,
+            message: {
+              id: MessageId.makeUnsafe("message-user-interrupted"),
+              role: "user",
+              text: "edit this stopped prompt",
+              createdAt: requestedAt,
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-08-01T08:00:02.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onEditUserMessage={() => true}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Edit message"');
+    expect(markup).not.toContain('aria-label="Revert to this message"');
   });
 
   it("renders a steering chip above steered user messages", async () => {

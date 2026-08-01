@@ -7,6 +7,7 @@ import type { NativeApi, ThreadBrowserState, ThreadId } from "@synara/contracts"
 
 import { useBrowserStateStore } from "../browserStateStore";
 import { useOptimisticUserMessageStore } from "../optimisticUserMessageStore";
+import { useUserMessageEditDraftStore } from "../userMessageEditDraftStore";
 
 type DeletedThreadBrowserCleanupApi = Pick<NativeApi, "browser" | "projects">;
 
@@ -70,6 +71,7 @@ export function removeDeletedThreadsFromClientState(
 ): void {
   for (const threadId of new Set(threadIds)) {
     useOptimisticUserMessageStore.getState().clearThread(threadId);
+    useUserMessageEditDraftStore.getState().clear(threadId);
     removeDeletedThreadFromClientState(threadId);
   }
 }

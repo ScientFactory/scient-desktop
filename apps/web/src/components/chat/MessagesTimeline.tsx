@@ -4,6 +4,7 @@
 // Exports: MessagesTimeline
 
 import {
+  EDIT_RESEND_PARENT_BUSY_ERROR_CLASS,
   type MessageId,
   type ProviderMentionReference,
   ThreadId,
@@ -73,7 +74,9 @@ import {
 import { pinActionLabel } from "~/lib/pin";
 import { Button } from "../ui/button";
 import { AutomationCreatedCard } from "./AutomationCreatedCard";
-import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { ChatImageAttachmentGallery } from "./ChatImageAttachmentGallery";
+import { scheduleTimelineImageSettleCorrections } from "./timelineImageSettle";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ToolCallDetailsContent, ToolCallDetailsDialog } from "./ToolCallDetailsDialog";
 import { DiffStatLabel } from "./DiffStatLabel";
@@ -173,6 +176,10 @@ import {
 import { observeUserMessageOverflow } from "./userMessageOverflowObserver";
 import { resolveRawTextDirectionHint, type ResolvedTextDirection } from "~/lib/textDirection";
 import {
+  nextUserMessageEditAttemptCreatedAt,
+  useUserMessageEditDraftStore,
+} from "~/userMessageEditDraftStore";
+import {
   resolveActiveTrailSnapshot,
   type ActiveTrailSnapshot,
   type MessageTrailAnchor,
@@ -226,6 +233,7 @@ const ACTIVE_MARKER_CLASS_NAME = "thread-marker-active";
 const EMPTY_MESSAGE_MARKERS: readonly ThreadMarker[] = [];
 const EMPTY_THREAD_MARKERS_BY_MESSAGE_ID = new Map<MessageId, readonly ThreadMarker[]>();
 const EMPTY_MESSAGE_ID_SET: ReadonlySet<MessageId> = new Set();
+const DEFAULT_TIMELINE_THREAD_ID = ThreadId.makeUnsafe("messages-timeline");
 
 /**
  * Imperative handle the transcript exposes so the Environment panel's pinned-message
@@ -397,6 +405,10 @@ function WorktreeSetupCard({ steps }: { steps: ReadonlyArray<WorktreeSetupStep> 
 }
 
 interface MessagesTimelineProps {
+  activeThreadId?: ThreadId;
+  threadError?: string | null;
+  threadErrorClass?: string | null;
+  threadSessionUpdatedAt?: string | null;
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
@@ -420,6 +432,8 @@ interface MessagesTimelineProps {
   threadMarkers?: readonly ThreadMarker[];
   /** User messages inserted locally by send actions, eligible for the subtle enter affordance. */
   enteringUserMessageIds?: ReadonlySet<MessageId>;
+  /** User rows whose blob previews are still explicitly owned by the app. */
+  ownedBlobUserMessageIds?: ReadonlySet<MessageId>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   forkProvenance?: ForkProvenance | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
@@ -434,12 +448,17 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: (turnCounts: readonly number[]) => void;
-  onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  onEditUserMessage?: (
+    messageId: MessageId,
+    text: string,
+    attemptCreatedAt: string,
+  ) => boolean | Promise<boolean>;
   /** Create an independent conversation whose imported transcript ends at this message. */
   onForkFromMessage?: (messageId: MessageId) => void;
   /** Server-backed boundaries whose complete prefix is safe to import. */
   forkableMessageIds?: ReadonlySet<MessageId>;
   activeTurnId?: TurnId | null;
+  interruptedTurn?: { readonly messageId: string; readonly turnId: string } | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onIsAtEndChange?: (isAtEnd: boolean) => void;
@@ -469,6 +488,10 @@ interface MessagesTimelineProps {
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  activeThreadId = DEFAULT_TIMELINE_THREAD_ID,
+  threadError = null,
+  threadErrorClass = null,
+  threadSessionUpdatedAt = null,
   hasMessages,
   isWorking,
   activeTurnInProgress,
@@ -483,6 +506,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onTogglePinMessage,
   threadMarkers = [],
   enteringUserMessageIds = EMPTY_MESSAGE_ID_SET,
+  ownedBlobUserMessageIds = EMPTY_MESSAGE_ID_SET,
   timelineEntries,
   forkProvenance = null,
   turnDiffSummaryByAssistantMessageId,
@@ -500,6 +524,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onForkFromMessage,
   forkableMessageIds,
   activeTurnId,
+  interruptedTurn,
   isRevertingCheckpoint,
   onImageExpand,
   onIsAtEndChange,
@@ -584,6 +609,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [editingUserMessageId, setEditingUserMessageId] = useState<MessageId | null>(null);
   const [submittingEditedUserMessageId, setSubmittingEditedUserMessageId] =
     useState<MessageId | null>(null);
+  const pendingUserMessageEdit = useUserMessageEditDraftStore(
+    (state) => state.draftsByThreadId[activeThreadId],
+  );
   const [selectedToolDetailsEntryId, setSelectedToolDetailsEntryId] = useState<string | null>(null);
   const openToolDetails = useCallback((workEntry: TimelineWorkEntry) => {
     setSelectedToolDetailsEntryId(workEntry.id);
@@ -674,6 +702,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedWorkGroupsState,
       highlightedMessageId,
       pinnedMessageIds,
+      pendingUserMessageEdit,
       settledTurnCollapseTransitions,
       submittingEditedUserMessageId,
       threadMarkersByMessageId,
@@ -690,6 +719,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedWorkGroupsState,
       highlightedMessageId,
       pinnedMessageIds,
+      pendingUserMessageEdit,
       settledTurnCollapseTransitions,
       submittingEditedUserMessageId,
       threadMarkersByMessageId,
@@ -826,31 +856,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return null;
   }, [rows]);
-  const tailScrollFrameRef = useRef<number | null>(null);
-  const tailScrollTimeoutsRef = useRef<number[]>([]);
+  const cancelTailImageCorrectionsRef = useRef<() => void>(() => {});
+  const isAtEndRef = useRef(true);
   const clearTailExpansionScrollTimers = useCallback(() => {
-    if (tailScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(tailScrollFrameRef.current);
-      tailScrollFrameRef.current = null;
-    }
-    for (const timeoutId of tailScrollTimeoutsRef.current) {
-      window.clearTimeout(timeoutId);
-    }
-    tailScrollTimeoutsRef.current = [];
+    cancelTailImageCorrectionsRef.current();
+    cancelTailImageCorrectionsRef.current = () => {};
   }, []);
   const scrollTailExpansionToEnd = useCallback(() => {
-    clearTailExpansionScrollTimers();
-    const scrollToEnd = () => {
-      void resolvedListRef.current?.scrollToEnd?.({ animated: false });
-    };
-    tailScrollFrameRef.current = window.requestAnimationFrame(() => {
-      tailScrollFrameRef.current = null;
-      scrollToEnd();
-    });
-    for (const delay of [80, 180, 260]) {
-      const timeoutId = window.setTimeout(scrollToEnd, delay);
-      tailScrollTimeoutsRef.current.push(timeoutId);
+    if (!shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: isAtEndRef.current })) {
+      return;
     }
+    clearTailExpansionScrollTimers();
+    cancelTailImageCorrectionsRef.current = scheduleTimelineImageSettleCorrections({
+      isAtEnd: () => isAtEndRef.current,
+      scrollToEnd: () => {
+        void resolvedListRef.current?.scrollToEnd?.({ animated: false });
+      },
+      requestFrame: window.requestAnimationFrame.bind(window),
+      cancelFrame: window.cancelAnimationFrame.bind(window),
+      setTimer: window.setTimeout.bind(window),
+      clearTimer: window.clearTimeout.bind(window),
+    });
   }, [clearTailExpansionScrollTimers, resolvedListRef]);
   useEffect(() => clearTailExpansionScrollTimers, [clearTailExpansionScrollTimers]);
   const ignoreTimelineImageLoad = useCallback(() => {}, []);
@@ -859,9 +885,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const editTarget = resolveLatestTailUserMessageEditTarget({
       messages,
       activeTurnId,
+      interruptedTurn,
     });
     return editTarget.editable ? (editTarget.messageId as MessageId) : null;
-  }, [activeTurnId, rows]);
+  }, [activeTurnId, interruptedTurn, rows]);
   const previousRowCountRef = useRef(rows.length);
   useEffect(() => {
     const previousRowCount = previousRowCountRef.current;
@@ -870,6 +897,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
     onIsAtEndChange?.(true);
+    isAtEndRef.current = true;
     const frameId = window.requestAnimationFrame(() => {
       void resolvedListRef.current?.scrollToEnd?.({ animated: false });
     });
@@ -907,11 +935,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onMessagesScroll?.(event);
       const state = resolvedListRef.current?.getState?.();
       if (state) {
+        isAtEndRef.current = state.isAtEnd;
+        if (!state.isAtEnd) clearTailExpansionScrollTimers();
         onIsAtEndChange?.(state.isAtEnd);
         emitTrailHighlightsForViewport(state.start, state.end);
       }
     },
-    [emitTrailHighlightsForViewport, onIsAtEndChange, onMessagesScroll, resolvedListRef],
+    [
+      clearTailExpansionScrollTimers,
+      emitTrailHighlightsForViewport,
+      onIsAtEndChange,
+      onMessagesScroll,
+      resolvedListRef,
+    ],
   );
   const handleViewableItemsChanged = useCallback<
     NonNullable<ComponentProps<typeof LegendList>["onViewableItemsChanged"]>
@@ -962,11 +998,73 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }));
   }, []);
   const cancelUserMessageEdit = useCallback(() => {
+    useUserMessageEditDraftStore
+      .getState()
+      .clear(activeThreadId, editingUserMessageId ?? undefined);
     setEditingUserMessageId(null);
-  }, []);
-  const startUserMessageEdit = useCallback((messageId: MessageId) => {
-    setEditingUserMessageId(messageId);
-  }, []);
+  }, [activeThreadId, editingUserMessageId]);
+  const startUserMessageEdit = useCallback(
+    (messageId: MessageId) => {
+      useUserMessageEditDraftStore.getState().clear(activeThreadId);
+      setEditingUserMessageId(messageId);
+    },
+    [activeThreadId],
+  );
+
+  useEffect(() => {
+    if (!pendingUserMessageEdit) {
+      return;
+    }
+    const pendingRow = rows.find(
+      (row) =>
+        row.kind === "message" &&
+        row.message.role === "user" &&
+        row.message.id === pendingUserMessageEdit.messageId,
+    );
+    if (!pendingRow || pendingRow.kind !== "message") {
+      // Detail hydration can temporarily omit rows while switching threads. The
+      // authoritative delete path clears this store; absence alone is not deletion.
+      return;
+    }
+    if (pendingUserMessageEdit.phase === "dispatching") {
+      return;
+    }
+    if (
+      pendingUserMessageEdit.phase === "accepted" &&
+      (pendingRow.message.text !== pendingUserMessageEdit.originalText ||
+        (pendingRow.message.completedAt ?? pendingRow.message.createdAt) !==
+          pendingUserMessageEdit.originalRevision)
+    ) {
+      useUserMessageEditDraftStore
+        .getState()
+        .clear(activeThreadId, pendingUserMessageEdit.messageId);
+      setEditingUserMessageId((current) =>
+        current === pendingUserMessageEdit.messageId ? null : current,
+      );
+      return;
+    }
+    if (
+      threadError &&
+      threadErrorClass === EDIT_RESEND_PARENT_BUSY_ERROR_CLASS &&
+      threadSessionUpdatedAt === pendingUserMessageEdit.attemptCreatedAt &&
+      pendingUserMessageEdit.phase === "accepted"
+    ) {
+      useUserMessageEditDraftStore
+        .getState()
+        .markRejected(activeThreadId, pendingUserMessageEdit.messageId);
+      setEditingUserMessageId(pendingUserMessageEdit.messageId);
+      return;
+    }
+    setEditingUserMessageId(pendingUserMessageEdit.messageId);
+  }, [
+    activeThreadId,
+    pendingUserMessageEdit,
+    rows,
+    threadError,
+    threadErrorClass,
+    threadSessionUpdatedAt,
+  ]);
+
   const submitUserMessageEdit = useCallback(
     async (messageId: MessageId, text: string) => {
       if (!onEditUserMessage) {
@@ -976,17 +1074,37 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (!nextText) {
         return;
       }
+      const originalRow = rows.find(
+        (row) => row.kind === "message" && row.message.id === messageId,
+      );
+      if (!originalRow || originalRow.kind !== "message") {
+        return;
+      }
+      const previousAttempt =
+        useUserMessageEditDraftStore.getState().draftsByThreadId[activeThreadId];
+      const attemptCreatedAt = nextUserMessageEditAttemptCreatedAt(
+        previousAttempt?.attemptCreatedAt,
+      );
+      useUserMessageEditDraftStore.getState().begin(activeThreadId, {
+        messageId,
+        draftText: nextText,
+        originalText: originalRow.message.text,
+        originalRevision: originalRow.message.completedAt ?? originalRow.message.createdAt,
+        attemptCreatedAt,
+      });
       setSubmittingEditedUserMessageId(messageId);
       try {
-        const saved = await onEditUserMessage(messageId, nextText);
+        const saved = await onEditUserMessage(messageId, nextText, attemptCreatedAt);
         if (saved) {
-          cancelUserMessageEdit();
+          useUserMessageEditDraftStore.getState().markAccepted(activeThreadId, messageId);
+        } else {
+          useUserMessageEditDraftStore.getState().clear(activeThreadId, messageId);
         }
       } finally {
         setSubmittingEditedUserMessageId(null);
       }
     },
-    [cancelUserMessageEdit, onEditUserMessage],
+    [activeThreadId, onEditUserMessage, rows],
   );
 
   const renderRowContent = (row: MessagesTimelineRow) => (
@@ -1173,31 +1291,36 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {userImages.length > 0 && (
-                  <div
-                    className={cn(
-                      "flex max-w-[240px] flex-wrap justify-end gap-2 self-end",
-                      showUserText && "mb-1",
-                    )}
-                  >
-                    {userImages.map((image) => (
-                      <UserImageAttachmentThumbnail
-                        key={image.id}
-                        image={image}
-                        userImages={userImages}
-                        onImageExpand={onImageExpand}
-                        onTimelineImageLoad={
-                          isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
-                        }
-                        resolvedTheme={resolvedTheme}
-                      />
-                    ))}
-                  </div>
+                  <ChatImageAttachmentGallery
+                    images={userImages}
+                    trustContext={
+                      ownedBlobUserMessageIds.has(row.message.id) ? "owned-user-preview" : "durable"
+                    }
+                    align="end"
+                    hasFollowingText={showUserText}
+                    onImageExpand={onImageExpand}
+                    onImageSettled={
+                      isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
+                    }
+                  />
                 )}
                 {isEditingThisMessage ? (
                   <UserMessageEditForm
                     key={row.message.id}
-                    initialValue={displayedUserMessage.copyText}
-                    disabled={isSubmittingThisEdit || isRevertingCheckpoint}
+                    initialValue={
+                      pendingUserMessageEdit?.messageId === row.message.id
+                        ? pendingUserMessageEdit.draftText
+                        : displayedUserMessage.copyText
+                    }
+                    disabled={
+                      pendingUserMessageEdit?.messageId === row.message.id &&
+                      pendingUserMessageEdit.phase === "rejected"
+                        ? false
+                        : isSubmittingThisEdit ||
+                          isRevertingCheckpoint ||
+                          (pendingUserMessageEdit?.messageId === row.message.id &&
+                            pendingUserMessageEdit.phase === "accepted")
+                    }
                     chatTypographyStyle={userMessageTypographyStyle}
                     onCancel={cancelUserMessageEdit}
                     onSubmit={(text) => void submitUserMessageEdit(row.message.id, text)}
@@ -1230,6 +1353,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                         chatTypographyStyle={userMessageTypographyStyle}
                         resolvedTheme={resolvedTheme}
                         markdownCwd={markdownCwd}
+                        onImageExpand={onImageExpand}
+                        onImageSettled={
+                          isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
+                        }
                       />
                     </UserMessageCollapsibleText>
                   </div>
@@ -1301,6 +1428,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = resolveAssistantMessageDisplayText(row);
+          const assistantImages = (row.message.attachments ?? []).filter(
+            (
+              attachment,
+            ): attachment is Extract<
+              NonNullable<TimelineMessage["attachments"]>[number],
+              { type: "image" }
+            > => attachment.type === "image",
+          );
           const messageMarkers =
             threadMarkersByMessageId.get(row.message.id) ?? EMPTY_MESSAGE_MARKERS;
           const buildWorkDisplay = (workEntries: WorkLogEntry[], workGroupId: string | null) => {
@@ -1575,10 +1710,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       directionHint={assistantDirectionHintByMessageId.get(row.message.id)}
                       style={chatTypographyStyle}
                       onImageExpand={onImageExpand}
+                      onImageSettled={
+                        isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
+                      }
                       markers={messageMarkers}
                     />
                   </div>
                 ) : null}
+                {assistantImages.length > 0 && (
+                  <div className={cn(messageText !== null && "mt-2")}>
+                    <ChatImageAttachmentGallery
+                      images={assistantImages}
+                      onImageExpand={onImageExpand}
+                      onImageSettled={
+                        isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
+                      }
+                    />
+                  </div>
+                )}
                 {renderWorkDisplay(inlineWorkDisplay, "inline")}
                 {inlineEditedFilesFromTurnSummary.length > 0 && (
                   <div className="mt-2 space-y-0.5">
@@ -2011,6 +2160,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 });
 
 type TimelineMessage = Extract<MessagesTimelineRow, { kind: "message" }>["message"];
+
+export function shouldCorrectTimelineForSettledImage(input: {
+  readonly isTailRow: boolean;
+  readonly isAtEnd: boolean;
+}): boolean {
+  return input.isTailRow && input.isAtEnd;
+}
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type SettledTurnCollapseTransition = {
   open: boolean;
@@ -2435,49 +2591,6 @@ function formatInlineWorkSummary(_groupedEntries: TimelineWorkEntry[]): string |
   return null;
 }
 
-const UserImageAttachmentThumbnail = memo(function UserImageAttachmentThumbnail(props: {
-  image: Extract<NonNullable<TimelineMessage["attachments"]>[number], { type: "image" }>;
-  userImages: Array<
-    Extract<NonNullable<TimelineMessage["attachments"]>[number], { type: "image" }>
-  >;
-  onImageExpand: (preview: ExpandedImagePreview) => void;
-  onTimelineImageLoad: () => void;
-  resolvedTheme: "light" | "dark";
-}) {
-  return (
-    <button
-      type="button"
-      className="flex size-15 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/70 bg-background/82 text-left shadow-[0_1px_0_rgba(255,255,255,0.2)_inset] transition-colors hover:bg-background/94"
-      aria-label={`Preview ${props.image.name}`}
-      title={props.image.name}
-      onClick={() => {
-        const preview = buildExpandedImagePreview(props.userImages, props.image.id);
-        if (!preview) return;
-        props.onImageExpand(preview);
-      }}
-    >
-      {props.image.previewUrl ? (
-        <img
-          src={props.image.previewUrl}
-          alt={props.image.name}
-          className="size-full object-cover"
-          onLoad={props.onTimelineImageLoad}
-          onError={props.onTimelineImageLoad}
-        />
-      ) : (
-        <div className="flex size-full items-center justify-center">
-          <FileEntryIcon
-            pathValue={props.image.name}
-            kind="file"
-            theme={props.resolvedTheme}
-            className="size-4 opacity-70"
-          />
-        </div>
-      )}
-    </button>
-  );
-});
-
 // Renders read-only user text with the same inline skill pill treatment as the composer.
 function renderUserMessageInlineText(
   text: string,
@@ -2549,12 +2662,12 @@ const UserMessageEditForm = memo(function UserMessageEditForm(props: {
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    if (!textarea) {
+    if (!textarea || props.disabled) {
       return;
     }
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }, []);
+  }, [props.disabled]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -2711,6 +2824,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   chatTypographyStyle: CSSProperties;
   resolvedTheme: "light" | "dark";
   markdownCwd: string | undefined;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+  onImageSettled: () => void;
 }) {
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
@@ -2733,6 +2848,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         terminalContexts={props.terminalContexts}
         className="font-system-ui wrap-break-word"
         style={props.chatTypographyStyle}
+        onImageExpand={props.onImageExpand}
+        onImageSettled={props.onImageSettled}
       />
     );
   }
@@ -2773,6 +2890,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       mentionReferences={props.mentionReferences}
       className="font-system-ui"
       style={props.chatTypographyStyle}
+      onImageExpand={props.onImageExpand}
+      onImageSettled={props.onImageSettled}
     />
   );
 });
