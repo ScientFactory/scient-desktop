@@ -6387,7 +6387,7 @@ describe("ProviderCommandReactor", () => {
     harness.stopSession.mockClear();
     harness.rollbackConversation.mockClear();
     harness.sendTurn.mockClear();
-    await Effect.runPromise(
+    const settledEditExit = await Effect.runPromiseExit(
       harness.engine.dispatch({
         type: "thread.message.edit-and-resend",
         commandId: CommandId.makeUnsafe("cmd-edit-settled-child-while-parent-running"),
@@ -6399,10 +6399,50 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await harness.drain();
+    expect(settledEditExit._tag).toBe("Failure");
     expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
     expect(harness.stopSession).not.toHaveBeenCalled();
     expect(harness.rollbackConversation).not.toHaveBeenCalled();
     expect(harness.sendTurn).not.toHaveBeenCalled();
+    const rejectedModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      rejectedModel.threads.find(
+        (entry) => entry.id === "subagent:thread-1:child-provider-1",
+      ),
+    ).toEqual(settledChild);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-parent-ready-after-child-edit-rejection"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    harness.setRuntimeSessionTurnState({ threadId: "thread-1", status: "ready" });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-retry-settled-child-after-parent-ready"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        messageId: asMessageId("message-subagent-stop-in-flight"),
+        text: "retry after the parent settles",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
+    expect(harness.stopSession).not.toHaveBeenCalled();
   });
 });

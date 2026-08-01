@@ -1635,6 +1635,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Only the latest rollbackable user message can be edited and resent (${editTarget.reason}).`,
         });
       }
+      const parentThread = thread.parentThreadId
+        ? readModel.threads.find((candidate) => candidate.id === thread.parentThreadId)
+        : undefined;
+      if (
+        parentThread?.session?.status === "running" &&
+        parentThread.session.activeTurnId !== null
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A subagent message cannot be edited while its shared parent turn is running.",
+        });
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
