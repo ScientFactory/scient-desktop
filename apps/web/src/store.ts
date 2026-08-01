@@ -49,6 +49,7 @@ import { deriveThreadSummaryMetadata } from "@synara/shared/threadSummary";
 import { getThreadFromState, getThreadsFromState } from "./threadDerivation";
 import { toAttachmentPreviewUrl } from "./lib/wsHttpUrl";
 import { isStalePendingRequestFailureDetail } from "./lib/pendingInteraction";
+import { useUserMessageEditDraftStore } from "./userMessageEditDraftStore";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -4591,6 +4592,14 @@ interface AppStore extends AppState {
   setThreadWorkspace: (threadId: ThreadId, patch: ThreadWorkspacePatch) => void;
 }
 
+export function clearDeletedThreadEditDrafts(events: ReadonlyArray<OrchestrationEvent>): void {
+  for (const event of events) {
+    if (event.type === "thread.deleted") {
+      useUserMessageEditDraftStore.getState().clear(event.payload.threadId);
+    }
+  }
+}
+
 export const useStore = create<AppStore>((set) => ({
   ...readPersistedState(),
   syncServerShellSnapshot: (snapshot) => set((state) => syncServerShellSnapshot(state, snapshot)),
@@ -4599,14 +4608,19 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => syncServerThreadDetailHotPath(state, thread)),
   syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
   applyShellEvent: (event) => set((state) => applyShellEvent(state, event)),
-  applyOrchestrationEvents: (events) => set((state) => applyOrchestrationEvents(state, events)),
-  applyOrchestrationEventsHotPath: (events) =>
+  applyOrchestrationEvents: (events) => {
+    clearDeletedThreadEditDrafts(events);
+    set((state) => applyOrchestrationEvents(state, events));
+  },
+  applyOrchestrationEventsHotPath: (events) => {
+    clearDeletedThreadEditDrafts(events);
     set((state) =>
       applyOrchestrationEventsHotPath(state, events, {
         updateThreadArray: false,
         updateSidebarSummary: false,
       }),
-    ),
+    );
+  },
   removeDeletedProjectFromClientState: (projectId) =>
     set((state) => removeDeletedProjectFromClientState(state, projectId)),
   removeDeletedThreadFromClientState: (threadId) =>

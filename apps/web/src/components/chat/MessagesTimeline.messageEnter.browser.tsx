@@ -166,6 +166,7 @@ describe("MessagesTimeline message enter animation", () => {
       draftText: "replacement kept through hydration",
       originalText: "Loaded from history.",
       originalRevision: "2026-03-17T19:12:28.000Z",
+      attemptCreatedAt: "2026-03-17T19:12:29.000Z",
     });
     useUserMessageEditDraftStore
       .getState()

@@ -9106,7 +9106,7 @@ export default function ChatView({
   }
 
   const onEditUserMessage = useCallback(
-    async (messageId: MessageId, text: string): Promise<boolean> => {
+    async (messageId: MessageId, text: string, attemptCreatedAt: string): Promise<boolean> => {
       const api = readNativeApi();
       if (!api || !activeThread || !isServerThread || isRevertingCheckpoint) {
         return false;
@@ -9145,7 +9145,7 @@ export default function ChatView({
 
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
-      const messageCreatedAt = new Date().toISOString();
+      const messageCreatedAt = attemptCreatedAt;
       const editedTextWithOriginalContext = appendOriginalComposerPromptBlocks({
         editedPrompt: text,
         originalPrompt: originalMessage.text,
@@ -12078,6 +12078,7 @@ export default function ChatView({
                     activeThreadId={activeThread.id}
                     threadError={activeThread.error}
                     threadErrorClass={activeThread.session?.lastErrorClass ?? null}
+                    threadSessionUpdatedAt={activeThread.session?.updatedAt ?? null}
                     activeTurnId={activeThread.session?.activeTurnId ?? null}
                     interruptedTurn={interruptedTurnEditContext({
                       latestTurn: activeThread.latestTurn,

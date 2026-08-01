@@ -175,7 +175,10 @@ import {
 } from "./userMessageCollapse";
 import { observeUserMessageOverflow } from "./userMessageOverflowObserver";
 import { resolveRawTextDirectionHint, type ResolvedTextDirection } from "~/lib/textDirection";
-import { useUserMessageEditDraftStore } from "~/userMessageEditDraftStore";
+import {
+  nextUserMessageEditAttemptCreatedAt,
+  useUserMessageEditDraftStore,
+} from "~/userMessageEditDraftStore";
 import {
   resolveActiveTrailSnapshot,
   type ActiveTrailSnapshot,
@@ -405,6 +408,7 @@ interface MessagesTimelineProps {
   activeThreadId?: ThreadId;
   threadError?: string | null;
   threadErrorClass?: string | null;
+  threadSessionUpdatedAt?: string | null;
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
@@ -444,7 +448,11 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: (turnCounts: readonly number[]) => void;
-  onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  onEditUserMessage?: (
+    messageId: MessageId,
+    text: string,
+    attemptCreatedAt: string,
+  ) => boolean | Promise<boolean>;
   /** Create an independent conversation whose imported transcript ends at this message. */
   onForkFromMessage?: (messageId: MessageId) => void;
   /** Server-backed boundaries whose complete prefix is safe to import. */
@@ -483,6 +491,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeThreadId = DEFAULT_TIMELINE_THREAD_ID,
   threadError = null,
   threadErrorClass = null,
+  threadSessionUpdatedAt = null,
   hasMessages,
   isWorking,
   activeTurnInProgress,
@@ -1037,6 +1046,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     if (
       threadError &&
       threadErrorClass === EDIT_RESEND_PARENT_BUSY_ERROR_CLASS &&
+      threadSessionUpdatedAt === pendingUserMessageEdit.attemptCreatedAt &&
       pendingUserMessageEdit.phase === "accepted"
     ) {
       useUserMessageEditDraftStore
@@ -1046,7 +1056,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
     setEditingUserMessageId(pendingUserMessageEdit.messageId);
-  }, [activeThreadId, pendingUserMessageEdit, rows, threadError, threadErrorClass]);
+  }, [
+    activeThreadId,
+    pendingUserMessageEdit,
+    rows,
+    threadError,
+    threadErrorClass,
+    threadSessionUpdatedAt,
+  ]);
 
   const submitUserMessageEdit = useCallback(
     async (messageId: MessageId, text: string) => {
@@ -1063,15 +1080,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (!originalRow || originalRow.kind !== "message") {
         return;
       }
+      const previousAttempt =
+        useUserMessageEditDraftStore.getState().draftsByThreadId[activeThreadId];
+      const attemptCreatedAt = nextUserMessageEditAttemptCreatedAt(
+        previousAttempt?.attemptCreatedAt,
+      );
       useUserMessageEditDraftStore.getState().begin(activeThreadId, {
         messageId,
         draftText: nextText,
         originalText: originalRow.message.text,
         originalRevision: originalRow.message.completedAt ?? originalRow.message.createdAt,
+        attemptCreatedAt,
       });
       setSubmittingEditedUserMessageId(messageId);
       try {
-        const saved = await onEditUserMessage(messageId, nextText);
+        const saved = await onEditUserMessage(messageId, nextText, attemptCreatedAt);
         if (saved) {
           useUserMessageEditDraftStore.getState().markAccepted(activeThreadId, messageId);
         } else {

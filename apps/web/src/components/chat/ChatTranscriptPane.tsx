@@ -38,6 +38,7 @@ interface ChatTranscriptPaneProps {
   activeThreadId: string;
   threadError?: string | null;
   threadErrorClass?: string | null;
+  threadSessionUpdatedAt?: string | null;
   activeTurnId?: TurnId | null;
   interruptedTurn?: { readonly messageId: string; readonly turnId: string } | null;
   activeTurnInProgress: boolean;
@@ -82,7 +83,11 @@ interface ChatTranscriptPaneProps {
   onOpenAutomation?: ComponentProps<typeof MessagesTimeline>["onOpenAutomation"];
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: ComponentProps<typeof MessagesTimeline>["onUndoTurnFiles"];
-  onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  onEditUserMessage?: (
+    messageId: MessageId,
+    text: string,
+    attemptCreatedAt: string,
+  ) => boolean | Promise<boolean>;
   onForkFromMessage?: (messageId: MessageId) => void;
   forkableMessageIds?: ReadonlySet<MessageId>;
   onScrollToBottom: () => void;
@@ -102,6 +107,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   activeThreadId,
   threadError,
   threadErrorClass,
+  threadSessionUpdatedAt,
   activeTurnId,
   interruptedTurn,
   activeTurnInProgress,
@@ -213,6 +219,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             activeThreadId={activeThreadId as ThreadId}
             {...(threadError !== undefined ? { threadError } : {})}
             {...(threadErrorClass !== undefined ? { threadErrorClass } : {})}
+            {...(threadSessionUpdatedAt !== undefined ? { threadSessionUpdatedAt } : {})}
             hasMessages={hasMessages}
             isWorking={isWorking}
             worktreeSetup={worktreeSetup}

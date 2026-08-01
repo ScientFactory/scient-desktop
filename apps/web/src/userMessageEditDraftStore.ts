@@ -6,6 +6,7 @@ export interface PendingUserMessageEditDraft {
   draftText: string;
   originalText: string;
   originalRevision: string;
+  attemptCreatedAt: string;
   phase: "dispatching" | "accepted" | "rejected";
 }
 
@@ -16,6 +17,16 @@ interface UserMessageEditDraftStoreState {
   markRejected: (threadId: ThreadId, messageId: MessageId) => void;
   clear: (threadId: ThreadId, messageId?: MessageId) => void;
   clearAll: () => void;
+}
+
+export function nextUserMessageEditAttemptCreatedAt(
+  previousCreatedAt: string | undefined,
+  nowMs = Date.now(),
+): string {
+  const previousMs = previousCreatedAt ? Date.parse(previousCreatedAt) : Number.NaN;
+  return new Date(
+    Math.max(nowMs, Number.isFinite(previousMs) ? previousMs + 1 : nowMs),
+  ).toISOString();
 }
 
 function updatePhase(

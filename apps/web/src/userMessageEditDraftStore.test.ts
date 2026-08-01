@@ -1,7 +1,10 @@
 import { MessageId, ThreadId } from "@synara/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { useUserMessageEditDraftStore } from "./userMessageEditDraftStore";
+import {
+  nextUserMessageEditAttemptCreatedAt,
+  useUserMessageEditDraftStore,
+} from "./userMessageEditDraftStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-edit-draft");
 const MESSAGE_ID = MessageId.makeUnsafe("message-edit-draft");
@@ -11,6 +14,15 @@ describe("userMessageEditDraftStore", () => {
     useUserMessageEditDraftStore.getState().clearAll();
   });
 
+  it("gives a retry a strictly newer correlation timestamp within the same millisecond", () => {
+    expect(
+      nextUserMessageEditAttemptCreatedAt(
+        "2026-08-01T08:00:00.000Z",
+        Date.parse("2026-08-01T08:00:00.000Z"),
+      ),
+    ).toBe("2026-08-01T08:00:00.001Z");
+  });
+
   it("retains rejected text and ignores a late acceptance", () => {
     const store = useUserMessageEditDraftStore.getState();
     store.begin(THREAD_ID, {
@@ -18,6 +30,7 @@ describe("userMessageEditDraftStore", () => {
       draftText: "replacement text",
       originalText: "original text",
       originalRevision: "2026-08-01T08:00:00.000Z",
+      attemptCreatedAt: "2026-08-01T08:00:01.000Z",
     });
     store.markRejected(THREAD_ID, MESSAGE_ID);
     store.markAccepted(THREAD_ID, MESSAGE_ID);
@@ -27,6 +40,7 @@ describe("userMessageEditDraftStore", () => {
       draftText: "replacement text",
       originalText: "original text",
       originalRevision: "2026-08-01T08:00:00.000Z",
+      attemptCreatedAt: "2026-08-01T08:00:01.000Z",
       phase: "rejected",
     });
   });
@@ -38,6 +52,7 @@ describe("userMessageEditDraftStore", () => {
       draftText: "first replacement",
       originalText: "original text",
       originalRevision: "2026-08-01T08:00:00.000Z",
+      attemptCreatedAt: "2026-08-01T08:00:01.000Z",
     });
     const newerMessageId = MessageId.makeUnsafe("message-edit-draft-newer");
     store.begin(THREAD_ID, {
@@ -45,6 +60,7 @@ describe("userMessageEditDraftStore", () => {
       draftText: "newer replacement",
       originalText: "newer original",
       originalRevision: "2026-08-01T08:00:01.000Z",
+      attemptCreatedAt: "2026-08-01T08:00:02.000Z",
     });
     store.clear(THREAD_ID, MESSAGE_ID);
 
