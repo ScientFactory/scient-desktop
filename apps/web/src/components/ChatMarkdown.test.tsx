@@ -35,6 +35,7 @@ async function renderMarkdown(
       cwd={cwd}
       isStreaming={options.isStreaming ?? false}
       markers={markers}
+      onImageExpand={() => {}}
       {...(options.directionHint ? { directionHint: options.directionHint } : {})}
       {...(options.recognizeFrontmatter ? { recognizeFrontmatter: true } : {})}
     />,
@@ -55,6 +56,132 @@ describe("ChatMarkdown", () => {
 
     expect(markup).toContain("text-foreground");
     expect(markup).not.toContain("text-neutral-900");
+  });
+
+  it("renders remote chat images through the privacy-safe clickable frame", async () => {
+    const markup = await renderMarkdown("![Remote capture](https://images.example/capture.png)");
+
+    expect(markup).toContain('aria-label="Preview Remote capture"');
+    expect(markup).toContain('src="https://images.example/capture.png"');
+    expect(markup).toContain('referrerPolicy="no-referrer"');
+    expect(markup).toContain('aria-label="Open source for Remote capture"');
+  });
+
+  it("renders linked images with a sibling link action rather than nested controls", async () => {
+    const markup = await renderMarkdown(
+      "[![Diagram](https://images.example/diagram.png)](https://example.com/report)",
+    );
+
+    expect(markup).toContain('aria-label="Preview Diagram"');
+    expect(markup).toContain('aria-label="Open link for Diagram"');
+    const buttonMarkup = markup.match(/<button[\s\S]*?<\/button>/)?.[0];
+    expect(buttonMarkup).not.toContain("<a");
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it("hoists recursively nested linked images while retaining surrounding link text", async () => {
+    const markup = await renderMarkdown(
+      "[*Before ![Nested](https://images.example/nested.png) after*](https://example.com/report)",
+    );
+
+    expect(markup).toContain('aria-label="Preview Nested"');
+    expect(markup).toContain('href="https://example.com/report"');
+    expect(markup).toContain("<em>Before </em>");
+    expect(markup).toContain("<em> after</em>");
+    expect(markup.indexOf("Before ")).toBeLessThan(markup.indexOf('aria-label="Preview Nested"'));
+    expect(markup.indexOf('aria-label="Preview Nested"')).toBeLessThan(markup.indexOf(" after"));
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it("preserves interleaving for multiple images in one link", async () => {
+    const markup = await renderMarkdown(
+      "[Before ![A](https://images.example/a.png) middle ![B](https://images.example/b.png) after](https://example.com/report)",
+    );
+    const positions = [
+      markup.indexOf("Before "),
+      markup.indexOf('aria-label="Preview A"'),
+      markup.indexOf(" middle "),
+      markup.indexOf('aria-label="Preview B"'),
+      markup.indexOf(" after"),
+    ];
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual(positions.toSorted((left, right) => left - right));
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it("routes a linked image's workspace destination through normal file-link policy", async () => {
+    const markup = await renderMarkdown(
+      "[![Diagram](https://images.example/diagram.png)](./reports/result.md)",
+      "/workspace",
+    );
+
+    expect(markup).toContain('aria-label="Preview Diagram"');
+    expect(markup).toContain('href="./reports/result.md"');
+    expect(markup).toContain("Open link");
+    expect(
+      markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")),
+    ).toBe(true);
+  });
+
+  it.each(["javascript:alert(1)", "data:text/html,unsafe"])(
+    "keeps an image preview but omits a neutralized unsafe link destination %s",
+    async (destination) => {
+      const markup = await renderMarkdown(
+        `[![Safe preview](https://images.example/preview.png)](${destination})`,
+      );
+
+      expect(markup).toContain('aria-label="Preview Safe preview"');
+      expect(markup).not.toContain('href=""');
+      expect(markup).not.toContain("Open link for Safe preview");
+      expect(
+        markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")) ??
+          true,
+      ).toBe(true);
+    },
+  );
+
+  it("keeps local image download access without a dead preview control in sent user markdown", async () => {
+    const markup = await renderUserMarkdown("![Attached](./capture.png)");
+
+    expect(markup).toContain('data-source-kind="local"');
+    expect(markup).toContain("/api/local-image?path=.%2Fcapture.png");
+    expect(markup).toContain('aria-label="Download Attached"');
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain('aria-label="Preview Attached"');
+  });
+
+  it("does not expose unsupported image sources or proxy them as local files", async () => {
+    const markup = await renderMarkdown("![Unsafe](data:image/png;base64,secret-payload)");
+
+    expect(markup).toContain("This image source is not supported.");
+    expect(markup).not.toContain("secret-payload");
+    expect(markup).not.toContain("/api/local-image");
+  });
+
+  it("keeps partial streamed image syntax inert until the destination is complete", async () => {
+    const partial = await renderMarkdown(
+      "![Capture](https://images.example/capture",
+      undefined,
+      undefined,
+      {
+        isStreaming: true,
+      },
+    );
+    const complete = await renderMarkdown(
+      "![Capture](https://images.example/capture.png)",
+      undefined,
+      undefined,
+      { isStreaming: true },
+    );
+
+    expect(partial).not.toContain("chat-image-frame");
+    expect(complete).toContain('aria-label="Preview Capture"');
   });
 
   it("resolves every natural-language markdown block independently", async () => {
