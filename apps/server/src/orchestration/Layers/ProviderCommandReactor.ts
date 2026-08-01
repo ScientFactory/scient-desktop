@@ -2414,6 +2414,18 @@ const make = Effect.gen(function* () {
       event.payload.threadId,
       event.payload.messageId,
     );
+    if (
+      thread &&
+      providerThread &&
+      providerThread.id !== thread.id &&
+      providerThread.session?.status === "running" &&
+      providerThread.session.activeTurnId !== null &&
+      !isQueuedMessageEdit
+    ) {
+      return yield* Effect.fail(
+        new Error("Cannot edit a subagent message while its shared parent turn is still running."),
+      );
+    }
     if (thread && !isQueuedMessageEdit) {
       yield* setThreadSession({
         threadId: event.payload.threadId,

@@ -6336,5 +6336,73 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession).not.toHaveBeenCalled();
     expect(harness.rollbackConversation).not.toHaveBeenCalled();
     expect(harness.sendTurn).not.toHaveBeenCalled();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-parent-running-after-child-stop"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-parent-still-running"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    harness.setRuntimeSessionTurnState({
+      threadId: "thread-1",
+      status: "running",
+      activeTurnId: asTurnId("turn-parent-still-running"),
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-child-settled-parent-running"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+          status: "interrupted",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    const settledModel = await Effect.runPromise(harness.engine.getReadModel());
+    const settledChild = settledModel.threads.find(
+      (entry) => entry.id === "subagent:thread-1:child-provider-1",
+    );
+    expect(settledChild?.latestTurn?.state).toBe("interrupted");
+    expect(settledChild?.session?.activeTurnId).toBeNull();
+
+    harness.stopRuntimeSession.mockClear();
+    harness.stopSession.mockClear();
+    harness.rollbackConversation.mockClear();
+    harness.sendTurn.mockClear();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-edit-settled-child-while-parent-running"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        messageId: asMessageId("message-subagent-stop-in-flight"),
+        text: "do not interrupt the still-running parent",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await harness.drain();
+    expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(harness.rollbackConversation).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 });
