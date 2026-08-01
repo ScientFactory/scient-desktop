@@ -55,7 +55,7 @@ function ReadyProjectChoice(props: {
         <DialogDescription>Choose how you want to use this folder in Scient.</DialogDescription>
       </DialogHeader>
 
-      <DialogPanel className="space-y-2.5 pt-1">
+      <DialogPanel className="space-y-2.5 !pt-1">
         <InitializationError error={props.error} />
 
         <div className="grid gap-2.5 sm:grid-cols-2">

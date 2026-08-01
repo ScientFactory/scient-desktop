@@ -49,14 +49,19 @@ describe("ScientProjectInitializationDialog", () => {
     const setupButton = await setupChoice.element();
     const openOnlyButton = await openOnlyChoice.element();
     const popup = document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
+    const scrollViewport = document.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
     const setupRect = setupButton.getBoundingClientRect();
     const openOnlyRect = openOnlyButton.getBoundingClientRect();
     const popupRect = popup?.getBoundingClientRect();
+    const scrollViewportRect = scrollViewport?.getBoundingClientRect();
 
     expect(popupRect?.width).toBeLessThanOrEqual(580);
     expect(popupRect?.height).toBeLessThan(200);
     expect(setupRect.height).toBeGreaterThanOrEqual(72);
     expect(setupRect.height).toBeLessThan(100);
+    expect(setupRect.top - (scrollViewportRect?.top ?? setupRect.top)).toBeGreaterThanOrEqual(2);
     expect(Math.abs(setupRect.top - openOnlyRect.top)).toBeLessThan(1);
     expect(Math.abs(setupRect.height - openOnlyRect.height)).toBeLessThan(1);
   });
