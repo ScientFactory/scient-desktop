@@ -124,9 +124,6 @@ describe("CheckpointStoreLive", () => {
       if (args === `${TEMP_INDEX_COMMAND_PREFIX}ls-files -v -z`) {
         return Effect.succeed({ code: 0, stdout: "H tracked.txt\0", stderr: "" });
       }
-      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add --renormalize -u -- .`) {
-        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
-      }
       if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         capturedSeed = readFileSync(input.env?.GIT_INDEX_FILE ?? "", "utf8");
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
@@ -366,6 +363,41 @@ describe("CheckpointStoreLive", () => {
       await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
 
       expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe("after!");
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run a clean filter for an untouched tracked file", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-filter-scope-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    const filteredPath = join(repo, "filtered.txt");
+    writeFileSync(filteredPath, "untouched\n");
+    utimesSync(filteredPath, new Date(1_000), new Date(1_000));
+    writeFileSync(join(repo, "changed.txt"), "before\n");
+    runGit(repo, ["add", "filtered.txt", "changed.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    writeFileSync(join(repo, ".gitattributes"), "filtered.txt filter=must-not-run\n");
+    runGit(repo, ["add", ".gitattributes"]);
+    runGit(repo, ["commit", "--quiet", "-m", "attributes"]);
+    runGit(repo, ["config", "filter.must-not-run.clean", "scient-filter-must-not-run"]);
+    runGit(repo, ["config", "filter.must-not-run.required", "true"]);
+    writeFileSync(join(repo, "changed.txt"), "after\n");
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/untouched-filter",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:changed.txt`])).toBe("after");
+      expect(runGit(repo, ["show", `${checkpointRef}:filtered.txt`])).toBe("untouched");
     } finally {
       await runtime.dispose();
       runtime = null;
