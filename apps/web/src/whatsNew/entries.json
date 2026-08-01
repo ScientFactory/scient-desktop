@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.5.15",
+    "date": "August 1, 2026",
+    "headline": "A steadier chat, clearer projects, and images you can keep.",
+    "features": [
+      {
+        "id": "durable-generated-images",
+        "title": "Your generated images stay with the conversation",
+        "description": "Images created in chat are saved safely and restored after a restart, even when the original response arrived late or incomplete."
+      },
+      {
+        "id": "clickable-chat-images",
+        "title": "See and open images right in chat",
+        "description": "Supported images are now visible in the conversation, previewable with the keyboard, and available to navigate, open, or download."
+      },
+      {
+        "id": "clearer-project-start",
+        "title": "A clearer way to start a project",
+        "description": "When you open a folder, Scient makes the project choices easier to understand so you can begin with the right setup."
+      },
+      {
+        "id": "reliable-agent-work",
+        "title": "More dependable work while agents are busy",
+        "description": "Scient keeps agent work associated with the right conversation through background work and interrupted turns, so it can recover progress more reliably when you return."
+      },
+      {
+        "id": "edit-stopped-prompts",
+        "title": "Edit and resend a stopped prompt",
+        "description": "If a prompt stops before it receives an answer, you can correct it and send it again without losing the conversation."
+      }
+    ]
+  },
+  {
     "version": "0.5.14",
     "date": "July 29, 2026",
     "headline": "A floating browser, a hand with commits, and a smoother workspace.",
