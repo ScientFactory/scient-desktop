@@ -89,6 +89,7 @@ import {
   forkAcpTurnIdleWatchdog,
   resolveAcpTurnIdleTimeoutMs,
 } from "../acp/AcpTurnIdleWatchdog.ts";
+import { forkProviderNotificationDrain } from "../acp/ProviderNotificationDrain.ts";
 import {
   applyDroidAcpInteractionMode,
   applyDroidAcpModelSelection,
@@ -141,10 +142,6 @@ const DROID_PLAN_MODE_PROMPT_PREFIX = [
   "Do not ask follow-up questions or wait for confirmation; if scope is ambiguous, choose a reasonable default and state the assumption in the plan.",
   "When ready, create the final implementation plan.",
 ].join("\n");
-
-// Notification drains belong to the transferred provider session, not to the
-// short-lived fiber that starts it.
-export const forkDroidNotificationDrain: typeof Effect.forkIn = Effect.forkIn;
 
 function summarizeDroidAcpLogPayload(payload: unknown): unknown {
   const text =
@@ -250,6 +247,7 @@ function makeDroidAcpRuntimeLoggers(
 export interface DroidAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly sessionRuntimeFactory?: typeof makeDroidAcpRuntime;
 }
 
 interface PendingApproval {
@@ -887,7 +885,7 @@ export function makeDroidAdapter(
             binaryPath: effectiveDroidSettings.binaryPath ?? "droid",
           });
 
-          const acp = yield* makeDroidAcpRuntime({
+          const acp = yield* (options?.sessionRuntimeFactory ?? makeDroidAcpRuntime)({
             droidSettings: effectiveDroidSettings,
             childProcessSpawner,
             cwd,
@@ -1291,7 +1289,7 @@ export function makeDroidAdapter(
                 ),
               ),
             ),
-          ).pipe(forkDroidNotificationDrain(sessionScope));
+          ).pipe(forkProviderNotificationDrain(sessionScope));
 
           ctx.notificationFiber = notificationFiber;
           sessions.set(input.threadId, ctx);

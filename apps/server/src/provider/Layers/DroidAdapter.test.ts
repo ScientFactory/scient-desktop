@@ -1,10 +1,11 @@
 import { TurnId } from "@synara/contracts";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  forkDroidNotificationDrain,
   isDroidNestedTaskToolCall,
   isRenderableDroidAssistantDelta,
+  makeDroidAdapter,
   resolveDroidSessionCwd,
   resolveDroidPermissionPolicy,
   scopeDroidRuntimeItemIdForTurn,
@@ -12,9 +13,8 @@ import {
   shouldIgnoreDroidInterrupt,
 } from "./DroidAdapter.ts";
 import {
-  observeNotificationDrainAbandonedStart,
-  observeNotificationDrainLifetime,
-  observeNotificationDrainReplacement,
+  observeAdapterNotificationLifecycle,
+  ProviderNotificationAdapterTestLayer,
 } from "./ProviderNotificationDrain.testSupport.ts";
 
 const serverConfig = {
@@ -138,29 +138,27 @@ describe("DroidAdapter runtime event scoping", () => {
 });
 
 describe("DroidAdapter notification drain lifetime", () => {
-  it("keeps draining after the start caller completes and stops at session teardown", async () => {
-    await expect(observeNotificationDrainLifetime(forkDroidNotificationDrain)).resolves.toEqual({
-      deliveredAfterCallerCompleted: true,
-      interruptedBeforeSessionTeardown: false,
-      interruptedAfterSessionTeardown: true,
-    });
-  });
+  it("delivers post-start notifications and bounds replacement, stop, and startup failure", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        observeAdapterNotificationLifecycle({
+          provider: "droid",
+          makeAdapter: (sessionRuntimeFactory) => makeDroidAdapter({}, { sessionRuntimeFactory }),
+        }).pipe(Effect.provide(ProviderNotificationAdapterTestLayer)),
+      ),
+    );
 
-  it("interrupts a stopped session drain without silencing its replacement", async () => {
-    await expect(observeNotificationDrainReplacement(forkDroidNotificationDrain)).resolves.toEqual({
-      stoppedDrainDelivered: false,
-      stoppedDrainInterrupted: true,
-      replacementDrainDelivered: true,
-      replacementDrainInterruptedAfterTeardown: true,
-    });
-  });
-
-  it("interrupts the drain when startup fails before session ownership transfers", async () => {
-    await expect(
-      observeNotificationDrainAbandonedStart(forkDroidNotificationDrain),
-    ).resolves.toEqual({
-      deliveredAfterStartupFailure: false,
-      interruptedByStartupCleanup: true,
+    expect(result).toEqual({
+      firstEventProvider: "droid",
+      firstEventDelta: "late-first",
+      firstScopeClosed: true,
+      replacementEventProvider: "droid",
+      replacementEventDelta: "late-replacement",
+      replacementScopeClosed: true,
+      sessionPresentAfterStop: false,
+      failedStart: true,
+      failedScopeClosed: true,
+      failedSessionPresent: false,
     });
   });
 });

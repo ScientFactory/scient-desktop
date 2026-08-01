@@ -82,6 +82,7 @@ import {
   forkAcpTurnIdleWatchdog,
   resolveAcpTurnIdleTimeoutMs,
 } from "../acp/AcpTurnIdleWatchdog.ts";
+import { forkProviderNotificationDrain } from "../acp/ProviderNotificationDrain.ts";
 import {
   applyCursorAcpModelSelection,
   buildCursorCliModelListCommand,
@@ -129,10 +130,6 @@ const CURSOR_PLAN_MODE_PROMPT_PREFIX = [
   "When ready, create the final implementation plan.",
 ].join("\n");
 
-// Notification drains belong to the transferred provider session, not to the
-// short-lived fiber that starts it.
-export const forkCursorNotificationDrain: typeof Effect.forkIn = Effect.forkIn;
-
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   Stream.runFold(
     stream,
@@ -143,6 +140,7 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
 export interface CursorAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly sessionRuntimeFactory?: typeof makeCursorAcpRuntime;
 }
 
 interface PendingApproval {
@@ -700,7 +698,7 @@ export function makeCursorAdapter(
               : {}),
           };
 
-          const acp = yield* makeCursorAcpRuntime({
+          const acp = yield* (options?.sessionRuntimeFactory ?? makeCursorAcpRuntime)({
             cursorSettings: effectiveCursorSettings,
             childProcessSpawner,
             cwd,
@@ -1071,7 +1069,7 @@ export function makeCursorAdapter(
                 }
               }),
             ),
-          ).pipe(forkCursorNotificationDrain(sessionScope));
+          ).pipe(forkProviderNotificationDrain(sessionScope));
 
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);

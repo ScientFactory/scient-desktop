@@ -1,38 +1,34 @@
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { forkCursorNotificationDrain } from "./CursorAdapter.ts";
+import { makeCursorAdapter } from "./CursorAdapter.ts";
 import {
-  observeNotificationDrainAbandonedStart,
-  observeNotificationDrainLifetime,
-  observeNotificationDrainReplacement,
+  observeAdapterNotificationLifecycle,
+  ProviderNotificationAdapterTestLayer,
 } from "./ProviderNotificationDrain.testSupport.ts";
 
 describe("CursorAdapter notification drain lifetime", () => {
-  it("keeps draining after the start caller completes and stops at session teardown", async () => {
-    await expect(observeNotificationDrainLifetime(forkCursorNotificationDrain)).resolves.toEqual({
-      deliveredAfterCallerCompleted: true,
-      interruptedBeforeSessionTeardown: false,
-      interruptedAfterSessionTeardown: true,
-    });
-  });
-
-  it("interrupts a stopped session drain without silencing its replacement", async () => {
-    await expect(observeNotificationDrainReplacement(forkCursorNotificationDrain)).resolves.toEqual(
-      {
-        stoppedDrainDelivered: false,
-        stoppedDrainInterrupted: true,
-        replacementDrainDelivered: true,
-        replacementDrainInterruptedAfterTeardown: true,
-      },
+  it("delivers post-start notifications and bounds replacement, stop, and startup failure", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        observeAdapterNotificationLifecycle({
+          provider: "cursor",
+          makeAdapter: (sessionRuntimeFactory) => makeCursorAdapter({}, { sessionRuntimeFactory }),
+        }).pipe(Effect.provide(ProviderNotificationAdapterTestLayer)),
+      ),
     );
-  });
 
-  it("interrupts the drain when startup fails before session ownership transfers", async () => {
-    await expect(
-      observeNotificationDrainAbandonedStart(forkCursorNotificationDrain),
-    ).resolves.toEqual({
-      deliveredAfterStartupFailure: false,
-      interruptedByStartupCleanup: true,
+    expect(result).toEqual({
+      firstEventProvider: "cursor",
+      firstEventDelta: "late-first",
+      firstScopeClosed: true,
+      replacementEventProvider: "cursor",
+      replacementEventDelta: "late-replacement",
+      replacementScopeClosed: true,
+      sessionPresentAfterStop: false,
+      failedStart: true,
+      failedScopeClosed: true,
+      failedSessionPresent: false,
     });
   });
 });

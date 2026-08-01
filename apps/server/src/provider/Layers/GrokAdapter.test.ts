@@ -4,21 +4,21 @@
 // Depends on: GrokAdapter helper exports and shared contract ids.
 
 import { TurnId } from "@synara/contracts";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  forkGrokNotificationDrain,
   isGrokContextCompactionToolCall,
   isRenderableGrokAssistantDelta,
+  makeGrokAdapter,
   mergeGrokModelDescriptors,
   parseXaiLanguageModelDescriptors,
   scopeGrokRuntimeItemIdForTurn,
   scopeGrokToolCallStateForTurn,
 } from "./GrokAdapter.ts";
 import {
-  observeNotificationDrainAbandonedStart,
-  observeNotificationDrainLifetime,
-  observeNotificationDrainReplacement,
+  observeAdapterNotificationLifecycle,
+  ProviderNotificationAdapterTestLayer,
 } from "./ProviderNotificationDrain.testSupport.ts";
 
 describe("GrokAdapter runtime event scoping", () => {
@@ -154,29 +154,27 @@ describe("GrokAdapter runtime event scoping", () => {
 });
 
 describe("GrokAdapter notification drain lifetime", () => {
-  it("keeps draining after the start caller completes and stops at session teardown", async () => {
-    await expect(observeNotificationDrainLifetime(forkGrokNotificationDrain)).resolves.toEqual({
-      deliveredAfterCallerCompleted: true,
-      interruptedBeforeSessionTeardown: false,
-      interruptedAfterSessionTeardown: true,
-    });
-  });
+  it("delivers post-start notifications and bounds replacement, stop, and startup failure", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        observeAdapterNotificationLifecycle({
+          provider: "grok",
+          makeAdapter: (sessionRuntimeFactory) => makeGrokAdapter({}, { sessionRuntimeFactory }),
+        }).pipe(Effect.provide(ProviderNotificationAdapterTestLayer)),
+      ),
+    );
 
-  it("interrupts a stopped session drain without silencing its replacement", async () => {
-    await expect(observeNotificationDrainReplacement(forkGrokNotificationDrain)).resolves.toEqual({
-      stoppedDrainDelivered: false,
-      stoppedDrainInterrupted: true,
-      replacementDrainDelivered: true,
-      replacementDrainInterruptedAfterTeardown: true,
-    });
-  });
-
-  it("interrupts the drain when startup fails before session ownership transfers", async () => {
-    await expect(
-      observeNotificationDrainAbandonedStart(forkGrokNotificationDrain),
-    ).resolves.toEqual({
-      deliveredAfterStartupFailure: false,
-      interruptedByStartupCleanup: true,
+    expect(result).toEqual({
+      firstEventProvider: "grok",
+      firstEventDelta: "late-first",
+      firstScopeClosed: true,
+      replacementEventProvider: "grok",
+      replacementEventDelta: "late-replacement",
+      replacementScopeClosed: true,
+      sessionPresentAfterStop: false,
+      failedStart: true,
+      failedScopeClosed: true,
+      failedSessionPresent: false,
     });
   });
 });
