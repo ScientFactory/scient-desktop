@@ -48,6 +48,7 @@ import {
 } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -258,6 +259,7 @@ describe("ProviderRuntimeIngestion", () => {
       Effect.service(ProjectionTurnRepository),
     );
     const profileStatsArchive = await testRuntime.runPromise(Effect.service(ProfileStatsArchive));
+    const serverSettings = await testRuntime.runPromise(Effect.service(ServerSettingsService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     const drain = () => Effect.runPromise(ingestion.drain);
     const startIngestion = async () => {
@@ -339,6 +341,7 @@ describe("ProviderRuntimeIngestion", () => {
       setProviderSession: provider.setSession,
       stopRuntimeSession: provider.stopRuntimeSession,
       profileStatsArchive,
+      serverSettings,
       drain,
       startIngestion,
       workspaceRoot,
@@ -2976,6 +2979,124 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.activities).toHaveLength(0);
   });
 
+  it("removes a newly materialized startup image when ownership dispatch is rejected", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const createdAt = "2026-07-31T11:00:30.000Z";
+    const imagePath = path.join(harness.generatedImagesRoot, "turnless-restart-rejected.png");
+    const targetMessageId = asMessageId("assistant:image:turnless-restart-rejected");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    await recordTurnlessGeneratedImageReference({
+      engine: harness.engine,
+      targetMessageId,
+      provenanceKey: "turnless-restart-rejected",
+      sourcePath: imagePath,
+      createdAt,
+    });
+
+    const mutableEngine = harness.engine as { dispatch: OrchestrationEngineShape["dispatch"] };
+    const originalDispatch = mutableEngine.dispatch;
+    let rejectedAttachmentDispatch = false;
+    mutableEngine.dispatch = ((command) => {
+      if (command.type === "thread.message.assistant.attachments.add") {
+        rejectedAttachmentDispatch = true;
+        return Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "forced startup attachment ownership rejection",
+          }),
+        );
+      }
+      return originalDispatch(command);
+    }) as OrchestrationEngineShape["dispatch"];
+
+    try {
+      await harness.startIngestion();
+    } finally {
+      mutableEngine.dispatch = originalDispatch;
+    }
+
+    expect(rejectedAttachmentDispatch).toBe(true);
+    expect(fs.existsSync(harness.attachmentsDir)).toBe(true);
+    expect(fs.readdirSync(harness.attachmentsDir)).toEqual([]);
+  });
+
+  it("retains an existing image owner when a startup replay dispatch is rejected", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const createdAt = "2026-07-31T11:00:45.000Z";
+    const provenanceKey = "turnless-restart-existing-owner";
+    const imagePath = path.join(harness.generatedImagesRoot, "turnless-restart-owner.png");
+    const existingMessageId = asMessageId("assistant:image:turnless-existing-owner");
+    const replayMessageId = asMessageId("assistant:image:turnless-replay-rejected");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    const attachment = await materializeGeneratedImageAttachment({
+      threadId: "thread-1",
+      sourcePath: imagePath,
+      provenanceKey,
+      allowedSourceRoots: [harness.generatedImagesRoot],
+      attachmentsDir: harness.attachmentsDir,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.attachments.add",
+        commandId: CommandId.makeUnsafe("test:turnless-existing-owner"),
+        threadId: asThreadId("thread-1"),
+        messageId: existingMessageId,
+        attachments: [attachment],
+        omittedImageCount: 0,
+        failedImageCount: 0,
+        createdAt,
+      }),
+    );
+    await recordTurnlessGeneratedImageReference({
+      engine: harness.engine,
+      targetMessageId: replayMessageId,
+      provenanceKey,
+      sourcePath: imagePath,
+      createdAt,
+    });
+
+    const mutableSnapshotQuery = harness.snapshotQuery as {
+      getThreadDetailForExportById: typeof harness.snapshotQuery.getThreadDetailForExportById;
+    };
+    const originalGetThreadDetailForExportById =
+      mutableSnapshotQuery.getThreadDetailForExportById;
+    let authoritativeOwnershipChecks = 0;
+    mutableSnapshotQuery.getThreadDetailForExportById = (threadId) => {
+      authoritativeOwnershipChecks += 1;
+      return originalGetThreadDetailForExportById(threadId);
+    };
+    const mutableEngine = harness.engine as { dispatch: OrchestrationEngineShape["dispatch"] };
+    const originalDispatch = mutableEngine.dispatch;
+    mutableEngine.dispatch = ((command) =>
+      command.type === "thread.message.assistant.attachments.add" &&
+      command.messageId === replayMessageId
+        ? Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "forced replay ownership rejection",
+            }),
+          )
+        : originalDispatch(command)) as OrchestrationEngineShape["dispatch"];
+
+    try {
+      await harness.startIngestion();
+    } finally {
+      mutableEngine.dispatch = originalDispatch;
+      mutableSnapshotQuery.getThreadDetailForExportById =
+        originalGetThreadDetailForExportById;
+    }
+
+    expect(authoritativeOwnershipChecks).toBeGreaterThan(0);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+    const thread = await Effect.runPromise(
+      harness.snapshotQuery.getThreadDetailById(asThreadId("thread-1")),
+    );
+    expect(
+      Option.getOrThrow(thread).messages.find((message) => message.id === existingMessageId)
+        ?.attachments,
+    ).toEqual([attachment]);
+  });
+
   it("recovers a newer turnless reference while preserving an earlier failure warning", async () => {
     const harness = await createHarness({ startIngestion: false });
     const targetMessageId = asMessageId("assistant:image:turnless-warning-then-new-ref");
@@ -3325,29 +3446,27 @@ describe("ProviderRuntimeIngestion", () => {
     const imagePath = path.join(harness.generatedImagesRoot, "delete-race.png");
     fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
 
-    const mutableSnapshotQuery = harness.snapshotQuery as {
-      getThreadDetailById: typeof harness.snapshotQuery.getThreadDetailById;
+    const mutableServerSettings = harness.serverSettings as {
+      getSettings: typeof harness.serverSettings.getSettings;
     };
-    const originalGetThreadDetailById = mutableSnapshotQuery.getThreadDetailById;
+    const originalGetSettings = mutableServerSettings.getSettings;
     let deletionTriggered = false;
-    mutableSnapshotQuery.getThreadDetailById = (requestedThreadId) =>
-      Effect.gen(function* () {
-        if (
-          !deletionTriggered &&
-          fs.existsSync(harness.attachmentsDir) &&
-          fs.readdirSync(harness.attachmentsDir).length > 0
-        ) {
-          deletionTriggered = true;
-          yield* harness.engine
-            .dispatch({
-              type: "thread.delete",
-              commandId: CommandId.makeUnsafe("cmd-delete-during-image-materialization"),
-              threadId,
-            })
-            .pipe(Effect.orDie);
-        }
-        return yield* originalGetThreadDetailById(requestedThreadId);
-      });
+    mutableServerSettings.getSettings = Effect.gen(function* () {
+      if (!deletionTriggered) {
+        deletionTriggered = true;
+        yield* harness.engine
+          .dispatch({
+            type: "thread.delete",
+            commandId: CommandId.makeUnsafe("cmd-delete-during-image-materialization"),
+            threadId,
+          })
+          .pipe(Effect.orDie);
+        // Deletion attachment cleanup has completed before materialization reads
+        // and publishes the provider bytes from the stale event snapshot.
+        expect(fs.existsSync(harness.attachmentsDir)).toBe(false);
+      }
+      return yield* originalGetSettings;
+    });
 
     harness.emit({
       type: "item.completed",
@@ -3367,7 +3486,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
     await harness.drain();
-    mutableSnapshotQuery.getThreadDetailById = originalGetThreadDetailById;
+    mutableServerSettings.getSettings = originalGetSettings;
 
     expect(deletionTriggered).toBe(true);
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
