@@ -117,7 +117,16 @@ const makeCheckpointStore = Effect.gen(function* () {
       // resolved file observes a complete old or new index without touching
       // the user's staging area.
       return yield* Effect.gen(function* () {
+        const sourceIndexInfo = yield* fs.stat(indexPath);
         yield* fs.copyFile(indexPath, tempIndexPath);
+        const sourceIndexInfoAfterCopy = yield* fs.stat(indexPath);
+        if (
+          sourceIndexInfo.ino !== sourceIndexInfoAfterCopy.ino ||
+          sourceIndexInfo.size !== sourceIndexInfoAfterCopy.size ||
+          sourceIndexInfo.mtime?.getTime() !== sourceIndexInfoAfterCopy.mtime?.getTime()
+        ) {
+          return yield* discardSeed;
+        }
 
         // A split index refers to sharedindex.* in the repository. Expand only
         // the temporary copy so no checkpoint command can create or rotate
@@ -146,6 +155,19 @@ const makeCheckpointStore = Effect.gen(function* () {
         if (hasProtectedEntryFlags) {
           return yield* discardSeed;
         }
+
+        // Normalizing a copied index rewrites it with a fresh timestamp. Restore
+        // the source index timestamp so Git retains its racy-stat boundary and
+        // rehashes only entries that could have changed since that index was
+        // written. Otherwise a rapid same-size rewrite can be misclassified as
+        // stat-clean, while forcing a repository-wide renormalization would run
+        // clean filters and alter untouched entries on every checkpoint.
+        const sourceAtime = sourceIndexInfo.atime;
+        const sourceMtime = sourceIndexInfo.mtime;
+        if (sourceAtime === undefined || sourceMtime === undefined) {
+          return yield* discardSeed;
+        }
+        yield* fs.utimes(tempIndexPath, sourceAtime, sourceMtime);
 
         return true;
       }).pipe(Effect.catch(() => discardSeed));
