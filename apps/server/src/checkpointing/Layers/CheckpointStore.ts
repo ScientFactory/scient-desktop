@@ -10,7 +10,6 @@
  * @module CheckpointStoreLive
  */
 import { randomUUID } from "node:crypto";
-import { statSync, utimesSync } from "node:fs";
 
 import { Cause, Deferred, Effect, Exit, Layer, FileSystem, Option, Path, Semaphore } from "effect";
 
@@ -118,14 +117,16 @@ const makeCheckpointStore = Effect.gen(function* () {
       // resolved file observes a complete old or new index without touching
       // the user's staging area.
       return yield* Effect.gen(function* () {
-        const sourceIndexTimes = yield* Effect.try({
-          try: () => {
-            const stats = statSync(indexPath);
-            return { atime: stats.atime, mtime: stats.mtime };
-          },
-          catch: (cause) => cause,
-        });
+        const sourceIndexInfo = yield* fs.stat(indexPath);
         yield* fs.copyFile(indexPath, tempIndexPath);
+        const sourceIndexInfoAfterCopy = yield* fs.stat(indexPath);
+        if (
+          sourceIndexInfo.ino !== sourceIndexInfoAfterCopy.ino ||
+          sourceIndexInfo.size !== sourceIndexInfoAfterCopy.size ||
+          sourceIndexInfo.mtime?.getTime() !== sourceIndexInfoAfterCopy.mtime?.getTime()
+        ) {
+          return yield* discardSeed;
+        }
 
         // A split index refers to sharedindex.* in the repository. Expand only
         // the temporary copy so no checkpoint command can create or rotate
@@ -155,14 +156,18 @@ const makeCheckpointStore = Effect.gen(function* () {
           return yield* discardSeed;
         }
 
-        // Preserve the copied index's original write time after normalization.
-        // Git's racy-clean protection compares worktree entry timestamps with
-        // the index timestamp; leaving the temporary copy timestamped "now"
-        // can make a rapid same-size edit look clean and snapshot stale bytes.
-        yield* Effect.try({
-          try: () => utimesSync(tempIndexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime),
-          catch: (cause) => cause,
-        });
+        // Normalizing a copied index rewrites it with a fresh timestamp. Restore
+        // the source index timestamp so Git retains its racy-stat boundary and
+        // rehashes only entries that could have changed since that index was
+        // written. Otherwise a rapid same-size rewrite can be misclassified as
+        // stat-clean, while forcing a repository-wide renormalization would run
+        // clean filters and alter untouched entries on every checkpoint.
+        const sourceAtime = sourceIndexInfo.atime;
+        const sourceMtime = sourceIndexInfo.mtime;
+        if (sourceAtime === undefined || sourceMtime === undefined) {
+          return yield* discardSeed;
+        }
+        yield* fs.utimes(tempIndexPath, sourceAtime, sourceMtime);
 
         return true;
       }).pipe(Effect.catch(() => discardSeed));

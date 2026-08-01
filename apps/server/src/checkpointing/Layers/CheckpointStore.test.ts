@@ -340,34 +340,70 @@ describe("CheckpointStoreLive", () => {
     }
   });
 
-  it("rehashes rapid same-size edits even when Git's index stat cache appears unchanged", async () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-racy-clean-test-"));
+  it("rehashes a same-size rewrite whose timestamp still matches the live index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-racy-index-test-"));
     const repo = join(tempRoot, "repo");
     mkdirSync(repo);
     initializeRepository(repo);
     const trackedPath = join(repo, "tracked.txt");
-    writeFileSync(trackedPath, "v1\n");
+    writeFileSync(trackedPath, "before\n");
+    const racyTimestamp = new Date(1_000);
+    utimesSync(trackedPath, racyTimestamp, racyTimestamp);
     runGit(repo, ["add", "tracked.txt"]);
     runGit(repo, ["commit", "--quiet", "-m", "base"]);
     runGit(repo, ["config", "core.trustctime", "false"]);
     runGit(repo, ["config", "core.checkStat", "minimal"]);
-    const indexedStat = statSync(trackedPath);
 
+    const originalStat = statSync(trackedPath);
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    utimesSync(liveIndexPath, originalStat.atime, originalStat.mtime);
+    writeFileSync(trackedPath, "after!\n");
+    utimesSync(trackedPath, originalStat.atime, originalStat.mtime);
     runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
     try {
       const store = await runtime.runPromise(Effect.service(CheckpointStore));
-      const capture = async (value: string, suffix: string) => {
-        writeFileSync(trackedPath, `${value}\n`);
-        utimesSync(trackedPath, indexedStat.atime, indexedStat.mtime);
-        const checkpointRef = CheckpointRef.makeUnsafe(
-          `refs/scient-checkpoints/thread/racy-clean-${suffix}`,
-        );
-        await runtime!.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
-        return runGit(repo, ["show", `${checkpointRef}:tracked.txt`]);
-      };
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/racy-same-size-rewrite",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
 
-      expect(await capture("v2", "one")).toBe("v2");
-      expect(await capture("v3", "two")).toBe("v3");
+      expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe("after!");
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run a clean filter for an untouched tracked file", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-filter-scope-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    const filteredPath = join(repo, "filtered.txt");
+    writeFileSync(filteredPath, "untouched\n");
+    utimesSync(filteredPath, new Date(1_000), new Date(1_000));
+    writeFileSync(join(repo, "changed.txt"), "before\n");
+    runGit(repo, ["add", "filtered.txt", "changed.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    writeFileSync(join(repo, ".gitattributes"), "filtered.txt filter=must-not-run\n");
+    runGit(repo, ["add", ".gitattributes"]);
+    runGit(repo, ["commit", "--quiet", "-m", "attributes"]);
+    runGit(repo, ["config", "filter.must-not-run.clean", "scient-filter-must-not-run"]);
+    runGit(repo, ["config", "filter.must-not-run.required", "true"]);
+    writeFileSync(join(repo, "changed.txt"), "after\n");
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/untouched-filter",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:changed.txt`])).toBe("after");
+      expect(runGit(repo, ["show", `${checkpointRef}:filtered.txt`])).toBe("untouched");
     } finally {
       await runtime.dispose();
       runtime = null;

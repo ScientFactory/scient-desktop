@@ -1154,6 +1154,9 @@ export function projectEvent(
         }),
       );
 
+    case "thread.generated-image-reference-recorded":
+      return Effect.succeed(nextBase);
+
     default:
       return Effect.succeed(nextBase);
   }

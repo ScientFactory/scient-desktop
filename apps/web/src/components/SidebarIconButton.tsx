@@ -42,6 +42,10 @@ export type SidebarIconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement
   // native `title` instead for row hover actions that should not pop a tooltip.
   tooltip?: ReactNode;
   tooltipSide?: TooltipSide;
+  /** Optional per-button hover delay. Leave unset to keep the shared tooltip timing. */
+  tooltipDelay?: number;
+  /** Optional per-button offset along the tooltip's alignment axis. */
+  tooltipAlignOffset?: number;
   // Swap the underlying interactive element (e.g. `<MenuTrigger />`). Defaults
   // to a plain `<button type="button" />`. The icon is injected as its child.
   render?: ReactElement;
@@ -56,6 +60,8 @@ export function SidebarIconButton({
   size = "md",
   tooltip,
   tooltipSide = "top",
+  tooltipDelay,
+  tooltipAlignOffset,
   render,
   className,
   ...buttonProps
@@ -82,8 +88,12 @@ export function SidebarIconButton({
 
   return (
     <Tooltip>
-      <TooltipTrigger render={cloneElement(trigger, mergedProps)}>{iconNode}</TooltipTrigger>
-      <TooltipPopup side={tooltipSide}>{tooltip}</TooltipPopup>
+      <TooltipTrigger delay={tooltipDelay} render={cloneElement(trigger, mergedProps)}>
+        {iconNode}
+      </TooltipTrigger>
+      <TooltipPopup side={tooltipSide} alignOffset={tooltipAlignOffset}>
+        {tooltip}
+      </TooltipPopup>
     </Tooltip>
   );
 }

@@ -9,6 +9,7 @@ import {
   type OrchestrationShellSnapshot,
   type ThreadId,
 } from "@synara/contracts";
+import { buildThreadHierarchyIndex } from "@synara/shared/threadHierarchy";
 import { Effect } from "effect";
 import { randomUUID } from "node:crypto";
 
@@ -142,19 +143,57 @@ export function getInactiveThreadIdsForRetention(
   protectedThreadIds: ReadonlySet<ThreadId> = new Set(),
 ): ThreadId[] {
   const cutoffMs = nowMs - THREAD_RETENTION_UNUSED_MS;
-  const inactiveThreadIds: ThreadId[] = [];
+  const liveThreads = readModel.threads.filter(
+    (thread) => !("deletedAt" in thread) || thread.deletedAt === null,
+  );
+  const hierarchy = buildThreadHierarchyIndex(liveThreads);
+  const inactiveSubtreeRootIds: ThreadId[] = [];
 
-  for (const thread of readModel.threads) {
-    if ("deletedAt" in thread && thread.deletedAt !== null) continue;
-    if (protectedThreadIds.has(thread.id)) continue;
-    if (thread.isPinned === true) continue;
-    if (isThreadBusy(thread)) continue;
+  const isRetentionEligible = (thread: RetentionThread) => {
+    if (protectedThreadIds.has(thread.id)) return false;
+    if (thread.isPinned === true) return false;
+    if (isThreadBusy(thread)) return false;
     const lastActivityMs = getThreadLastActivityMs(thread);
-    if (lastActivityMs === null || lastActivityMs > cutoffMs) continue;
-    inactiveThreadIds.push(thread.id);
+    return lastActivityMs !== null && lastActivityMs <= cutoffMs;
+  };
+
+  // A parent and its subagents are one reachability unit. Hide only roots whose
+  // complete live subtree is inactive; otherwise an old parent could hide a
+  // recent, busy, pinned, or automation-protected child.
+  for (const root of hierarchy.collectSubtreeRoots()) {
+    const subtree = [root, ...hierarchy.collectDescendants(root.id)];
+    if (subtree.every(isRetentionEligible)) {
+      inactiveSubtreeRootIds.push(root.id);
+    }
   }
 
-  return inactiveThreadIds;
+  return inactiveSubtreeRootIds;
+}
+
+export function getRetentionDeleteScope(
+  snapshot: OrchestrationShellSnapshot,
+  threadId: ThreadId,
+  nowMs: number,
+  protectedThreadIds: ReadonlySet<ThreadId>,
+): {
+  readonly expectedDescendantThreadIds: ThreadId[];
+  readonly expectedReadModelSequence: number;
+} | null {
+  if (!getInactiveThreadIdsForRetention(snapshot, nowMs, protectedThreadIds).includes(threadId)) {
+    return null;
+  }
+  const root = snapshot.threads.find((thread) => thread.id === threadId);
+  if (!root) return null;
+  const liveProjectThreads = snapshot.threads.filter(
+    (thread) =>
+      (!("deletedAt" in thread) || thread.deletedAt === null) &&
+      thread.projectId === root.projectId,
+  );
+  const hierarchy = buildThreadHierarchyIndex(liveProjectThreads);
+  return {
+    expectedDescendantThreadIds: hierarchy.collectDescendants(threadId).map((thread) => thread.id),
+    expectedReadModelSequence: snapshot.snapshotSequence,
+  };
 }
 
 export const runThreadRetentionSweep = Effect.fn("runThreadRetentionSweep")(function* (
@@ -188,29 +227,49 @@ export const runThreadRetentionSweep = Effect.fn("runThreadRetentionSweep")(func
       Effect.forEach(
         threadBatch,
         (threadId) =>
-          orchestrationEngine
-            .dispatch({
+          Effect.gen(function* () {
+            // Revalidate immediately before dispatch, then bind the command to
+            // this exact projection revision and descendant set. Any new work,
+            // pin, automation protection, or child creation fails closed.
+            const currentSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+            const currentProtectedThreadIds =
+              yield* listRetentionProtectedThreadIds(automationRepository);
+            const deleteScope = getRetentionDeleteScope(
+              currentSnapshot,
+              threadId,
+              Date.now(),
+              currentProtectedThreadIds,
+            );
+            if (!deleteScope) {
+              return yield* Effect.fail(
+                new Error("retention subtree changed or is no longer inactive"),
+              );
+            }
+            return yield* orchestrationEngine.dispatch({
               type: "thread.delete",
               commandId: CommandId.makeUnsafe(
                 `${THREAD_RETENTION_COMMAND_ID_PREFIX}${randomUUID()}`,
               ),
               threadId,
-            })
-            .pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  deletedCount += 1;
+              cascadeDescendants: true,
+              expectedDescendantThreadIds: deleteScope.expectedDescendantThreadIds,
+              expectedReadModelSequence: deleteScope.expectedReadModelSequence,
+            });
+          }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                deletedCount += 1;
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("failed to hide inactive thread during retention sweep").pipe(
+                Effect.annotateLogs({
+                  threadId,
+                  error: String(error),
                 }),
               ),
-              Effect.catch((error) =>
-                Effect.logWarning("failed to hide inactive thread during retention sweep").pipe(
-                  Effect.annotateLogs({
-                    threadId,
-                    error: String(error),
-                  }),
-                ),
-              ),
             ),
+          ),
         { concurrency: 1 },
       ).pipe(
         Effect.tap(() =>

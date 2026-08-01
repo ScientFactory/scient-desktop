@@ -1,9 +1,17 @@
-import { CheckpointRef, EventId, ThreadId, TurnId, type ModelSlug } from "@synara/contracts";
+import {
+  CheckpointRef,
+  EventId,
+  MessageId,
+  ThreadId,
+  TurnId,
+  type ModelSlug,
+} from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
   appendVoiceTranscriptToPrompt,
   completeComposerVoiceTranscript,
+  collectOwnedBlobUserMessageIds,
   buildComposerMenuSelectionKey,
   createLocalDispatchSnapshot,
   createWorktreeSetupSnapshot,
@@ -53,6 +61,21 @@ import {
   shouldRenderTerminalWorkspace,
   worktreeSetupHasError,
 } from "./ChatView.logic";
+
+describe("owned user image blob trust", () => {
+  it("includes both optimistic rows and server preview-handoff rows", () => {
+    const optimisticId = MessageId.makeUnsafe("optimistic-user");
+    const handoffId = MessageId.makeUnsafe("handoff-user");
+    const owned = collectOwnedBlobUserMessageIds({
+      optimisticMessageIds: new Set([optimisticId]),
+      handoffPreviewUrlsByMessageId: { [handoffId]: ["blob:handoff"] },
+    });
+
+    expect(owned.has(optimisticId)).toBe(true);
+    expect(owned.has(handoffId)).toBe(true);
+    expect(owned.has("assistant-unowned" as typeof optimisticId)).toBe(false);
+  });
+});
 
 describe("file undo completion", () => {
   const pending = {
