@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProjectThreadTree,
+  nestVisibleSidebarThreadRows,
   collectSelectedThreadSubtreeRoots,
   createSidebarThreadHoverAnchorId,
   derivePinnedProjectIdsForSidebar,
@@ -1387,6 +1388,32 @@ describe("buildProjectThreadTree", () => {
       [ThreadId.makeUnsafe("thread-child"), 1, true],
       [ThreadId.makeUnsafe("thread-grandchild"), 2, false],
     ]);
+  });
+
+  it("reconstructs only currently visible family branches for animated disclosure regions", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("thread-child");
+    const threads = [
+      makeThread({ id: parentId, createdAt: "2026-03-09T10:02:00.000Z" }),
+      makeThread({
+        id: childId,
+        parentThreadId: parentId,
+        createdAt: "2026-03-09T10:01:00.000Z",
+      }),
+    ];
+
+    const closedForest = nestVisibleSidebarThreadRows(buildProjectThreadTree({ threads }));
+    expect(closedForest).toHaveLength(1);
+    expect(closedForest[0]?.thread.id).toBe(parentId);
+    expect(closedForest[0]?.children).toEqual([]);
+
+    const openForest = nestVisibleSidebarThreadRows(
+      buildProjectThreadTree({
+        threads,
+        expandedParentThreadIds: new Set([parentId]),
+      }),
+    );
+    expect(openForest[0]?.children.map((node) => node.thread.id)).toEqual([childId]);
   });
 });
 

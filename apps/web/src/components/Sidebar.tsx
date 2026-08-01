@@ -5,8 +5,6 @@
 import {
   ArchiveIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   ClockIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -43,6 +41,7 @@ import { TbArrowsDiagonal, TbArrowsDiagonalMinimize2 } from "react-icons/tb";
 import { LuFolderPlus } from "react-icons/lu";
 import { IoFilter } from "react-icons/io5";
 import {
+  Fragment,
   useCallback,
   useEffect,
   lazy,
@@ -228,6 +227,12 @@ import { SidebarSectionToolbar } from "./SidebarSectionToolbar";
 import { SidebarGlyph, sidebarGlyphClass, SIDEBAR_TRAILING_ICON_CLASS } from "./sidebarGlyphs";
 import { ThreadPinToggleButton } from "./ThreadPinToggleButton";
 import {
+  SidebarThreadFamilyDisclosureButton,
+  SidebarThreadFamilyDisclosureRegion,
+  sidebarThreadFamilyRegionId,
+  type SidebarThreadFamilyScope,
+} from "./SidebarThreadFamilyDisclosure";
+import {
   SidebarStatusTrailingGlyph,
   SidebarThreadTrailingIndicators,
 } from "./SidebarThreadTrailingIndicators";
@@ -333,6 +338,7 @@ import {
   getNextVisibleSidebarThreadId,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarEntriesForPreview,
+  nestVisibleSidebarThreadRows,
   groupSidebarThreadsByProjectId,
   partitionSidebarThreadsByProjectIds,
   isLatestPinnedProjectMutation,
@@ -356,6 +362,7 @@ import {
   resolveThreadStatusPill,
   validateNewThreadInWorkspaceAction,
   type SidebarDerivedProjectData,
+  type SidebarThreadTreeNode,
   type SidebarActionBadge,
   type SidebarView,
   shouldShowDebugFeatureFlagsMenu,
@@ -5748,9 +5755,7 @@ export default function Sidebar() {
           <span className={SIDEBAR_SECTION_LABEL_CLASS_NAME}>Pinned</span>
         </div>
         <div className="flex flex-col gap-0.5">
-          {pinnedThreadRows.map((row) =>
-            renderPinnedThreadRow(row.thread, row.depth, row.childCount, row.isExpanded),
-          )}
+          {renderPinnedThreadFamilyNodes(nestVisibleSidebarThreadRows(pinnedThreadRows))}
         </div>
       </div>
     );
@@ -5855,7 +5860,7 @@ export default function Sidebar() {
     const hasTrailingStatusGlyph = Boolean(threadStatus) || Boolean(threadJumpLabel);
     const showThreadProviderAvatar = !isGenericChatThreadTitle(thread.title);
     const canToggleSubagents = childCount > 0;
-    const childCountLabel = `${childCount} ${pluralize(childCount, "subagent")}`;
+    const disclosureRegionId = sidebarThreadFamilyRegionId("pinned", thread.id);
     const hoverAnchorId = createSidebarThreadHoverAnchorId({
       scope: "pinned",
       threadId: thread.id,
@@ -5879,8 +5884,6 @@ export default function Sidebar() {
             />
           ) : null}
           <div
-            role="button"
-            tabIndex={0}
             data-thread-item
             className={cn(
               SIDEBAR_HEADER_ROW_CLASS_NAME,
@@ -5907,20 +5910,6 @@ export default function Sidebar() {
                   }
                 : undefined
             }
-            onPointerDown={(event) => primeThreadActivation(event, thread.id)}
-            onClick={() => activateThreadFromSidebarIntent(thread.id)}
-            onDoubleClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              openRenameThreadDialog(thread.id);
-            }}
-            onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                activateThreadFromSidebarIntent(thread.id);
-              }
-            }}
             onContextMenu={(event) => {
               event.preventDefault();
               void handleThreadContextMenu(thread.id, {
@@ -5929,18 +5918,29 @@ export default function Sidebar() {
               });
             }}
           >
-            {threadEntryPoint === "terminal" ? (
-              <SidebarGlyph icon={TerminalIcon} variant="chrome" />
-            ) : showThreadProviderAvatar ? (
-              <ProviderAvatarWithTerminal
-                provider={thread.session?.provider ?? thread.modelSelection.provider}
-                handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
-                handoffTooltip={handoffBadgeLabel}
-                terminalStatus={terminalStatus}
-                terminalCount={terminalCount}
-              />
-            ) : null}
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+              onPointerDown={(event) => primeThreadActivation(event, thread.id)}
+              onClick={() => activateThreadFromSidebarIntent(thread.id)}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openRenameThreadDialog(thread.id);
+              }}
+              onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
+            >
+              {threadEntryPoint === "terminal" ? (
+                <SidebarGlyph icon={TerminalIcon} variant="chrome" />
+              ) : showThreadProviderAvatar ? (
+                <ProviderAvatarWithTerminal
+                  provider={thread.session?.provider ?? thread.modelSelection.provider}
+                  handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
+                  handoffTooltip={handoffBadgeLabel}
+                  terminalStatus={terminalStatus}
+                  terminalCount={terminalCount}
+                />
+              ) : null}
               <span
                 className={cn(
                   "min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui,12px)] leading-5",
@@ -5969,30 +5969,16 @@ export default function Sidebar() {
                   Pending
                 </span>
               ) : null}
-            </div>
+            </button>
             {canToggleSubagents ? (
-              <button
-                type="button"
-                data-thread-selection-safe
-                aria-expanded={isExpanded}
-                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${childCountLabel}`}
-                title={childCountLabel}
-                className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center gap-0.5 rounded-full border border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] px-[5px] text-[color:var(--color-text-foreground-secondary)] transition-colors hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[color:var(--color-text-foreground)]"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  toggleSubagentParent(thread.id);
-                }}
-              >
-                <span className="text-[9px] font-medium leading-none tabular-nums">
-                  {childCount}
-                </span>
-                {isExpanded ? (
-                  <SidebarGlyph icon={ChevronDownIcon} variant="chevron" />
-                ) : (
-                  <SidebarGlyph icon={ChevronRightIcon} variant="chevron" />
-                )}
-              </button>
+              <SidebarThreadFamilyDisclosureButton
+                childCount={childCount}
+                controls={disclosureRegionId}
+                open={isExpanded}
+                threadTitle={thread.title}
+                className="border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] text-[color:var(--color-text-foreground-secondary)] hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[color:var(--color-text-foreground)]"
+                onToggle={() => toggleSubagentParent(thread.id)}
+              />
             ) : null}
             {projectLabel ? (
               // Right-aligned project context for the flattened pinned list. The title
@@ -6035,6 +6021,31 @@ export default function Sidebar() {
     );
   }
 
+  function renderPinnedThreadFamilyNodes(
+    nodes: readonly SidebarThreadTreeNode<SidebarThreadSummary>[],
+  ): ReactNode {
+    return nodes.map((node) => {
+      const regionId = sidebarThreadFamilyRegionId("pinned", node.thread.id);
+      return (
+        <Fragment key={node.thread.id}>
+          {renderPinnedThreadRow(node.thread, node.depth, node.childCount, node.isExpanded)}
+          {node.childCount > 0 ? (
+            <SidebarThreadFamilyDisclosureRegion
+              id={regionId}
+              open={node.isExpanded}
+              threadTitle={node.thread.title}
+              className="w-full"
+            >
+              <div className="flex flex-col gap-0.5">
+                {renderPinnedThreadFamilyNodes(node.children)}
+              </div>
+            </SidebarThreadFamilyDisclosureRegion>
+          ) : null}
+        </Fragment>
+      );
+    });
+  }
+
   function renderThreadRow(
     thread: SidebarThreadSummary,
     orderedProjectThreadIds: readonly ThreadId[],
@@ -6045,6 +6056,7 @@ export default function Sidebar() {
     // their top-level rows align flush like pinned rows instead of the indented
     // column used for project-nested threads.
     topLevel = false,
+    disclosureScope: SidebarThreadFamilyScope = topLevel ? "chat" : "project",
   ) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
@@ -6100,7 +6112,7 @@ export default function Sidebar() {
       visibleThreadJumpLabelPartsByThreadId.get(thread.id) ?? EMPTY_SHORTCUT_PARTS;
     // Untouched draft chat threads are intentionally text-only until they get a real title.
     const showThreadProviderAvatar = !isGenericChatThreadTitle(thread.title);
-    const childCountLabel = `${childCount} ${pluralize(childCount, "subagent")}`;
+    const disclosureRegionId = sidebarThreadFamilyRegionId(disclosureScope, thread.id);
     const toggleButtonClassName = isHighlighted
       ? "border-[color:var(--color-border)] bg-[var(--color-background-button-secondary)] text-[var(--color-text-foreground-secondary)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[var(--color-text-foreground)]"
       : "border-[color:var(--color-border-light)] bg-[var(--color-background-elevated-secondary)] text-[var(--color-text-foreground-secondary)] hover:border-[color:var(--color-border)] hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[var(--color-text-foreground)]";
@@ -6128,7 +6140,7 @@ export default function Sidebar() {
             {...SIDEBAR_HOVER_CARD_TRIGGER_PROPS}
             render={
               <SidebarMenuSubButton
-                render={<div role="button" tabIndex={0} />}
+                render={<div />}
                 data-thread-entry-point={threadEntryPoint}
                 size="sm"
                 isActive={isActive}
@@ -6161,24 +6173,6 @@ export default function Sidebar() {
                     );
                   }
                 }}
-                onClick={(event) => {
-                  handleThreadClick(event, thread.id, orderedProjectThreadIds, {
-                    isActive,
-                    canToggleSubagents,
-                  });
-                }}
-                onPointerDown={(event) => primeThreadActivation(event, thread.id)}
-                onDoubleClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openRenameThreadDialog(thread.id);
-                }}
-                onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  activateThreadFromSidebarIntent(thread.id);
-                }}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   if (selectedThreadIds.size > 0 && selectedThreadIds.has(thread.id)) {
@@ -6199,36 +6193,50 @@ export default function Sidebar() {
               />
             }
           >
-            {isSubagentThread ? (
-              <span
-                aria-hidden="true"
-                className="relative inline-flex h-3.5 w-[18px] shrink-0 items-center"
-                style={{ marginLeft: `${subagentIndentPx}px` }}
-              >
-                <span className="absolute left-1.5 top-0 bottom-0 w-px rounded-full bg-border/35" />
-                <span className="absolute left-1.5 top-1/2 h-px w-2.5 -translate-y-1/2 bg-border/35" />
-                <span
-                  className="absolute left-1.5 top-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full"
-                  style={{ backgroundColor: subagentPresentation?.accentColor }}
-                />
-              </span>
-            ) : threadEntryPoint === "terminal" ? (
-              <SidebarGlyph icon={TerminalIcon} variant="chrome" />
-            ) : showThreadProviderAvatar ? (
-              <ProviderAvatarWithTerminal
-                provider={thread.session?.provider ?? thread.modelSelection.provider}
-                handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
-                handoffTooltip={handoffBadgeLabel}
-                terminalStatus={terminalStatus}
-                terminalCount={terminalCount}
-              />
-            ) : null}
-            <div
+            <button
+              type="button"
               className={cn(
                 "flex min-w-0 flex-1 items-center text-left",
                 isSubagentThread ? "gap-[5px]" : "gap-1.5",
               )}
+              onClick={(event) => {
+                handleThreadClick(event, thread.id, orderedProjectThreadIds, {
+                  isActive,
+                  canToggleSubagents,
+                });
+              }}
+              onPointerDown={(event) => primeThreadActivation(event, thread.id)}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openRenameThreadDialog(thread.id);
+              }}
+              onPointerUp={(event) => handleThreadRenamePointerUp(event, thread.id)}
             >
+              {isSubagentThread ? (
+                <span
+                  aria-hidden="true"
+                  className="relative inline-flex h-3.5 w-[18px] shrink-0 items-center"
+                  style={{ marginLeft: `${subagentIndentPx}px` }}
+                >
+                  <span className="absolute left-1.5 top-0 bottom-0 w-px rounded-full bg-border/35" />
+                  <span className="absolute left-1.5 top-1/2 h-px w-2.5 -translate-y-1/2 bg-border/35" />
+                  <span
+                    className="absolute left-1.5 top-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+                    style={{ backgroundColor: subagentPresentation?.accentColor }}
+                  />
+                </span>
+              ) : threadEntryPoint === "terminal" ? (
+                <SidebarGlyph icon={TerminalIcon} variant="chrome" />
+              ) : showThreadProviderAvatar ? (
+                <ProviderAvatarWithTerminal
+                  provider={thread.session?.provider ?? thread.modelSelection.provider}
+                  handoffSourceProvider={thread.handoff?.sourceProvider ?? null}
+                  handoffTooltip={handoffBadgeLabel}
+                  terminalStatus={terminalStatus}
+                  terminalCount={terminalCount}
+                />
+              ) : null}
               <span
                 className={cn(
                   "min-w-0 flex-1 truncate text-[length:var(--app-font-size-ui,12px)]",
@@ -6261,33 +6269,17 @@ export default function Sidebar() {
                   Pending
                 </span>
               ) : null}
-            </div>
+            </button>
             <div className="ml-auto flex shrink-0 items-center gap-1.5 pr-1">
               {canToggleSubagents ? (
-                <button
-                  type="button"
-                  data-thread-selection-safe
-                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${childCountLabel}`}
-                  title={childCountLabel}
-                  className={cn(
-                    "inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-full border px-[5px] transition-colors",
-                    toggleButtonClassName,
-                  )}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    toggleSubagentParent(thread.id);
-                  }}
-                >
-                  <span className="text-[9px] font-medium leading-none tabular-nums">
-                    {childCount}
-                  </span>
-                  {isExpanded ? (
-                    <SidebarGlyph icon={ChevronDownIcon} variant="chevron" />
-                  ) : (
-                    <SidebarGlyph icon={ChevronRightIcon} variant="chevron" />
-                  )}
-                </button>
+                <SidebarThreadFamilyDisclosureButton
+                  childCount={childCount}
+                  controls={disclosureRegionId}
+                  open={isExpanded}
+                  threadTitle={thread.title}
+                  className={toggleButtonClassName}
+                  onToggle={() => toggleSubagentParent(thread.id)}
+                />
               ) : null}
               {showCompactMeta && isTemporaryThread && !thread.sidechatSourceThreadId ? (
                 <Tooltip>
@@ -6330,28 +6322,42 @@ export default function Sidebar() {
     );
   }
 
-  function renderChatItem(row: (typeof visibleChatThreadRows)[number]) {
-    return renderThreadRow(
-      row.thread,
-      visibleChatThreadIds,
-      row.depth,
-      row.childCount,
-      row.isExpanded,
-      true,
-    );
-  }
-
-  function renderStudioChatItem(row: (typeof studioChatThreadRows)[number]) {
-    // Studio rows are a flat top-level list like home Chats: the indented column
-    // is reserved for project-nested threads.
-    return renderThreadRow(
-      row.thread,
-      studioChatThreadIds,
-      row.depth,
-      row.childCount,
-      row.isExpanded,
-      true,
-    );
+  function renderThreadFamilyNodes(
+    nodes: readonly SidebarThreadTreeNode<SidebarThreadSummary>[],
+    orderedThreadIds: readonly ThreadId[],
+    scope: SidebarThreadFamilyScope,
+    topLevel: boolean,
+  ): ReactNode {
+    return nodes.map((node) => {
+      const regionId = sidebarThreadFamilyRegionId(scope, node.thread.id);
+      return (
+        <Fragment key={node.thread.id}>
+          {renderThreadRow(
+            node.thread,
+            orderedThreadIds,
+            node.depth,
+            node.childCount,
+            node.isExpanded,
+            topLevel,
+            scope,
+          )}
+          {node.childCount > 0 ? (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarThreadFamilyDisclosureRegion
+                id={regionId}
+                open={node.isExpanded}
+                threadTitle={node.thread.title}
+                className="w-full"
+              >
+                <SidebarMenuSub className="mx-0 my-0 w-full translate-x-0 gap-0.5 border-l-0 px-0 py-0">
+                  {renderThreadFamilyNodes(node.children, orderedThreadIds, scope, topLevel)}
+                </SidebarMenuSub>
+              </SidebarThreadFamilyDisclosureRegion>
+            </SidebarMenuSubItem>
+          ) : null}
+        </Fragment>
+      );
+    });
   }
 
   function renderProjectItem(
@@ -6606,14 +6612,19 @@ export default function Sidebar() {
                   ))}
                 </>
               ) : null}
-              {visibleEntries.map((entry) =>
-                renderThreadRow(
-                  entry.thread,
-                  orderedProjectThreadIds,
-                  entry.depth,
-                  entry.childCount,
-                  entry.isExpanded,
+              {renderThreadFamilyNodes(
+                nestVisibleSidebarThreadRows(
+                  visibleEntries.map((entry) => ({
+                    thread: entry.thread,
+                    depth: entry.depth,
+                    rootThreadId: entry.rootRowId,
+                    childCount: entry.childCount,
+                    isExpanded: entry.isExpanded,
+                  })),
                 ),
+                orderedProjectThreadIds,
+                "project",
+                false,
               )}
 
               {(canShowMoreThreads || canShowLessThreads) && (
@@ -7657,7 +7668,12 @@ export default function Sidebar() {
                   )}
                   <SidebarMenu ref={attachProjectListAutoAnimateRef} className="gap-1">
                     {studioChatThreadRows.length > 0 ? (
-                      studioChatThreadRows.map((row) => renderStudioChatItem(row))
+                      renderThreadFamilyNodes(
+                        nestVisibleSidebarThreadRows(studioChatThreadRows),
+                        studioChatThreadIds,
+                        "studio",
+                        true,
+                      )
                     ) : (
                       <div className="px-2 pt-4 text-center text-[length:var(--app-font-size-ui,12px)] text-muted-foreground/58">
                         {threadsHydrated ? "No studio chats yet" : "Loading Studio..."}
@@ -7834,7 +7850,12 @@ export default function Sidebar() {
                     className={cn("gap-1", disclosureContentClassName(chatSectionExpanded))}
                   >
                     {visibleChatThreadRows.length > 0 ? (
-                      renderedChatEntries.map((entry) => renderChatItem(entry.row))
+                      renderThreadFamilyNodes(
+                        nestVisibleSidebarThreadRows(renderedChatEntries.map((entry) => entry.row)),
+                        visibleChatThreadIds,
+                        "chat",
+                        true,
+                      )
                     ) : (
                       <div className="px-2 py-2 text-[length:var(--app-font-size-ui,12px)] text-muted-foreground/48">
                         No chats yet

@@ -8,6 +8,7 @@ import {
   logCleanupCauseUnlessInterrupted,
   providerCleanupCanPurgeImmediately,
   resolveDeletedThreadProviderCleanup,
+  runStartupPurgeProgressPasses,
   waitForDeletedSubagentSettlement,
 } from "./ThreadDeletionReactor";
 
@@ -391,6 +392,49 @@ describe("waitForDeletedSubagentSettlement", () => {
     );
     expect(settled).toBe(true);
     expect(reads).toBe(3);
+  });
+});
+
+describe("runStartupPurgeProgressPasses", () => {
+  it("retries a deferred root after a root-first pass purges its child", async () => {
+    const remainingThreadIds = new Set(["root", "child"]);
+    const attemptedThreadIds: string[] = [];
+
+    const result = await Effect.runPromise(
+      runStartupPurgeProgressPasses({
+        purgePass: () =>
+          Effect.sync(() => {
+            let purgedCount = 0;
+            for (const threadId of remainingThreadIds) {
+              attemptedThreadIds.push(threadId);
+              if (threadId === "root" && remainingThreadIds.has("child")) continue;
+              remainingThreadIds.delete(threadId);
+              purgedCount += 1;
+            }
+            return purgedCount;
+          }),
+      }),
+    );
+
+    expect(result).toEqual({ purgedCount: 2, reachedPassLimit: false });
+    expect(attemptedThreadIds).toEqual(["root", "child", "root"]);
+    expect(remainingThreadIds.size).toBe(0);
+  });
+
+  it("stops immediately when a pass makes no progress", async () => {
+    let passes = 0;
+    const result = await Effect.runPromise(
+      runStartupPurgeProgressPasses({
+        purgePass: () =>
+          Effect.sync(() => {
+            passes += 1;
+            return 0;
+          }),
+      }),
+    );
+
+    expect(result).toEqual({ purgedCount: 0, reachedPassLimit: false });
+    expect(passes).toBe(1);
   });
 });
 

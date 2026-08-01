@@ -785,6 +785,31 @@ describe("OrchestrationEngine", () => {
         .every((thread) => (thread.archivedAt ?? null) === null),
     ).toBe(true);
 
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.makeUnsafe("cmd-subtree-delete-without-cascade"),
+          threadId: parentId,
+        }),
+      ),
+    ).rejects.toThrow("complete family");
+    const eventsAfterRejectedDelete = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      eventsAfterRejectedDelete.filter(
+        (event) => event.commandId === "cmd-subtree-delete-without-cascade",
+      ),
+    ).toEqual([]);
+    expect(
+      (await system.run(engine.getReadModel())).threads
+        .filter((thread) => [parentId, childId, grandchildId].includes(thread.id))
+        .every((thread) => thread.deletedAt === null),
+    ).toBe(true);
+
     const deleteResult = await system.run(
       engine.dispatch({
         type: "thread.delete",

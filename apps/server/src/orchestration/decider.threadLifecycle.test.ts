@@ -287,20 +287,38 @@ describe("thread subtree lifecycle decisions", () => {
     expect(eventThreadIds(result)).toEqual([CHILD, PARENT]);
   });
 
-  it("preserves single-thread deletion when cascading is not requested", async () => {
+  it("rejects non-cascade deletion when the root has live same-project descendants", async () => {
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.delete",
+            commandId: CommandId.makeUnsafe("cmd-delete-root-without-cascade"),
+            threadId: PARENT,
+          },
+          readModel: makeReadModel(hierarchy()),
+        }),
+      ),
+    ).rejects.toThrow("complete family");
+  });
+
+  it("allows proven leaf deletion when cascading is not requested", async () => {
     const result = await Effect.runPromise(
       decideOrchestrationCommand({
         command: {
           type: "thread.delete",
-          commandId: CommandId.makeUnsafe("cmd-delete-single"),
-          threadId: PARENT,
+          commandId: CommandId.makeUnsafe("cmd-delete-leaf"),
+          threadId: CHILD,
         },
-        readModel: makeReadModel(hierarchy()),
+        readModel: makeReadModel([
+          makeThread({ id: PARENT }),
+          makeThread({ id: CHILD, parentThreadId: PARENT }),
+        ]),
       }),
     );
 
     expect(Array.isArray(result)).toBe(false);
-    expect(eventThreadIds(result)).toEqual([PARENT]);
+    expect(eventThreadIds(result)).toEqual([CHILD]);
   });
 
   it("terminates corrupt cycles without duplicating or deleting the root twice", async () => {

@@ -3,7 +3,7 @@
 // Layer: Web orchestration helper tests
 
 import type { NativeApi, ThreadBrowserState } from "@synara/contracts";
-import { ThreadId } from "@synara/contracts";
+import { ProjectId, ThreadId } from "@synara/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useBrowserStateStore } from "../browserStateStore";
@@ -11,9 +11,17 @@ import { createMemoryStorage } from "./storage";
 
 import {
   archivedThreadDeleteConfirmation,
+  buildArchivedThreadFamilyScopes,
+  buildArchivedThreadDeletionFamilies,
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "./archivedThreadDelete";
+
+const PROJECT_ID = ProjectId.makeUnsafe("project-archived-delete");
+
+function snapshotThread(threadId: ThreadId, parentThreadId: ThreadId | null = null) {
+  return { id: threadId, parentThreadId, projectId: PROJECT_ID };
+}
 
 describe("archivedThreadDeleteConfirmation", () => {
   it("states the complete destructive scope for a subtree", () => {
@@ -27,6 +35,28 @@ describe("archivedThreadDeleteConfirmation", () => {
     expect(archivedThreadDeleteConfirmation("Leaf", 1)).toContain(
       "remove the conversation and its history forever",
     );
+  });
+});
+
+describe("buildArchivedThreadFamilyScopes", () => {
+  it("keeps restore and destructive counts distinct for a legacy mixed family", () => {
+    const parent = ThreadId.makeUnsafe("thread-archived-parent");
+    const archivedChild = ThreadId.makeUnsafe("thread-archived-child");
+    const liveChild = ThreadId.makeUnsafe("thread-live-child");
+    const threads = [
+      { ...snapshotThread(parent), archivedAt: "2026-08-01T00:00:00.000Z" },
+      {
+        ...snapshotThread(archivedChild, parent),
+        archivedAt: "2026-08-01T00:00:00.000Z",
+      },
+      { ...snapshotThread(liveChild, parent), archivedAt: null },
+    ];
+
+    const scopes = buildArchivedThreadFamilyScopes(threads);
+
+    expect(scopes.archivedRoots.map((thread) => thread.id)).toEqual([parent]);
+    expect(scopes.restoreCountByRootId.get(parent)).toBe(2);
+    expect(scopes.deleteCountByRootId.get(parent)).toBe(3);
   });
 });
 
@@ -105,34 +135,45 @@ describe("deleteArchivedThreadFromClient", () => {
     expect(dispatchOrder).toBeLessThan(removeOrder);
   });
 
-  it("deletes multiple archived threads and removes each locally once", async () => {
-    const threadA = ThreadId.makeUnsafe("thread-archived-a");
-    const threadB = ThreadId.makeUnsafe("thread-archived-b");
+  it("derives one exact cascade for a selected archived parent and child", async () => {
+    const parent = ThreadId.makeUnsafe("thread-archived-parent");
+    const child = ThreadId.makeUnsafe("thread-archived-child");
     const dispatchCommand = vi.fn().mockResolvedValue({ sequence: 11 });
     const removeDeletedThreadFromClientState = vi.fn();
 
     await deleteArchivedThreadsFromClient({
       api: archivedDeleteApi(dispatchCommand),
-      threadIds: [threadA, threadA, threadB],
+      threadIds: [parent, child],
+      snapshotThreads: [snapshotThread(parent), snapshotThread(child, parent)],
       removeDeletedThreadFromClientState,
     });
 
-    expect(dispatchCommand).toHaveBeenCalledTimes(2);
-    expect(dispatchCommand).toHaveBeenNthCalledWith(1, {
+    expect(dispatchCommand).toHaveBeenCalledOnce();
+    expect(dispatchCommand).toHaveBeenCalledWith({
       type: "thread.delete",
       commandId: expect.any(String),
-      threadId: threadA,
+      threadId: parent,
+      cascadeDescendants: true,
+      expectedDescendantThreadIds: [child],
     });
-    expect(dispatchCommand).toHaveBeenNthCalledWith(2, {
-      type: "thread.delete",
-      commandId: expect.any(String),
-      threadId: threadB,
-    });
-    expect(removeDeletedThreadFromClientState.mock.calls).toEqual([[threadA], [threadB]]);
+    expect(removeDeletedThreadFromClientState.mock.calls).toEqual([[child], [parent]]);
   });
 
-  it("reconciles successful archived deletes when a later bulk delete fails", async () => {
+  it("includes unselected snapshot descendants in a selected root's exact cascade", () => {
+    const parent = ThreadId.makeUnsafe("thread-selected-parent");
+    const child = ThreadId.makeUnsafe("thread-unselected-child");
+
+    expect(
+      buildArchivedThreadDeletionFamilies({
+        selectedThreadIds: [parent],
+        snapshotThreads: [snapshotThread(parent), snapshotThread(child, parent)],
+      }),
+    ).toEqual([{ rootThreadId: parent, descendantThreadIds: [child] }]);
+  });
+
+  it("reconciles a complete independent family when a later family fails", async () => {
     const threadA = ThreadId.makeUnsafe("thread-archived-a");
+    const childA = ThreadId.makeUnsafe("thread-archived-a-child");
     const threadB = ThreadId.makeUnsafe("thread-archived-b");
     const dispatchError = new Error("delete failed");
     const dispatchCommand = vi
@@ -144,12 +185,50 @@ describe("deleteArchivedThreadFromClient", () => {
     await expect(
       deleteArchivedThreadsFromClient({
         api: archivedDeleteApi(dispatchCommand),
-        threadIds: [threadA, threadB],
+        threadIds: [threadA, childA, threadB],
+        snapshotThreads: [
+          snapshotThread(threadA),
+          snapshotThread(childA, threadA),
+          snapshotThread(threadB),
+        ],
         removeDeletedThreadFromClientState,
       }),
     ).rejects.toThrow(dispatchError);
 
     expect(dispatchCommand).toHaveBeenCalledTimes(2);
-    expect(removeDeletedThreadFromClientState.mock.calls).toEqual([[threadA]]);
+    expect(dispatchCommand).toHaveBeenNthCalledWith(1, {
+      type: "thread.delete",
+      commandId: expect.any(String),
+      threadId: threadA,
+      cascadeDescendants: true,
+      expectedDescendantThreadIds: [childA],
+    });
+    expect(dispatchCommand).toHaveBeenNthCalledWith(2, {
+      type: "thread.delete",
+      commandId: expect.any(String),
+      threadId: threadB,
+      cascadeDescendants: true,
+      expectedDescendantThreadIds: [],
+    });
+    expect(removeDeletedThreadFromClientState.mock.calls).toEqual([[childA], [threadA]]);
+  });
+
+  it("keeps selected roots independent across projects even when parent ids collide", () => {
+    const parent = ThreadId.makeUnsafe("thread-parent");
+    const child = ThreadId.makeUnsafe("thread-child");
+    const otherProject = ProjectId.makeUnsafe("project-other");
+
+    expect(
+      buildArchivedThreadDeletionFamilies({
+        selectedThreadIds: [parent, child],
+        snapshotThreads: [
+          snapshotThread(parent),
+          { id: child, parentThreadId: parent, projectId: otherProject },
+        ],
+      }),
+    ).toEqual([
+      { rootThreadId: parent, descendantThreadIds: [] },
+      { rootThreadId: child, descendantThreadIds: [] },
+    ]);
   });
 });

@@ -19,10 +19,7 @@ import { getModelOptions, normalizeModelSlug } from "@synara/shared/model";
 import { providerSupportsSignOut } from "@synara/shared/providerSignOut";
 import { asProviderSignOutNativeApi } from "@synara/shared/providerSignOutTransport";
 import { pluralize } from "@synara/shared/text";
-import {
-  buildThreadHierarchyIndex,
-  collectSubagentDescendants,
-} from "@synara/shared/threadHierarchy";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import {
   type ReactNode,
   type RefObject,
@@ -129,6 +126,7 @@ import { CentralIcon } from "../lib/central-icons";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import {
   archivedThreadDeleteConfirmation,
+  buildArchivedThreadFamilyScopes,
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "../lib/archivedThreadDelete";
@@ -804,17 +802,11 @@ function SettingsRouteView() {
   const allThreadsMessageless = useStore(useMemo(() => createAllThreadsMessagelessSelector(), []));
   const projects = useStore((store) => store.projects);
   const threadsHydrated = useStore((store) => store.threadsHydrated);
-  const { archivedFamilyCountByThreadId, archivedThreads } = useMemo(() => {
-    const archivedThreadShells = threadShells.filter((thread) => thread.archivedAt != null);
-    const hierarchy = buildThreadHierarchyIndex(archivedThreadShells);
-    const roots = hierarchy.collectSubtreeRoots();
-    return {
-      archivedThreads: roots,
-      archivedFamilyCountByThreadId: new Map(
-        roots.map((root) => [root.id, hierarchy.collectDescendants(root.id).length + 1] as const),
-      ),
-    };
-  }, [threadShells]);
+  const archivedThreadFamilyScopes = useMemo(
+    () => buildArchivedThreadFamilyScopes(threadShells),
+    [threadShells],
+  );
+  const archivedThreads = archivedThreadFamilyScopes.archivedRoots;
   const shouldOfferRecoveryTools = useMemo(() => {
     if (!threadsHydrated || projects.length === 0) {
       return false;
@@ -1912,6 +1904,7 @@ function SettingsRouteView() {
         await deleteArchivedThreadsFromClient({
           api,
           threadIds: linkedArchivedThreadIds,
+          snapshotThreads: snapshot.threads,
           removeDeletedThreadFromClientState,
         });
 
@@ -2008,7 +2001,8 @@ function SettingsRouteView() {
     async (
       threadId: ThreadId,
       threadTitle: string,
-      conversationCount: number,
+      restoreConversationCount: number,
+      deleteConversationCount: number,
       position: { x: number; y: number },
     ) => {
       const api = readNativeApi();
@@ -2016,10 +2010,13 @@ function SettingsRouteView() {
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "restore", label: archivedThreadRestoreActionLabel(conversationCount) },
+          {
+            id: "restore",
+            label: archivedThreadRestoreActionLabel(restoreConversationCount),
+          },
           {
             id: "delete",
-            label: archivedThreadDeleteActionLabel(conversationCount),
+            label: archivedThreadDeleteActionLabel(deleteConversationCount),
             destructive: true,
           },
         ],
@@ -2027,7 +2024,7 @@ function SettingsRouteView() {
       );
 
       if (clicked === "restore") {
-        await unarchiveThread(threadId, threadTitle, conversationCount);
+        await unarchiveThread(threadId, threadTitle, restoreConversationCount);
         return;
       }
 
@@ -3229,18 +3226,22 @@ function SettingsRouteView() {
             title={project?.name ?? "Unknown project"}
           >
             {projectThreads.map((thread) => {
-              const conversationCount = archivedFamilyCountByThreadId.get(thread.id) ?? 1;
+              const restoreConversationCount =
+                archivedThreadFamilyScopes.restoreCountByRootId.get(thread.id) ?? 1;
+              const deleteConversationCount =
+                archivedThreadFamilyScopes.deleteCountByRootId.get(thread.id) ?? 1;
               return (
                 <SettingsListRow
                   key={thread.id}
                   title={thread.title}
-                  description={`Archived ${formatRelativeTime(thread.archivedAt ?? thread.createdAt)} · ${threadFamilyConversationCountLabel(conversationCount)}`}
+                  description={`Archived ${formatRelativeTime(thread.archivedAt ?? thread.createdAt)} · ${threadFamilyConversationCountLabel(restoreConversationCount)}`}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     void handleArchivedThreadContextMenu(
                       thread.id,
                       thread.title,
-                      conversationCount,
+                      restoreConversationCount,
+                      deleteConversationCount,
                       {
                         x: event.clientX,
                         y: event.clientY,
@@ -3254,24 +3255,24 @@ function SettingsRouteView() {
                         variant="outline"
                         aria-label={archivedThreadRestoreAccessibleLabel(
                           thread.title,
-                          conversationCount,
+                          restoreConversationCount,
                         )}
                         onClick={() =>
-                          void unarchiveThread(thread.id, thread.title, conversationCount)
+                          void unarchiveThread(thread.id, thread.title, restoreConversationCount)
                         }
                       >
-                        {archivedThreadRestoreActionLabel(conversationCount)}
+                        {archivedThreadRestoreActionLabel(restoreConversationCount)}
                       </Button>
                       <Button
                         size="xs"
                         variant="destructive"
                         aria-label={archivedThreadDeleteAccessibleLabel(
                           thread.title,
-                          conversationCount,
+                          deleteConversationCount,
                         )}
                         onClick={() => void deleteArchivedThread(thread.id, thread.title)}
                       >
-                        {archivedThreadDeleteActionLabel(conversationCount)}
+                        {archivedThreadDeleteActionLabel(deleteConversationCount)}
                       </Button>
                     </>
                   }

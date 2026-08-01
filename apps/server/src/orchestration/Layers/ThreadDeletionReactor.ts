@@ -28,6 +28,25 @@ const PURGE_STARTUP_SWEEP_DELAY_MS = 60 * 1000;
 const MISSING_PROVIDER_BINDING_DETAIL = "no persisted provider binding exists";
 const SUBAGENT_SETTLEMENT_POLL_ATTEMPTS = 50;
 const SUBAGENT_SETTLEMENT_POLL_INTERVAL_MS = 100;
+const STARTUP_PURGE_MAX_PROGRESS_PASSES = 1_000;
+
+export const runStartupPurgeProgressPasses = Effect.fn("runStartupPurgeProgressPasses")(
+  function* (input: {
+    readonly purgePass: () => Effect.Effect<number, unknown>;
+    readonly maxPasses?: number;
+  }) {
+    const maxPasses = Math.max(1, input.maxPasses ?? STARTUP_PURGE_MAX_PROGRESS_PASSES);
+    let purgedCount = 0;
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      const passPurgedCount = yield* input.purgePass();
+      purgedCount += passPurgedCount;
+      if (passPurgedCount === 0) {
+        return { purgedCount, reachedPassLimit: false } as const;
+      }
+    }
+    return { purgedCount, reachedPassLimit: true } as const;
+  },
+);
 
 export type DeletedThreadProviderCleanup =
   | {
@@ -397,19 +416,27 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Effect.sleep(PURGE_STARTUP_SWEEP_DELAY_MS).pipe(
         Effect.flatMap(() =>
-          profileStatsArchive.purgeSoftDeletedManualThreads({
-            beforePurge: (threadId) => cleanupThreadBeforePurge(ThreadId.makeUnsafe(threadId)),
+          runStartupPurgeProgressPasses({
+            purgePass: () =>
+              profileStatsArchive.purgeSoftDeletedManualThreads({
+                beforePurge: (threadId) => cleanupThreadBeforePurge(ThreadId.makeUnsafe(threadId)),
+              }),
           }),
         ),
-        Effect.tap((purgedCount) =>
+        Effect.tap(({ purgedCount }) =>
           purgedCount > 0 ? refreshCommandReadModelAfterPurge("startup-sweep") : Effect.void,
         ),
-        Effect.flatMap((purgedCount) =>
-          purgedCount > 0
-            ? Effect.logInfo("purged soft-deleted threads after stats archive snapshot", {
+        Effect.flatMap(({ purgedCount, reachedPassLimit }) =>
+          reachedPassLimit
+            ? Effect.logWarning("startup purge sweep reached its progress-pass limit", {
                 purgedCount,
+                maxPasses: STARTUP_PURGE_MAX_PROGRESS_PASSES,
               })
-            : Effect.void,
+            : purgedCount > 0
+              ? Effect.logInfo("purged soft-deleted threads after stats archive snapshot", {
+                  purgedCount,
+                })
+              : Effect.void,
         ),
         Effect.catch((error) =>
           Effect.logWarning("startup purge sweep for deleted threads failed", {

@@ -777,18 +777,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
+      const liveProjectThreads = readModel.threads.filter(
+        (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+      );
+      const liveDescendantThreadIds = collectSubagentDescendants(
+        liveProjectThreads,
+        command.threadId,
+      ).map((thread) => thread.id);
       if (command.cascadeDescendants === true) {
         yield* requireThreadSubtreeNotStarting({
           readModel,
           command,
           threadId: command.threadId,
         });
-        const liveProjectThreads = readModel.threads.filter(
-          (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
-        );
-        const descendantThreadIds = collectSubagentDescendants(liveProjectThreads, command.threadId)
-          .map((thread) => thread.id)
-          .toReversed();
+        const descendantThreadIds = liveDescendantThreadIds.toReversed();
         const expectedThreadIds = command.expectedDescendantThreadIds;
         const expectedSet = new Set(expectedThreadIds ?? []);
         const actualSet = new Set(descendantThreadIds);
@@ -821,6 +823,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               threadId,
               deletedAt: occurredAt,
             },
+          }),
+        );
+      }
+      if (liveDescendantThreadIds.length > 0) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail:
+              "This conversation has live sub-agent descendants. Refresh it and confirm deletion of the complete family.",
           }),
         );
       }

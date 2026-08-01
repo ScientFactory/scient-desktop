@@ -892,6 +892,12 @@ export interface SidebarThreadTreeRow<
   isExpanded: boolean;
 }
 
+export interface SidebarThreadTreeNode<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+> extends SidebarThreadTreeRow<T> {
+  children: SidebarThreadTreeNode<T>[];
+}
+
 function collectForcedExpandedParentIds<
   T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
 >(threadById: Map<T["id"], T>, forceVisibleThreadId: T["id"] | undefined): Set<T["id"]> {
@@ -910,15 +916,17 @@ function collectForcedExpandedParentIds<
   return forcedParentIds;
 }
 
-// Build the project-local parent/child thread tree while preserving sort order from the input list.
-export function buildProjectThreadTree<
+// Build the complete project-local parent/child forest while preserving input sort order.
+// Visibility is a separate flattening step so the UI can keep a closed disclosure shell
+// mounted long enough to animate its previously visible children out.
+export function buildProjectThreadForest<
   T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
 >(input: {
   threads: readonly T[];
   expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
   forceVisibleThreadId?: T["id"] | undefined;
   rootThreadIds?: ReadonlySet<T["id"]> | undefined;
-}): SidebarThreadTreeRow<T>[] {
+}): SidebarThreadTreeNode<T>[] {
   const { expandedParentThreadIds, forceVisibleThreadId, rootThreadIds, threads } = input;
   const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
   const childrenByParentId = new Map<T["id"], T[]>();
@@ -953,39 +961,82 @@ export function buildProjectThreadTree<
   }
 
   const forcedExpandedParentIds = collectForcedExpandedParentIds(threadById, forceVisibleThreadId);
-  const orderedRows: SidebarThreadTreeRow<T>[] = [];
   const renderedThreadIds = new Set<T["id"]>();
 
-  const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
-    if (renderedThreadIds.has(thread.id)) return;
+  const visit = (
+    thread: T,
+    depth: number,
+    rootThreadId: T["id"],
+  ): SidebarThreadTreeNode<T> | null => {
+    if (renderedThreadIds.has(thread.id)) return null;
     renderedThreadIds.add(thread.id);
     const childThreads = childrenByParentId.get(thread.id) ?? [];
     const isExpanded =
       childThreads.length > 0 &&
       (expandedParentThreadIds?.has(thread.id) === true || forcedExpandedParentIds.has(thread.id));
 
-    orderedRows.push({
+    const node: SidebarThreadTreeNode<T> = {
       thread,
       depth,
       rootThreadId,
       childCount: childThreads.length,
       isExpanded,
-    });
-
-    if (!isExpanded) {
-      return;
-    }
-
+      children: [],
+    };
     for (const child of childThreads) {
-      visit(child, depth + 1, rootThreadId);
+      const childNode = visit(child, depth + 1, rootThreadId);
+      if (childNode) node.children.push(childNode);
     }
+    return node;
   };
 
+  const forest: SidebarThreadTreeNode<T>[] = [];
   for (const root of roots) {
-    visit(root, 0, root.id);
+    const rootNode = visit(root, 0, root.id);
+    if (rootNode) forest.push(rootNode);
   }
 
-  return orderedRows;
+  return forest;
+}
+
+export function flattenVisibleSidebarThreadForest<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(forest: readonly SidebarThreadTreeNode<T>[]): SidebarThreadTreeRow<T>[] {
+  const rows: SidebarThreadTreeRow<T>[] = [];
+  const visit = (node: SidebarThreadTreeNode<T>) => {
+    const { children: _children, ...row } = node;
+    rows.push(row);
+    if (!node.isExpanded) return;
+    for (const child of node.children) visit(child);
+  };
+  for (const root of forest) visit(root);
+  return rows;
+}
+
+export function nestVisibleSidebarThreadRows<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(rows: readonly SidebarThreadTreeRow<T>[]): SidebarThreadTreeNode<T>[] {
+  const nodeById = new Map<T["id"], SidebarThreadTreeNode<T>>();
+  const roots: SidebarThreadTreeNode<T>[] = [];
+  for (const row of rows) {
+    const node: SidebarThreadTreeNode<T> = { ...row, children: [] };
+    nodeById.set(row.thread.id, node);
+    const parentThreadId = row.thread.parentThreadId ?? null;
+    const parent = parentThreadId === null ? null : nodeById.get(parentThreadId);
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+// Build the currently visible project tree rows for ordering, paging, and shortcuts.
+export function buildProjectThreadTree<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(input: Parameters<typeof buildProjectThreadForest<T>>[0]): SidebarThreadTreeRow<T>[] {
+  return flattenVisibleSidebarThreadForest(buildProjectThreadForest(input));
 }
 
 export function getVisibleSidebarEntriesForPreview<
@@ -1071,6 +1122,21 @@ export function getPinnedThreadRowsForSidebar<
     readonly forceVisibleThreadId?: T["id"] | undefined;
   },
 ): SidebarThreadTreeRow<T>[] {
+  return flattenVisibleSidebarThreadForest(
+    getPinnedThreadForestForSidebar(threads, pinnedThreadIds, options),
+  );
+}
+
+export function getPinnedThreadForestForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(
+  threads: readonly T[],
+  pinnedThreadIds: readonly T["id"][],
+  options?: {
+    readonly expandedParentThreadIds?: ReadonlySet<T["id"]> | undefined;
+    readonly forceVisibleThreadId?: T["id"] | undefined;
+  },
+): SidebarThreadTreeNode<T>[] {
   const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
   const pinnedThreadIdSet = new Set(pinnedThreadIds);
   const hasPinnedAncestor = (thread: T) => {
@@ -1092,7 +1158,7 @@ export function getPinnedThreadRowsForSidebar<
     }
   }
 
-  return buildProjectThreadTree({
+  return buildProjectThreadForest({
     threads,
     rootThreadIds,
     expandedParentThreadIds: options?.expandedParentThreadIds,
