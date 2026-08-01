@@ -1180,10 +1180,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     )}
                   >
                     {userImages.map((image) => (
-                      <UserImageAttachmentThumbnail
+                      <ChatImageAttachmentThumbnail
                         key={image.id}
                         image={image}
-                        userImages={userImages}
+                        images={userImages}
                         onImageExpand={onImageExpand}
                         onTimelineImageLoad={
                           isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
@@ -1301,6 +1301,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = resolveAssistantMessageDisplayText(row);
+          const assistantImages = (row.message.attachments ?? []).filter(
+            (
+              attachment,
+            ): attachment is Extract<
+              NonNullable<TimelineMessage["attachments"]>[number],
+              { type: "image" }
+            > => attachment.type === "image",
+          );
           const messageMarkers =
             threadMarkersByMessageId.get(row.message.id) ?? EMPTY_MESSAGE_MARKERS;
           const buildWorkDisplay = (workEntries: WorkLogEntry[], workGroupId: string | null) => {
@@ -1579,6 +1587,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     />
                   </div>
                 ) : null}
+                {assistantImages.length > 0 && (
+                  <div
+                    className={cn(
+                      "flex max-w-[240px] flex-wrap gap-2",
+                      messageText !== null && "mt-2",
+                    )}
+                  >
+                    {assistantImages.map((image) => (
+                      <ChatImageAttachmentThumbnail
+                        key={image.id}
+                        image={image}
+                        images={assistantImages}
+                        onImageExpand={onImageExpand}
+                        onTimelineImageLoad={
+                          isTailContentRow ? scrollTailExpansionToEnd : ignoreTimelineImageLoad
+                        }
+                        resolvedTheme={resolvedTheme}
+                      />
+                    ))}
+                  </div>
+                )}
                 {renderWorkDisplay(inlineWorkDisplay, "inline")}
                 {inlineEditedFilesFromTurnSummary.length > 0 && (
                   <div className="mt-2 space-y-0.5">
@@ -2435,11 +2464,9 @@ function formatInlineWorkSummary(_groupedEntries: TimelineWorkEntry[]): string |
   return null;
 }
 
-const UserImageAttachmentThumbnail = memo(function UserImageAttachmentThumbnail(props: {
+const ChatImageAttachmentThumbnail = memo(function ChatImageAttachmentThumbnail(props: {
   image: Extract<NonNullable<TimelineMessage["attachments"]>[number], { type: "image" }>;
-  userImages: Array<
-    Extract<NonNullable<TimelineMessage["attachments"]>[number], { type: "image" }>
-  >;
+  images: Array<Extract<NonNullable<TimelineMessage["attachments"]>[number], { type: "image" }>>;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onTimelineImageLoad: () => void;
   resolvedTheme: "light" | "dark";
@@ -2451,7 +2478,7 @@ const UserImageAttachmentThumbnail = memo(function UserImageAttachmentThumbnail(
       aria-label={`Preview ${props.image.name}`}
       title={props.image.name}
       onClick={() => {
-        const preview = buildExpandedImagePreview(props.userImages, props.image.id);
+        const preview = buildExpandedImagePreview(props.images, props.image.id);
         if (!preview) return;
         props.onImageExpand(preview);
       }}

@@ -141,7 +141,7 @@ export function resolveAssistantMessageCopyState({
 }
 
 type AssistantMessageDisplayInput = {
-  readonly message: Pick<ChatMessage, "text" | "streaming">;
+  readonly message: Pick<ChatMessage, "text" | "streaming" | "attachments">;
   readonly leadingWorkEntries?: ReadonlyArray<WorkLogEntry>;
   readonly inlineWorkEntries?: ReadonlyArray<WorkLogEntry>;
   readonly collapsedTurnItems?: ReadonlyArray<CollapsedTurnItem>;
@@ -169,6 +169,10 @@ export function resolveAssistantMessageDisplayText(
   }
   if (input.message.streaming) {
     return "";
+  }
+
+  if (input.message.attachments?.some((attachment) => attachment.type === "image")) {
+    return null;
   }
 
   const hasVisibleGeneratedImage = [

@@ -61,7 +61,9 @@ import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionFullThreadDiffContext,
-  type ProjectionGeneratedImageActivityRecord,
+  type ProjectionGeneratedImageReferenceRecord,
+  type ProjectionTurnGeneratedImageStartupReferenceRecord,
+  type ProjectionTurnlessGeneratedImageReferenceRecord,
   type ProjectionSnapshotCounts,
   type ProjectionSnapshotSequence,
   type ProjectionThreadCheckpointContext,
@@ -79,6 +81,7 @@ const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_ACTIVITIES = 500;
 const MAX_THREAD_FILE_CHANGE_ACTIVITIES = 2_000;
 const MAX_TURN_GENERATED_IMAGE_ACTIVITY_RECORDS = 64;
+const MAX_STARTUP_TURNLESS_GENERATED_IMAGE_REFERENCES = 512;
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(ModelSelectionJsonUnknown),
@@ -139,9 +142,34 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
 const ProjectionFileChangeActivityPayloadDbRowSchema = Schema.Struct({
   payload: Schema.fromJsonString(Schema.Unknown),
 });
-const ProjectionGeneratedImageActivityDbRowSchema = Schema.Struct({
-  kind: Schema.String,
-  payload: Schema.fromJsonString(Schema.Unknown),
+const ProjectionGeneratedImageReferenceDbRowSchema = Schema.Struct({
+  sourcePath: Schema.String,
+  provenanceKey: Schema.String,
+  sourceKind: Schema.NullOr(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.NullOr(Schema.String),
+});
+const ProjectionTurnGeneratedImageStartupReferenceDbRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  attachmentId: Schema.String,
+  createdAt: IsoDateTime,
+  sourcePath: Schema.String,
+  provenanceKey: Schema.String,
+  sourceKind: Schema.NullOr(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.NullOr(Schema.String),
+});
+const ProjectionTurnlessGeneratedImageReferenceDbRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  targetMessageId: MessageId,
+  attachmentId: Schema.String,
+  createdAt: IsoDateTime,
+  sourcePath: Schema.String,
+  provenanceKey: Schema.String,
+  sourceKind: Schema.NullOr(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.NullOr(Schema.String),
+});
+const LatestAssistantMessageIdRowSchema = Schema.Struct({
+  messageId: MessageId,
 });
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
@@ -171,6 +199,10 @@ const ThreadIdLookupInput = Schema.Struct({
 const ThreadTurnLookupInput = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
+});
+const ThreadMessageLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  targetMessageId: MessageId,
 });
 const ThreadMessagesByThreadLookupInput = Schema.Struct({
   threadId: ThreadId,
@@ -1565,30 +1597,198 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  // Generated-image references are recovered at turn settlement. Keep this query
-  // independent of the 500-row thread-detail activity window: a long-running turn
-  // can emit far more tool activities before its terminal event arrives.
-  const listGeneratedImageActivityRowsByTurn = SqlSchema.findAll({
+  const getLatestAssistantMessageIdRowByTurn = SqlSchema.findOneOption({
     Request: ThreadTurnLookupInput,
-    Result: ProjectionGeneratedImageActivityDbRowSchema,
+    Result: LatestAssistantMessageIdRowSchema,
     execute: ({ threadId, turnId }) =>
       sql`
-        SELECT kind, payload_json AS "payload"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND turn_id = ${turnId}
-          AND (
-            (kind = 'tool.completed' AND json_extract(payload_json, '$.itemType') = 'image_generation')
-            OR (
-              kind = ${STUDIO_OUTPUTS_ACTIVITY_KIND}
-              AND json_type(payload_json, '$.data.generatedImage') = 'object'
-            )
-          )
-        -- Provider replay can project the same completion more than once. Collapse
-        -- exact payload duplicates before applying the two-records-per-image cap.
-        GROUP BY kind, payload_json
-        ORDER BY MIN(created_at) ASC, MIN(activity_id) ASC
+        SELECT json_extract(payload_json, '$.messageId') AS "messageId"
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND event_type = 'thread.message-sent'
+          AND json_extract(payload_json, '$.turnId') = ${turnId}
+          AND json_extract(payload_json, '$.role') = 'assistant'
+        GROUP BY json_extract(payload_json, '$.messageId')
+        -- Updates to an earlier commentary message may arrive late. Terminal
+        -- ownership follows message creation order, not the latest update.
+        ORDER BY MIN(sequence) DESC
+        LIMIT 1
+      `,
+  });
+
+  const listGeneratedImageReferenceRowsByTurn = SqlSchema.findAll({
+    Request: ThreadTurnLookupInput,
+    Result: ProjectionGeneratedImageReferenceDbRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          json_extract(payload_json, '$.sourcePath') AS "sourcePath",
+          json_extract(payload_json, '$.provenanceKey') AS "provenanceKey",
+          json_extract(payload_json, '$.sourceKind') AS "sourceKind",
+          json_extract(payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId"
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND event_type = 'thread.generated-image-reference-recorded'
+          AND json_extract(payload_json, '$.turnId') = ${turnId}
+        GROUP BY json_extract(payload_json, '$.provenanceKey')
+        ORDER BY MIN(sequence) ASC
         LIMIT ${MAX_TURN_GENERATED_IMAGE_ACTIVITY_RECORDS}
+      `,
+  });
+  const listTurnGeneratedImageReferenceRowsForStartup = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionTurnGeneratedImageStartupReferenceDbRowSchema,
+    execute: () =>
+      sql`
+        WITH turn_references AS (
+          SELECT
+            refs.stream_id AS "threadId",
+            json_extract(refs.payload_json, '$.turnId') AS "turnId",
+            json_extract(refs.payload_json, '$.attachmentId') AS "attachmentId",
+            json_extract(refs.payload_json, '$.createdAt') AS "createdAt",
+            json_extract(refs.payload_json, '$.sourcePath') AS "sourcePath",
+            json_extract(refs.payload_json, '$.provenanceKey') AS "provenanceKey",
+            json_extract(refs.payload_json, '$.sourceKind') AS "sourceKind",
+            json_extract(refs.payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId",
+            MIN(refs.sequence) AS "firstSequence"
+          FROM orchestration_events AS refs
+          INNER JOIN projection_threads AS threads
+            ON threads.thread_id = refs.stream_id
+            AND threads.deleted_at IS NULL
+          INNER JOIN projection_turns AS turns
+            ON turns.thread_id = refs.stream_id
+            AND turns.turn_id = json_extract(refs.payload_json, '$.turnId')
+          WHERE refs.aggregate_kind = 'thread'
+            AND refs.event_type = 'thread.generated-image-reference-recorded'
+            AND json_extract(refs.payload_json, '$.turnId') IS NOT NULL
+            AND turns.state NOT IN ('pending', 'running')
+          GROUP BY refs.stream_id, json_extract(refs.payload_json, '$.turnId'), json_extract(refs.payload_json, '$.provenanceKey')
+        )
+        SELECT
+          refs."threadId",
+          refs."turnId",
+          refs."attachmentId",
+          refs."createdAt",
+          refs."sourcePath",
+          refs."provenanceKey",
+          refs."sourceKind",
+          refs."sourceProviderThreadId",
+          MAX(refs."firstSequence") OVER (
+            PARTITION BY refs."threadId", refs."turnId"
+          ) AS "turnLatestSequence"
+        FROM turn_references AS refs
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM orchestration_events AS outcome,
+            json_each(outcome.payload_json, '$.attachments') AS attachment
+          WHERE outcome.aggregate_kind = 'thread'
+            AND outcome.stream_id = refs."threadId"
+            AND outcome.event_type = 'thread.message-sent'
+            AND json_extract(outcome.payload_json, '$.turnId') = refs."turnId"
+            AND json_extract(attachment.value, '$.id') = refs."attachmentId"
+            AND outcome.sequence > refs."firstSequence"
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM orchestration_events AS outcome
+          WHERE outcome.aggregate_kind = 'thread'
+            AND outcome.stream_id = refs."threadId"
+            AND outcome.event_type = 'thread.message-sent'
+            AND json_extract(outcome.payload_json, '$.turnId') = refs."turnId"
+            AND (
+              outcome.command_id LIKE 'provider:turn-generated-image-recovery:%'
+              OR outcome.command_id LIKE 'provider:%:generated-image-attachments:%'
+            )
+            AND outcome.sequence > refs."firstSequence"
+        )
+        ORDER BY "turnLatestSequence" DESC, refs."firstSequence" ASC
+        LIMIT ${MAX_STARTUP_TURNLESS_GENERATED_IMAGE_REFERENCES}
+      `,
+  });
+
+  const turnlessGeneratedImageReferenceColumns = sql`
+    stream_id AS "threadId",
+    json_extract(payload_json, '$.targetMessageId') AS "targetMessageId",
+    json_extract(payload_json, '$.attachmentId') AS "attachmentId",
+    json_extract(payload_json, '$.createdAt') AS "createdAt",
+    json_extract(payload_json, '$.sourcePath') AS "sourcePath",
+    json_extract(payload_json, '$.provenanceKey') AS "provenanceKey",
+    json_extract(payload_json, '$.sourceKind') AS "sourceKind",
+    json_extract(payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId"
+  `;
+  const listTurnlessGeneratedImageReferenceRowsByTarget = SqlSchema.findAll({
+    Request: ThreadMessageLookupInput,
+    Result: ProjectionTurnlessGeneratedImageReferenceDbRowSchema,
+    execute: ({ threadId, targetMessageId }) =>
+      sql`
+        SELECT ${turnlessGeneratedImageReferenceColumns}
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND event_type = 'thread.generated-image-reference-recorded'
+          AND json_extract(payload_json, '$.turnId') IS NULL
+          AND json_extract(payload_json, '$.targetMessageId') = ${targetMessageId}
+        GROUP BY stream_id, json_extract(payload_json, '$.provenanceKey')
+        ORDER BY MIN(sequence) ASC
+        LIMIT ${MAX_TURN_GENERATED_IMAGE_ACTIVITY_RECORDS}
+      `,
+  });
+  const listTurnlessGeneratedImageReferenceRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionTurnlessGeneratedImageReferenceDbRowSchema,
+    execute: () =>
+      sql`
+        WITH turnless_references AS (
+          SELECT
+            stream_id AS "threadId",
+            json_extract(payload_json, '$.targetMessageId') AS "targetMessageId",
+            json_extract(payload_json, '$.attachmentId') AS "attachmentId",
+            json_extract(payload_json, '$.createdAt') AS "createdAt",
+            json_extract(payload_json, '$.sourcePath') AS "sourcePath",
+            json_extract(payload_json, '$.provenanceKey') AS "provenanceKey",
+            json_extract(payload_json, '$.sourceKind') AS "sourceKind",
+            json_extract(payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId",
+            MIN(sequence) AS "firstSequence"
+          FROM orchestration_events AS refs
+          INNER JOIN projection_threads AS threads
+            ON threads.thread_id = refs.stream_id
+            AND threads.deleted_at IS NULL
+          WHERE refs.aggregate_kind = 'thread'
+            AND refs.event_type = 'thread.generated-image-reference-recorded'
+            AND json_extract(refs.payload_json, '$.turnId') IS NULL
+            AND json_extract(refs.payload_json, '$.targetMessageId') IS NOT NULL
+          GROUP BY refs.stream_id, json_extract(refs.payload_json, '$.targetMessageId'), json_extract(refs.payload_json, '$.provenanceKey')
+        )
+        SELECT
+          refs."threadId",
+          refs."targetMessageId",
+          refs."attachmentId",
+          refs."createdAt",
+          refs."sourcePath",
+          refs."provenanceKey",
+          refs."sourceKind",
+          refs."sourceProviderThreadId",
+          MAX(refs."firstSequence") OVER (
+            PARTITION BY refs."threadId", refs."targetMessageId"
+          ) AS "targetLatestSequence"
+        FROM turnless_references AS refs
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM orchestration_events AS outcome
+          WHERE outcome.aggregate_kind = 'thread'
+            AND outcome.stream_id = refs."threadId"
+            AND outcome.event_type = 'thread.message-sent'
+            AND json_extract(outcome.payload_json, '$.messageId') = refs."targetMessageId"
+            AND outcome.sequence > refs."firstSequence"
+        )
+        -- A bounded startup processes the newest unresolved references first.
+        -- Once their outcome event is appended they leave this ledger, so older
+        -- unresolved references become eligible on a later startup instead of
+        -- being permanently hidden by satisfied lifetime history.
+        ORDER BY "targetLatestSequence" DESC, refs."firstSequence" ASC
+        LIMIT ${MAX_STARTUP_TURNLESS_GENERATED_IMAGE_REFERENCES}
       `,
   });
 
@@ -1745,7 +1945,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const latestTurns = collectProjectedLatestTurns(latestTurnRows);
           const sessions = collectProjectedSessions(sessionRows);
 
-          let updatedAt = collectBaseUpdatedAt({ projectRows, threadRows, stateRows });
+          let updatedAt = collectBaseUpdatedAt({
+            projectRows,
+            threadRows,
+            stateRows,
+          });
           updatedAt = maxOptionalIso(updatedAt, messages.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, proposedPlans.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, activities.updatedAt);
@@ -1868,7 +2072,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const sessions = collectProjectedSessions(sessionRows);
           const latestTurns = collectProjectedLatestTurns(latestTurnRows);
 
-          let updatedAt = collectBaseUpdatedAt({ projectRows, threadRows, stateRows });
+          let updatedAt = collectBaseUpdatedAt({
+            projectRows,
+            threadRows,
+            stateRows,
+          });
           updatedAt = maxOptionalIso(updatedAt, proposedPlans.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, sessions.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, latestTurns.updatedAt);
@@ -1973,7 +2181,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const latestTurns = collectProjectedLatestTurns(latestTurnRows);
           const sessions = collectProjectedSessions(sessionRows);
 
-          let updatedAt = collectBaseUpdatedAt({ projectRows, threadRows, stateRows });
+          let updatedAt = collectBaseUpdatedAt({
+            projectRows,
+            threadRows,
+            stateRows,
+          });
           updatedAt = maxOptionalIso(updatedAt, latestTurns.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, sessions.updatedAt);
 
@@ -2136,7 +2348,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     options,
   ) =>
     Effect.gen(function* () {
-      const threadRow = yield* getThreadCheckpointContextThreadRow({ threadId }).pipe(
+      const threadRow = yield* getThreadCheckpointContextThreadRow({
+        threadId,
+      }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadCheckpointContext:getThread:query",
@@ -2148,7 +2362,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         return Option.none<ProjectionThreadCheckpointContext>();
       }
 
-      const checkpointRows = yield* listCheckpointRowsByThread({ threadId }).pipe(
+      const checkpointRows = yield* listCheckpointRowsByThread({
+        threadId,
+      }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadCheckpointContext:listCheckpoints:query",
@@ -2190,19 +2406,66 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       });
     });
 
-  const listGeneratedImageActivitiesByTurn: ProjectionSnapshotQueryShape["listGeneratedImageActivitiesByTurn"] =
+  const getLatestAssistantMessageIdByTurn: ProjectionSnapshotQueryShape["getLatestAssistantMessageIdByTurn"] =
     (threadId, turnId) =>
-      listGeneratedImageActivityRowsByTurn({ threadId, turnId }).pipe(
+      getLatestAssistantMessageIdRowByTurn({ threadId, turnId }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
-            "ProjectionSnapshotQuery.listGeneratedImageActivitiesByTurn:query",
-            "ProjectionSnapshotQuery.listGeneratedImageActivitiesByTurn:decodeRows",
+            "ProjectionSnapshotQuery.getLatestAssistantMessageIdByTurn:query",
+            "ProjectionSnapshotQuery.getLatestAssistantMessageIdByTurn:decodeRow",
+          ),
+        ),
+        Effect.map(Option.map((row) => row.messageId)),
+      );
+
+  const listGeneratedImageReferencesByTurn: ProjectionSnapshotQueryShape["listGeneratedImageReferencesByTurn"] =
+    (threadId, turnId) =>
+      listGeneratedImageReferenceRowsByTurn({ threadId, turnId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listGeneratedImageReferencesByTurn:query",
+            "ProjectionSnapshotQuery.listGeneratedImageReferencesByTurn:decodeRows",
+          ),
+        ),
+        Effect.map((rows): ReadonlyArray<ProjectionGeneratedImageReferenceRecord> => rows),
+      );
+
+  const listTurnGeneratedImageReferencesForStartup: ProjectionSnapshotQueryShape["listTurnGeneratedImageReferencesForStartup"] =
+    () =>
+      listTurnGeneratedImageReferenceRowsForStartup().pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listTurnGeneratedImageReferencesForStartup:query",
+            "ProjectionSnapshotQuery.listTurnGeneratedImageReferencesForStartup:decodeRows",
           ),
         ),
         Effect.map(
-          (rows): ReadonlyArray<ProjectionGeneratedImageActivityRecord> =>
-            rows.map((row) => ({ kind: row.kind, payload: row.payload })),
+          (rows): ReadonlyArray<ProjectionTurnGeneratedImageStartupReferenceRecord> => rows,
         ),
+      );
+
+  const listTurnlessGeneratedImageReferencesByTarget: ProjectionSnapshotQueryShape["listTurnlessGeneratedImageReferencesByTarget"] =
+    (threadId, targetMessageId) =>
+      listTurnlessGeneratedImageReferenceRowsByTarget({ threadId, targetMessageId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listTurnlessGeneratedImageReferencesByTarget:query",
+            "ProjectionSnapshotQuery.listTurnlessGeneratedImageReferencesByTarget:decodeRows",
+          ),
+        ),
+        Effect.map((rows): ReadonlyArray<ProjectionTurnlessGeneratedImageReferenceRecord> => rows),
+      );
+
+  const listTurnlessGeneratedImageReferences: ProjectionSnapshotQueryShape["listTurnlessGeneratedImageReferences"] =
+    () =>
+      listTurnlessGeneratedImageReferenceRows().pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listTurnlessGeneratedImageReferences:query",
+            "ProjectionSnapshotQuery.listTurnlessGeneratedImageReferences:decodeRows",
+          ),
+        ),
+        Effect.map((rows): ReadonlyArray<ProjectionTurnlessGeneratedImageReferenceRecord> => rows),
       );
 
   const getFullThreadDiffContext: ProjectionSnapshotQueryShape["getFullThreadDiffContext"] = (
@@ -2308,7 +2571,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const parentRow = yield* getSyntheticSubagentParentThreadRow({ threadId }).pipe(
+            const parentRow = yield* getSyntheticSubagentParentThreadRow({
+              threadId,
+            }).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.findSyntheticSubagentParentThread:getThread:query",
@@ -2342,7 +2607,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // Hydrate a full thread detail projection without opening its own transaction.
   const loadThreadDetail = (
     threadId: ThreadId,
-    options: { readonly messageLimit: number | null; readonly tracePrefix: string } = {
+    options: {
+      readonly messageLimit: number | null;
+      readonly tracePrefix: string;
+    } = {
       messageLimit: MAX_THREAD_MESSAGES,
       tracePrefix: "ProjectionSnapshotQuery.getThreadDetailById",
     },
@@ -2374,7 +2642,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
-        listThreadMessageRowsByThread({ threadId, maxMessages: options.messageLimit }).pipe(
+        listThreadMessageRowsByThread({
+          threadId,
+          maxMessages: options.messageLimit,
+        }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               `${options.tracePrefix}:listMessages:query`,
@@ -2534,7 +2805,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
-    listGeneratedImageActivitiesByTurn,
+    listGeneratedImageReferencesByTurn,
+    listTurnGeneratedImageReferencesForStartup,
+    listTurnlessGeneratedImageReferencesByTarget,
+    listTurnlessGeneratedImageReferences,
+    getLatestAssistantMessageIdByTurn,
     getFullThreadDiffContext,
     getThreadShellById,
     findSyntheticSubagentParentThread,

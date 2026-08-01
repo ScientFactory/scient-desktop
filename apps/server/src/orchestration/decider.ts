@@ -6,6 +6,7 @@ import type {
   ThreadMarker,
 } from "@synara/contracts";
 import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   MAX_PINNED_PROJECTS,
   PINNED_MESSAGES_MAX_COUNT,
   THREAD_MARKERS_MAX_COUNT,
@@ -56,6 +57,37 @@ const STUDIO_PROJECT_KIND_SET = new Set<ProjectKind>(["studio"]);
 // Kinds that claim exclusive ownership of a workspace root. Chat containers are excluded: they
 // use placeholder roots (e.g. the home dir) that legitimately coexist with real projects.
 const WORKSPACE_OWNING_PROJECT_KIND_SET = new Set<ProjectKind>(["project", "studio"]);
+const GENERATED_IMAGE_WARNING_PARAGRAPH =
+  /^(?:A|One) generated image could not be displayed because Scient could not safely store it\.$|^\d+ generated images could not be displayed because Scient could not safely store them\.$|^Additional generated (?:image was|images were) omitted because chat messages support at most \d+ attachments\.$|^Additional \d+ generated images were omitted because chat messages support at most \d+ attachments\.$/u;
+
+export function reconcileGeneratedImageWarningText(
+  text: string,
+  omittedImageCount: number,
+  failedImageCount: number,
+): string {
+  const paragraphs = text
+    .split("\n\n")
+    .filter((paragraph) => !GENERATED_IMAGE_WARNING_PARAGRAPH.test(paragraph.trim()));
+  if (omittedImageCount === 1) {
+    paragraphs.push(
+      `Additional generated image was omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    );
+  } else if (omittedImageCount > 1) {
+    paragraphs.push(
+      `Additional ${omittedImageCount} generated images were omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    );
+  }
+  if (failedImageCount === 1) {
+    paragraphs.push(
+      "One generated image could not be displayed because Scient could not safely store it.",
+    );
+  } else if (failedImageCount > 1) {
+    paragraphs.push(
+      `${failedImageCount} generated images could not be displayed because Scient could not safely store them.`,
+    );
+  }
+  return paragraphs.filter((paragraph) => paragraph.length > 0).join("\n\n");
+}
 
 function collectExistingMessageIds(readModel: OrchestrationReadModel) {
   return new Set(
@@ -158,7 +190,9 @@ function validateProjectPinLimit(input: {
   }
 
   const excludeProjectIds = new Set<string>([input.projectId, ...(input.staleProjectIds ?? [])]);
-  const pinnedProjectCount = countPinnedProjects(input.readModel, { excludeProjectIds });
+  const pinnedProjectCount = countPinnedProjects(input.readModel, {
+    excludeProjectIds,
+  });
   if (pinnedProjectCount < MAX_PINNED_PROJECTS) {
     return Effect.void;
   }
@@ -1808,6 +1842,96 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.message.assistant.attachments.add": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingMessage = thread.messages.find((message) => message.id === command.messageId);
+      if (existingMessage && existingMessage.role !== "assistant") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Cannot add assistant attachments to non-assistant message '${command.messageId}'.`,
+        });
+      }
+      const existingAttachments = existingMessage?.attachments ?? [];
+      const existingIds = new Set(existingAttachments.map((attachment) => attachment.id));
+      const additions = command.attachments.filter((attachment) => !existingIds.has(attachment.id));
+      const attachments = [...existingAttachments, ...additions].slice(
+        0,
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+      );
+      const omittedCount =
+        existingAttachments.length +
+        additions.length -
+        attachments.length +
+        (command.omittedImageCount ?? 0);
+      const existingText = existingMessage?.text ?? "";
+      const text = reconcileGeneratedImageWarningText(
+        existingText,
+        omittedCount,
+        command.failedImageCount ?? 0,
+      );
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "assistant",
+          text,
+          attachments,
+          turnId: resolveStableMessageTurnId({
+            existingTurnId: existingMessage?.turnId,
+            incomingTurnId: command.turnId,
+          }),
+          // Adding an attachment must never reopen a message that already settled.
+          streaming: existingMessage?.streaming ?? false,
+          source: existingMessage?.source ?? "native",
+          createdAt: existingMessage?.createdAt ?? command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.generated-image.reference.record": {
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      if ((command.turnId === undefined) === (command.targetMessageId === undefined)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Generated-image references must target exactly one turn or assistant message.",
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.generated-image-reference-recorded",
+        payload: {
+          threadId: command.threadId,
+          ...(command.turnId ? { turnId: command.turnId } : {}),
+          ...(command.targetMessageId ? { targetMessageId: command.targetMessageId } : {}),
+          attachmentId: command.attachmentId,
+          provenanceKey: command.provenanceKey,
+          sourcePath: command.sourcePath,
+          ...(command.sourceKind ? { sourceKind: command.sourceKind } : {}),
+          ...(command.sourceProviderThreadId
+            ? { sourceProviderThreadId: command.sourceProviderThreadId }
+            : {}),
+          createdAt: command.createdAt,
         },
       };
     }

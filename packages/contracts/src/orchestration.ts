@@ -1353,6 +1353,34 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageAssistantAttachmentsAddCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.assistant.attachments.add"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  attachments: Schema.Array(ChatImageAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
+  omittedImageCount: Schema.optional(NonNegativeInt),
+  failedImageCount: Schema.optional(NonNegativeInt),
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+const ThreadGeneratedImageReferenceRecordCommand = Schema.Struct({
+  type: Schema.Literal("thread.generated-image.reference.record"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  targetMessageId: Schema.optional(MessageId),
+  attachmentId: TrimmedNonEmptyString,
+  provenanceKey: TrimmedNonEmptyString,
+  sourcePath: TrimmedNonEmptyString,
+  sourceKind: Schema.optional(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1400,6 +1428,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessagesImportCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageAssistantAttachmentsAddCommand,
+  ThreadGeneratedImageReferenceRecordCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1452,6 +1482,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.generated-image-reference-recorded",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1789,6 +1820,18 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadGeneratedImageReferenceRecordedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  targetMessageId: Schema.optional(MessageId),
+  attachmentId: TrimmedNonEmptyString,
+  provenanceKey: TrimmedNonEmptyString,
+  sourcePath: TrimmedNonEmptyString,
+  sourceKind: Schema.optional(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1980,6 +2023,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.generated-image-reference-recorded"),
+    payload: ThreadGeneratedImageReferenceRecordedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
