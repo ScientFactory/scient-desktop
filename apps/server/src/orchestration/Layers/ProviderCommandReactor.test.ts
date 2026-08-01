@@ -3363,26 +3363,6 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-subagent-for-stop"),
-        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
-        message: {
-          messageId: asMessageId("message-subagent-stop-in-flight"),
-          role: "user",
-          text: "child work in flight",
-          attachments: [],
-        },
-        runtimeMode: "approval-required",
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        createdAt: now,
-      }),
-    );
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    harness.sendTurn.mockClear();
-    harness.rollbackConversation.mockClear();
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
         commandId: CommandId.makeUnsafe("cmd-home-turn-start"),
         threadId: ThreadId.makeUnsafe("thread-home"),
         message: {
@@ -6269,6 +6249,26 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-subagent-for-stop"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        message: {
+          messageId: asMessageId("message-subagent-stop-in-flight"),
+          role: "user",
+          text: "child work in flight",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    harness.sendTurn.mockClear();
+    harness.rollbackConversation.mockClear();
 
     await Effect.runPromise(
       harness.engine.dispatch({
