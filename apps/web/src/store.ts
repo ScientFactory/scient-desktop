@@ -293,6 +293,7 @@ function latestTurnsEqual(left: Thread["latestTurn"], right: Thread["latestTurn"
   if (left == null || right == null) return false;
   return (
     left.turnId === right.turnId &&
+    left.requestMessageId === right.requestMessageId &&
     left.state === right.state &&
     left.requestedAt === right.requestedAt &&
     left.startedAt === right.startedAt &&
@@ -1631,6 +1632,7 @@ function normalizeLatestTurn(
   if (
     previous &&
     previous.turnId === incoming.turnId &&
+    previous.requestMessageId === incoming.requestMessageId &&
     previous.state === incoming.state &&
     previous.requestedAt === incoming.requestedAt &&
     previous.startedAt === incoming.startedAt &&
@@ -1643,6 +1645,7 @@ function normalizeLatestTurn(
 
   return {
     turnId: incoming.turnId,
+    ...(incoming.requestMessageId ? { requestMessageId: incoming.requestMessageId } : {}),
     state: incoming.state,
     requestedAt: incoming.requestedAt,
     startedAt: incoming.startedAt,
@@ -2699,6 +2702,9 @@ function buildLatestTurn(params: {
       : params.sourceProposedPlan;
   return {
     turnId: params.turnId,
+    ...(params.previous?.turnId === params.turnId && params.previous.requestMessageId
+      ? { requestMessageId: params.previous.requestMessageId }
+      : {}),
     state: params.state,
     requestedAt: params.requestedAt,
     startedAt: params.startedAt,

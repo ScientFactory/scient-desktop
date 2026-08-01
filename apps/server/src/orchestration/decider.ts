@@ -21,6 +21,7 @@ import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { doThreadMarkerRangesOverlap } from "@synara/shared/threadMarkers";
 import {
   collectTailTurnIds,
+  interruptedTurnEditContext,
   resolveTailUserMessageEditTarget,
 } from "@synara/shared/conversationEdit";
 import { Effect } from "effect";
@@ -1622,6 +1623,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         messageId: command.messageId,
         activeTurnId:
           thread.session?.status === "running" ? (thread.session.activeTurnId ?? null) : null,
+        interruptedTurn: interruptedTurnEditContext({
+          latestTurn: thread.latestTurn,
+          sessionStatus: thread.session?.status,
+          sessionActiveTurnId: thread.session?.activeTurnId,
+        }),
       });
       if (!editTarget.editable) {
         return yield* new OrchestrationCommandInvariantError({

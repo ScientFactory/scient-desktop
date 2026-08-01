@@ -3572,6 +3572,38 @@ describe("store read model sync", () => {
     });
   });
 
+  it("hydrates the exact request message identity for an otherwise unchanged latest turn", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const turnId = TurnId.makeUnsafe("turn-stopped-unanswered");
+    const requestMessageId = MessageId.makeUnsafe("message-stopped-unanswered");
+    const latestTurn = {
+      turnId,
+      state: "interrupted" as const,
+      requestedAt: "2026-02-27T00:00:00.000Z",
+      startedAt: "2026-02-27T00:00:01.000Z",
+      completedAt: "2026-02-27T00:00:02.000Z",
+      assistantMessageId: null,
+    };
+    const initialState = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(makeReadModelThread({ latestTurn })),
+    );
+
+    const next = syncServerThreadDetailHotPath(
+      initialState,
+      makeReadModelThread({
+        latestTurn: {
+          ...latestTurn,
+          requestMessageId,
+        },
+      }),
+    );
+
+    expect(next.threadTurnStateById?.[threadId]?.latestTurn?.requestMessageId).toBe(
+      requestMessageId,
+    );
+  });
+
   it("updates sidebar summaries during hot-path thread renames", () => {
     const threadId = ThreadId.makeUnsafe("thread-1");
     const initialState = syncServerReadModel(

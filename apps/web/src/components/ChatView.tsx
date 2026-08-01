@@ -43,7 +43,10 @@ import {
   getRecommendedDefaultModelSelection,
   normalizeModelSlug,
 } from "@synara/shared/model";
-import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
+import {
+  interruptedTurnEditContext,
+  resolveTailUserMessageEditTarget,
+} from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
 import {
@@ -9115,6 +9118,11 @@ export default function ChatView({
           activeThread.session?.orchestrationStatus === "running"
             ? (activeThread.session.activeTurnId ?? null)
             : null,
+        interruptedTurn: interruptedTurnEditContext({
+          latestTurn: activeThread.latestTurn,
+          sessionStatus: activeThread.session?.orchestrationStatus,
+          sessionActiveTurnId: activeThread.session?.activeTurnId,
+        }),
       });
       if (!editTarget.editable) {
         setThreadError(activeThread.id, "Only the latest rollbackable user message can be edited.");
@@ -12069,6 +12077,11 @@ export default function ChatView({
                   <ChatTranscriptPane
                     activeThreadId={activeThread.id}
                     activeTurnId={activeThread.session?.activeTurnId ?? null}
+                    interruptedTurn={interruptedTurnEditContext({
+                      latestTurn: activeThread.latestTurn,
+                      sessionStatus: activeThread.session?.orchestrationStatus,
+                      sessionActiveTurnId: activeThread.session?.activeTurnId,
+                    })}
                     agentActivityDetail={openAgentActivityDetail}
                     hasMessages={timelineEntries.length > 0}
                     isWorking={isWorking}

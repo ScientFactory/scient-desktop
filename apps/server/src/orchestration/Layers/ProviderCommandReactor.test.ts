@@ -2088,6 +2088,118 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("edits and resends a stopped prompt that received no assistant output", async () => {
+    const harness = await createHarness();
+    const requestedAt = "2026-08-01T08:00:00.000Z";
+    const providerStartedAt = "2026-08-01T08:00:00.500Z";
+    const stoppedAt = "2026-08-01T08:00:01.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-original-unanswered-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-stopped-unanswered"),
+          role: "user",
+          text: "old unanswered prompt",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: requestedAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    harness.sendTurn.mockClear();
+    harness.startSession.mockClear();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-unanswered-turn-running"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-stopped-unanswered"),
+          lastError: null,
+          updatedAt: providerStartedAt,
+        },
+        createdAt: providerStartedAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.makeUnsafe("cmd-stop-unanswered-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        createdAt: stoppedAt,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
+      return thread?.session?.status === "stopped";
+    });
+    const stoppedModel = await Effect.runPromise(harness.engine.getReadModel());
+    const stoppedThread = stoppedModel.threads.find(
+      (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+    );
+    expect(stoppedThread?.latestTurn).toMatchObject({
+      turnId: "turn-stopped-unanswered",
+      requestMessageId: "user-message-stopped-unanswered",
+      state: "interrupted",
+      requestedAt: providerStartedAt,
+    });
+    expect(stoppedThread?.session?.status).toBe("stopped");
+    expect(stoppedThread?.messages[0]?.createdAt).toBe(requestedAt);
+    expect(stoppedThread?.messages).toMatchObject([
+      {
+        id: "user-message-stopped-unanswered",
+        role: "user",
+        text: "old unanswered prompt",
+        turnId: null,
+      },
+    ]);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-edit-stopped-unanswered"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: asMessageId("user-message-stopped-unanswered"),
+        text: "edited unanswered prompt",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-08-01T08:00:02.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(harness.rollbackConversation).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      numTurns: 1,
+    });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "edited unanswered prompt",
+    );
+
+    const resentModel = await Effect.runPromise(harness.engine.getReadModel());
+    const resentThread = resentModel.threads.find(
+      (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+    );
+    expect(resentThread?.messages.map((message) => message.text)).toEqual([
+      "edited unanswered prompt",
+    ]);
+  });
+
   it("restarts Droid edits and bootstraps only the retained transcript", async () => {
     const harness = await createHarness({
       threadModelSelection: { provider: "droid", model: "claude-opus-4-8" },
@@ -3247,6 +3359,26 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-subagent-for-stop"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        message: {
+          messageId: asMessageId("message-subagent-stop-in-flight"),
+          role: "user",
+          text: "child work in flight",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    harness.sendTurn.mockClear();
+    harness.rollbackConversation.mockClear();
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -6191,5 +6323,22 @@ describe("ProviderCommandReactor", () => {
     );
     expect(thread?.session?.status).toBe("interrupted");
     expect(thread?.session?.activeTurnId).toBe("turn-child-stop");
+
+    const editExit = await Effect.runPromiseExit(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-edit-in-flight-stopped-subagent"),
+        threadId: ThreadId.makeUnsafe("subagent:thread-1:child-provider-1"),
+        messageId: asMessageId("message-subagent-stop-in-flight"),
+        text: "do not resend while the child is still settling",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    expect(editExit._tag).toBe("Failure");
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(harness.rollbackConversation).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 });

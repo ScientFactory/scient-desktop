@@ -759,6 +759,7 @@ export function projectEvent(
               ...modelSelectionPatch,
               runtimeMode: payload.runtimeMode,
               interactionMode: payload.interactionMode,
+              pendingTurnMessageId: payload.messageId,
               updatedAt: payload.createdAt,
             }),
           };
@@ -872,6 +873,10 @@ export function projectEvent(
                   ? thread.latestTurn
                   : {
                       turnId: session.activeTurnId,
+                      requestMessageId:
+                        thread.latestTurn?.turnId === session.activeTurnId
+                          ? (thread.latestTurn.requestMessageId ?? null)
+                          : (thread.pendingTurnMessageId ?? null),
                       state: "running",
                       requestedAt:
                         thread.latestTurn?.turnId === session.activeTurnId
@@ -888,6 +893,10 @@ export function projectEvent(
                           : null,
                     }
                 : settleLatestTurnForSessionStatus(thread.latestTurn, session),
+            pendingTurnMessageId:
+              session.status === "running" && session.activeTurnId !== null
+                ? null
+                : thread.pendingTurnMessageId,
             updatedAt: event.occurredAt,
           }),
         };

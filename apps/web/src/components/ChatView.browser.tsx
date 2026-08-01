@@ -483,6 +483,52 @@ function createSnapshotForTargetUser(options: {
   };
 }
 
+function createSnapshotWithStoppedUnansweredPrompt(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-stopped-unanswered-filler" as MessageId,
+    targetText: "earlier prompt",
+  });
+  const requestedAt = "2026-08-01T08:00:00.000Z";
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            messages: [
+              ...thread.messages,
+              {
+                id: "msg-user-stopped-unanswered" as MessageId,
+                role: "user" as const,
+                text: "old stopped prompt",
+                turnId: null,
+                streaming: false,
+                source: "native" as const,
+                createdAt: requestedAt,
+                updatedAt: requestedAt,
+              },
+            ],
+            latestTurn: {
+              turnId: "turn-stopped-unanswered" as TurnId,
+              requestMessageId: "msg-user-stopped-unanswered" as MessageId,
+              state: "interrupted" as const,
+              requestedAt,
+              startedAt: requestedAt,
+              completedAt: "2026-08-01T08:00:01.000Z",
+              assistantMessageId: null,
+            },
+            session: {
+              ...thread.session!,
+              status: "stopped" as const,
+              activeTurnId: null,
+              updatedAt: "2026-08-01T08:00:01.000Z",
+            },
+          }
+        : thread,
+    ),
+  };
+}
+
 function createSnapshotWithLongAssistantResponse(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-assistant-overflow-target" as MessageId,
@@ -7000,6 +7046,40 @@ describe("ChatView timeline estimator parity (full app)", () => {
         bytes: new Uint8Array([1, 2, 3, 4]),
       });
       useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("edits and resends a stopped prompt before any assistant answer exists", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithStoppedUnansweredPrompt(),
+    });
+
+    try {
+      const editButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Edit message"]'),
+        "Unable to find Edit for the stopped unanswered prompt.",
+      );
+      editButton.click();
+      const editTextArea = page.getByRole("textbox", { name: "Edit message" });
+      await editTextArea.fill("edited stopped prompt");
+      const editForm = editTextArea.element().closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+
+      await vi.waitFor(() => {
+        const editCommands = wsRequests
+          .map(readDispatchedCommand)
+          .filter((command) => command?.type === "thread.message.edit-and-resend");
+        expect(editCommands).toHaveLength(1);
+        expect(editCommands[0]).toMatchObject({
+          threadId: THREAD_ID,
+          messageId: "msg-user-stopped-unanswered",
+          text: expect.stringContaining("edited stopped prompt"),
+        });
+      });
+    } finally {
       await mounted.cleanup();
     }
   });

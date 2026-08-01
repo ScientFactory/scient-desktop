@@ -444,6 +444,7 @@ interface MessagesTimelineProps {
   /** Server-backed boundaries whose complete prefix is safe to import. */
   forkableMessageIds?: ReadonlySet<MessageId>;
   activeTurnId?: TurnId | null;
+  interruptedTurn?: { readonly messageId: string; readonly turnId: string } | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onIsAtEndChange?: (isAtEnd: boolean) => void;
@@ -505,6 +506,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onForkFromMessage,
   forkableMessageIds,
   activeTurnId,
+  interruptedTurn,
   isRevertingCheckpoint,
   onImageExpand,
   onIsAtEndChange,
@@ -860,9 +862,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const editTarget = resolveLatestTailUserMessageEditTarget({
       messages,
       activeTurnId,
+      interruptedTurn,
     });
     return editTarget.editable ? (editTarget.messageId as MessageId) : null;
-  }, [activeTurnId, rows]);
+  }, [activeTurnId, interruptedTurn, rows]);
   const previousRowCountRef = useRef(rows.length);
   useEffect(() => {
     const previousRowCount = previousRowCountRef.current;

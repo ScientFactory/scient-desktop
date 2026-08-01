@@ -655,6 +655,54 @@ describe("MessagesTimeline", () => {
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Revert to this message"/);
   });
 
+  it("keeps edit available after an unanswered turn is interrupted", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const requestedAt = "2026-08-01T08:00:00.000Z";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        interruptedTurn={{
+          messageId: "message-user-interrupted",
+          turnId: "turn-user-interrupted",
+        }}
+        timelineEntries={[
+          {
+            id: "entry-user-interrupted",
+            kind: "message",
+            createdAt: requestedAt,
+            message: {
+              id: MessageId.makeUnsafe("message-user-interrupted"),
+              role: "user",
+              text: "edit this stopped prompt",
+              createdAt: requestedAt,
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-08-01T08:00:02.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onEditUserMessage={() => true}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Edit message"');
+    expect(markup).not.toContain('aria-label="Revert to this message"');
+  });
+
   it("renders a steering chip above steered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
