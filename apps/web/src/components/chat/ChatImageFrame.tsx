@@ -27,11 +27,23 @@ export interface ChatImageLoadState {
   readonly status: ChatImageLoadStatus;
 }
 
+export interface ChatImageActionState {
+  readonly key: string;
+  readonly error: string | null;
+}
+
 export function reduceChatImageLoadState(
   state: ChatImageLoadState,
   event: { readonly key: string; readonly status: Exclude<ChatImageLoadStatus, "loading"> },
 ): ChatImageLoadState {
   return event.key === state.key ? { key: state.key, status: event.status } : state;
+}
+
+export function reduceChatImageActionState(
+  state: ChatImageActionState,
+  event: { readonly key: string; readonly error: string | null },
+): ChatImageActionState {
+  return event.key === state.key ? { key: state.key, error: event.error } : state;
 }
 
 export function ChatImageFrame(props: {
@@ -55,11 +67,15 @@ export function ChatImageFrame(props: {
   if (settleRef.current.key !== sourceKey) {
     settleRef.current = { key: sourceKey, settled: false };
   }
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<ChatImageActionState>({
+    key: sourceKey,
+    error: null,
+  });
+  const actionError = actionState.key === sourceKey ? actionState.error : null;
 
   useEffect(() => {
     setLoadState({ key: sourceKey, status: "loading" });
-    setActionError(null);
+    setActionState({ key: sourceKey, error: null });
   }, [sourceKey]);
 
   const settle = useCallback(
@@ -79,16 +95,20 @@ export function ChatImageFrame(props: {
       if (source.kind !== "attachment" && source.kind !== "local") return;
       event.preventDefault();
       event.stopPropagation();
-      setActionError(null);
+      const actionKey = sourceKey;
+      setActionState({ key: actionKey, error: null });
       void downloadUrlAsBlob({ url: source.downloadUrl, filename: source.name }).catch(
         (error: unknown) => {
-          setActionError(
-            error instanceof Error ? error.message : "The image could not be downloaded.",
+          setActionState((current) =>
+            reduceChatImageActionState(current, {
+              key: actionKey,
+              error: error instanceof Error ? error.message : "The image could not be downloaded.",
+            }),
           );
         },
       );
     },
-    [source],
+    [source, sourceKey],
   );
 
   const display = props.display ?? "inline";

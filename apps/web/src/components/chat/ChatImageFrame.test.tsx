@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ChatImageFrame, reduceChatImageLoadState } from "./ChatImageFrame";
+import {
+  ChatImageFrame,
+  reduceChatImageActionState,
+  reduceChatImageLoadState,
+} from "./ChatImageFrame";
 
 describe("ChatImageFrame", () => {
   it("ignores stale load events after the keyed source changes", () => {
@@ -20,6 +24,15 @@ describe("ChatImageFrame", () => {
         { key: "attachment:current", status: "error" },
       ),
     ).toEqual({ key: "attachment:current", status: "error" });
+  });
+
+  it("ignores a late download failure after the image source changes", () => {
+    expect(
+      reduceChatImageActionState(
+        { key: "attachment:new", error: null },
+        { key: "attachment:old", error: "The earlier download failed." },
+      ),
+    ).toEqual({ key: "attachment:new", error: null });
   });
 
   it("renders a keyboard action and privacy-safe remote source action as siblings", () => {

@@ -78,4 +78,30 @@ describe("ExpandedImageDialog duplicate-source navigation", () => {
       await screen.unmount();
     }
   });
+
+  it("ignores a late download failure from the image shown before navigation", async () => {
+    let rejectDownload: ((reason: Error) => void) | undefined;
+    downloadUrlAsBlob.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectDownload = reject;
+        }),
+    );
+    const screen = await render(<DuplicateSourceDialogHarness />);
+
+    try {
+      await page.getByRole("link", { name: "Download First duplicate" }).click();
+      await page.getByRole("button", { name: "Next image" }).click();
+      rejectDownload?.(new Error("The earlier download failed."));
+
+      await expect
+        .element(page.getByRole("link", { name: "Download Second duplicate" }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByText("Could not download image: The earlier download failed."))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });
