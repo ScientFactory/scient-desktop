@@ -38,6 +38,12 @@ function begin(overrides?: Partial<Parameters<typeof beginScientOperation>[0]>) 
     ingress: "provider-gateway",
     operationId: "operation-7",
     semanticIdempotencyIdentity: "logical-request-7",
+    semanticIdempotencyScope: {
+      kind: "provider-turn",
+      provider: "claudeAgent",
+      callerThreadId: "thread-1",
+      callerTurnId: "turn-1",
+    },
     payloadFingerprint: "payload-sha256",
     parentOperationId: "operation-parent",
     receivedAt: NOW,
@@ -58,6 +64,7 @@ describe("beginScientOperation", () => {
       projectId: "project-1",
       ingress: "provider-gateway",
       parentOperationId: "operation-parent",
+      providerAuthorizingTurnId: "turn-1",
       idempotency: {
         mode: "semantic",
         payloadFingerprint: "payload-sha256",
@@ -81,6 +88,20 @@ describe("beginScientOperation", () => {
     expect(Object.isFrozen(result.envelope.authority.actor)).toBe(true);
     expect(Object.isFrozen(result.envelope.authority.capabilities)).toBe(true);
     expect(Object.isFrozen(result.envelope.authority.projectIds)).toBe(true);
+  });
+
+  it("keeps provider audit turn aligned with semantic retry scope", () => {
+    expect(() =>
+      begin({
+        providerAuthorizingTurnId: "turn-other",
+      }),
+    ).toThrow("Provider authorizing turn must match the semantic retry turn");
+    const unique = begin({
+      semanticIdempotencyIdentity: null,
+      providerAuthorizingTurnId: "turn-independent",
+    });
+    if (!unique.allow) throw new Error("expected authorization");
+    expect(unique.envelope.providerAuthorizingTurnId).toBe("turn-independent");
   });
 
   it.each([
@@ -128,13 +149,68 @@ describe("beginScientOperation", () => {
 
   it("uses canonical hashing without delimiter collisions", () => {
     const left = begin({
-      authority: authority({ authorityId: "a:b", generation: "c" }),
+      authority: authority({
+        actor: {
+          kind: "provider-thread",
+          threadId: "a:b",
+          provider: "claudeAgent",
+          sessionKey: "left",
+        },
+      }),
+      semanticIdempotencyScope: {
+        kind: "provider-turn",
+        provider: "claudeAgent",
+        callerThreadId: "a:b",
+        callerTurnId: "c",
+      },
     });
     const right = begin({
-      authority: authority({ authorityId: "a", generation: "b:c" }),
+      authority: authority({
+        actor: {
+          kind: "provider-thread",
+          threadId: "a",
+          provider: "claudeAgent",
+          sessionKey: "right",
+        },
+      }),
+      semanticIdempotencyScope: {
+        kind: "provider-turn",
+        provider: "claudeAgent",
+        callerThreadId: "a",
+        callerTurnId: "b:c",
+      },
     });
     if (!left.allow || !right.allow) throw new Error("expected authorization");
     expect(left.envelope.idempotency.claimKey).not.toBe(right.envelope.idempotency.claimKey);
+  });
+
+  it("keeps same-turn retries stable across provider session replacement", () => {
+    const first = begin();
+    const replacement = begin({
+      authority: authority({
+        authorityId: "provider-session:replacement",
+        generation: "generation:replacement",
+        actor: {
+          kind: "provider-thread",
+          threadId: "thread-1",
+          provider: "claudeAgent",
+          sessionKey: "session-replacement",
+        },
+      }),
+    });
+    const laterTurn = begin({
+      semanticIdempotencyScope: {
+        kind: "provider-turn",
+        provider: "claudeAgent",
+        callerThreadId: "thread-1",
+        callerTurnId: "turn-2",
+      },
+    });
+    if (!first.allow || !replacement.allow || !laterTurn.allow) {
+      throw new Error("expected authorization");
+    }
+    expect(replacement.envelope.idempotency.claimKey).toBe(first.envelope.idempotency.claimKey);
+    expect(laterTurn.envelope.idempotency.claimKey).not.toBe(first.envelope.idempotency.claimKey);
   });
 
   it("changes grant evidence when scope, capability, or expiry changes", () => {

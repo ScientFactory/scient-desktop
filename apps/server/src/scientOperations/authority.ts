@@ -407,9 +407,46 @@ function immutableActor(actor: ScientOperationActor): ScientOperationActor {
   return Object.freeze({ ...actor });
 }
 
+function structuredIdentity(value: string, field: string, maxUtf8Bytes = 512): string {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:@+-]*$/u.test(value) ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    Buffer.byteLength(value, "utf8") > maxUtf8Bytes
+  ) {
+    throw new ScientOperationInputError(`${field} is not a bounded structured identity.`);
+  }
+  return value;
+}
+
+function validateActorIdentity(actor: ScientOperationActor): void {
+  switch (actor.kind) {
+    case "provider-thread":
+      structuredIdentity(actor.threadId, "actor.threadId");
+      structuredIdentity(actor.provider, "actor.provider", 128);
+      structuredIdentity(actor.sessionKey, "actor.sessionKey");
+      return;
+    case "automation-run":
+      structuredIdentity(actor.automationId, "actor.automationId");
+      structuredIdentity(actor.runId, "actor.runId");
+      return;
+    case "external-integration":
+      structuredIdentity(actor.integrationId, "actor.integrationId");
+      return;
+    case "manual-user":
+      structuredIdentity(actor.userId, "actor.userId");
+      return;
+  }
+}
+
 export function makeScientOperationAuthority(
   input: ScientOperationAuthority,
 ): ScientOperationAuthority {
+  structuredIdentity(input.authorityId, "authorityId");
+  structuredIdentity(input.generation, "generation");
+  validateActorIdentity(input.actor);
+  for (const projectId of input.projectIds) structuredIdentity(projectId, "projectId");
   return Object.freeze({
     ...input,
     actor: immutableActor(input.actor),
@@ -433,10 +470,118 @@ export interface ScientOperationGrantSnapshot extends ScientOperationAuthority {
 export interface ScientOperationIdempotencyClaim {
   readonly mode: "semantic" | "unique";
   readonly identity: string;
-  /** Hash of actor, grant generation, project, operation, and logical identity. */
+  readonly claimKeyVersion: 2;
+  readonly semanticIdentityHash: string;
+  readonly actorScopeHash: string;
+  /**
+   * Unique claims include the current grant generation. Semantic v2 claims
+   * instead bind project, operation, trusted actor scope, and logical identity
+   * so an exact same-turn retry survives credential/session replacement.
+   */
   readonly claimKey: string;
   /** Compared separately so reuse with different input becomes a conflict. */
   readonly payloadFingerprint: string;
+}
+
+export type ScientOperationSemanticRetryScope =
+  | {
+      readonly kind: "provider-turn";
+      readonly provider: string;
+      readonly callerThreadId: string;
+      readonly callerTurnId: string;
+    }
+  | {
+      readonly kind: "automation-run";
+      readonly automationId: string;
+      readonly runId: string;
+    }
+  | {
+      readonly kind: "external-integration";
+      readonly integrationId: string;
+    }
+  | {
+      readonly kind: "manual-user";
+      readonly userIdHash: string;
+    };
+
+function validateSemanticRetryScope(
+  scope: ScientOperationSemanticRetryScope | null | undefined,
+  actor: ScientOperationActor,
+): ScientOperationSemanticRetryScope {
+  if (scope === null || scope === undefined || typeof scope !== "object") {
+    throw new ScientOperationInputError(
+      "Semantic idempotency requires a trusted stable retry scope.",
+    );
+  }
+  const expectedKeys: ReadonlyArray<string> =
+    scope.kind === "provider-turn"
+      ? ["callerThreadId", "callerTurnId", "kind", "provider"]
+      : scope.kind === "automation-run"
+        ? ["automationId", "kind", "runId"]
+        : scope.kind === "external-integration"
+          ? ["integrationId", "kind"]
+          : scope.kind === "manual-user"
+            ? ["kind", "userIdHash"]
+            : [];
+  if (
+    expectedKeys.length === 0 ||
+    Object.keys(scope).toSorted().join("\0") !== expectedKeys.join("\0") ||
+    expectedKeys.some(
+      (key) => key !== "kind" && typeof (scope as Record<string, unknown>)[key] !== "string",
+    ) ||
+    expectedKeys.some(
+      (key) => key !== "kind" && (scope as Record<string, string>)[key]?.length === 0,
+    ) ||
+    expectedKeys.some(
+      (key) =>
+        key !== "kind" &&
+        Buffer.byteLength((scope as Record<string, string>)[key] ?? "", "utf8") > 512,
+    )
+  ) {
+    throw new ScientOperationInputError("Semantic retry scope is malformed or unsupported.");
+  }
+  switch (scope.kind) {
+    case "provider-turn":
+      structuredIdentity(scope.provider, "semanticRetryScope.provider", 128);
+      structuredIdentity(scope.callerThreadId, "semanticRetryScope.callerThreadId");
+      structuredIdentity(scope.callerTurnId, "semanticRetryScope.callerTurnId");
+      break;
+    case "automation-run":
+      structuredIdentity(scope.automationId, "semanticRetryScope.automationId");
+      structuredIdentity(scope.runId, "semanticRetryScope.runId");
+      break;
+    case "external-integration":
+      structuredIdentity(scope.integrationId, "semanticRetryScope.integrationId");
+      break;
+    case "manual-user":
+      if (!/^[a-f0-9]{64}$/u.test(scope.userIdHash)) {
+        throw new ScientOperationInputError(
+          "semanticRetryScope.userIdHash is not a bounded structured hash.",
+        );
+      }
+      break;
+  }
+  const matchesActor =
+    (scope.kind === "provider-turn" &&
+      actor.kind === "provider-thread" &&
+      scope.provider === actor.provider &&
+      scope.callerThreadId === actor.threadId) ||
+    (scope.kind === "automation-run" &&
+      actor.kind === "automation-run" &&
+      scope.automationId === actor.automationId &&
+      scope.runId === actor.runId) ||
+    (scope.kind === "external-integration" &&
+      actor.kind === "external-integration" &&
+      scope.integrationId === actor.integrationId) ||
+    (scope.kind === "manual-user" &&
+      actor.kind === "manual-user" &&
+      scope.userIdHash === sha256Canonical(["scient-operation-manual-user-v2", actor.userId]));
+  if (!matchesActor) {
+    throw new ScientOperationInputError(
+      "Semantic retry scope does not match the authorized actor.",
+    );
+  }
+  return Object.freeze({ ...scope });
 }
 
 export interface ScientOperationRequestEnvelope {
@@ -447,6 +592,9 @@ export interface ScientOperationRequestEnvelope {
   readonly authority: ScientOperationGrantSnapshot;
   readonly ingress: ScientOperationIngress;
   readonly parentOperationId: string | null;
+  /** Trusted current provider turn used only for audit attribution. */
+  readonly providerAuthorizingTurnId: string | null;
+  readonly semanticRetryScope: ScientOperationSemanticRetryScope | null;
   readonly idempotency: ScientOperationIdempotencyClaim;
   readonly receivedAt: number;
 }
@@ -547,10 +695,26 @@ export function beginScientOperation(input: {
   readonly ingress: ScientOperationIngress;
   readonly operationId: string;
   readonly semanticIdempotencyIdentity?: string | null;
+  /** Trusted host scope for semantic retries; never derived from bearer/session credentials. */
+  readonly semanticIdempotencyScope?: ScientOperationSemanticRetryScope | null;
   readonly payloadFingerprint: string;
   readonly receivedAt: number;
   readonly parentOperationId?: string | null;
+  readonly providerAuthorizingTurnId?: string | null;
 }): BeginScientOperationResult {
+  structuredIdentity(input.projectId, "projectId");
+  structuredIdentity(input.operationId, "operationId");
+  if (input.parentOperationId !== undefined && input.parentOperationId !== null) {
+    structuredIdentity(input.parentOperationId, "parentOperationId");
+  }
+  if (input.providerAuthorizingTurnId !== undefined && input.providerAuthorizingTurnId !== null) {
+    if (input.authority.actor.kind !== "provider-thread") {
+      throw new ScientOperationInputError(
+        "Only a provider-thread actor can carry an authorizing turn.",
+      );
+    }
+    structuredIdentity(input.providerAuthorizingTurnId, "providerAuthorizingTurnId");
+  }
   const resolvedAuthority = makeScientOperationAuthority(input.authority);
   const decision = authorize({
     authority: resolvedAuthority,
@@ -562,6 +726,23 @@ export function beginScientOperation(input: {
 
   const authority = grantSnapshot(resolvedAuthority);
   const semanticIdentity = input.semanticIdempotencyIdentity?.trim() || null;
+  const semanticScope =
+    semanticIdentity === null
+      ? null
+      : validateSemanticRetryScope(input.semanticIdempotencyScope, authority.actor);
+  if (
+    semanticScope?.kind === "provider-turn" &&
+    input.providerAuthorizingTurnId !== undefined &&
+    input.providerAuthorizingTurnId !== null &&
+    input.providerAuthorizingTurnId !== semanticScope.callerTurnId
+  ) {
+    throw new ScientOperationInputError(
+      "Provider authorizing turn must match the semantic retry turn.",
+    );
+  }
+  const providerAuthorizingTurnId =
+    input.providerAuthorizingTurnId ??
+    (semanticScope?.kind === "provider-turn" ? semanticScope.callerTurnId : null);
   // Never retain caller/model-controlled retry text in an authoritative
   // envelope. A one-way digest preserves stable retry identity without turning
   // receipts or audit adapters into a secret/path disclosure channel.
@@ -569,14 +750,32 @@ export function beginScientOperation(input: {
     semanticIdentity === null
       ? input.operationId
       : sha256Canonical(["semantic-idempotency", semanticIdentity]);
-  const claimKey = sha256Canonical([
-    authority.authorityId,
-    authority.generation,
-    authority.actor,
-    input.projectId,
-    input.definition.id,
-    identity,
+  const actorScopeHash = sha256Canonical([
+    "scient-operation-actor-scope-v2",
+    semanticScope ?? {
+      actorKind: authority.actor.kind,
+      authorityId: authority.authorityId,
+      authorityGeneration: authority.generation,
+    },
   ]);
+  const semanticIdentityHash = sha256Canonical(["scient-operation-semantic-identity-v2", identity]);
+  const claimKey =
+    semanticIdentity === null
+      ? sha256Canonical([
+          authority.authorityId,
+          authority.generation,
+          authority.actor,
+          input.projectId,
+          input.definition.id,
+          identity,
+        ])
+      : sha256Canonical([
+          "scient-operation-claim-v2",
+          input.projectId,
+          input.definition.id,
+          actorScopeHash,
+          semanticIdentityHash,
+        ]);
   const envelope: ScientOperationRequestEnvelope = Object.freeze({
     operationId: input.operationId,
     operation: input.definition.id,
@@ -585,9 +784,14 @@ export function beginScientOperation(input: {
     authority,
     ingress: input.ingress,
     parentOperationId: input.parentOperationId ?? null,
+    providerAuthorizingTurnId,
+    semanticRetryScope: semanticScope,
     idempotency: Object.freeze({
       mode: semanticIdentity === null ? "unique" : "semantic",
       identity,
+      claimKeyVersion: 2,
+      semanticIdentityHash,
+      actorScopeHash,
       claimKey,
       payloadFingerprint: input.payloadFingerprint,
     }),

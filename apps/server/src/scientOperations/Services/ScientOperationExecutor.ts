@@ -18,7 +18,13 @@ import type {
   ScientOperationId,
   ScientOperationRequestEnvelope,
   ScientOperationResultReceipt,
+  ScientOperationSemanticRetryScope,
 } from "../authority.ts";
+import type {
+  ScientOperationDurableIntent,
+  ScientOperationPersistedReceipt,
+  ScientOperationSafeReplay,
+} from "../../persistence/Services/ScientOperationReceipts.ts";
 
 export interface ScientOperationExecutionContext<Admission> {
   readonly admission: Admission;
@@ -32,6 +38,8 @@ export interface ScientOperationExecutionInput<Result, Admission, AdapterError> 
   readonly operation: ScientOperationId;
   readonly projectId: string;
   readonly ingress: ScientOperationRequestEnvelope["ingress"];
+  readonly semanticIdempotencyScope?: ScientOperationSemanticRetryScope;
+  readonly providerAuthorizingTurnId?: string;
   readonly domainInput: Readonly<Record<string, unknown>>;
   readonly admit: Effect.Effect<Admission, AdapterError>;
   readonly execute: (
@@ -40,12 +48,30 @@ export interface ScientOperationExecutionInput<Result, Admission, AdapterError> 
   ) => Effect.Effect<Result>;
   /** Re-check live caller authority before a read result leaves the host. */
   readonly releaseRead: (admission: Admission) => Effect.Effect<void, AdapterError>;
+  /** Re-check live authority/turn after durable lookup before a replay leaves the host. */
+  readonly releaseReplay: (admission: Admission) => Effect.Effect<void, AdapterError>;
   /** Exact host transaction/lease boundary for governed writes. */
   readonly runTransactionalWrite: <A>(effect: Effect.Effect<A>) => Effect.Effect<A, AdapterError>;
   /** Revocation signal raced with reads; irreversible effects stay unavailable in F1. */
   readonly revocationFence: Effect.Effect<never, AdapterError>;
   /** Extract a stable authored error code from a successful adapter result. */
   readonly resultErrorCode: (result: Result) => string | null;
+  /** Operation-specific, redacted replay contract. Omit for non-semantic operations. */
+  readonly durableReplay?: {
+    readonly encode: (
+      result: Result,
+      canonicalInput: Readonly<Record<string, unknown>>,
+    ) => ScientOperationSafeReplay;
+    readonly decode: (
+      replay: ScientOperationSafeReplay,
+      canonicalInput: Readonly<Record<string, unknown>>,
+    ) => Result;
+  };
+  /** Exact typed intent persisted atomically with the claim before dispatch. */
+  readonly prepareDurableIntent?: (
+    canonicalInput: Readonly<Record<string, unknown>>,
+    envelope: ScientOperationRequestEnvelope,
+  ) => ScientOperationDurableIntent;
 }
 
 export type ScientOperationExecutionOutcome<Result, AdapterError> =
@@ -65,6 +91,19 @@ export type ScientOperationExecutionOutcome<Result, AdapterError> =
       readonly kind: "execution-rejected";
       readonly code: "operation_not_available";
       readonly message: string;
+    }
+  | {
+      readonly kind: "durability-rejected";
+      readonly code:
+        | "idempotency_conflict"
+        | "operation_outcome_uncertain"
+        | "operation_receipt_unavailable";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "replayed";
+      readonly result: Result;
+      readonly receipt: ScientOperationPersistedReceipt;
     }
   | {
       readonly kind: "finished";
