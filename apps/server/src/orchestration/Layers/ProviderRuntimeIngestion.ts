@@ -2590,7 +2590,7 @@ const make = Effect.gen(function* () {
                     input.allowDurableFallbackWhenSourceUnavailable,
                 }
               : {}),
-        }),
+          }),
         catch: (cause) => cause,
       });
       const threadOption = yield* readGeneratedImageLivenessThread(input.thread.id);

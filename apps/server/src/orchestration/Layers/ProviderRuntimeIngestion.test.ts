@@ -3058,8 +3058,7 @@ describe("ProviderRuntimeIngestion", () => {
     const mutableSnapshotQuery = harness.snapshotQuery as {
       getThreadDetailForExportById: typeof harness.snapshotQuery.getThreadDetailForExportById;
     };
-    const originalGetThreadDetailForExportById =
-      mutableSnapshotQuery.getThreadDetailForExportById;
+    const originalGetThreadDetailForExportById = mutableSnapshotQuery.getThreadDetailForExportById;
     let authoritativeOwnershipChecks = 0;
     mutableSnapshotQuery.getThreadDetailForExportById = (threadId) => {
       authoritativeOwnershipChecks += 1;
@@ -3082,8 +3081,7 @@ describe("ProviderRuntimeIngestion", () => {
       await harness.startIngestion();
     } finally {
       mutableEngine.dispatch = originalDispatch;
-      mutableSnapshotQuery.getThreadDetailForExportById =
-        originalGetThreadDetailForExportById;
+      mutableSnapshotQuery.getThreadDetailForExportById = originalGetThreadDetailForExportById;
     }
 
     expect(authoritativeOwnershipChecks).toBeGreaterThan(0);
@@ -3492,9 +3490,9 @@ describe("ProviderRuntimeIngestion", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const deletedThread = readModel.threads.find((thread) => thread.id === threadId);
     expect(deletedThread?.deletedAt).toEqual(expect.any(String));
-    expect(
-      deletedThread?.messages.flatMap((message) => message.attachments ?? []) ?? [],
-    ).toEqual([]);
+    expect(deletedThread?.messages.flatMap((message) => message.attachments ?? []) ?? []).toEqual(
+      [],
+    );
     expect(fs.readdirSync(harness.attachmentsDir)).toEqual([]);
   });
 
