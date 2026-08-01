@@ -90,6 +90,7 @@ import {
   forkAcpTurnIdleWatchdog,
   resolveAcpTurnIdleTimeoutMs,
 } from "../acp/AcpTurnIdleWatchdog.ts";
+import { forkProviderNotificationDrain } from "../acp/ProviderNotificationDrain.ts";
 import {
   applyGrokAcpModelSelection,
   getGrokApiKeyEnv,
@@ -282,6 +283,7 @@ function makeGrokAcpRuntimeLoggers(
 export interface GrokAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly sessionRuntimeFactory?: typeof makeGrokAcpRuntime;
 }
 
 interface PendingApproval {
@@ -1132,7 +1134,7 @@ export function makeGrokAdapter(
             binaryPath: effectiveGrokSettings.binaryPath ?? "grok",
           });
 
-          const acp = yield* makeGrokAcpRuntime({
+          const acp = yield* (options?.sessionRuntimeFactory ?? makeGrokAcpRuntime)({
             grokSettings: effectiveGrokSettings,
             childProcessSpawner,
             cwd,
@@ -1525,7 +1527,7 @@ export function makeGrokAdapter(
                 ),
               ),
             ),
-          ).pipe(Effect.forkChild);
+          ).pipe(forkProviderNotificationDrain(sessionScope));
 
           ctx.notificationFiber = notificationFiber;
           sessions.set(input.threadId, ctx);
