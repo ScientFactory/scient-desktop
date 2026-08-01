@@ -2315,6 +2315,64 @@ const make = Effect.gen(function* () {
       yield* clearAssistantMessageState(input.messageId);
     });
 
+  const readGeneratedImageOwnershipThread = (threadId: ThreadId, operation: string) =>
+    projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
+      Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE),
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to verify generated-image attachment ownership", {
+          threadId,
+          operation,
+          causeName: cause instanceof Error ? cause.name : "UnknownError",
+        }).pipe(Effect.as(null)),
+      ),
+    );
+
+  const removeGeneratedImageAttachmentsWithoutRetainedOwner = (input: {
+    threadId: ThreadId;
+    attachments: ReadonlyArray<ChatImageAttachment>;
+    operation: string;
+  }) =>
+    Effect.gen(function* () {
+      if (input.attachments.length === 0) return;
+      const threadOption = yield* readGeneratedImageOwnershipThread(
+        input.threadId,
+        input.operation,
+      );
+      // A failed ownership query cannot safely distinguish an orphan from a
+      // successfully committed attachment, so retain the bytes for replay.
+      if (threadOption === null) return;
+      const retainedAttachmentIds =
+        Option.isSome(threadOption) && threadOption.value.deletedAt === null
+          ? new Set(
+              threadOption.value.messages.flatMap(
+                (message) => message.attachments?.map((attachment) => attachment.id) ?? [],
+              ),
+            )
+          : new Set<string>();
+      yield* Effect.forEach(
+        input.attachments.filter((attachment) => !retainedAttachmentIds.has(attachment.id)),
+        (attachment) =>
+          Effect.tryPromise({
+            try: () =>
+              removeMaterializedGeneratedImageAttachment({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              }),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to clean up unowned generated-image attachment", {
+                threadId: input.threadId,
+                attachmentId: attachment.id,
+                operation: input.operation,
+                causeName: cause instanceof Error ? cause.name : "UnknownError",
+              }),
+            ),
+          ),
+        { concurrency: 1 },
+      );
+    });
+
   /** Appends durable generated-image attachments without changing message lifecycle state. */
   const appendGeneratedImagesToAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -2346,17 +2404,27 @@ const make = Effect.gen(function* () {
         failedImageCount,
       );
       if (missingAttachments.length === 0 && reconciledText === targetText) return;
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.assistant.attachments.add",
-        commandId: providerCommandId(input.event, "generated-image-attachments"),
-        threadId: input.threadId,
-        messageId: targetMessageId,
-        attachments: missingAttachments,
-        omittedImageCount,
-        failedImageCount,
-        ...(input.turnId ? { turnId: input.turnId } : {}),
-        createdAt: input.createdAt,
-      });
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.message.assistant.attachments.add",
+          commandId: providerCommandId(input.event, "generated-image-attachments"),
+          threadId: input.threadId,
+          messageId: targetMessageId,
+          attachments: missingAttachments,
+          omittedImageCount,
+          failedImageCount,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt: input.createdAt,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            removeGeneratedImageAttachmentsWithoutRetainedOwner({
+              threadId: input.threadId,
+              attachments: missingAttachments,
+              operation: "attachment-dispatch-failed",
+            }).pipe(Effect.andThen(Effect.failCause(cause))),
+          ),
+        );
     });
 
   const rememberPendingGeneratedImage = (
@@ -2476,7 +2544,7 @@ const make = Effect.gen(function* () {
           new Error("Generated image source is missing its trusted provider-thread binding."),
         );
       }
-      return yield* Effect.tryPromise({
+      const attachment = yield* Effect.tryPromise({
         try: () =>
           materializeGeneratedImageAttachment({
             threadId: input.thread.id,
@@ -2490,9 +2558,25 @@ const make = Effect.gen(function* () {
                     input.allowDurableFallbackWhenSourceUnavailable,
                 }
               : {}),
-          }),
+        }),
         catch: (cause) => cause,
       });
+      const threadOption = yield* readGeneratedImageOwnershipThread(
+        input.thread.id,
+        "post-materialization",
+      );
+      if (
+        threadOption === null ||
+        (Option.isSome(threadOption) && threadOption.value.deletedAt === null)
+      ) {
+        return attachment;
+      }
+      yield* removeGeneratedImageAttachmentsWithoutRetainedOwner({
+        threadId: input.thread.id,
+        attachments: [attachment],
+        operation: "thread-deleted-during-materialization",
+      });
+      return null;
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("failed to materialize generated image attachment", {

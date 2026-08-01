@@ -3125,9 +3125,9 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine,
       (entry) => entry.messages.filter((message) => message.attachments?.length === 1).length === 8,
     );
-    // Each of the eight recovery groups loads its target once, and the
-    // attachment command hydrates that target again before merging state.
-    expect(threadLookupCount).toBe(16);
+    // Each recovery group loads its target, revalidates thread ownership after
+    // materialization, and hydrates the target again while committing ownership.
+    expect(threadLookupCount).toBe(24);
     expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
     const unresolved = await Effect.runPromise(
       harness.snapshotQuery.listTurnlessGeneratedImageReferences(),
@@ -3181,9 +3181,10 @@ describe("ProviderRuntimeIngestion", () => {
         (message) => message.id === "assistant:image:prefix-a" && message.attachments?.length === 5,
       ),
     );
-    // The first group performs one recovery lookup plus command hydration; the
-    // second group is inspected before its work is deferred by the budget.
-    expect(lookupCount).toBe(3);
+    // The first group performs one recovery lookup, five post-materialization
+    // ownership checks, and command hydration; the second group is inspected
+    // before its work is deferred by the budget.
+    expect(lookupCount).toBe(8);
     expect(thread.messages.some((message) => message.id === "assistant:image:prefix-b")).toBe(
       false,
     );
@@ -3316,6 +3317,66 @@ describe("ProviderRuntimeIngestion", () => {
       type: "image",
       mimeType: "image/png",
     });
+  });
+
+  it("removes a materialized image when thread deletion wins before ownership", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const imagePath = path.join(harness.generatedImagesRoot, "delete-race.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+
+    const mutableSnapshotQuery = harness.snapshotQuery as {
+      getThreadDetailById: typeof harness.snapshotQuery.getThreadDetailById;
+    };
+    const originalGetThreadDetailById = mutableSnapshotQuery.getThreadDetailById;
+    let deletionTriggered = false;
+    mutableSnapshotQuery.getThreadDetailById = (requestedThreadId) =>
+      Effect.gen(function* () {
+        if (
+          !deletionTriggered &&
+          fs.existsSync(harness.attachmentsDir) &&
+          fs.readdirSync(harness.attachmentsDir).length > 0
+        ) {
+          deletionTriggered = true;
+          yield* harness.engine
+            .dispatch({
+              type: "thread.delete",
+              commandId: CommandId.makeUnsafe("cmd-delete-during-image-materialization"),
+              threadId,
+            })
+            .pipe(Effect.orDie);
+        }
+        return yield* originalGetThreadDetailById(requestedThreadId);
+      });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-delete-race-image-complete"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      itemId: asItemId("delete-race-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "delete-race-image",
+        },
+      },
+    });
+    await harness.drain();
+    mutableSnapshotQuery.getThreadDetailById = originalGetThreadDetailById;
+
+    expect(deletionTriggered).toBe(true);
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const deletedThread = readModel.threads.find((thread) => thread.id === threadId);
+    expect(deletedThread?.deletedAt).toEqual(expect.any(String));
+    expect(
+      deletedThread?.messages.flatMap((message) => message.attachments ?? []) ?? [],
+    ).toEqual([]);
+    expect(fs.readdirSync(harness.attachmentsDir)).toEqual([]);
   });
 
   it("attaches a turnless image to the existing assistant item with the same id", async () => {
