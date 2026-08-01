@@ -220,7 +220,7 @@ async function recoverDurableGeneratedImageAttachment(input: {
 async function persistAtomically(input: {
   readonly destinationPath: string;
   readonly bytes: Buffer;
-}): Promise<void> {
+}): Promise<boolean> {
   const destinationDirectory = path.dirname(input.destinationPath);
   await fs.mkdir(destinationDirectory, {
     recursive: true,
@@ -228,11 +228,12 @@ async function persistAtomically(input: {
   });
   const existing = await readExistingAttachment(input.destinationPath);
   if (existing) {
-    if (existing.equals(input.bytes)) return;
+    if (existing.equals(input.bytes)) return false;
     throw new Error("A generated-image replay resolved to different persisted bytes.");
   }
 
   const temporaryPath = `${input.destinationPath}.tmp-${crypto.randomUUID()}`;
+  let created = false;
   try {
     const handle = await fs.open(temporaryPath, "wx", 0o600);
     try {
@@ -245,6 +246,7 @@ async function persistAtomically(input: {
       // A hard link publishes the complete file without replacing an existing
       // deterministic target if a duplicate event wins the race.
       await fs.link(temporaryPath, input.destinationPath);
+      created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const raced = await readExistingAttachment(input.destinationPath);
@@ -259,6 +261,7 @@ async function persistAtomically(input: {
     await fs.rm(temporaryPath, { force: true });
     await syncDirectoryEntry(destinationDirectory);
   }
+  return created;
 }
 
 export async function cleanupStaleGeneratedImageAttachmentTemps(input: {
@@ -283,14 +286,14 @@ export async function cleanupStaleGeneratedImageAttachmentTemps(input: {
   return removed;
 }
 
-export async function materializeGeneratedImageAttachment(input: {
+export async function materializeGeneratedImageAttachmentWithResult(input: {
   readonly threadId: string;
   readonly sourcePath: string;
   readonly provenanceKey: string;
   readonly allowedSourceRoots: ReadonlyArray<string>;
   readonly attachmentsDir: string;
   readonly allowDurableFallbackWhenSourceUnavailable?: boolean;
-}): Promise<ChatImageAttachment> {
+}): Promise<{ readonly attachment: ChatImageAttachment; readonly created: boolean }> {
   const durableAttachment = await recoverDurableGeneratedImageAttachment(input);
   const [realSourceResult, realRoots] = await Promise.all([
     fs.realpath(input.sourcePath).then(
@@ -306,7 +309,7 @@ export async function materializeGeneratedImageAttachment(input: {
       input.allowDurableFallbackWhenSourceUnavailable === true &&
       (sourceCode === "ENOENT" || sourceCode === "ENOTDIR")
     ) {
-      return durableAttachment.attachment;
+      return { attachment: durableAttachment.attachment, created: false };
     }
     throw realSourceResult.error;
   }
@@ -329,7 +332,7 @@ export async function materializeGeneratedImageAttachment(input: {
     throw new Error("A generated-image replay resolved to different persisted bytes or format.");
   }
   if (durableAttachment) {
-    return durableAttachment.attachment;
+    return { attachment: durableAttachment.attachment, created: false };
   }
   const extension = GENERATED_IMAGE_MIME_TYPES[mimeType];
   const attachmentId = generatedImageAttachmentId(input);
@@ -347,8 +350,19 @@ export async function materializeGeneratedImageAttachment(input: {
   if (!destinationPath) {
     throw new Error("Cannot resolve the provider image attachment destination.");
   }
-  await persistAtomically({ destinationPath, bytes });
-  return attachment;
+  const created = await persistAtomically({ destinationPath, bytes });
+  return { attachment, created };
+}
+
+export async function materializeGeneratedImageAttachment(input: {
+  readonly threadId: string;
+  readonly sourcePath: string;
+  readonly provenanceKey: string;
+  readonly allowedSourceRoots: ReadonlyArray<string>;
+  readonly attachmentsDir: string;
+  readonly allowDurableFallbackWhenSourceUnavailable?: boolean;
+}): Promise<ChatImageAttachment> {
+  return (await materializeGeneratedImageAttachmentWithResult(input)).attachment;
 }
 
 export async function removeMaterializedGeneratedImageAttachment(input: {

@@ -24,8 +24,29 @@ import {
   hasActionableProposedPlan,
   isFileChangeWorkLogEntry,
   isLatestTurnSettled,
+  isSessionBusyForArchive,
   isProviderFileEditWorkLogEntry,
 } from "./session-logic";
+
+describe("isSessionBusyForArchive", () => {
+  it.each(["starting", "running"] as const)(
+    "blocks archive while a session is %s even before an active turn id is projected",
+    (orchestrationStatus) => {
+      expect(isSessionBusyForArchive({ orchestrationStatus })).toBe(true);
+    },
+  );
+
+  it.each(["idle", "ready", "stopped", "interrupted", "error"] as const)(
+    "allows archive after a session is %s",
+    (orchestrationStatus) => {
+      expect(isSessionBusyForArchive({ orchestrationStatus })).toBe(false);
+    },
+  );
+
+  it("allows archive when no provider session exists", () => {
+    expect(isSessionBusyForArchive(null)).toBe(false);
+  });
+});
 
 function makeActivity(overrides: {
   id?: string;

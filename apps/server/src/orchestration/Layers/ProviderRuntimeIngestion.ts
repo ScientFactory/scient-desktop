@@ -40,7 +40,7 @@ import { ServerConfig } from "../../config.ts";
 import {
   cleanupStaleGeneratedImageAttachmentTemps,
   generatedImageAttachmentId,
-  materializeGeneratedImageAttachment,
+  materializeGeneratedImageAttachmentWithResult,
   removeMaterializedGeneratedImageAttachment,
 } from "../../generatedImageAttachments.ts";
 import { copyAndAttributeStudioGeneratedImage } from "../../studioGeneratedImages.ts";
@@ -2315,6 +2315,107 @@ const make = Effect.gen(function* () {
       yield* clearAssistantMessageState(input.messageId);
     });
 
+  const readGeneratedImageOwnershipThread = (threadId: ThreadId, operation: string) =>
+    projectionSnapshotQuery.getThreadDetailForExportById(threadId).pipe(
+      Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE),
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to verify generated-image attachment ownership", {
+          threadId,
+          operation,
+          causeName: cause instanceof Error ? cause.name : "UnknownError",
+        }).pipe(Effect.as(null)),
+      ),
+    );
+
+  const readGeneratedImageLivenessThread = (threadId: ThreadId) =>
+    projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
+      Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE),
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to verify generated-image thread liveness", {
+          threadId,
+          causeName: cause instanceof Error ? cause.name : "UnknownError",
+        }).pipe(Effect.as(null)),
+      ),
+    );
+
+  const removeGeneratedImageAttachmentsWithoutRetainedOwner = (input: {
+    threadId: ThreadId;
+    attachments: ReadonlyArray<ChatImageAttachment>;
+    operation: string;
+  }) =>
+    Effect.gen(function* () {
+      if (input.attachments.length === 0) return;
+      const threadOption = yield* readGeneratedImageOwnershipThread(
+        input.threadId,
+        input.operation,
+      );
+      // A failed ownership query cannot safely distinguish an orphan from a
+      // successfully committed attachment, so retain the bytes for replay.
+      if (threadOption === null) return;
+      const retainedAttachmentIds =
+        Option.isSome(threadOption) && threadOption.value.deletedAt === null
+          ? new Set(
+              threadOption.value.messages.flatMap(
+                (message) => message.attachments?.map((attachment) => attachment.id) ?? [],
+              ),
+            )
+          : new Set<string>();
+      yield* Effect.forEach(
+        input.attachments.filter((attachment) => !retainedAttachmentIds.has(attachment.id)),
+        (attachment) =>
+          Effect.tryPromise({
+            try: () =>
+              removeMaterializedGeneratedImageAttachment({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              }),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to clean up unowned generated-image attachment", {
+                threadId: input.threadId,
+                attachmentId: attachment.id,
+                operation: input.operation,
+                causeName: cause instanceof Error ? cause.name : "UnknownError",
+              }),
+            ),
+          ),
+        { concurrency: 1 },
+      );
+    });
+
+  const dispatchGeneratedImageAttachmentsWithCleanup = (input: {
+    commandId: CommandId;
+    threadId: ThreadId;
+    messageId: MessageId;
+    attachments: ReadonlyArray<ChatImageAttachment>;
+    omittedImageCount: number;
+    failedImageCount: number;
+    turnId?: TurnId;
+    createdAt: string;
+  }) =>
+    orchestrationEngine
+      .dispatch({
+        type: "thread.message.assistant.attachments.add",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        messageId: input.messageId,
+        attachments: input.attachments,
+        omittedImageCount: input.omittedImageCount,
+        failedImageCount: input.failedImageCount,
+        ...(input.turnId ? { turnId: input.turnId } : {}),
+        createdAt: input.createdAt,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          removeGeneratedImageAttachmentsWithoutRetainedOwner({
+            threadId: input.threadId,
+            attachments: input.attachments,
+            operation: "attachment-dispatch-failed",
+          }).pipe(Effect.andThen(Effect.fail(error))),
+        ),
+      );
+
   /** Appends durable generated-image attachments without changing message lifecycle state. */
   const appendGeneratedImagesToAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -2346,8 +2447,7 @@ const make = Effect.gen(function* () {
         failedImageCount,
       );
       if (missingAttachments.length === 0 && reconciledText === targetText) return;
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.assistant.attachments.add",
+      yield* dispatchGeneratedImageAttachmentsWithCleanup({
         commandId: providerCommandId(input.event, "generated-image-attachments"),
         threadId: input.threadId,
         messageId: targetMessageId,
@@ -2476,9 +2576,9 @@ const make = Effect.gen(function* () {
           new Error("Generated image source is missing its trusted provider-thread binding."),
         );
       }
-      return yield* Effect.tryPromise({
+      const materialized = yield* Effect.tryPromise({
         try: () =>
-          materializeGeneratedImageAttachment({
+          materializeGeneratedImageAttachmentWithResult({
             threadId: input.thread.id,
             sourcePath: input.sourcePath,
             provenanceKey: input.provenanceKey,
@@ -2493,6 +2593,41 @@ const make = Effect.gen(function* () {
           }),
         catch: (cause) => cause,
       });
+      const threadOption = yield* readGeneratedImageLivenessThread(input.thread.id);
+      if (
+        threadOption !== null &&
+        Option.isSome(threadOption) &&
+        threadOption.value.deletedAt === null
+      ) {
+        return materialized.attachment;
+      }
+      if (threadOption === null) {
+        if (materialized.created) {
+          yield* Effect.tryPromise({
+            try: () =>
+              removeMaterializedGeneratedImageAttachment({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment: materialized.attachment,
+              }),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to roll back unverified generated-image attachment", {
+                threadId: input.thread.id,
+                attachmentId: materialized.attachment.id,
+                causeName: cause instanceof Error ? cause.name : "UnknownError",
+              }),
+            ),
+          );
+        }
+        return null;
+      }
+      yield* removeGeneratedImageAttachmentsWithoutRetainedOwner({
+        threadId: input.thread.id,
+        attachments: [materialized.attachment],
+        operation: "thread-deleted-during-materialization",
+      });
+      return null;
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("failed to materialize generated image attachment", {
@@ -2975,9 +3110,14 @@ const make = Effect.gen(function* () {
       // shell so high-frequency streaming events don't re-decode the whole
       // transcript. See eventNeedsHeavyThreadDetail for the safety rationale.
       const needsHeavyThreadDetail = eventNeedsHeavyThreadDetail(event);
-      const parentThread = needsHeavyThreadDetail
+      const projectedParentThread = needsHeavyThreadDetail
         ? yield* getThreadDetail(event.threadId)
         : yield* getThreadShellDetail(event.threadId);
+      const parentThread =
+        projectedParentThread ??
+        (yield* orchestrationEngine.getReadModel()).threads.find(
+          (thread) => thread.id === event.threadId,
+        );
       if (!parentThread) return;
 
       const ensureSubagentThread = (
@@ -3008,6 +3148,12 @@ const make = Effect.gen(function* () {
               : undefined;
 
           if (Option.isNone(existingThread)) {
+            const deletedThread = (yield* orchestrationEngine.getReadModel()).threads.find(
+              (thread) => thread.id === childThreadId && thread.deletedAt !== null,
+            );
+            if (deletedThread) {
+              return { threadId: childThreadId, thread: deletedThread };
+            }
             yield* orchestrationEngine.dispatch({
               type: "thread.create",
               commandId: providerCommandId(event, "subagent-thread-create"),
@@ -3107,7 +3253,7 @@ const make = Effect.gen(function* () {
           event.type === "item.completed") &&
         event.payload.itemType === "collab_agent_tool_call" &&
         collabItem !== undefined;
-      if (isCollabToolEvent && collabItem) {
+      if (parentThread.deletedAt === null && isCollabToolEvent && collabItem) {
         const receiverThreadIds = collectSubagentProviderThreadIds(collabItem);
         const identityDirectory = buildSubagentIdentityDirectory(
           extractSubagentIdentityHints(collabItem),
@@ -3130,14 +3276,86 @@ const make = Effect.gen(function* () {
         providerThreadId !== undefined &&
         providerParentThreadId !== undefined &&
         providerThreadId !== providerParentThreadId;
-      const targetThreadResolution =
-        isChildThreadEvent && providerThreadId
-          ? yield* ensureSubagentThread(
-              providerThreadId,
-              extractSubagentIdentity(event, providerThreadId),
-            )
-          : { threadId: parentThread.id, thread: parentThread };
+      let targetThreadResolution: {
+        readonly threadId: ThreadId;
+        readonly thread: OrchestrationThread;
+      } | null;
+      if (isChildThreadEvent && providerThreadId) {
+        if (parentThread.deletedAt !== null) {
+          const childThreadId = subagentThreadId(parentThread.id, providerThreadId);
+          const child = (yield* orchestrationEngine.getReadModel()).threads.find(
+            (thread) => thread.id === childThreadId && thread.deletedAt !== null,
+          );
+          targetThreadResolution = child ? { threadId: childThreadId, thread: child } : null;
+        } else {
+          targetThreadResolution = yield* ensureSubagentThread(
+            providerThreadId,
+            extractSubagentIdentity(event, providerThreadId),
+          );
+        }
+      } else {
+        targetThreadResolution = { threadId: parentThread.id, thread: parentThread };
+      }
+      if (targetThreadResolution === null) return;
       const thread = targetThreadResolution.thread;
+      if (thread.deletedAt !== null) {
+        const deletedThreadActiveTurnId = thread.session?.activeTurnId ?? null;
+        const deletedThreadEventTurnId = resolveTerminalTurnId(event, deletedThreadActiveTurnId);
+        if (
+          (event.type === "turn.completed" || event.type === "turn.aborted") &&
+          deletedThreadActiveTurnId !== null &&
+          (deletedThreadEventTurnId === undefined ||
+            !sameId(deletedThreadActiveTurnId, deletedThreadEventTurnId))
+        ) {
+          return;
+        }
+        const terminalStatus = (() => {
+          switch (event.type) {
+            case "turn.completed":
+              return runtimeTurnState(event) === "failed" ? ("error" as const) : ("ready" as const);
+            case "turn.aborted":
+              return "interrupted" as const;
+            case "session.exited":
+              return "stopped" as const;
+            case "session.state.changed": {
+              const status = orchestrationSessionStatusFromRuntimeState(event.payload.state);
+              return status === "ready" || status === "stopped" || status === "error"
+                ? status
+                : null;
+            }
+            default:
+              return null;
+          }
+        })();
+        if (terminalStatus !== null) {
+          const lastError =
+            event.type === "session.state.changed" && event.payload.state === "error"
+              ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
+              : event.type === "turn.completed" && runtimeTurnState(event) === "failed"
+                ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
+                : terminalStatus === "ready" || terminalStatus === "interrupted"
+                  ? null
+                  : (thread.session?.lastError ?? null);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: providerCommandId(event, "deleted-thread-terminal-session-set"),
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status: terminalStatus,
+              providerName: event.provider,
+              runtimeMode: thread.session?.runtimeMode ?? "full-access",
+              activeTurnId: null,
+              lastError,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
+        // A soft-deleted thread may only settle its active lifecycle. Content,
+        // metadata, and child-creation events must never resurrect it.
+        return;
+      }
       const codexAuthenticationErrorEventId =
         event.type === "session.exited" &&
         event.provider === "codex" &&
@@ -4144,8 +4362,7 @@ const make = Effect.gen(function* () {
         `omitted-${priorWarningCounts.omitted + omittedImageCount}`,
         `failed-${priorWarningCounts.failed + failedImageCount}`,
       ].join(":");
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.assistant.attachments.add",
+      yield* dispatchGeneratedImageAttachmentsWithCleanup({
         commandId: CommandId.makeUnsafe(
           `provider:turn-generated-image-recovery:${first.threadId}:${first.turnId}:${targetMessageId}:${outcomeKey}`,
         ),
@@ -4241,8 +4458,7 @@ const make = Effect.gen(function* () {
         `omitted-${priorWarningCounts.omitted + omittedImageCount}`,
         `failed-${priorWarningCounts.failed + failedImageCount}`,
       ].join(":");
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.assistant.attachments.add",
+      yield* dispatchGeneratedImageAttachmentsWithCleanup({
         commandId: CommandId.makeUnsafe(
           `provider:turnless-generated-image-recovery:${first.threadId}:${first.targetMessageId}:${outcomeKey}`,
         ),

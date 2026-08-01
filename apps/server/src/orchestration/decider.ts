@@ -17,6 +17,7 @@ import {
   deriveAssociatedWorktreeMetadata,
   deriveAssociatedWorktreeMetadataPatch,
 } from "@synara/shared/threadWorkspace";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { doThreadMarkerRangesOverlap } from "@synara/shared/threadMarkers";
 import {
   collectTailTurnIds,
@@ -34,6 +35,7 @@ import { resolveNextForkTitle } from "./forkTitle.ts";
 import { validateImportedMessageIds, validateMessageForkImport } from "./messageFork.ts";
 import { resolveStableMessageTurnId } from "./messageTurnId.ts";
 import {
+  findThreadById,
   listActiveProjectsByWorkspaceRoot,
   listThreadsByProjectId,
   requireProject,
@@ -44,6 +46,9 @@ import {
   requireThreadAbsent,
   requireThreadArchived,
   requireThreadNotArchived,
+  requireThreadSubtreeIdle,
+  requireThreadSubtreeNotStarting,
+  requireValidThreadParent,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -472,6 +477,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireValidThreadParent({
+        readModel,
+        command,
+        threadId: command.threadId,
+        projectId: command.projectId,
+        parentThreadId: command.parentThreadId ?? null,
+      });
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -793,12 +805,70 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const rootThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
+      const liveProjectThreads = readModel.threads.filter(
+        (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+      );
+      const liveDescendantThreadIds = collectSubagentDescendants(
+        liveProjectThreads,
+        command.threadId,
+      ).map((thread) => thread.id);
+      if (command.cascadeDescendants === true) {
+        yield* requireThreadSubtreeNotStarting({
+          readModel,
+          command,
+          threadId: command.threadId,
+        });
+        const descendantThreadIds = liveDescendantThreadIds.toReversed();
+        const expectedThreadIds = command.expectedDescendantThreadIds;
+        const expectedSet = new Set(expectedThreadIds ?? []);
+        const actualSet = new Set(descendantThreadIds);
+        if (
+          (command.expectedReadModelSequence !== undefined &&
+            command.expectedReadModelSequence !== readModel.snapshotSequence) ||
+          expectedThreadIds === undefined ||
+          expectedSet.size !== expectedThreadIds.length ||
+          expectedSet.size !== actualSet.size ||
+          descendantThreadIds.some((threadId) => !expectedSet.has(threadId))
+        ) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail:
+                "The conversation subtree changed before deletion. Refresh it and confirm the updated scope.",
+            }),
+          );
+        }
+        return [...descendantThreadIds, command.threadId].map(
+          (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt,
+              commandId: command.commandId,
+            }),
+            type: "thread.deleted",
+            payload: {
+              threadId,
+              deletedAt: occurredAt,
+            },
+          }),
+        );
+      }
+      if (liveDescendantThreadIds.length > 0) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail:
+              "This conversation has live sub-agent descendants. Refresh it and confirm deletion of the complete family.",
+          }),
+        );
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -820,51 +890,89 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireThreadSubtreeIdle({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const rootThread = findThreadById(readModel, command.threadId);
+      const descendantThreadIds = collectSubagentDescendants(
+        readModel.threads.filter(
+          (thread) =>
+            thread.deletedAt === null &&
+            rootThread !== undefined &&
+            thread.projectId === rootThread.projectId,
+        ),
+        command.threadId,
+      )
+        .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) === null)
+        .map((thread) => thread.id);
+      return [...descendantThreadIds, command.threadId].map(
+        (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.archived",
+          payload: {
+            threadId,
+            archivedAt: occurredAt,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.archived",
-        payload: {
-          threadId: command.threadId,
-          archivedAt: occurredAt,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.unarchive": {
-      yield* requireThreadArchived({
+      const rootThread = yield* requireThreadArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
+      const descendantThreadIds = collectSubagentDescendants(
+        readModel.threads.filter(
+          (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+        ),
+        command.threadId,
+      )
+        .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) !== null)
+        .map((thread) => thread.id);
+      return [...descendantThreadIds, command.threadId].map(
+        (threadId): Omit<OrchestrationEvent, "sequence"> => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.unarchived",
+          payload: {
+            threadId,
+            updatedAt: occurredAt,
+          },
         }),
-        type: "thread.unarchived",
-        payload: {
-          threadId: command.threadId,
-          updatedAt: occurredAt,
-        },
-      };
+      );
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (command.parentThreadId !== undefined) {
+        yield* requireValidThreadParent({
+          readModel,
+          command,
+          threadId: command.threadId,
+          projectId: thread.projectId,
+          parentThreadId: command.parentThreadId,
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -1573,11 +1681,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.set": {
-      const thread = yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
+      const thread = findThreadById(readModel, command.threadId);
+      if (!thread) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not exist for command '${command.type}'.`,
+        });
+      }
+      const isDeletedThreadTerminalSettlement =
+        thread.deletedAt !== null &&
+        command.session.activeTurnId === null &&
+        (command.session.status === "ready" ||
+          command.session.status === "interrupted" ||
+          command.session.status === "stopped" ||
+          command.session.status === "error");
+      if (thread.deletedAt !== null && !isDeletedThreadTerminalSettlement) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Deleted thread '${command.threadId}' only accepts terminal session settlement.`,
+        });
+      }
       const sessionEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1592,6 +1715,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      if (isDeletedThreadTerminalSettlement) return sessionEvent;
       const settlement = collectAssistantMessagesToSettle({
         thread,
         nextSession: command.session,
