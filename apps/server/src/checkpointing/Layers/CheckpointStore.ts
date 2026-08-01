@@ -147,6 +147,16 @@ const makeCheckpointStore = Effect.gen(function* () {
           return yield* discardSeed;
         }
 
+        // Force tracked entries through Git's clean/hash path before the full
+        // add. A copied live index can otherwise treat a rapid same-size
+        // rewrite as stat-clean and silently reuse its stale blob id.
+        yield* git.execute({
+          operation: "CheckpointStore.rehashCheckpointIndex",
+          cwd,
+          args: [...TEMP_INDEX_GIT_CONFIG, "add", "--renormalize", "-u", "--", "."],
+          env: tempIndexEnv,
+        });
+
         return true;
       }).pipe(Effect.catch(() => discardSeed));
     }).pipe(Effect.catch(() => Effect.succeed(false)));

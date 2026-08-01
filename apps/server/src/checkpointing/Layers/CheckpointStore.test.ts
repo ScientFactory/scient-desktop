@@ -10,6 +10,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -121,6 +123,9 @@ describe("CheckpointStoreLive", () => {
       }
       if (args === `${TEMP_INDEX_COMMAND_PREFIX}ls-files -v -z`) {
         return Effect.succeed({ code: 0, stdout: "H tracked.txt\0", stderr: "" });
+      }
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add --renormalize -u -- .`) {
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
       if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         capturedSeed = readFileSync(input.env?.GIT_INDEX_FILE ?? "", "utf8");
@@ -331,6 +336,36 @@ describe("CheckpointStoreLive", () => {
       expect(runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe(
         statusBefore,
       );
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rehashes a same-size rewrite whose timestamp still matches the live index", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-racy-index-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    const trackedPath = join(repo, "tracked.txt");
+    writeFileSync(trackedPath, "before\n");
+    runGit(repo, ["add", "tracked.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+
+    const originalStat = statSync(trackedPath);
+    writeFileSync(trackedPath, "after!\n");
+    utimesSync(trackedPath, originalStat.atime, originalStat.mtime);
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/racy-same-size-rewrite",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:tracked.txt`])).toBe("after!");
     } finally {
       await runtime.dispose();
       runtime = null;
