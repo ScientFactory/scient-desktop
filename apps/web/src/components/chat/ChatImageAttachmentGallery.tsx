@@ -2,7 +2,7 @@
 // Purpose: Role-neutral durable chat attachment gallery and preview grouping.
 // Layer: Web chat presentation component
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import { ChatImageFrame } from "./ChatImageFrame";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -45,6 +45,17 @@ export const ChatImageAttachmentGallery = memo(function ChatImageAttachmentGalle
       })),
     [props.images, props.trustContext],
   );
+  useEffect(() => {
+    setDownloadError((current) =>
+      current &&
+      !previewItems.some(
+        (item) =>
+          item.id === current.itemId && chatImageSourceKey(item.source) === current.sourceKey,
+      )
+        ? null
+        : current,
+    );
+  }, [previewItems]);
   const visibleDownloadError =
     downloadError &&
     previewItems.some(
@@ -108,7 +119,10 @@ export const ChatImageAttachmentGallery = memo(function ChatImageAttachmentGalle
         ))}
       </div>
       {visibleDownloadError ? (
-        <p className="mt-1 max-w-[240px] text-xs text-destructive" role="alert">
+        <p
+          className="mt-1 min-w-0 max-w-[240px] text-xs text-destructive [overflow-wrap:anywhere]"
+          role="alert"
+        >
           Could not download {visibleDownloadError.name}: {visibleDownloadError.message}
         </p>
       ) : null}

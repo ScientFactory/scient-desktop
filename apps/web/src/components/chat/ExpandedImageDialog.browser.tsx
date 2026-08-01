@@ -87,6 +87,25 @@ function KeyboardDialogHarness() {
   );
 }
 
+function GallerySourceTransitionHarness() {
+  const [previewUrl, setPreviewUrl] = useState("/attachments/source-a");
+
+  return (
+    <>
+      <button type="button" onClick={() => setPreviewUrl("/attachments/source-a")}>
+        Use source A
+      </button>
+      <button type="button" onClick={() => setPreviewUrl("/attachments/source-b")}>
+        Use source B
+      </button>
+      <ChatImageAttachmentGallery
+        images={[{ id: "capture", name: "capture.png", previewUrl }]}
+        onImageExpand={() => {}}
+      />
+    </>
+  );
+}
+
 describe("ExpandedImageDialog duplicate-source navigation", () => {
   beforeEach(() => {
     downloadUrlAsBlob.mockReset();
@@ -142,11 +161,13 @@ describe("ExpandedImageDialog duplicate-source navigation", () => {
   });
 
   it("reserves a bounded gallery row for a failed thumbnail download", async () => {
-    downloadUrlAsBlob.mockRejectedValue(new Error("The attachment is unavailable."));
+    const longName = `${"capture".repeat(18)}.png`;
+    const longFailure = "unavailable".repeat(24);
+    downloadUrlAsBlob.mockRejectedValue(new Error(longFailure));
     const screen = await render(
       <div className="w-[260px]">
         <ChatImageAttachmentGallery
-          images={[{ id: "capture", name: "capture.png", previewUrl: "/attachments/capture" }]}
+          images={[{ id: "capture", name: longName, previewUrl: "/attachments/capture" }]}
           onImageExpand={() => {}}
         />
         <p>Following transcript content</p>
@@ -154,19 +175,41 @@ describe("ExpandedImageDialog duplicate-source navigation", () => {
     );
 
     try {
-      await page.getByRole("link", { name: "Download capture.png" }).click();
-      const alert = page.getByText(
-        "Could not download capture.png: The attachment is unavailable.",
-        { exact: true },
-      );
+      await page.getByRole("link", { name: `Download ${longName}` }).click();
+      const alert = page.getByText(`Could not download ${longName}: ${longFailure}`, {
+        exact: true,
+      });
       const following = page.getByText("Following transcript content");
       await expect.element(alert).toBeVisible();
       await expect.element(following).toBeVisible();
 
-      const alertRect = (await alert.element()).getBoundingClientRect();
+      const alertElement = await alert.element();
+      const alertRect = alertElement.getBoundingClientRect();
       const followingRect = (await following.element()).getBoundingClientRect();
       expect(alertRect.width).toBeLessThanOrEqual(240);
+      expect(alertElement.scrollWidth).toBeLessThanOrEqual(alertElement.clientWidth + 1);
       expect(alertRect.bottom).toBeLessThanOrEqual(followingRect.top + 1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not revive an old gallery action error after an A to B to A source transition", async () => {
+    downloadUrlAsBlob.mockRejectedValue(new Error("The first source failed."));
+    const screen = await render(<GallerySourceTransitionHarness />);
+
+    try {
+      await page.getByRole("link", { name: "Download capture.png" }).click();
+      const staleError = page.getByText(
+        "Could not download capture.png: The first source failed.",
+        { exact: true },
+      );
+      await expect.element(staleError).toBeVisible();
+
+      await page.getByRole("button", { name: "Use source B" }).click();
+      await expect.element(staleError).not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Use source A" }).click();
+      await expect.element(staleError).not.toBeInTheDocument();
     } finally {
       await screen.unmount();
     }
