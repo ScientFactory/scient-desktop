@@ -54,6 +54,11 @@ import {
   generatedImageAttachmentId,
   materializeGeneratedImageAttachment,
 } from "../../generatedImageAttachments.ts";
+import {
+  CheckpointStore,
+  type CheckpointStoreShape,
+} from "../../checkpointing/Services/CheckpointStore.ts";
+import { ProfileStatsArchive, ProfileStatsArchiveLive } from "../../profileStatsArchive.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -166,7 +171,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProfileStatsArchive | ProviderRuntimeIngestionService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -217,10 +222,22 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     );
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(false),
+      captureCheckpoint: () => Effect.die("unused checkpoint store test method"),
+      copyCheckpointRef: () => Effect.die("unused checkpoint store test method"),
+      hasCheckpointRef: () => Effect.die("unused checkpoint store test method"),
+      restoreCheckpoint: () => Effect.die("unused checkpoint store test method"),
+      reverseCheckpointDiff: () => Effect.die("unused checkpoint store test method"),
+      diffCheckpoints: () => Effect.die("unused checkpoint store test method"),
+      deleteCheckpointRefs: () => Effect.void,
+    };
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(ProjectionTurnRepositoryLive),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provideMerge(ProfileStatsArchiveLive),
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
       Layer.provideMerge(dbPath ? makeSqlitePersistenceLive(dbPath) : SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
@@ -240,6 +257,7 @@ describe("ProviderRuntimeIngestion", () => {
     const projectionTurnRepository = await testRuntime.runPromise(
       Effect.service(ProjectionTurnRepository),
     );
+    const profileStatsArchive = await testRuntime.runPromise(Effect.service(ProfileStatsArchive));
     scope = await Effect.runPromise(Scope.make("sequential"));
     const drain = () => Effect.runPromise(ingestion.drain);
     const startIngestion = async () => {
@@ -320,6 +338,7 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       stopRuntimeSession: provider.stopRuntimeSession,
+      profileStatsArchive,
       drain,
       startIngestion,
       workspaceRoot,
@@ -532,6 +551,217 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("settles a soft-deleted active thread without ingesting new content", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-deleted");
+    const now = new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-deleted-thread-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.makeUnsafe("cmd-soft-delete-active-thread"),
+        threadId,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-deleted-stale-turn-aborted"),
+      provider: "codex",
+      threadId,
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-stale"),
+      payload: {},
+    });
+    await harness.drain();
+    const stillActive = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      stillActive.threads.find((thread) => thread.id === threadId)?.session?.activeTurnId,
+    ).toBe(turnId);
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-deleted-turn-aborted"),
+      provider: "codex",
+      threadId,
+      createdAt: new Date().toISOString(),
+      turnId,
+      payload: {},
+    });
+
+    const settled = await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.deletedAt !== null &&
+        thread.session?.status === "interrupted" &&
+        thread.session.activeTurnId === null,
+    );
+    expect(settled.messages).toEqual([]);
+  });
+
+  it("keeps a deleted child tombstone through refresh and rejects a delayed distinct turn start", async () => {
+    const harness = await createHarness();
+    const childThreadId = asThreadId("subagent:thread-1:child-provider-delayed");
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-child-initial-turn-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-child-initial"),
+      providerRefs: {
+        providerThreadId: "child-provider-delayed",
+        providerParentThreadId: "parent-provider-1",
+      },
+      payload: {},
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.activeTurnId === "turn-child-initial",
+      2000,
+      childThreadId,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-child-running-before-turn-id"),
+        threadId: childThreadId,
+        session: {
+          threadId: childThreadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.makeUnsafe("cmd-delete-child-before-delayed-turn"),
+        threadId: childThreadId,
+      }),
+    );
+    await Effect.runPromise(harness.engine.refreshCommandReadModel());
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-child-delayed-distinct-turn-started"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-child-delayed"),
+      providerRefs: {
+        providerThreadId: "child-provider-delayed",
+        providerParentThreadId: "parent-provider-1",
+      },
+      payload: {},
+    });
+    await harness.drain();
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const child = readModel.threads.find((thread) => thread.id === childThreadId);
+    expect(child).toMatchObject({
+      id: childThreadId,
+      deletedAt: expect.any(String),
+      session: {
+        status: "running",
+        activeTurnId: null,
+      },
+    });
+    expect(readModel.threads.filter((thread) => thread.id === childThreadId)).toHaveLength(1);
+  });
+
+  it("does not recreate a child after its provider owner and tombstone are safely purged", async () => {
+    const harness = await createHarness();
+    const rootThreadId = asThreadId("thread-1");
+    const childThreadId = asThreadId("subagent:thread-1:child-provider-purged");
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-child-before-family-purge"),
+      provider: "codex",
+      createdAt: now,
+      threadId: rootThreadId,
+      turnId: asTurnId("turn-child-before-family-purge"),
+      providerRefs: {
+        providerThreadId: "child-provider-purged",
+        providerParentThreadId: "parent-provider-1",
+      },
+      payload: {},
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.activeTurnId === "turn-child-before-family-purge",
+      2000,
+      childThreadId,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.makeUnsafe("cmd-delete-family-before-safe-purge"),
+        threadId: rootThreadId,
+        cascadeDescendants: true,
+        expectedDescendantThreadIds: [childThreadId],
+      }),
+    );
+    expect(
+      await Effect.runPromise(
+        harness.profileStatsArchive.purgeThreadWithStatsSnapshot({ threadId: rootThreadId }),
+      ),
+    ).toBe(true);
+    expect(
+      await Effect.runPromise(
+        harness.profileStatsArchive.purgeThreadWithStatsSnapshot({ threadId: childThreadId }),
+      ),
+    ).toBe(true);
+    await Effect.runPromise(harness.engine.refreshCommandReadModel());
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-child-distinct-after-family-purge"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: rootThreadId,
+      turnId: asTurnId("turn-child-after-family-purge"),
+      providerRefs: {
+        providerThreadId: "child-provider-purged",
+        providerParentThreadId: "parent-provider-1",
+      },
+      payload: {},
+    });
+    await harness.drain();
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(readModel.threads.some((thread) => thread.id === rootThreadId)).toBe(false);
+    expect(readModel.threads.some((thread) => thread.id === childThreadId)).toBe(false);
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

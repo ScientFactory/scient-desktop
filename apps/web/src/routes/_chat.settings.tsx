@@ -19,6 +19,7 @@ import { getModelOptions, normalizeModelSlug } from "@synara/shared/model";
 import { providerSupportsSignOut } from "@synara/shared/providerSignOut";
 import { asProviderSignOutNativeApi } from "@synara/shared/providerSignOutTransport";
 import { pluralize } from "@synara/shared/text";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import {
   type ReactNode,
   type RefObject,
@@ -124,9 +125,25 @@ import { playAppSnapCaptureSound } from "../lib/appSnapSound";
 import { CentralIcon } from "../lib/central-icons";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import {
+  archivedThreadDeleteConfirmation,
+  buildArchivedThreadFamilyScopes,
+  buildArchivedWorktreeDeletionPlan,
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "../lib/archivedThreadDelete";
+import {
+  archivedThreadDeleteAccessibleLabel,
+  archivedThreadDeleteActionLabel,
+  archivedThreadDeleteProgressMessage,
+  archivedThreadDeleteSuccessMessage,
+  archivedWorktreeDeleteBlockedMessage,
+  archivedWorktreeDeleteSuccessMessage,
+  archivedThreadRestoreAccessibleLabel,
+  archivedThreadRestoreActionLabel,
+  archivedThreadRestoreProgressMessage,
+  archivedThreadRestoreSuccessMessage,
+  threadFamilyConversationCountLabel,
+} from "../lib/threadArchivePresentation";
 import {
   ArchiveIcon,
   ChevronDownIcon,
@@ -788,10 +805,11 @@ function SettingsRouteView() {
   const allThreadsMessageless = useStore(useMemo(() => createAllThreadsMessagelessSelector(), []));
   const projects = useStore((store) => store.projects);
   const threadsHydrated = useStore((store) => store.threadsHydrated);
-  const archivedThreads = useMemo(
-    () => threadShells.filter((thread) => thread.archivedAt != null),
+  const archivedThreadFamilyScopes = useMemo(
+    () => buildArchivedThreadFamilyScopes(threadShells),
     [threadShells],
   );
+  const archivedThreads = archivedThreadFamilyScopes.archivedRoots;
   const shouldOfferRecoveryTools = useMemo(() => {
     if (!threadsHydrated || projects.length === 0) {
       return false;
@@ -1850,27 +1868,29 @@ function SettingsRouteView() {
         return;
       }
 
-      const linkedThreadsFromSnapshot = snapshot.threads.filter((thread) => {
-        const candidatePaths = [
-          normalizeManagedWorktreePath(thread.worktreePath),
-          normalizeManagedWorktreePath(thread.associatedWorktreePath ?? null),
-        ];
-        return candidatePaths.includes(input.worktreePath);
+      const deletionPlan = buildArchivedWorktreeDeletionPlan({
+        worktreePath: input.worktreePath,
+        snapshotThreads: snapshot.threads,
       });
-      const linkedArchivedThreadIds = linkedThreadsFromSnapshot
-        .filter((thread) => (thread.archivedAt ?? null) !== null)
-        .map((thread) => thread.id);
-      const linkedActiveThreadCount = linkedThreadsFromSnapshot.filter(
-        (thread) => (thread.archivedAt ?? null) === null,
-      ).length;
-      const linkedConversationCount = linkedActiveThreadCount + linkedArchivedThreadIds.length;
+      if (deletionPlan.unexpectedDescendantThreadIds.length > 0) {
+        setWorktreeFeedback({
+          tone: "error",
+          message: archivedWorktreeDeleteBlockedMessage(
+            displayName,
+            deletionPlan.unexpectedDescendantThreadIds.length,
+          ),
+        });
+        return;
+      }
+      const archivedDeletionCount = deletionPlan.threadIds.length;
+      const linkedConversationCount = deletionPlan.linkedActiveThreadCount + archivedDeletionCount;
       const confirmed = await api.dialogs.confirm(
         linkedConversationCount > 0
           ? [
               `Delete worktree "${displayName}"?`,
               "",
-              `${linkedActiveThreadCount} active and ${linkedArchivedThreadIds.length} archived ${pluralize(linkedConversationCount, "conversation is", "conversations are")} linked to this worktree.`,
-              linkedArchivedThreadIds.length > 0
+              `${deletionPlan.linkedActiveThreadCount} active and ${archivedDeletionCount} archived ${pluralize(linkedConversationCount, "conversation is", "conversations are")} linked to this worktree.`,
+              archivedDeletionCount > 0
                 ? "Archived conversations will be deleted first."
                 : "Deleting it can break reopening those chats in the same workspace.",
               "",
@@ -1888,7 +1908,8 @@ function SettingsRouteView() {
       try {
         await deleteArchivedThreadsFromClient({
           api,
-          threadIds: linkedArchivedThreadIds,
+          threadIds: deletionPlan.linkedArchivedThreadIds,
+          snapshotThreads: snapshot.threads,
           removeDeletedThreadFromClientState,
         });
 
@@ -1902,10 +1923,7 @@ function SettingsRouteView() {
         });
         setWorktreeFeedback({
           tone: "success",
-          message:
-            linkedArchivedThreadIds.length > 0
-              ? `${displayName} was removed and ${linkedArchivedThreadIds.length} archived ${pluralize(linkedArchivedThreadIds.length, "conversation")} were deleted.`
-              : `${displayName} was removed.`,
+          message: archivedWorktreeDeleteSuccessMessage(displayName, archivedDeletionCount),
         });
       } catch (error) {
         setWorktreeFeedback({
@@ -1917,44 +1935,59 @@ function SettingsRouteView() {
     [queryClient, removeDeletedThreadFromClientState, removeWorktreeMutation],
   );
 
-  const unarchiveThread = useCallback(async (threadId: ThreadId) => {
-    const api = readNativeApi();
-    if (!api) return;
-    setArchivedThreadFeedback({ tone: "info", message: "Restoring archived thread..." });
-    try {
-      await unarchiveThreadFromClient(api.orchestration, threadId);
+  const unarchiveThread = useCallback(
+    async (threadId: ThreadId, threadTitle: string, conversationCount: number) => {
+      const api = readNativeApi();
+      if (!api) return;
       setArchivedThreadFeedback({
-        tone: "success",
-        message: "The thread was restored to the sidebar.",
+        tone: "info",
+        message: archivedThreadRestoreProgressMessage(threadTitle, conversationCount),
       });
-    } catch (error) {
-      setArchivedThreadFeedback({
-        tone: "error",
-        message: error instanceof Error ? error.message : "Unable to restore the thread.",
-      });
-    }
-  }, []);
+      try {
+        await unarchiveThreadFromClient(api.orchestration, threadId);
+        setArchivedThreadFeedback({
+          tone: "success",
+          message: archivedThreadRestoreSuccessMessage(conversationCount),
+        });
+      } catch (error) {
+        setArchivedThreadFeedback({
+          tone: "error",
+          message: error instanceof Error ? error.message : "Unable to restore the thread.",
+        });
+      }
+    },
+    [],
+  );
 
   const deleteArchivedThread = useCallback(
     async (threadId: ThreadId, threadTitle: string) => {
       const api = readNativeApi();
       if (!api) return;
 
+      const descendantThreadIds = collectSubagentDescendants(threadShells, threadId).map(
+        (thread) => thread.id,
+      );
+      const conversationCount = descendantThreadIds.length + 1;
+
       const confirmed = await api.dialogs.confirm(
-        `Permanently delete "${threadTitle}"?\n\nThis will remove the thread and its conversation history forever.`,
+        archivedThreadDeleteConfirmation(threadTitle, conversationCount),
       );
       if (!confirmed) return;
 
-      setArchivedThreadFeedback({ tone: "info", message: `Deleting ${threadTitle}...` });
+      setArchivedThreadFeedback({
+        tone: "info",
+        message: archivedThreadDeleteProgressMessage(threadTitle, conversationCount),
+      });
       try {
         await deleteArchivedThreadFromClient({
           api,
           threadId,
+          descendantThreadIds: descendantThreadIds.toReversed(),
           removeDeletedThreadFromClientState,
         });
         setArchivedThreadFeedback({
           tone: "success",
-          message: "The archived thread was permanently removed.",
+          message: archivedThreadDeleteSuccessMessage(conversationCount),
         });
       } catch (error) {
         setArchivedThreadFeedback({
@@ -1963,24 +1996,37 @@ function SettingsRouteView() {
         });
       }
     },
-    [removeDeletedThreadFromClientState],
+    [removeDeletedThreadFromClientState, threadShells],
   );
 
   const handleArchivedThreadContextMenu = useCallback(
-    async (threadId: ThreadId, threadTitle: string, position: { x: number; y: number }) => {
+    async (
+      threadId: ThreadId,
+      threadTitle: string,
+      restoreConversationCount: number,
+      deleteConversationCount: number,
+      position: { x: number; y: number },
+    ) => {
       const api = readNativeApi();
       if (!api) return;
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "restore", label: "Restore" },
-          { id: "delete", label: "Delete", destructive: true },
+          {
+            id: "restore",
+            label: archivedThreadRestoreActionLabel(restoreConversationCount),
+          },
+          {
+            id: "delete",
+            label: archivedThreadDeleteActionLabel(deleteConversationCount),
+            destructive: true,
+          },
         ],
         position,
       );
 
       if (clicked === "restore") {
-        await unarchiveThread(threadId);
+        await unarchiveThread(threadId, threadTitle, restoreConversationCount);
         return;
       }
 
@@ -3181,38 +3227,60 @@ function SettingsRouteView() {
             key={project?.id ?? "unknown-project"}
             title={project?.name ?? "Unknown project"}
           >
-            {projectThreads.map((thread) => (
-              <SettingsListRow
-                key={thread.id}
-                title={thread.title}
-                description={`Archived ${formatRelativeTime(thread.archivedAt ?? thread.createdAt)}`}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void handleArchivedThreadContextMenu(thread.id, thread.title, {
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
-                }}
-                actions={
-                  <>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => void unarchiveThread(thread.id)}
-                    >
-                      Restore
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="destructive"
-                      onClick={() => void deleteArchivedThread(thread.id, thread.title)}
-                    >
-                      Delete
-                    </Button>
-                  </>
-                }
-              />
-            ))}
+            {projectThreads.map((thread) => {
+              const restoreConversationCount =
+                archivedThreadFamilyScopes.restoreCountByRootId.get(thread.id) ?? 1;
+              const deleteConversationCount =
+                archivedThreadFamilyScopes.deleteCountByRootId.get(thread.id) ?? 1;
+              return (
+                <SettingsListRow
+                  key={thread.id}
+                  title={thread.title}
+                  description={`Archived ${formatRelativeTime(thread.archivedAt ?? thread.createdAt)} · ${threadFamilyConversationCountLabel(restoreConversationCount)}`}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    void handleArchivedThreadContextMenu(
+                      thread.id,
+                      thread.title,
+                      restoreConversationCount,
+                      deleteConversationCount,
+                      {
+                        x: event.clientX,
+                        y: event.clientY,
+                      },
+                    );
+                  }}
+                  actions={
+                    <>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        aria-label={archivedThreadRestoreAccessibleLabel(
+                          thread.title,
+                          restoreConversationCount,
+                        )}
+                        onClick={() =>
+                          void unarchiveThread(thread.id, thread.title, restoreConversationCount)
+                        }
+                      >
+                        {archivedThreadRestoreActionLabel(restoreConversationCount)}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="destructive"
+                        aria-label={archivedThreadDeleteAccessibleLabel(
+                          thread.title,
+                          deleteConversationCount,
+                        )}
+                        onClick={() => void deleteArchivedThread(thread.id, thread.title)}
+                      >
+                        {archivedThreadDeleteActionLabel(deleteConversationCount)}
+                      </Button>
+                    </>
+                  }
+                />
+              );
+            })}
           </SettingsSection>
         ))}
       </div>

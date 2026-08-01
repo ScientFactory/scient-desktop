@@ -716,6 +716,130 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("commits recursive thread lifecycle events as one ordered command result", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const projectId = asProjectId("project-subtree-lifecycle");
+    const parentId = ThreadId.makeUnsafe("thread-subtree-parent");
+    const childId = ThreadId.makeUnsafe("thread-subtree-child");
+    const grandchildId = ThreadId.makeUnsafe("thread-subtree-grandchild");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-subtree-project"),
+        projectId,
+        title: "Subtree Project",
+        workspaceRoot: "/tmp/project-subtree-lifecycle",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        createdAt,
+      }),
+    );
+    for (const [threadId, parentThreadId] of [
+      [parentId, null],
+      [childId, parentId],
+      [grandchildId, childId],
+    ] as const) {
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe(`cmd-create-${threadId}`),
+          threadId,
+          projectId,
+          title: String(threadId),
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          ...(parentThreadId ? { parentThreadId } : {}),
+          createdAt,
+        }),
+      );
+    }
+
+    const archiveResult = await system.run(
+      engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.makeUnsafe("cmd-subtree-archive"),
+        threadId: parentId,
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads
+        .filter((thread) => [parentId, childId, grandchildId].includes(thread.id))
+        .every((thread) => thread.archivedAt !== null),
+    ).toBe(true);
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.makeUnsafe("cmd-subtree-unarchive"),
+        threadId: parentId,
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads
+        .filter((thread) => [parentId, childId, grandchildId].includes(thread.id))
+        .every((thread) => (thread.archivedAt ?? null) === null),
+    ).toBe(true);
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.makeUnsafe("cmd-subtree-delete-without-cascade"),
+          threadId: parentId,
+        }),
+      ),
+    ).rejects.toThrow("complete family");
+    const eventsAfterRejectedDelete = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      eventsAfterRejectedDelete.filter(
+        (event) => event.commandId === "cmd-subtree-delete-without-cascade",
+      ),
+    ).toEqual([]);
+    expect(
+      (await system.run(engine.getReadModel())).threads
+        .filter((thread) => [parentId, childId, grandchildId].includes(thread.id))
+        .every((thread) => thread.deletedAt === null),
+    ).toBe(true);
+
+    const deleteResult = await system.run(
+      engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.makeUnsafe("cmd-subtree-delete"),
+        threadId: parentId,
+        cascadeDescendants: true,
+        expectedDescendantThreadIds: [childId, grandchildId],
+      }),
+    );
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    const deleteEvents = events.filter((event) => event.commandId === "cmd-subtree-delete");
+    expect(deleteEvents.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ threadId: grandchildId }),
+      expect.objectContaining({ threadId: childId }),
+      expect.objectContaining({ threadId: parentId }),
+    ]);
+    expect(deleteResult.sequence).toBe(deleteEvents.at(-1)?.sequence);
+    expect(archiveResult.sequence).toBeGreaterThan(0);
+    expect(
+      (await system.run(engine.getReadModel())).threads
+        .filter((thread) => [parentId, childId, grandchildId].includes(thread.id))
+        .every((thread) => thread.deletedAt !== null),
+    ).toBe(true);
+    await system.dispose();
+  });
+
   it("streams persisted domain events in order", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
