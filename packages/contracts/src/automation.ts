@@ -134,6 +134,31 @@ export const AutomationAllowedCapability = Schema.Literals([
 ]);
 export type AutomationAllowedCapability = typeof AutomationAllowedCapability.Type;
 
+/**
+ * Versioned, immutable host grant captured when an automation run is created.
+ *
+ * The persisted portion deliberately excludes a provider session or turn. The
+ * gateway binds the exact live turn from the run's pending message before it
+ * constructs a central Scient operation authority. A process-epoch hash makes
+ * pre-restart grants unusable without storing a credential.
+ */
+export const AutomationOperationGrantSnapshot = Schema.Struct({
+  version: Schema.Literal(1),
+  runtimeEpochHash: TrimmedNonEmptyString.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
+  automationVersion: TrimmedNonEmptyString.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
+  automationId: AutomationId,
+  runId: AutomationRunId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  pendingMessageId: MessageId,
+  capabilities: Schema.Array(
+    Schema.Literals(["project:context:read", "thread:list", "thread:read", "thread:drive"]),
+  ),
+  issuedAt: AutomationIsoDateTime,
+  leaseExpiresAt: AutomationIsoDateTime,
+});
+export type AutomationOperationGrantSnapshot = typeof AutomationOperationGrantSnapshot.Type;
+
 export const AutomationPermissionSnapshot = Schema.Struct({
   provider: ProviderKind,
   modelSelection: ModelSelection,
@@ -143,6 +168,9 @@ export const AutomationPermissionSnapshot = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   worktreeMode: AutomationWorktreeMode,
   allowedCapabilities: Schema.Array(AutomationAllowedCapability),
+  operationGrant: Schema.optional(Schema.NullOr(AutomationOperationGrantSnapshot)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   createdAt: AutomationIsoDateTime,
 });
 export type AutomationPermissionSnapshot = typeof AutomationPermissionSnapshot.Type;

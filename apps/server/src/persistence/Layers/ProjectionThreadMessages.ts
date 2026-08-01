@@ -126,8 +126,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.dispatch_mode
           ),
           dispatch_origin = COALESCE(
-            excluded.dispatch_origin,
-            projection_thread_messages.dispatch_origin
+            projection_thread_messages.dispatch_origin,
+            excluded.dispatch_origin
           ),
           dispatch_source = COALESCE(
             excluded.dispatch_source,
