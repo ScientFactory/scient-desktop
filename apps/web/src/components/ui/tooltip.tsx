@@ -40,6 +40,7 @@ function TooltipPopup({
   viewportClassName,
   variant = "default",
   align = "center",
+  alignOffset = 0,
   sideOffset = 4,
   side = "top",
   anchor,
@@ -47,6 +48,7 @@ function TooltipPopup({
   ...props
 }: TooltipPrimitive.Popup.Props & {
   align?: TooltipPrimitive.Positioner.Props["align"];
+  alignOffset?: TooltipPrimitive.Positioner.Props["alignOffset"];
   side?: TooltipPrimitive.Positioner.Props["side"];
   sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
@@ -64,6 +66,7 @@ function TooltipPopup({
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner
         align={align}
+        alignOffset={alignOffset}
         anchor={anchor}
         className={cn(
           "z-50 h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none",

@@ -714,6 +714,26 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("resolveAssistantMessageDisplayText", () => {
+  it("suppresses the empty placeholder when the assistant owns a durable image", () => {
+    expect(
+      resolveAssistantMessageDisplayText({
+        message: {
+          text: "",
+          streaming: false,
+          attachments: [
+            {
+              type: "image",
+              id: "image-1",
+              name: "generated-image.png",
+              mimeType: "image/png",
+              sizeBytes: 12,
+            },
+          ],
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("suppresses the empty placeholder when the turn visibly completed an image", () => {
     expect(
       resolveAssistantMessageDisplayText({

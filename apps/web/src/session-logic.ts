@@ -282,6 +282,13 @@ type LatestTurnTiming = Pick<
 >;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
 
+/** Archive must not hide a provider session during startup or before its turn id is projected. */
+export function isSessionBusyForArchive(
+  session: Pick<ThreadSession, "orchestrationStatus"> | null | undefined,
+): boolean {
+  return session?.orchestrationStatus === "starting" || session?.orchestrationStatus === "running";
+}
+
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,

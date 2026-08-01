@@ -58,6 +58,7 @@ export function makeServerRuntimeServicesLayer() {
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(ServerSettingsLive),
   );
   const studioOutputReactorLayer = StudioOutputReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),

@@ -153,6 +153,11 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asTrimmedString(value: unknown): string | undefined {
+  const stringValue = asString(value)?.trim();
+  return stringValue && stringValue.length > 0 ? stringValue : undefined;
+}
+
 function asArray(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
@@ -605,7 +610,7 @@ function codexEventBase(
   };
 }
 
-function codexGeneratedImageThreadId(
+function codexGeneratedImageProviderThreadId(
   event: ProviderEvent,
   payload: Record<string, unknown> | undefined,
 ): string | undefined {
@@ -615,9 +620,15 @@ function codexGeneratedImageThreadId(
     firstStringValue(msg, ["thread_id", "threadId", "threadID", "thread"]) ??
     firstStringValue(nestedEvent, ["thread_id", "threadId", "threadID", "thread"]) ??
     firstStringValue(payload, ["thread_id", "threadId", "threadID", "thread"]) ??
-    event.providerThreadId ??
-    event.threadId
+    event.providerThreadId
   );
+}
+
+function codexGeneratedImageThreadId(
+  event: ProviderEvent,
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  return codexGeneratedImageProviderThreadId(event, payload) ?? event.threadId;
 }
 
 function sanitizeGeneratedImagePayload(event: ProviderEvent, canonicalThreadId: ThreadId): unknown {
@@ -684,9 +695,10 @@ function mapGeneratedImageEndEvent(
   }
   const payload = asObject(event.payload);
   const candidate = generatedImageEventCandidate(event);
+  const providerThreadId = codexGeneratedImageProviderThreadId(event, payload);
   const reference = extractCodexGeneratedImageReference({
     value: candidate,
-    threadId: codexGeneratedImageThreadId(event, payload) ?? canonicalThreadId,
+    threadId: providerThreadId ?? canonicalThreadId,
   });
   if (!reference) {
     return undefined;
@@ -709,6 +721,7 @@ function mapGeneratedImageEndEvent(
       ...runtimeEventBase(
         {
           ...event,
+          ...(providerThreadId ? { providerThreadId } : {}),
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
         },
@@ -1430,27 +1443,30 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "deprecationNotice") {
+    const details = asTrimmedString(payload?.details);
     return [
       {
         type: "deprecation.notice",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          summary: asString(payload?.summary) ?? "Deprecation notice",
-          ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
+          summary: asTrimmedString(payload?.summary) ?? "Deprecation notice",
+          ...(details ? { details } : {}),
         },
       },
     ];
   }
 
   if (event.method === "configWarning") {
+    const details = asTrimmedString(payload?.details);
+    const path = asTrimmedString(payload?.path);
     return [
       {
         type: "config.warning",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          summary: asString(payload?.summary) ?? "Configuration warning",
-          ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
-          ...(asString(payload?.path) ? { path: asString(payload?.path) } : {}),
+          summary: asTrimmedString(payload?.summary) ?? "Configuration warning",
+          ...(details ? { details } : {}),
+          ...(path ? { path } : {}),
           ...(payload?.range !== undefined ? { range: payload.range } : {}),
         },
       },
