@@ -59,6 +59,16 @@ export interface OrchestrationEngineShape {
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
+   * Dispatch a protected command whose persistence transaction must lose to a
+   * revocation signal until commit. It returns at the durable commit boundary;
+   * deferred projection/publication continues on the serialized worker.
+   */
+  readonly dispatchProtected: (
+    command: OrchestrationCommand,
+    revocation: Effect.Effect<unknown, unknown, never>,
+  ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
+
+  /**
    * Repair project-facing projection state for older installs without clearing
    * existing chat rows.
    *

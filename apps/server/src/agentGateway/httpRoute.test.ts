@@ -42,7 +42,7 @@ function makeFakeCredentials(): AgentGatewayCredentialsShape {
             threadId: "thread-1",
             provider: "claudeAgent",
             issuedAt: 0,
-            capabilities: new Set(["thread:read"]),
+            capabilities: ["thread:read"],
           }
         : null,
   } as unknown as AgentGatewayCredentialsShape;
