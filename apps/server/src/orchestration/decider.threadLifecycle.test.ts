@@ -100,6 +100,52 @@ function makeInterruptedEditableChild(input: {
   };
 }
 
+function makeRunningChildWithTail(input: { readonly queued: boolean }) {
+  const activeMessageId = MessageId.makeUnsafe("message-active-child");
+  const tailMessageId = input.queued
+    ? MessageId.makeUnsafe("message-queued-child")
+    : activeMessageId;
+  const activeTurnId = TurnId.makeUnsafe("turn-active-child");
+  const activeMessage = {
+    id: activeMessageId,
+    role: "user" as const,
+    text: "active child prompt",
+    turnId: null,
+    streaming: false,
+    source: "native" as const,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const thread = {
+    ...makeThread({
+      id: CHILD,
+      parentThreadId: PARENT,
+      sessionStatus: "running",
+      activeTurnId,
+    }),
+    messages: input.queued
+      ? [
+          activeMessage,
+          {
+            ...activeMessage,
+            id: tailMessageId,
+            text: "queued child prompt",
+          },
+        ]
+      : [activeMessage],
+    latestTurn: {
+      turnId: activeTurnId,
+      requestMessageId: activeMessageId,
+      state: "running" as const,
+      requestedAt: NOW,
+      startedAt: NOW,
+      completedAt: null,
+      assistantMessageId: null,
+    },
+  } satisfies OrchestrationReadModel["threads"][number];
+  return { thread, tailMessageId };
+}
+
 function makeReadModel(threads: OrchestrationReadModel["threads"]): OrchestrationReadModel {
   return {
     snapshotSequence: 1,
@@ -307,6 +353,60 @@ describe("thread subtree lifecycle decisions", () => {
       "sequence"
     >;
     expect(retryEvent.type).toBe("thread.message-edit-resend-requested");
+  });
+
+  it("rejects an active child edit while its shared parent is busy", async () => {
+    const { thread, tailMessageId } = makeRunningChildWithTail({ queued: false });
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.message.edit-and-resend",
+            commandId: CommandId.makeUnsafe("cmd-edit-active-child-parent-busy"),
+            threadId: CHILD,
+            messageId: tailMessageId,
+            text: "edited active child prompt",
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([
+            makeThread({ id: PARENT, sessionStatus: "running" }),
+            thread,
+          ]),
+        }),
+      ),
+    ).rejects.toThrow("shared parent session is busy");
+  });
+
+  it("keeps a genuinely queued child-tail edit available while its shared parent is busy", async () => {
+    const { thread, tailMessageId } = makeRunningChildWithTail({ queued: true });
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.message.edit-and-resend",
+          commandId: CommandId.makeUnsafe("cmd-edit-queued-child-parent-busy"),
+          threadId: CHILD,
+          messageId: tailMessageId,
+          text: "edited queued child prompt",
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeThread({ id: PARENT, sessionStatus: "running" }),
+          thread,
+        ]),
+      }),
+    );
+    const event = (Array.isArray(result) ? result[0] : result) as Omit<
+      OrchestrationEvent,
+      "sequence"
+    >;
+    expect(event).toMatchObject({
+      type: "thread.message-edit-resend-requested",
+      payload: { threadId: CHILD, messageId: tailMessageId, rollbackTurnCount: 0 },
+    });
   });
 
   it("restores every archived nondeleted descendant with the parent", async () => {

@@ -1661,7 +1661,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       const parentThread = resolveSharedProviderParentThread(readModel, thread);
-      if (editTarget.rollbackTurnCount > 0 && isProviderSessionBusyForChildEdit(parentThread?.session)) {
+      const isQueuedTailEdit =
+        editTarget.mode === "active-tail" &&
+        thread.latestTurn?.state === "running" &&
+        thread.latestTurn.requestMessageId != null &&
+        thread.latestTurn.requestMessageId !== command.messageId;
+      if (!isQueuedTailEdit && isProviderSessionBusyForChildEdit(parentThread?.session)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "A subagent message cannot be edited while its shared parent session is busy.",
