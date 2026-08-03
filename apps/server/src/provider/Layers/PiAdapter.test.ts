@@ -15,6 +15,7 @@ import {
   getPiSupportedThinkingOptions,
   makePiUserInputOptions,
   PLAIN_PI_EXTENSION_THEME,
+  toPiProviderModelDescriptor,
 } from "./PiAdapter";
 
 function makePiModel(input: {
@@ -28,6 +29,116 @@ function makePiModel(input: {
 }
 
 describe("getPiDiscoverableModels", () => {
+  it("preserves valid Pi model identities and metadata", () => {
+    const descriptor = toPiProviderModelDescriptor(
+      {
+        provider: "openrouter",
+        id: "google/gemma-4-26b-a4b-it",
+        name: "Google: Gemma 4 26B A4B",
+        reasoning: false,
+      } as Model<Api>,
+      () => "OpenRouter",
+    );
+
+    expect(descriptor).toEqual({
+      slug: "openrouter/google/gemma-4-26b-a4b-it",
+      name: "Google: Gemma 4 26B A4B",
+      upstreamProviderId: "openrouter",
+      upstreamProviderName: "OpenRouter",
+    });
+  });
+
+  it("trims extension-owned display metadata", () => {
+    const descriptor = toPiProviderModelDescriptor(
+      {
+        provider: "openrouter",
+        id: "google/gemma-4-26b-a4b-it",
+        name: " Google: Gemma 4 26B A4B ",
+        reasoning: false,
+      } as Model<Api>,
+      () => " OpenRouter ",
+    );
+
+    expect(descriptor).toMatchObject({
+      slug: "openrouter/google/gemma-4-26b-a4b-it",
+      name: "Google: Gemma 4 26B A4B",
+      upstreamProviderId: "openrouter",
+      upstreamProviderName: "OpenRouter",
+    });
+  });
+
+  it("falls back from blank display metadata without dropping a valid model", () => {
+    const descriptor = toPiProviderModelDescriptor(
+      {
+        provider: "local",
+        id: "glm-5.2",
+        name: "   ",
+        reasoning: false,
+      } as Model<Api>,
+      () => "\t",
+    );
+
+    expect(descriptor).toMatchObject({
+      slug: "local/glm-5.2",
+      name: "local/glm-5.2",
+      upstreamProviderId: "local",
+      upstreamProviderName: "local",
+    });
+  });
+
+  it("omits models with blank registry identities", () => {
+    expect(
+      toPiProviderModelDescriptor(
+        { provider: "", id: "model-id", name: "Model", reasoning: false } as Model<Api>,
+        () => "Provider",
+      ),
+    ).toBeNull();
+    expect(
+      toPiProviderModelDescriptor(
+        { provider: "provider", id: "   ", name: "Model", reasoning: false } as Model<Api>,
+        () => "Provider",
+      ),
+    ).toBeNull();
+  });
+
+  it("omits models whose trimmed identity would no longer resolve in Pi", () => {
+    expect(
+      toPiProviderModelDescriptor(
+        { provider: " openrouter", id: "model-id", name: "Model", reasoning: false } as Model<Api>,
+        () => "OpenRouter",
+      ),
+    ).toBeNull();
+    expect(
+      toPiProviderModelDescriptor(
+        { provider: "openrouter", id: " model-id", name: "Model", reasoning: false } as Model<Api>,
+        () => "OpenRouter",
+      ),
+    ).toBeNull();
+  });
+
+  it("preserves supported thinking metadata", () => {
+    const descriptor = toPiProviderModelDescriptor(
+      {
+        provider: "anthropic",
+        id: "claude-opus-4-8",
+        name: "Claude Opus 4.8",
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh" },
+      } as Model<Api>,
+      () => "Anthropic",
+    );
+
+    expect(descriptor?.supportedReasoningEfforts?.map((option) => option.value)).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(descriptor?.defaultReasoningEffort).toBe("medium");
+  });
+
   it("includes custom-provider models authenticated through auth.json semantics", () => {
     const agentDir = mkdtempSync(path.join(tmpdir(), "synara-pi-models-"));
     const modelsPath = path.join(agentDir, "models.json");
