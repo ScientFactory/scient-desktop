@@ -196,6 +196,50 @@ export function getPiDiscoverableModels(
   return registry.getAvailable();
 }
 
+/**
+ * Pi extensions own their model metadata, so normalize display-only values
+ * before they cross Scient's trimmed-string RPC contract. Identity values stay
+ * byte-for-byte unchanged so every returned slug still resolves in Pi's model
+ * registry; malformed identities are omitted instead of breaking the catalog.
+ */
+export function toPiProviderModelDescriptor(
+  model: Model<Api>,
+  getProviderDisplayName: (provider: string) => string,
+): ProviderListModelsResult["models"][number] | null {
+  const provider = trimToUndefined(model.provider);
+  const modelId = trimToUndefined(model.id);
+  if (
+    !provider ||
+    !modelId ||
+    provider !== model.provider ||
+    modelId !== model.id ||
+    provider.includes("/")
+  ) {
+    return null;
+  }
+
+  const slug = `${provider}/${modelId}`;
+  const supportedThinkingOptions = getPiSupportedThinkingOptions(model);
+  return {
+    slug,
+    name: trimToUndefined(model.name) ?? slug,
+    upstreamProviderId: provider,
+    upstreamProviderName: trimToUndefined(getProviderDisplayName(provider)) ?? provider,
+    ...(supportedThinkingOptions.length > 0
+      ? {
+          supportedReasoningEfforts: supportedThinkingOptions.map((option) => ({
+            value: option.value,
+            label: option.label,
+            description: option.description,
+          })),
+          ...(supportedThinkingOptions.some((option) => option.value === DEFAULT_PI_THINKING_LEVEL)
+            ? { defaultReasoningEffort: DEFAULT_PI_THINKING_LEVEL }
+            : {}),
+        }
+      : {}),
+  };
+}
+
 function parseModelReference(
   modelId: string | null | undefined,
 ): { readonly provider?: string; readonly id: string } | undefined {
@@ -2133,28 +2177,12 @@ const makePiAdapter = (options?: PiAdapterLiveOptions) =>
             modelRegistry: registry,
           });
           const extensionCount = services.resourceLoader.getExtensions().extensions.length;
-          const models = getPiDiscoverableModels(services.modelRegistry).map((model) => {
-            const supportedThinkingOptions = getPiSupportedThinkingOptions(model);
-            return {
-              slug: `${model.provider}/${model.id}`,
-              name: model.name,
-              upstreamProviderId: model.provider,
-              upstreamProviderName: services.modelRegistry.getProviderDisplayName(model.provider),
-              ...(supportedThinkingOptions.length > 0
-                ? {
-                    supportedReasoningEfforts: supportedThinkingOptions.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                      description: option.description,
-                    })),
-                    ...(supportedThinkingOptions.some(
-                      (option) => option.value === DEFAULT_PI_THINKING_LEVEL,
-                    )
-                      ? { defaultReasoningEffort: DEFAULT_PI_THINKING_LEVEL }
-                      : {}),
-                  }
-                : {}),
-            };
+          const models = getPiDiscoverableModels(services.modelRegistry).flatMap((model) => {
+            const descriptor = toPiProviderModelDescriptor(
+              model,
+              services.modelRegistry.getProviderDisplayName.bind(services.modelRegistry),
+            );
+            return descriptor ? [descriptor] : [];
           });
           return {
             models,
