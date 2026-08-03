@@ -208,7 +208,13 @@ export function toPiProviderModelDescriptor(
 ): ProviderListModelsResult["models"][number] | null {
   const provider = trimToUndefined(model.provider);
   const modelId = trimToUndefined(model.id);
-  if (!provider || !modelId || provider !== model.provider || modelId !== model.id) {
+  if (
+    !provider ||
+    !modelId ||
+    provider !== model.provider ||
+    modelId !== model.id ||
+    provider.includes("/")
+  ) {
     return null;
   }
 

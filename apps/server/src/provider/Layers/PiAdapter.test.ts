@@ -116,6 +116,15 @@ describe("getPiDiscoverableModels", () => {
     ).toBeNull();
   });
 
+  it("omits provider identities that cannot round-trip through a model slug", () => {
+    expect(
+      toPiProviderModelDescriptor(
+        { provider: "team/proxy", id: "model-id", name: "Model", reasoning: false } as Model<Api>,
+        () => "Team Proxy",
+      ),
+    ).toBeNull();
+  });
+
   it("preserves supported thinking metadata", () => {
     const descriptor = toPiProviderModelDescriptor(
       {
