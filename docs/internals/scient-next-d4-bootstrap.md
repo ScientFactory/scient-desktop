@@ -1,6 +1,6 @@
 # Scient Next D4 bootstrap record
 
-Status: private migration candidate; D4 bootstrap draft PR pending publication. This document
+Status: private migration candidate; D4 bootstrap draft PR #1 is open. This document
 is the candidate's first provenance and safety record. It is not a release
 record and it does not authorize publishing, updating, or migrating user data.
 
@@ -20,6 +20,7 @@ authorization.
 - Candidate branch base: the same selected revision, with the complete T3
   history preserved; no squash or replay was used.
 - Candidate branch: `agent/d4-bootstrap-20260806`.
+- Published draft PR: [ScientFactory/scient-desktop-next#1](https://github.com/ScientFactory/scient-desktop-next/pull/1)
 
 The candidate repository keeps `origin` as the private ScientFactory-owned
 remote and `upstream` as a fetch-only official T3 remote. The upstream push URL
