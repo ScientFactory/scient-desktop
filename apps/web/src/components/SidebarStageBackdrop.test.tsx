@@ -24,7 +24,7 @@ describe("SidebarStageBackdrop", () => {
   });
 
   it.each(["nightly", "dev"] as const)(
-    "uses unique SVG definition ids when %s artwork is rendered more than once",
+    "uses the minimal Scient treatment when %s artwork is rendered more than once",
     (variant) => {
       const markup = renderToStaticMarkup(
         <>
@@ -32,10 +32,11 @@ describe("SidebarStageBackdrop", () => {
           <StageBackdropButtonArt variant={variant} />
         </>,
       );
-      const ids = Array.from(markup.matchAll(/\sid="([^"]+)"/g), (match) => match[1]);
 
-      expect(ids.length).toBeGreaterThan(0);
-      expect(new Set(ids).size).toBe(ids.length);
+      expect(markup.match(new RegExp(`data-scient-stage="${variant}"`, "g"))?.length).toBe(2);
+      expect(markup).toContain("scient-stage-watermark");
+      expect(markup).not.toContain("stage-blueprint");
+      expect(markup).not.toContain("T3");
     },
   );
 });

@@ -17,6 +17,23 @@ describe("Scient brand guard", () => {
     ]);
   });
 
+  it("rejects an inherited visual wordmark even when its name is split from the copy", () => {
+    expect(
+      findPublicBrandViolations([
+        {
+          path: "apps/web/src/components/sidebar/SidebarChrome.tsx",
+          contents: "const Brand = () => <T3Wordmark />;",
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "apps/web/src/components/sidebar/SidebarChrome.tsx",
+        line: 1,
+        text: "const Brand = () => <T3Wordmark />;",
+      },
+    ]);
+  });
+
   it("permits technical commentary and donor-only surfaces", () => {
     expect(
       findPublicBrandViolations([

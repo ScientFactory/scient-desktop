@@ -14,6 +14,12 @@ preview, and production: the canonical burgundy `#471A1A` and slate
 labels such as `Scient (Dev)` distinguish channels without fragmenting the
 product mark or changing it with system appearance.
 
+The in-app masthead, splash screen, and authentication surfaces use the same
+canonical mark from `apps/web/src/assets/scient-symbol.svg`. Keep that compact
+web asset geometrically and chromatically aligned with the Icon Composer
+sources; it is intentionally a separate SVG file so the app does not depend on
+an icon-project implementation detail at runtime.
+
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
 Exporting requires Icon Composer on macOS. The script selects the newest exporter from Xcode or a standalone Icon Composer installation. Icon Composer 2 and newer are pinned to design generation 26; older exporters read the generation embedded in the source project. Set `ICON_COMPOSER_TOOL` to the full path of `Icon Composer.app/Contents/Executables/ictool` to override automatic discovery.

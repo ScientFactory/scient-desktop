@@ -23,7 +23,7 @@ const PRODUCT_SURFACE_FILES = new Set([
 
 const EXCLUDED_ROOTS = ["apps/mobile/", "apps/marketing/"] as const;
 const SOURCE_EXTENSIONS = new Set([".html", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
-const FORBIDDEN_PUBLIC_BRANDS = /\bT3 Code\b|\bT3 Tools\b/i;
+const FORBIDDEN_PUBLIC_BRANDS = /\bT3 Code\b|\bT3 Tools\b|\bT3Wordmark\b|aria-label=["']T3["']/i;
 
 const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
   ["apps/desktop/package.json", ['"productName": "Scient"']],
@@ -34,6 +34,8 @@ const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
   ],
   ["scripts/local-dev-app.mjs", ['LOCAL_DEV_APP_NAME = "Scient (Dev)"']],
   ["assets/prod/app-icon.icon/Assets/symbol.svg", ['fill="#46587E"', 'fill="#471A1A"']],
+  ["apps/web/src/assets/scient-symbol.svg", ['fill="#46587E"', 'fill="#471A1A"']],
+  ["apps/web/src/components/sidebar/SidebarChrome.tsx", ["APP_BASE_NAME", "<ScientSymbol"]],
 ]);
 
 export interface BrandViolation {
