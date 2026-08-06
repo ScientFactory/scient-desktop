@@ -195,8 +195,8 @@ gate and a separate security/privacy review.
 
 ## Proof 1: candidate verification
 
-The final clean verification completed on 2026-08-06 at 11:51:48 Asia/Jerusalem
-(08:51:48 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
+The final clean verification completed on 2026-08-06 at 11:54:56 Asia/Jerusalem
+(08:54:56 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
 
 ```text
 pnpm run test                pass (207 files passed, 2 skipped; 1872 passed, 7 skipped)
