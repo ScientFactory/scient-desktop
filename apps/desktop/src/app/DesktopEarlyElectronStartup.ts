@@ -14,6 +14,7 @@ import {
   resolveDesktopStateDir,
   type JoinPath,
 } from "./DesktopStatePaths.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
@@ -49,17 +50,16 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
 }): string {
-  const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
+  const scientNextHome = Option.fromUndefinedOr(input.env.SCIENT_NEXT_HOME);
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
-    t3Home,
+    scientNextHome,
   });
   const stateDir = resolveDesktopStateDir({
     baseDir,
     isDevelopment: isDevelopmentEnvironment(input.env),
     joinPath: input.joinPath,
-    t3Home,
   });
   return input.joinPath(stateDir, "desktop-settings.json");
 }
@@ -81,7 +81,9 @@ export function resolveEarlyLinuxElectronOptions(
 ): EarlyLinuxElectronOptions {
   const preference = resolveEarlyLinuxPasswordStorePreference(input);
   return {
-    linuxWmClass: isDevelopmentEnvironment(input.env) ? "t3code-dev" : "t3code",
+    linuxWmClass: isDevelopmentEnvironment(input.env)
+      ? SCIENT_NEXT_IDENTITY.linuxDevelopmentWmClass
+      : SCIENT_NEXT_IDENTITY.linuxWmClass,
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,

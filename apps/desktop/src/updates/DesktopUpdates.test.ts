@@ -144,7 +144,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
+          SCIENT_NEXT_HOME: `/tmp/scient-next-desktop-updates-test-${process.pid}`,
           T3CODE_DESKTOP_MOCK_UPDATES: "true",
           T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
           ...options.env,
@@ -178,7 +178,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(settingsLayer),
     Layer.provideMerge(
       DesktopConfig.layerTest({
-        T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
+        SCIENT_NEXT_HOME: `/tmp/scient-next-desktop-updates-test-${process.pid}`,
         T3CODE_DESKTOP_MOCK_UPDATES: "true",
         T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
         ...options.env,
@@ -272,6 +272,28 @@ describe("DesktopUpdates", () => {
 
       assert.equal(harness.listenerCount(), 0);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps update publication and updater access disabled in the D4 envelope", () => {
+    const harness = makeHarness({ env: { SCIENT_NEXT_SAFETY_ENVELOPE: "true" } });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const state = yield* updates.getState;
+        const disabledReason = yield* updates.disabledReason;
+        assert.equal(state.enabled, false);
+        assert.equal(state.status, "disabled");
+        assert.isTrue(Option.isSome(disabledReason));
+        if (Option.isSome(disabledReason)) {
+          assert.include(disabledReason.value, "D4 bootstrap");
+        }
+        assert.deepEqual(harness.feedUrls(), []);
+        assert.equal(harness.listenerCount(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
   it.effect("updates and broadcasts state from updater events", () => {

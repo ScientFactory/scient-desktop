@@ -1,4 +1,24 @@
-# T3 Code
+# Scient Next migration candidate
+
+This private repository is ScientFactory's provisional T3-derived desktop
+candidate. It preserves the complete official T3 history and is currently in
+the bounded D4 bootstrap phase. It is not a public Scient release, does not
+replace the supported `scient-desktop` application, and has no enabled updater,
+release, production cloud, or user-data migration authority.
+
+The exact donor base, safety envelope, verification, limitations, and rollback
+are recorded in the
+[Scient Next D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
+Contributor boundaries are in [AGENTS.md](AGENTS.md), and the continuing T3
+relationship is in [UPSTREAM.md](UPSTREAM.md).
+
+The remainder of this README is inherited T3 product documentation. It remains
+useful for understanding the host platform but does not describe the
+candidate's current public product or release status.
+
+---
+
+# T3 Code (inherited host documentation)
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 

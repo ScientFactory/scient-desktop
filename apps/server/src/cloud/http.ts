@@ -42,6 +42,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -77,6 +78,22 @@ import {
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
+
+export const isCandidateCloudIntegrationDisabled = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+) => {
+  const explicitCloudOptIn =
+    env.SCIENT_NEXT_CLOUD_ENABLED === "true" ||
+    (env.NODE_ENV === "test" && env.SCIENT_NEXT_CLOUD_ROUTE_TEST === "true");
+  return SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && !explicitCloudOptIn;
+};
+
+const cloudIntegrationDisabled = () =>
+  Effect.fail(
+    new EnvironmentHttpInternalServerError({
+      message: "Cloud integration is disabled in the Scient Next D4 candidate.",
+    }),
+  );
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -1018,6 +1035,18 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "connect",
   Effect.fnUntraced(function* (handlers) {
+    if (isCandidateCloudIntegrationDisabled()) {
+      return handlers
+        .handle("linkProof", () => cloudIntegrationDisabled())
+        .handle("relayConfig", () => cloudIntegrationDisabled())
+        .handle("linkState", () => cloudIntegrationDisabled())
+        .handle("unlink", () => cloudIntegrationDisabled())
+        .handle("preferences", () => cloudIntegrationDisabled())
+        .handle("health", () => cloudIntegrationDisabled())
+        .handle("mintCredential", () => cloudIntegrationDisabled())
+        .handle("t3MintCredential", () => cloudIntegrationDisabled());
+    }
+
     const dependencies = yield* cloudHttpDependencies;
     return handlers
       .handle("linkProof", ({ payload }) => cloudLinkProofHandler(dependencies, payload))

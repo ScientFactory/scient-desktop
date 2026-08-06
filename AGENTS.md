@@ -1,3 +1,71 @@
+# Scient Next candidate instructions
+
+Status: private D4 migration candidate. These instructions override the
+inherited T3 guidance below when the two conflict.
+
+ScientFactory owns this repository and the candidate product direction. Yaacov
+is the accountable D4 owner. The implementation operator for the bootstrap is
+OpenAI Codex task `019fbc83-7f59-7050-a16c-7b63686016ce`, acting under Yaacov's
+authorization.
+
+## Current boundary
+
+- This repository is the fresh, literal-ancestry T3-derived successor
+  candidate. `ScientFactory/scient-desktop` remains the supported continuity
+  application until a later cutover gate.
+- `Scient Next` is provisional private-candidate labeling, not a public brand
+  or release identity.
+- D4 permits identity/state isolation and fail-closed telemetry, cloud,
+  updater, service, signing, and publication guards only. It does not permit
+  scientific features, legacy-data import, cloud or mobile enablement, signing,
+  release, or public distribution.
+- Never read, copy, seed, migrate, or write T3 or current-Scient live user data
+  for D4. This overrides the inherited donor test-data guidance below. Use only
+  synthetic fixtures in candidate-owned temporary directories.
+- Do not use production credentials or point `SCIENT_NEXT_HOME`/`--home-dir`/
+  `--base-dir` at `.t3` or a current Scient data root.
+- No browser automation, screenshots, visual regression, geometry checks, or
+  manual UI acceptance belong to D4. A later user-facing gate owns that proof.
+
+## Repository and upstream rules
+
+- `origin` is the writable `ScientFactory/scient-desktop-next` remote.
+- `upstream` is the official `pingdotgg/t3code` remote and must remain
+  fetch-only with push URL `DISABLED`. Never add Synara as a remote.
+- Preserve literal T3 ancestry. Receive upstream work through dedicated,
+  bounded merge branches; never replay donor history or mix an upstream merge
+  with a Scient feature.
+- Keep `main` protected by process: no direct product commits, force pushes,
+  history rewrites, releases, or publication. Use short-lived branches and
+  draft pull requests. The private-repository plan currently prevents GitHub
+  branch-protection configuration; this limitation is not release-acceptable.
+- Before changing a protected divergence, read [UPSTREAM.md](UPSTREAM.md),
+  [upstream-state.json](upstream-state.json), and the
+  [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
+
+## Verification
+
+Use Node `^24.13.1` and pnpm `11.10.0`. Run focused checks while iterating. A
+final D4 candidate change must pass the applicable focused tests plus:
+
+```text
+pnpm exec vp fmt --check
+pnpm exec vp lint --report-unused-disable-directives
+pnpm run typecheck
+pnpm run test
+pnpm run build
+pnpm run test:desktop-smoke
+git diff --check
+```
+
+These commands are the repository-specific baseline established from the exact
+official T3 integration base. Do not substitute commands from the current
+Synara-derived Scient repository.
+
+---
+
+# Inherited T3 contributor guidance
+
 # T3 Code
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.

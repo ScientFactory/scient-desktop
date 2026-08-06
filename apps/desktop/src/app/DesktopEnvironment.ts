@@ -15,6 +15,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -62,6 +63,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly commitHashOverride: Option.Option<string>;
     readonly otlpTracesUrl: Option.Option<string>;
     readonly otlpExportIntervalMs: number;
+    readonly safetyEnvelopeEnabled: boolean;
     readonly branding: DesktopAppBranding;
     readonly displayName: string;
     readonly appUserModelId: string;
@@ -79,7 +81,33 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+const APP_BASE_NAME = SCIENT_NEXT_IDENTITY.baseName;
+
+const resolveCandidateAppUserModelId = (input: {
+  readonly isDevelopment: boolean;
+  readonly override: Option.Option<string>;
+}): string => {
+  const defaultId = input.isDevelopment
+    ? SCIENT_NEXT_IDENTITY.developmentAppId
+    : SCIENT_NEXT_IDENTITY.appId;
+  return Option.match(input.override, {
+    onNone: () => defaultId,
+    onSome: (override) => {
+      const normalized = override.trim();
+      // A launcher may add a worktree suffix for concurrent development
+      // instances, but an ambient T3 or arbitrary app identity must never
+      // cross the D4 boundary.
+      if (
+        input.isDevelopment &&
+        (normalized === SCIENT_NEXT_IDENTITY.developmentAppId ||
+          normalized.startsWith(`${SCIENT_NEXT_IDENTITY.developmentAppId}.`))
+      ) {
+        return normalized;
+      }
+      return defaultId;
+    },
+  });
+};
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -100,7 +128,7 @@ function resolveDesktopAppBranding(input: {
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: input.isDevelopment ? SCIENT_NEXT_IDENTITY.developmentName : APP_BASE_NAME,
   };
 }
 
@@ -153,7 +181,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    scientNextHome: config.scientNextHome,
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
@@ -166,10 +194,13 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment,
     joinPath: path.join,
-    t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isDevelopment
+    ? SCIENT_NEXT_IDENTITY.developmentUserDataDirName
+    : SCIENT_NEXT_IDENTITY.productionUserDataDirName;
+  // Kept in the service shape for callers that display migration diagnostics;
+  // D4 intentionally never probes or adopts this path.
+  const legacyUserDataDirName = "__scient_next_legacy_disabled__";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -210,13 +241,23 @@ const make = Effect.fn("desktop.environment.make")(function* (
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,
     otlpExportIntervalMs: config.otlpExportIntervalMs,
+    // The launcher and main-process bootstrap force this marker for every D4
+    // runtime. Keeping it runtime-configured lets generic service tests still
+    // exercise inherited T3 behavior without weakening the actual candidate
+    // process boundary.
+    safetyEnvelopeEnabled: config.safetyEnvelopeEnabled,
     branding,
     displayName,
-    appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
-    ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    appUserModelId: resolveCandidateAppUserModelId({
+      isDevelopment,
+      override: config.appUserModelIdOverride,
+    }),
+    linuxDesktopEntryName: isDevelopment
+      ? SCIENT_NEXT_IDENTITY.linuxDevelopmentDesktopEntryName
+      : SCIENT_NEXT_IDENTITY.linuxDesktopEntryName,
+    linuxWmClass: isDevelopment
+      ? SCIENT_NEXT_IDENTITY.linuxDevelopmentWmClass
+      : SCIENT_NEXT_IDENTITY.linuxWmClass,
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

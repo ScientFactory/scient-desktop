@@ -31,7 +31,8 @@ env:
 jobs:
   ios:
     name: iPhone 6.9, iPhone 6.5, and iPad 13
-    if: inputs.platform == 'all' || inputs.platform == 'ios'
+    # D4 candidate: visual/mobile capture is not part of this phase.
+    if: ${{ false }}
     runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 60
     steps:
@@ -78,7 +79,8 @@ jobs:
 
   android:
     name: Android phone, 7-inch tablet, and 10-inch tablet
-    if: inputs.platform == 'all' || inputs.platform == 'android'
+    # D4 candidate: visual/mobile capture is not part of this phase.
+    if: ${{ false }}
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     env:

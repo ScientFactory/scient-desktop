@@ -135,6 +135,7 @@ already dispatch.
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
 - [Resource telemetry](./resource-telemetry.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
+- [Scient Next D4 bootstrap record](./scient-next-d4-bootstrap.md)
 
 [rpc]: ../../packages/contracts/src/rpc.ts
 [contracts]: ../../packages/contracts/src/orchestration.ts

@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -32,7 +33,7 @@ export const hostFlag = Flag.string("host").pipe(
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription(
-    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+    "Explicit Scient Next data directory; runtime state is stored under userdata.",
   ),
   Flag.optional,
 );
@@ -76,6 +77,13 @@ export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  scientNextHome: Config.string("SCIENT_NEXT_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  scientNextSafetyEnvelope: Config.boolean("SCIENT_NEXT_SAFETY_ENVELOPE").pipe(
+    Config.withDefault(false),
+  ),
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.logLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
@@ -270,20 +278,48 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
       () => undefined,
     );
+    const cliBaseDir = normalizedFlags.baseDir.pipe(
+      Option.filter((value) => value.trim().length > 0),
+    );
+    const candidateEnvBaseDir = Option.fromUndefinedOr(env.scientNextHome).pipe(
+      Option.filter((value) => value.trim().length > 0),
+    );
     const explicitBaseDir = resolveOptionPrecedence(
-      normalizedFlags.baseDir,
-      Option.fromUndefinedOr(env.t3Home),
+      cliBaseDir,
+      // The candidate-owned name is authoritative for direct/server and
+      // desktop child launches. Do not allow ambient T3CODE_HOME to redirect
+      // a Scient Next process into an installed T3/current-Scient state root.
+      candidateEnvBaseDir,
+      SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
+        ? Option.none()
+        : Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(
-        resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
+        resolveOptionPrecedence(
+          explicitBaseDir,
+          // The inherited bootstrap field is private IPC, but it still carries
+          // a T3-owned state path. Ignore it in the candidate so a direct
+          // server launch cannot be redirected into legacy state.
+          SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
+            ? Option.none()
+            : Option.fromUndefinedOr(bootstrap?.t3Home),
+        ),
       ),
     );
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      baseDirIsExplicit: Option.isSome(explicitBaseDir),
+      // The candidate runner supplies a candidate home to avoid ambient T3
+      // state, but that is still implicit development state when a dev URL is
+      // present. Keep it under the candidate development directory rather
+      // than production userdata.
+      developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
+      baseDirIsExplicit:
+        Option.isSome(cliBaseDir) ||
+        (Option.isSome(explicitBaseDir) &&
+          !(SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && Option.isSome(candidateEnvBaseDir))),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
@@ -357,13 +393,17 @@ export const resolveServerConfig = (
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
       otlpTracesUrl:
-        env.otlpTracesUrl ??
-        bootstrap?.otlpTracesUrl ??
-        persistedObservabilitySettings.otlpTracesUrl,
+        SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+          ? undefined
+          : (env.otlpTracesUrl ??
+            bootstrap?.otlpTracesUrl ??
+            persistedObservabilitySettings.otlpTracesUrl),
       otlpMetricsUrl:
-        env.otlpMetricsUrl ??
-        bootstrap?.otlpMetricsUrl ??
-        persistedObservabilitySettings.otlpMetricsUrl,
+        SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+          ? undefined
+          : (env.otlpMetricsUrl ??
+            bootstrap?.otlpMetricsUrl ??
+            persistedObservabilitySettings.otlpMetricsUrl),
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
       mode,

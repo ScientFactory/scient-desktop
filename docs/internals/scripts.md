@@ -37,12 +37,12 @@ authenticated.
 
 ### Dev state directories
 
-- Dev commands run from a linked **git worktree** default to that worktree's gitignored `.t3`, even
-  when `T3CODE_HOME` is set, storing state in `<worktree>/.t3/userdata`. Pass `--home-dir <path>` to
+- Dev commands run from a linked **git worktree** default to that worktree's gitignored `.scient-next`, even
+  when `T3CODE_HOME` is set, storing development state in `<worktree>/.scient-next/scient-next-dev`. Pass `--home-dir <path>` to
   choose another isolated directory explicitly. Submodules are not worktrees and keep the normal
   precedence.
-- From the **main checkout**, dev commands implicitly use `~/.t3/dev`, keeping development state
-  separate from `~/.t3/userdata`. An explicit `--home-dir <path>` stores state under
+- From the **main checkout**, dev commands implicitly use `~/.scient-next/scient-next-dev`, keeping development state
+  separate from `~/.scient-next/userdata`. An explicit `--home-dir <path>` stores development state under
   `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared
   data.
 
@@ -74,15 +74,19 @@ authenticated.
 ### Desktop `.dmg` packaging notes
 
 - Default build is unsigned/not notarized for local sharing.
+- D4 rejects `--signed` and does not authorize distribution, notarization, or
+  publication. Signing can be re-enabled only through a later release and
+  credential review.
 - The DMG build uses `assets/prod/black-macos-1024.png` as the production app icon source.
-- Desktop production windows load the bundled UI from the `t3code://app/` root URL (not a
+- Desktop production windows load the bundled UI from the `scient-next://app/` root URL (not a
   `127.0.0.1` document URL, and not an explicit `index.html` path).
 - Desktop packaging includes `apps/server/dist` (the `t3` backend) and starts it on loopback with an
   auth token for WebSocket/API traffic.
 - Your tester can still open it on macOS by right-clicking the app and choosing **Open** on first
   launch.
 - To keep staging files for debugging package contents, run: `vp run dist:desktop:dmg --keep-stage`
-- To allow code-signing/notarization when configured in CI/secrets, add: `--signed`.
+- The inherited `--signed` path is intentionally unavailable in this candidate
+  during D4.
 - Signed macOS builds also require `T3CODE_APPLE_TEAM_ID` and
   `T3CODE_MACOS_PROVISIONING_PROFILE`. The passkey RP domain is derived from
   `T3CODE_CLERK_PUBLISHABLE_KEY` unless `T3CODE_CLERK_PASSKEY_RP_DOMAINS` overrides it.

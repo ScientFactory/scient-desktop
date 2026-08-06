@@ -31,6 +31,8 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
+- [Scient Next D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
+- [Candidate upstream maintenance](../UPSTREAM.md)
 - [CI gates](./internals/ci.md)
 
 ### Runbooks

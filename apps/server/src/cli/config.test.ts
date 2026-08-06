@@ -68,10 +68,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-env-base");
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:5173"),
-      );
+      const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:5173"), {
+        developmentStateDirName: "scient-next-dev",
+        baseDirIsExplicit: false,
+      });
       const resolved = yield* resolveServerConfig(
         {
           mode: Option.none(),
@@ -98,7 +98,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_MODE: "desktop",
                   T3CODE_PORT: "4001",
                   T3CODE_HOST: "0.0.0.0",
-                  T3CODE_HOME: baseDir,
+                  SCIENT_NEXT_HOME: baseDir,
+                  T3CODE_HOME: join(NodeOS.tmpdir(), "ignored-legacy-t3-home"),
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
                   T3CODE_DEV_ALLOWED_ORIGINS:
                     "https://host.example.ts.net, https://phone.example.ts.net ",
@@ -133,7 +134,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(resolved.stateDir, join(baseDir, "userdata"));
+      assert.equal(resolved.stateDir, join(baseDir, "scient-next-dev"));
     }),
   );
 
@@ -171,6 +172,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_MODE: "desktop",
                   T3CODE_PORT: "4001",
                   T3CODE_HOST: "0.0.0.0",
+                  SCIENT_NEXT_HOME: join(NodeOS.tmpdir(), "ignored-candidate-home"),
                   T3CODE_HOME: join(NodeOS.tmpdir(), "ignored-base"),
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
                   T3CODE_NO_BROWSER: "false",
@@ -279,15 +281,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect("uses bootstrap envelope values as fallbacks when flags and env are absent", () =>
+  it.effect("uses bootstrap values but ignores its legacy T3 home in the candidate", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = "/tmp/t3-bootstrap-home";
+      const baseDir = "/tmp/scient-next-bootstrap-home";
       const fd = yield* openBootstrapFd(
         makeDesktopBootstrap({
           port: 4888,
           host: "127.0.0.2",
-          t3Home: baseDir,
+          t3Home: "/tmp/ignored-legacy-t3-bootstrap-home",
           noBrowser: true,
           desktopBootstrapToken: "desktop-token",
           desktopTelemetryFd: 4,
@@ -323,6 +325,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.fromEnv({
                 env: {
                   T3CODE_BOOTSTRAP_FD: String(fd),
+                  SCIENT_NEXT_HOME: baseDir,
                 },
               }),
             ),
@@ -334,8 +337,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Info",
         ...defaultObservabilityConfig,
-        otlpTracesUrl: "http://localhost:4318/v1/traces",
-        otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        otlpTracesUrl: undefined,
+        otlpMetricsUrl: undefined,
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -425,10 +428,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: 443,
         }),
       );
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:4173"),
-      );
+      const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:4173"), {
+        developmentStateDirName: "scient-next-dev",
+        baseDirIsExplicit: false,
+      });
 
       const resolved = yield* resolveServerConfig(
         {
@@ -454,7 +457,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                 env: {
                   T3CODE_MODE: "web",
                   T3CODE_BOOTSTRAP_FD: String(fd),
-                  T3CODE_HOME: baseDir,
+                  SCIENT_NEXT_HOME: baseDir,
+                  T3CODE_HOME: join(NodeOS.tmpdir(), "ignored-legacy-t3-home"),
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                   T3CODE_LOG_WS_EVENTS: "true",
@@ -531,13 +535,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         ),
       );
 
-      expect(resolved.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
-      expect(resolved.otlpMetricsUrl).toBe("http://localhost:4318/v1/metrics");
+      expect(resolved.otlpTracesUrl).toBeUndefined();
+      expect(resolved.otlpMetricsUrl).toBeUndefined();
       expect(resolved).toEqual({
         logLevel: "Info",
         ...defaultObservabilityConfig,
-        otlpTracesUrl: "http://localhost:4318/v1/traces",
-        otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        otlpTracesUrl: undefined,
+        otlpMetricsUrl: undefined,
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -554,6 +558,48 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
+    }),
+  );
+
+  it.effect("fails closed for outbound OTLP destinations in the D4 envelope", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-next-cli-config-safe-" });
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("desktop"),
+          port: Option.some(4888),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  SCIENT_NEXT_SAFETY_ENVELOPE: "true",
+                  T3CODE_OTLP_TRACES_URL: "https://telemetry.example/traces",
+                  T3CODE_OTLP_METRICS_URL: "https://telemetry.example/metrics",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.otlpTracesUrl).toBeUndefined();
+      expect(resolved.otlpMetricsUrl).toBeUndefined();
     }),
   );
 

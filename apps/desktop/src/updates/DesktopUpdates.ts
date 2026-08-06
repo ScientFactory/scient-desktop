@@ -29,6 +29,7 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -224,7 +225,11 @@ function getAutoUpdateDisabledReason(args: {
   appImage?: string | undefined;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
+  safetyEnvelopeEnabled: boolean;
 }): string | null {
+  if (args.safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.autoUpdateEnabled) {
+    return "Automatic updates are disabled during the Scient Next D4 bootstrap.";
+  }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }
@@ -309,6 +314,7 @@ export const make = Effect.gen(function* () {
         appImage: Option.getOrUndefined(config.appImagePath),
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
+        safetyEnvelopeEnabled: environment.safetyEnvelopeEnabled,
       }),
     );
   });
@@ -716,7 +722,10 @@ export const make = Effect.gen(function* () {
       const appUpdateYmlConfig = yield* readAppUpdateYml;
       yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
 
-      if (config.mockUpdates) {
+      if (
+        config.mockUpdates &&
+        !(environment.safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.autoUpdateEnabled)
+      ) {
         yield* electronUpdater.setFeedURL({
           provider: "generic",
           url: `http://localhost:${config.mockUpdateServerPort}`,

@@ -46,6 +46,7 @@ await waitForResources({
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+childEnv.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 const devProtocolClient = resolveDevProtocolClient();
 if (devProtocolClient) {
   childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;

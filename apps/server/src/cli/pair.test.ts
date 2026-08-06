@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 import { cli } from "../bin.ts";
 import {
@@ -178,7 +179,11 @@ describe("t3 pair", () => {
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-dev-test-"));
         const port = Number(new URL(origin).port);
-        const statePath = NodePath.join(baseDir, "dev", "server-runtime.json");
+        const statePath = NodePath.join(
+          baseDir,
+          SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
+          "server-runtime.json",
+        );
         yield* persistServerRuntimeState({
           path: statePath,
           state: yield* makePersistedServerRuntimeState({
