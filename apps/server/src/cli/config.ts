@@ -296,7 +296,15 @@ export const resolveServerConfig = (
     ).pipe(Option.filter((value) => value.trim().length > 0));
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(
-        resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
+        resolveOptionPrecedence(
+          explicitBaseDir,
+          // The inherited bootstrap field is private IPC, but it still carries
+          // a T3-owned state path. Ignore it in the candidate so a direct
+          // server launch cannot be redirected into legacy state.
+          SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
+            ? Option.none()
+            : Option.fromUndefinedOr(bootstrap?.t3Home),
+        ),
       ),
     );
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());

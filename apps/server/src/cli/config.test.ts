@@ -281,15 +281,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect("uses bootstrap envelope values as fallbacks when flags and env are absent", () =>
+  it.effect("uses bootstrap values but ignores its legacy T3 home in the candidate", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = "/tmp/t3-bootstrap-home";
+      const baseDir = "/tmp/scient-next-bootstrap-home";
       const fd = yield* openBootstrapFd(
         makeDesktopBootstrap({
           port: 4888,
           host: "127.0.0.2",
-          t3Home: baseDir,
+          t3Home: "/tmp/ignored-legacy-t3-bootstrap-home",
           noBrowser: true,
           desktopBootstrapToken: "desktop-token",
           desktopTelemetryFd: 4,
@@ -325,6 +325,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.fromEnv({
                 env: {
                   T3CODE_BOOTSTRAP_FD: String(fd),
+                  SCIENT_NEXT_HOME: baseDir,
                 },
               }),
             ),

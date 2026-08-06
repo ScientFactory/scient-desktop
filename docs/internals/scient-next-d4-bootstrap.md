@@ -82,6 +82,9 @@ bundle can load, with tests guarding the boundary.
 The D4 runtime also:
 
 - never probes or adopts T3 or current-Scient legacy user-data directories;
+- ignores the inherited bootstrap envelope's T3 home field under the compiled
+  D4 safety identity; candidate state must come from the candidate-owned path
+  or its isolated default;
 - does not read ambient `T3CODE_HOME` as the desktop identity root;
 - uses a candidate-specific home (`~/.scient-next` by default and
   `.scient-next` in a linked development worktree), while accepting
@@ -130,6 +133,10 @@ The D4 runtime also:
 The `Scient Next` display label is provisional candidate labeling, not the
 final public Scient rebrand. Final branding, legal copy, release identity,
 signing, and updater identity remain later cutover decisions.
+
+Inherited web copy and boot-shell labels intentionally remain T3-branded in
+D4. The private candidate's collision-safe Electron identity and runtime label
+do not constitute the later public rebrand.
 
 The marker `SCIENT_NEXT_SAFETY_ENVELOPE=true` is set by the candidate launcher and
 desktop backend. It makes the telemetry and updater guards observable and
