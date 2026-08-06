@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -6,6 +7,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Terminal from "effect/Terminal";
@@ -19,7 +21,13 @@ import {
   isPublishAgentActivityEnabledValue,
   reportCloudDisconnectResults,
 } from "./connect.ts";
-import { recoverServiceOnboardingOffer, serviceOnboardingDisabled } from "./service.ts";
+import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
+
+const unreachableBootService = BootService.BootService.of({
+  install: Effect.die("D4 service guard was bypassed"),
+  uninstall: Effect.die("D4 service guard was bypassed"),
+  status: Effect.die("D4 service guard was bypassed"),
+});
 
 it("explains how to complete headless authorization", () => {
   assert.equal(
@@ -73,9 +81,19 @@ it.effect("keeps a successful connection when a remote service update is pending
   }),
 );
 
-it("does not offer the inherited global service during Scient Next onboarding", () => {
-  assert.isTrue(serviceOnboardingDisabled);
-});
+it.effect("does not offer the inherited global service during Scient Next onboarding", () =>
+  Effect.gen(function* () {
+    const result = yield* offerServiceDuringOnboarding;
+    assert.isFalse(result);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(BootService.BootService, unreachableBootService),
+      ),
+    ),
+  ),
+);
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
   Effect.gen(function* () {

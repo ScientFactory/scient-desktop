@@ -210,7 +210,7 @@ The final clean verification completed on 2026-08-06 at 12:21:10 Asia/Jerusalem
 
 ```text
 pnpm run test                pass (207 files passed, 2 skipped; 1873 passed, 7 skipped)
-focused D4 safety suites     pass (6 files; 183 tests)
+focused D4 safety suites     pass (6 files; 194 tests)
 pnpm run typecheck           pass (existing suggestion diagnostics only)
 pnpm exec vp fmt --check     pass (2425 files)
 pnpm exec vp lint --report-unused-disable-directives  pass
