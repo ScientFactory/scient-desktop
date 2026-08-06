@@ -14,6 +14,11 @@ preview, and production: the canonical burgundy `#471A1A` and slate
 labels such as `Scient (Dev)` distinguish channels without fragmenting the
 product mark or changing it with system appearance.
 
+The symbol layer uses Icon Composer scale `8.0` with zero translation in every
+channel project. This is a 5.88% linear reduction from the initial `8.5`
+placement: the mark remains mathematically centered while gaining a little more
+breathing room inside the icon body.
+
 The in-app masthead, splash screen, and authentication surfaces use the same
 canonical mark from `apps/web/src/assets/scient-symbol.svg`. Keep that compact
 web asset geometrically and chromatically aligned with the Icon Composer

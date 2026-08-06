@@ -10,7 +10,7 @@
           "image-name": "symbol.svg",
           "name": "Scient Symbol",
           "position": {
-            "scale": 8.5,
+            "scale": 8.0,
             "translation-in-points": [0, 0]
           }
         },

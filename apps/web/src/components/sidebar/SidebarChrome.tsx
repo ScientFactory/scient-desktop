@@ -87,9 +87,9 @@ function SidebarBrand({
       to="/"
     >
       <ScientSymbol className="size-4" />
-      <span className="truncate text-sm font-semibold tracking-tight">{APP_BASE_NAME}</span>
+      <span className="truncate text-base font-semibold tracking-tight">{APP_BASE_NAME}</span>
       {stageLabel ? (
-        <span className="sidebar-brand-stage-label truncate text-[11px] font-medium">
+        <span className="sidebar-brand-stage sidebar-brand-stage-label truncate text-[11px] font-medium">
           {stageLabel}
         </span>
       ) : null}

@@ -36,6 +36,9 @@ const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
   ["assets/prod/app-icon.icon/Assets/symbol.svg", ['fill="#46587E"', 'fill="#471A1A"']],
   ["apps/web/src/assets/scient-symbol.svg", ['fill="#46587E"', 'fill="#471A1A"']],
   ["apps/web/src/components/sidebar/SidebarChrome.tsx", ["APP_BASE_NAME", "<ScientSymbol"]],
+  ["assets/dev/app-icon.icon/icon.json", ['"scale": 8.0', '"translation-in-points": [0, 0]']],
+  ["assets/nightly/app-icon.icon/icon.json", ['"scale": 8.0', '"translation-in-points": [0, 0]']],
+  ["assets/prod/app-icon.icon/icon.json", ['"scale": 8.0', '"translation-in-points": [0, 0]']],
 ]);
 
 export interface BrandViolation {
