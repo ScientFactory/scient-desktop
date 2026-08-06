@@ -1,8 +1,8 @@
 # Scient Next migration candidate
 
 This private repository is ScientFactory's provisional T3-derived desktop
-candidate. It preserves the complete official T3 history and is currently in
-the bounded D4 bootstrap phase. It is not a public Scient release, does not
+candidate. It preserves the complete official T3 history and has integrated
+the bounded D4 bootstrap safety envelope. It is not a public Scient release, does not
 replace the supported `scient-desktop` application, and has no enabled updater,
 release, production cloud, or user-data migration authority.
 

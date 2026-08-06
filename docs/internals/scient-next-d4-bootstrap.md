@@ -1,8 +1,9 @@
 # Scient Next D4 bootstrap record
 
-Status: private migration candidate; D4 bootstrap draft PR #1 is open. This document
-is the candidate's first provenance and safety record. It is not a release
-record and it does not authorize publishing, updating, or migrating user data.
+Status: private migration candidate; D4 bootstrap PR #1 is integrated. This
+document is the candidate's first provenance and safety record. It is not a
+release record and it does not authorize publishing, updating, or migrating
+user data.
 
 Accountable owner: Yaacov. Bootstrap implementation operator: OpenAI Codex task
 `019fbc83-7f59-7050-a16c-7b63686016ce`, acting under Yaacov's D4
@@ -20,7 +21,8 @@ authorization.
 - Candidate branch base: the same selected revision, with the complete T3
   history preserved; no squash or replay was used.
 - Candidate branch: `agent/d4-bootstrap-20260806`.
-- Published draft PR: [ScientFactory/scient-desktop-next#1](https://github.com/ScientFactory/scient-desktop-next/pull/1)
+- Integrated bootstrap: [ScientFactory/scient-desktop-next#1](https://github.com/ScientFactory/scient-desktop-next/pull/1),
+  squash merge `3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d`.
 
 The candidate repository keeps `origin` as the private ScientFactory-owned
 remote and `upstream` as a fetch-only official T3 remote. The upstream push URL
@@ -243,11 +245,13 @@ non-visual Electron startup check only.
 
 ## Rollback
 
-The D4 rollback is to close the candidate draft PR and continue using the
-current `ScientFactory/scient-desktop` application. The candidate branch and
-repository are isolated from that product, T3 installations, release channels,
-and live user data, so abandoning D4 requires no database downgrade, credential
-repair, or installed-app cross-grade.
+The D4 rollback is to stop using the private candidate and continue using the
+current `ScientFactory/scient-desktop` application. The candidate repository is
+isolated from that product, T3 installations, release channels, and live user
+data, so abandoning it requires no database downgrade, credential repair, or
+installed-app cross-grade. Reverting an integrated safety guard is not an
+acceptable rollback; any repository-level reversal requires its own reviewed
+change.
 
 Do not weaken or revert individual safety guards to make the candidate start.
 If a guard cannot be preserved, stop the candidate lane and amend the parent
