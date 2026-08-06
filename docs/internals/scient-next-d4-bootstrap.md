@@ -205,12 +205,12 @@ gate and a separate security/privacy review.
 
 ## Proof 1: candidate verification
 
-The final clean verification completed on 2026-08-06 at 12:03:19 Asia/Jerusalem
-(09:03:19 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
+The final clean verification completed on 2026-08-06 at 12:18:53 Asia/Jerusalem
+(09:18:53 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
 
 ```text
 pnpm run test                pass (207 files passed, 2 skipped; 1873 passed, 7 skipped)
-focused D4 safety suites     pass (3 files; 42 tests)
+focused D4 safety suites     pass (4 files; 160 tests)
 pnpm run typecheck           pass (existing suggestion diagnostics only)
 pnpm exec vp fmt --check     pass (2425 files)
 pnpm exec vp lint --report-unused-disable-directives  pass
@@ -219,7 +219,7 @@ pnpm run test:desktop-smoke  pass
 git diff --check             pass
 ```
 
-The server-router cloud protocol suite also passed independently (120 tests).
+The focused count includes the 120-test server-router cloud protocol suite.
 
 No browser, screenshot, geometry, or manual UI proof was used.
 
