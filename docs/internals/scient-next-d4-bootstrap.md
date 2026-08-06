@@ -63,7 +63,7 @@ desktop:
 | Boundary                        | Candidate value                                                                       |
 | ------------------------------- | ------------------------------------------------------------------------------------- |
 | Production display name         | `Scient Next`                                                                         |
-| Development display name        | `Scient Next Dev`                                                                     |
+| Development display name        | `Scient Next (Dev)`                                                                   |
 | Application/bundle ID           | `com.scientfactory.scient.next`                                                       |
 | Development app identity        | `com.scientfactory.scient.next.dev` (concurrent deep-link launches are not supported) |
 | Production protocol             | `scient-next://`                                                                      |

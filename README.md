@@ -12,6 +12,12 @@ are recorded in the
 Contributor boundaries are in [AGENTS.md](AGENTS.md), and the continuing T3
 relationship is in [UPSTREAM.md](UPSTREAM.md).
 
+Maintainers can run the isolated **Scient Next (Dev)** application with
+`pnpm dev:app`. The canonical installation, lifecycle, feature-worktree, and
+recovery procedure is the
+[local dev app runbook](docs/operations/local-dev-app.md). This development app
+is not a public build or release candidate.
+
 The remainder of this README is inherited T3 product documentation. It remains
 useful for understanding the host platform but does not describe the
 candidate's current public product or release status.

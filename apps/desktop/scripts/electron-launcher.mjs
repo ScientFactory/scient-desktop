@@ -17,7 +17,7 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "Scient Next Dev" : "Scient Next";
+export const APP_DISPLAY_NAME = isDevelopment ? "Scient Next (Dev)" : "Scient Next";
 export const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
@@ -121,12 +121,34 @@ export function makeDevelopmentLauncherScript({
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   return [
     "#!/bin/sh",
+    'if [ "${SCIENT_NEXT_DEV_RUNNER_ACTIVE:-}" != "1" ]; then',
+    '  launcher_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+    '  exec "$launcher_dir/../Resources/run-scient-next-dev.command"',
+    "fi",
     ...envEntries.map(([name, value]) =>
       name === "SCIENT_NEXT_SAFETY_ENVELOPE"
         ? `export ${name}=${shellSingleQuote(value)}`
         : `if [ -z "\${${name}:-}" ]; then export ${name}=${shellSingleQuote(value)}; fi`,
     ),
     `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopRoot)} ${shellSingleQuote(mainEntryPath)} "$@"`,
+    "",
+  ].join("\n");
+}
+
+export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
+  const launcherRepoRoot = NodePath.resolve(desktopRoot, "..", "..");
+  const logPath = NodePath.join(launcherRepoRoot, ".scient-next", "local-dev-app.log");
+  const nodeBinDir = NodePath.dirname(process.execPath);
+  const pnpmExecPath = environment.npm_execpath?.trim();
+  const localDevInvocation = pnpmExecPath
+    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app`
+    : "pnpm dev:app";
+  return [
+    "#!/bin/sh",
+    `mkdir -p ${shellSingleQuote(NodePath.dirname(logPath))}`,
+    `export PATH=${shellSingleQuote(nodeBinDir)}:"$PATH"`,
+    `cd ${shellSingleQuote(launcherRepoRoot)}`,
+    `exec ${localDevInvocation} >> ${shellSingleQuote(logPath)} 2>&1`,
     "",
   ].join("\n");
 }
@@ -142,6 +164,18 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
     }),
   );
   NodeFS.chmodSync(targetBinaryPath, 0o755);
+  const appBundlePath = NodePath.resolve(targetBinaryPath, "..", "..", "..");
+  const commandPath = NodePath.join(
+    appBundlePath,
+    "Contents",
+    "Resources",
+    "run-scient-next-dev.command",
+  );
+  NodeFS.writeFileSync(
+    commandPath,
+    makeDevelopmentCommandScript({ desktopRoot: desktopDir, environment: process.env }),
+  );
+  NodeFS.chmodSync(commandPath, 0o755);
 }
 
 function registerMacLauncherBundle(appBundlePath) {

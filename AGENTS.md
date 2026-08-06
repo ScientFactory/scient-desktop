@@ -42,6 +42,12 @@ authorization.
 - Before changing a protected divergence, read [UPSTREAM.md](UPSTREAM.md),
   [upstream-state.json](upstream-state.json), and the
   [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
+- For any request to install, open, stop, refresh, or inspect the local
+  development app, follow the
+  [Scient Next local dev app runbook](docs/operations/local-dev-app.md). Always
+  identify the exact checkout, branch, and head before launch. The installed
+  launcher belongs to one stable checkout; feature worktrees run their own
+  isolated instance and must not silently repoint it.
 
 ## Verification
 
