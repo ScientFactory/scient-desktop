@@ -281,10 +281,12 @@ export const resolveServerConfig = (
     const explicitBaseDir = resolveOptionPrecedence(
       normalizedFlags.baseDir,
       // The candidate-owned name is authoritative for direct/server and
-      // desktop child launches. Keep T3CODE_HOME as a compatibility alias
-      // for ordinary T3-derived CLI usage.
+      // desktop child launches. Do not allow ambient T3CODE_HOME to redirect
+      // a Scient Next process into an installed T3/current-Scient state root.
       Option.fromUndefinedOr(env.scientNextHome),
-      Option.fromUndefinedOr(env.t3Home),
+      SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
+        ? Option.none()
+        : Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(
@@ -302,7 +304,7 @@ export const resolveServerConfig = (
       developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
       baseDirIsExplicit:
         Option.isSome(explicitBaseDir) &&
-        !(env.scientNextSafetyEnvelope && env.scientNextHome !== undefined),
+        !(SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && env.scientNextHome !== undefined),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(

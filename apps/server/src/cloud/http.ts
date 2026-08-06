@@ -42,6 +42,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -78,14 +79,14 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
-// The D4 desktop/server launcher sets this marker unconditionally. Keep the
-// guard runtime-based so the inherited cloud contract remains unit-testable
-// and available for a later selected-user enablement phase, while a real D4
-// candidate process cannot execute connect handlers merely because cloud
-// environment variables are present.
 export const isCandidateCloudIntegrationDisabled = (
   env: Readonly<Record<string, string | undefined>> = process.env,
-) => env.SCIENT_NEXT_SAFETY_ENVELOPE === "true" && env.SCIENT_NEXT_CLOUD_ENABLED !== "true";
+) => {
+  const explicitCloudOptIn =
+    env.SCIENT_NEXT_CLOUD_ENABLED === "true" ||
+    (env.NODE_ENV === "test" && env.SCIENT_NEXT_CLOUD_ROUTE_TEST === "true");
+  return SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && !explicitCloudOptIn;
+};
 
 const cloudIntegrationDisabled = () =>
   Effect.fail(

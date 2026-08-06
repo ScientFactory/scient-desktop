@@ -67,9 +67,23 @@ import {
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
-import { vi } from "vite-plus/test";
+import { afterAll, beforeAll, vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+
+// The server-router suite exercises the inherited cloud protocol directly.
+// Opt this test file into the otherwise-disabled D4 routes and restore the
+// caller's environment when the file completes; this test-only switch does
+// not make public cloud configuration appear in the route builder.
+const previousScientNextCloudRouteTest = process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
+beforeAll(() => {
+  process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = "true";
+});
+afterAll(() => {
+  if (previousScientNextCloudRouteTest === undefined)
+    delete process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
+  else process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = previousScientNextCloudRouteTest;
+});
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";

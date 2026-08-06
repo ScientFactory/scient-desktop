@@ -1,9 +1,12 @@
 # Scient Next D4 bootstrap record
 
-Status: private migration candidate; D4 bootstrap verified locally, draft PR
-pending publication. This document is the candidate's first provenance and
-safety record. It is not a release record and it does not authorize publishing,
-updating, or migrating user data.
+Status: private migration candidate; D4 bootstrap draft PR pending publication. This document
+is the candidate's first provenance and safety record. It is not a release
+record and it does not authorize publishing, updating, or migrating user data.
+
+Accountable owner: Yaacov. Bootstrap implementation operator: OpenAI Codex task
+`019fbc83-7f59-7050-a16c-7b63686016ce`, acting under Yaacov's D4
+authorization.
 
 ## Integration base
 
@@ -21,6 +24,11 @@ updating, or migrating user data.
 The candidate repository keeps `origin` as the private ScientFactory-owned
 remote and `upstream` as a fetch-only official T3 remote. The upstream push URL
 is deliberately set to `DISABLED`. No Synara remote is configured.
+
+The continuing relationship and machine-readable bootstrap state are recorded
+in [UPSTREAM.md](../../UPSTREAM.md) and
+[upstream-state.json](../../upstream-state.json). The observed donor tip is kept
+separate from the literal integration base.
 
 ## Proof 0: untouched T3 baseline
 
@@ -75,9 +83,9 @@ The D4 runtime also:
 - never probes or adopts T3 or current-Scient legacy user-data directories;
 - does not read ambient `T3CODE_HOME` as the desktop identity root;
 - uses a candidate-specific home (`~/.scient-next` by default and
-  `.scient-next` in a linked development worktree), while retaining
-  `T3CODE_HOME` only as an internal server compatibility input set to that same
-  candidate path;
+  `.scient-next` in a linked development worktree), while accepting
+  `T3CODE_HOME` only when an internal desktop child process explicitly sets it
+  to that same candidate path; ambient `T3CODE_HOME` is ignored;
 - uses `~/.scient-next` as the direct-server fallback and passes the same POSIX
   candidate home into WSL; Windows-side home paths are never forwarded to the
   Linux backend;
@@ -87,16 +95,20 @@ The D4 runtime also:
 - disables updater configuration, update-feed use, update polling, and build
   publication in the candidate; `resolveBuildOptions` also rejects signed
   artifact requests so D4 cannot consume production signing credentials;
-- blocks the server connect handlers while the D4 safety marker is active,
-  even if cloud/relay variables are present. The cloud source remains in the
-  tree for a later selected-user enablement phase. The server/CLI test harness
-  has an explicit opt-in (`SCIENT_NEXT_CLOUD_ENABLED=true`) for protocol tests;
-  D4 defaults do not enable it, and browser/web enablement remains a later
-  implementation decision;
+- blocks the server connect handlers by the compiled D4 identity safety
+  envelope, even when a direct server launch has no launcher marker and cloud
+  or relay variables are present. `SCIENT_NEXT_CLOUD_ENABLED=true` is reserved
+  for explicit protocol-test/selected-user opt-in; it does not enable cloud by
+  default, and browser/web enablement remains a later implementation decision;
 - keeps the T3 cloud/relay/mobile source and build foundations present, but the
   D4 identity explicitly disables cloud configuration and relay tracing. It
   does not enable a live Scient service endpoint, production credential, cloud
   account, mobile UI, or release feed;
+- keeps the inherited service/self-update implementation in the source tree for
+  later review, but does not expose `service` or `__service-preflight` commands
+  in D4 because the donor currently targets the global `t3code.service` unit;
+  re-enabling service lifecycle requires a distinct Scient service identity and
+  a separate release/security review;
 - guards the release, relay-deployment, mobile-publication, and screenshot
   workflow jobs with an explicit false condition. The inherited workflow files
   remain for later deliberate re-enablement; any future T3 merge must audit
@@ -117,26 +129,86 @@ signing, and updater identity remain later cutover decisions.
 
 The marker `SCIENT_NEXT_SAFETY_ENVELOPE=true` is set by the candidate launcher and
 desktop backend. It makes the telemetry and updater guards observable and
-testable. Local diagnostic log files remain available; outbound delivery does
-not.
+testable; the compiled identity also makes the server cloud guard fail closed
+for direct launches. Local diagnostic log files remain available; outbound
+delivery does not.
+
+## Protected divergence manifest
+
+These are intentional Scient-owned seams. Every future T3 merge must audit
+them before the merge can be considered safe:
+
+| Protected boundary                                            | Owning source seams                                                                                                  | Preservation evidence                                                                                                    |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Central candidate identity                                    | `packages/shared/src/scientNextIdentity.ts`; early Electron launcher constants; desktop identity adapters            | `scientNextIdentity.test.ts`, `DesktopAppIdentity.test.ts`, `DesktopEarlyElectronStartup.test.ts`                        |
+| State roots and legacy-fallback refusal                       | `packages/shared/src/devHome.ts`; desktop environment/backend configuration; server CLI/config and pairing           | `devHome.test.ts`, `DesktopEnvironment.test.ts`, `DesktopBackendConfiguration.test.ts`, `config.test.ts`, `pair.test.ts` |
+| Protocols, preview partitions, and browser/client persistence | desktop protocol, Linux URL handling, preview browser session, web client/theme storage                              | protocol, Linux URL, browser-session, client-persistence, and theme focused tests                                        |
+| Provider identity, analytics, and outbound observability      | `DesktopClerk.ts`, `DesktopObservability.ts`, server `AnalyticsService.ts`, server/web relay and build configuration | desktop Clerk/observability tests, analytics tests, cloud public-config tests, build inspection                          |
+| Cloud and relay production-dark boundary                      | server/web cloud public config, server cloud HTTP guard, relay tracing, desktop/server/web Vite configuration        | cloud public-config and HTTP tests plus server-router protocol suite with explicit test opt-in                           |
+| Service, updater, signing, and artifact authority             | server CLI registration, desktop updates, desktop-artifact builder, release configuration                            | CLI, desktop-update, artifact-builder, build, smoke, and workflow-source checks                                          |
+| Release, relay, mobile, and screenshot workflows              | `.github/workflows/release.yml`, `deploy-relay.yml`, mobile EAS and showcase workflows                               | explicit disabled job guards reviewed in source; hosted jobs may parse but must not publish                              |
+
+The first D4 change deliberately keeps T3's internal package names. Package
+names are not product authority and are not a reason for a broad namespace
+rewrite. The protected seams above are the minimum divergence budget; feature
+work must not be added to this manifest merely to avoid a conscious host
+change.
+
+## License and notice inventory
+
+Literal T3 ancestry and all tracked license files are preserved. D4 adds no new
+runtime dependency. The source inventory at this head is:
+
+| Path                                             | Covered work                         | License / notice                      |
+| ------------------------------------------------ | ------------------------------------ | ------------------------------------- |
+| `LICENSE`                                        | T3 Code source                       | MIT; T3 Tools Inc. copyright retained |
+| `.agents/skills/ios-debugger-agent/LICENSE`      | inherited OpenAI skill               | MIT                                   |
+| `.agents/skills/ios-simulator-browser/LICENSE`   | inherited OpenAI skill               | MIT                                   |
+| `apps/mobile/modules/t3-composer-editor/LICENSE` | Expo-derived composer editor         | MIT                                   |
+| `apps/mobile/modules/t3-markdown-text/LICENSE`   | Bluesky-derived Markdown text module | MIT                                   |
+| `apps/web/src/terminal/ghostty/fonts/LICENSE`    | terminal font                        | MIT                                   |
+| `native/libghostty-vt/LICENSE`                   | Ghostty VT library                   | MIT                                   |
+
+This is the tracked-source notice inventory required for D4, not a release
+SBOM or legal clearance. Dependency-license, trademark, final-brand, signing,
+and distribution review remain mandatory before any public artifact.
+
+## Secret-handling boundary
+
+- D4 introduces no production secret and no Scient cloud credential.
+- Provider CLI credentials remain owned by their external provider tools; D4
+  disables provider-account identity reads used for inherited analytics.
+- Candidate server secrets and authentication state live only below the
+  isolated candidate state root. Nothing probes or imports `.t3` or current
+  Scient secret directories.
+- Desktop bootstrap secrets continue through the inherited one-time file
+  descriptor boundary; they are not written into repository files or build
+  configuration.
+- Inherited T3 environment-variable names remain internal compatibility seams.
+  Their presence does not enable outbound telemetry, live cloud, service,
+  updater, signing, or publication under the D4 identity.
+
+Known gap: D4 does not redesign provider authentication or prove a production
+cloud secret lifecycle. Any selected-user cloud work requires the later cloud
+gate and a separate security/privacy review.
 
 ## Proof 1: candidate verification
 
-The complete workspace run completed on 2026-08-06 at 11:05 Asia/Jerusalem;
-focused post-change suites completed at 11:16, and the server-router suite was
-recertified at 11:33 after review-lane cleanup, from this worktree (Node
-`v24.14.0`, pnpm `11.10.0`):
+The final clean verification completed on 2026-08-06 at 11:51:48 Asia/Jerusalem
+(08:51:48 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
 
 ```text
-pnpm run test                pass (207 files; 1871 passed, 7 skipped)
+pnpm run test                pass (207 files passed, 2 skipped; 1872 passed, 7 skipped)
+focused D4 safety suites     pass (3 files; 42 tests)
 pnpm run typecheck           pass (existing suggestion diagnostics only)
-pnpm exec vp fmt --check     pass (2423 files)
+pnpm exec vp fmt --check     pass (2425 files)
 pnpm exec vp lint --report-unused-disable-directives  pass
 pnpm run build               pass (web, marketing, server, desktop)
 pnpm run test:desktop-smoke  pass
-server-router focused       pass (120 tests)
 git diff --check             pass
 ```
+
+The server-router cloud protocol suite also passed independently (120 tests).
 
 No browser, screenshot, geometry, or manual UI proof was used.
 
@@ -156,6 +228,20 @@ No computer use, browser automation, screenshots, geometry checks, visual tests,
 or manual UI acceptance were performed for D4. Desktop smoke is the existing
 non-visual Electron startup check only.
 
+## Rollback
+
+The D4 rollback is to close the candidate draft PR and continue using the
+current `ScientFactory/scient-desktop` application. The candidate branch and
+repository are isolated from that product, T3 installations, release channels,
+and live user data, so abandoning D4 requires no database downgrade, credential
+repair, or installed-app cross-grade.
+
+Do not weaken or revert individual safety guards to make the candidate start.
+If a guard cannot be preserved, stop the candidate lane and amend the parent
+migration decision. Candidate-local synthetic state may be preserved for
+diagnosis or removed later only through a separately confirmed operation; D4
+does not delete it automatically.
+
 ## Repository protection limitation
 
 GitHub branch-protection API configuration was attempted for `main` with
@@ -169,6 +255,6 @@ accepted before the candidate can become a production release repository.
 
 ## Evidence ownership
 
-This record belongs to the D4 bootstrap branch. The parent Scient repository remains the authority for migration
-policy and cutover decisions; this file records only candidate-local facts and
-verification.
+This record belongs to the D4 bootstrap branch. The parent Scient repository
+remains the authority for migration policy and cutover decisions; this file
+records only candidate-local facts and verification.

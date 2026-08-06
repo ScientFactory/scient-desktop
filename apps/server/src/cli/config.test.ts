@@ -68,10 +68,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-env-base");
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:5173"),
-      );
+      const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:5173"), {
+        developmentStateDirName: "scient-next-dev",
+        baseDirIsExplicit: false,
+      });
       const resolved = yield* resolveServerConfig(
         {
           mode: Option.none(),
@@ -98,7 +98,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_MODE: "desktop",
                   T3CODE_PORT: "4001",
                   T3CODE_HOST: "0.0.0.0",
-                  T3CODE_HOME: baseDir,
+                  SCIENT_NEXT_HOME: baseDir,
+                  T3CODE_HOME: join(NodeOS.tmpdir(), "ignored-legacy-t3-home"),
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
                   T3CODE_DEV_ALLOWED_ORIGINS:
                     "https://host.example.ts.net, https://phone.example.ts.net ",
@@ -133,7 +134,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(resolved.stateDir, join(baseDir, "userdata"));
+      assert.equal(resolved.stateDir, join(baseDir, "scient-next-dev"));
     }),
   );
 
@@ -425,10 +426,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: 443,
         }),
       );
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:4173"),
-      );
+      const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:4173"), {
+        developmentStateDirName: "scient-next-dev",
+        baseDirIsExplicit: false,
+      });
 
       const resolved = yield* resolveServerConfig(
         {
@@ -454,7 +455,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                 env: {
                   T3CODE_MODE: "web",
                   T3CODE_BOOTSTRAP_FD: String(fd),
-                  T3CODE_HOME: baseDir,
+                  SCIENT_NEXT_HOME: baseDir,
+                  T3CODE_HOME: join(NodeOS.tmpdir(), "ignored-legacy-t3-home"),
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                   T3CODE_LOG_WS_EVENTS: "true",

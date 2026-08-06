@@ -16,6 +16,7 @@ import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -43,7 +44,10 @@ const connectUnavailableCommand = Command.make("connect", {
   ),
 );
 
-export const makeCli = ({ cloudEnabled = hasCloudPublicConfig() } = {}) =>
+export const makeCli = ({
+  cloudEnabled = hasCloudPublicConfig(),
+  serviceEnabled = !SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled,
+} = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the T3 Code server."),
     Command.withHandler((flags) => runServerCommand(flags)),
@@ -53,8 +57,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig() } = {}) =>
       pairCommand,
       authCommand,
       projectCommand,
-      serviceCommand,
-      servicePreflightCommand,
+      ...(serviceEnabled ? [serviceCommand, servicePreflightCommand] : []),
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

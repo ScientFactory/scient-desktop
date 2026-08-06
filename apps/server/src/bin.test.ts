@@ -203,15 +203,12 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
   );
 
-  it.effect("exposes service lifecycle commands without T3 Connect configuration", () =>
+  it.effect("does not expose the inherited service lifecycle in the D4 candidate", () =>
     Effect.gen(function* () {
-      const { output } = yield* captureStdout(runCli(["service", "--help"], noConnectCli));
+      const { output } = yield* captureStdout(runCli(["--help"], noConnectCli));
 
-      assert.include(output, "Manage the T3 Code background service.");
-      assert.include(output, "install");
-      assert.include(output, "uninstall");
-      assert.include(output, "update");
-      assert.include(output, "status");
+      assert.notInclude(output, "Manage the T3 Code background service.");
+      assert.notInclude(output, "__service-preflight");
     }),
   );
 

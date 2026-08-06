@@ -1,5 +1,18 @@
 # Contributing
 
+## Scient Next candidate boundary
+
+This repository is currently a private ScientFactory migration candidate. The
+D4 scope and verification rules in [AGENTS.md](AGENTS.md) govern contributions
+before the inherited T3 guidance below. Do not propose scientific features,
+legacy-data migration, cloud/mobile enablement, signing, release, or public
+distribution until the parent Scient migration plan explicitly opens the
+corresponding gate.
+
+All candidate changes use short-lived branches and draft pull requests. T3
+upstream merges use dedicated branches and must remain separate from Scient
+product work; see [UPSTREAM.md](UPSTREAM.md).
+
 ## Read This First
 
 We are not actively accepting contributions right now.

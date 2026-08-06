@@ -52,7 +52,19 @@ it("keeps D4 cloud integration disabled unless explicitly opted in", () => {
       SCIENT_NEXT_CLOUD_ENABLED: "true",
     }),
   ).toBe(false);
-  expect(isCandidateCloudIntegrationDisabled({})).toBe(false);
+  expect(
+    isCandidateCloudIntegrationDisabled({
+      NODE_ENV: "test",
+      SCIENT_NEXT_CLOUD_ROUTE_TEST: "true",
+    }),
+  ).toBe(false);
+  expect(
+    isCandidateCloudIntegrationDisabled({
+      NODE_ENV: "production",
+      SCIENT_NEXT_CLOUD_ROUTE_TEST: "true",
+    }),
+  ).toBe(true);
+  expect(isCandidateCloudIntegrationDisabled({})).toBe(true);
 });
 
 function makeSecretStore(
