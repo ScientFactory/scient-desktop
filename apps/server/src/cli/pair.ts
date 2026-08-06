@@ -263,11 +263,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       bases.push(worktreeHome);
     }
     const envHome = yield* Config.string("SCIENT_NEXT_HOME").pipe(Config.option);
-    const compatibilityHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
     bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
-    if (Option.isSome(compatibilityHome)) {
-      bases.push(yield* resolveBaseDir(Option.getOrUndefined(compatibilityHome)));
-    }
   }
 
   const checkedStatePaths: Array<string> = [];
