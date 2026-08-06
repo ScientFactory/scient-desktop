@@ -20,7 +20,7 @@ jobs:
     # D4 candidate: production infrastructure remains disabled until a later
     # cutover review explicitly restores release authority.
     if: ${{ false }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: production

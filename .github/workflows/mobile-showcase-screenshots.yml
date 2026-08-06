@@ -33,7 +33,7 @@ jobs:
     name: iPhone 6.9, iPhone 6.5, and iPad 13
     # D4 candidate: visual/mobile capture is not part of this phase.
     if: ${{ false }}
-    runs-on: blacksmith-12vcpu-macos-26
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -81,7 +81,7 @@ jobs:
     name: Android phone, 7-inch tablet, and 10-inch tablet
     # D4 candidate: visual/mobile capture is not part of this phase.
     if: ${{ false }}
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       T3_SHOWCASE_ANDROID_ABI: x86_64

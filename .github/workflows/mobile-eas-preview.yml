@@ -10,7 +10,7 @@ jobs:
     # D4 candidate: do not publish mobile artifacts or OTA branches from the
     # migration candidate. Keep the inherited workflow for later re-evaluation.
     if: ${{ false }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
