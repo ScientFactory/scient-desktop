@@ -104,6 +104,9 @@ The D4 runtime also:
 - mobile source still carries T3's cloud/tracing foundations, but mobile builds
   and publication are outside D4 and explicitly unsupported until a later
   mobile safety review;
+- accepts an explicit `SCIENT_NEXT_HOME`/`--home-dir` only as an operator-owned
+  isolated override. It is never used to probe legacy data automatically; an
+  operator must not point it at `.t3` or the current Scient data root;
 - does not add scientific tables, migrations, project data, credentials, or
   user-data conversion. The host database remains the untouched T3 generic
   database boundary for this phase.
@@ -119,8 +122,10 @@ not.
 
 ## Proof 1: candidate verification
 
-The final clean run completed on 2026-08-06 at 11:09 Asia/Jerusalem from this
-worktree (Node `v24.14.0`, pnpm `11.10.0`):
+The complete workspace run completed on 2026-08-06 at 11:05 Asia/Jerusalem;
+focused post-change suites completed at 11:16, and the server-router suite was
+recertified at 11:33 after review-lane cleanup, from this worktree (Node
+`v24.14.0`, pnpm `11.10.0`):
 
 ```text
 pnpm run test                pass (207 files; 1871 passed, 7 skipped)
@@ -129,6 +134,7 @@ pnpm exec vp fmt --check     pass (2423 files)
 pnpm exec vp lint --report-unused-disable-directives  pass
 pnpm run build               pass (web, marketing, server, desktop)
 pnpm run test:desktop-smoke  pass
+server-router focused       pass (120 tests)
 git diff --check             pass
 ```
 
