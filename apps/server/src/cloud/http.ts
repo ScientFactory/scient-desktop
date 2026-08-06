@@ -83,9 +83,9 @@ import { traceRelayRequest } from "./traceRelayRequest.ts";
 // and available for a later selected-user enablement phase, while a real D4
 // candidate process cannot execute connect handlers merely because cloud
 // environment variables are present.
-const candidateSafetyEnvelopeEnabled = () =>
-  process.env.SCIENT_NEXT_SAFETY_ENVELOPE === "true" &&
-  process.env.SCIENT_NEXT_CLOUD_ENABLED !== "true";
+export const isCandidateCloudIntegrationDisabled = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+) => env.SCIENT_NEXT_SAFETY_ENVELOPE === "true" && env.SCIENT_NEXT_CLOUD_ENABLED !== "true";
 
 const cloudIntegrationDisabled = () =>
   Effect.fail(
@@ -1034,7 +1034,7 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "connect",
   Effect.fnUntraced(function* (handlers) {
-    if (candidateSafetyEnvelopeEnabled()) {
+    if (isCandidateCloudIntegrationDisabled()) {
       return handlers
         .handle("linkProof", () => cloudIntegrationDisabled())
         .handle("relayConfig", () => cloudIntegrationDisabled())
