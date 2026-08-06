@@ -205,8 +205,10 @@ gate and a separate security/privacy review.
 
 ## Proof 1: candidate verification
 
-The final clean verification completed on 2026-08-06 at 12:21:10 Asia/Jerusalem
-(09:21:10 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
+The final clean verification completed on 2026-08-06 at 12:26:21 Asia/Jerusalem
+(09:26:21 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`). The full
+workspace test pass completed at 12:21:10; the focused D4 suites, typecheck,
+format, and lint were rerun after the final guard-test commit:
 
 ```text
 pnpm run test                pass (207 files passed, 2 skipped; 1873 passed, 7 skipped)
