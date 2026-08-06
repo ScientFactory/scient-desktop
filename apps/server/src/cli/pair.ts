@@ -262,8 +262,12 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
     }
-    const envHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
+    const envHome = yield* Config.string("SCIENT_NEXT_HOME").pipe(Config.option);
+    const compatibilityHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
     bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
+    if (Option.isSome(compatibilityHome)) {
+      bases.push(yield* resolveBaseDir(Option.getOrUndefined(compatibilityHome)));
+    }
   }
 
   const checkedStatePaths: Array<string> = [];
@@ -315,9 +319,10 @@ const makePairServerConfig = Effect.fn(function* (input: {
   const { baseDir, variant, state } = input.target;
   // The recorded devUrl marks the development state directory. Keep the
   // candidate-specific directory name aligned with server startup.
+  const devUrl = state.devUrl !== undefined ? new URL(state.devUrl) : undefined;
   const derivedPaths = yield* ServerConfig.deriveServerPaths(
     baseDir,
-    variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
+    variant === "dev" ? (devUrl ?? DEV_VARIANT_PLACEHOLDER_URL) : undefined,
     { developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName },
   );
   return ServerConfig.make({
