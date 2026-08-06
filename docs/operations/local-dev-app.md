@@ -1,4 +1,4 @@
-# Scient Next Local Dev App
+# Scient Local Dev App
 
 Status: Active maintainer runbook
 Owner: ScientFactory
@@ -7,7 +7,7 @@ Purpose: Keeps one recognizable local Scient development app available while all
 
 ## Outcome And Boundary
 
-The local development application is named **Scient Next (Dev)**. It is a live
+The local development application is named **Scient (Dev)**. It is a live
 Electron development runtime, not an installed release snapshot. The owning
 checkout runs the backend, renderer, and Electron shell together with rebuild
 and reload behavior.
@@ -15,7 +15,7 @@ and reload behavior.
 The development identity stays separate from the current Scient app and from
 future release identity:
 
-- display name: `Scient Next (Dev)`;
+- display name: `Scient (Dev)`;
 - development protocol: `scient-next-dev://`;
 - worktree-specific macOS bundle identifier;
 - worktree-specific ports;
@@ -31,7 +31,7 @@ working local dev app does not authorize release, cutover, or user-data import.
 One checkout may own the clickable launcher at:
 
 ```text
-~/Applications/Scient Next (Dev).app
+~/Applications/Scient (Dev).app
 ```
 
 From the selected clean checkout:
@@ -46,6 +46,11 @@ The installer creates the generated Electron development bundle, copies it to
 the user Applications directory, records the exact owning checkout inside the
 bundle, and registers it with macOS. It refuses to overwrite an unrecognized
 application or a launcher owned by another checkout.
+
+The visible name and icon may evolve without weakening isolation. The
+development protocol, bundle identifier, state root, and launcher-ownership
+marker remain candidate-specific until the cutover audit explicitly changes
+them.
 
 To deliberately transfer launcher ownership after selecting a new stable
 checkout:

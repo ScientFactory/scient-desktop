@@ -9,6 +9,12 @@ Accountable owner: Yaacov. Bootstrap implementation operator: OpenAI Codex task
 `019fbc83-7f59-7050-a16c-7b63686016ce`, acting under Yaacov's D4
 authorization.
 
+> **Post-D4 identity note:** this record preserves the exact D4 state and names
+> as historical evidence. The candidate now presents the Scient product label
+> (`Scient` and `Scient (Dev)`) while retaining the D4 `scient-next` bundle,
+> protocol, state, persistence, and safety identifiers. That visible rebrand
+> does not authorize cutover, release, updater, cloud, mobile, or data import.
+
 ## Integration base
 
 - Donor: official `pingdotgg/t3code` repository, fetched read-only.

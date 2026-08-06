@@ -207,7 +207,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCli(["--help"], noConnectCli));
 
-      assert.notInclude(output, "Manage the T3 Code background service.");
+      assert.notInclude(output, "Manage the Scient background service.");
       assert.notInclude(output, "__service-preflight");
     }),
   );

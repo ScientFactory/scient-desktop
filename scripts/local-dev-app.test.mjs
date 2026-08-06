@@ -54,7 +54,7 @@ afterEach(() => {
 describe("local dev app installation", () => {
   it("registers the exact app bundle through the system LaunchServices helper", () => {
     const calls = [];
-    registerDevelopmentAppBundle("/Applications/Scient Next (Dev).app", {
+    registerDevelopmentAppBundle("/Applications/Scient (Dev).app", {
       spawnSync: (...args) => {
         calls.push(args);
         return { status: 0, stderr: "" };
@@ -62,14 +62,14 @@ describe("local dev app installation", () => {
     });
 
     assert.deepEqual(calls, [
-      [MACOS_LSREGISTER_PATH, ["-f", "/Applications/Scient Next (Dev).app"], { encoding: "utf8" }],
+      [MACOS_LSREGISTER_PATH, ["-f", "/Applications/Scient (Dev).app"], { encoding: "utf8" }],
     ]);
   });
 
   it("reports LaunchServices registration failures", () => {
     assert.throws(
       () =>
-        registerDevelopmentAppBundle("/Applications/Scient Next (Dev).app", {
+        registerDevelopmentAppBundle("/Applications/Scient (Dev).app", {
           spawnSync: () => ({ status: 1, stderr: "registration failed" }),
         }),
       /registration failed/,

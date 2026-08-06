@@ -228,7 +228,7 @@ function getAutoUpdateDisabledReason(args: {
   safetyEnvelopeEnabled: boolean;
 }): string | null {
   if (args.safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.autoUpdateEnabled) {
-    return "Automatic updates are disabled during the Scient Next D4 bootstrap.";
+    return "Automatic updates are disabled for this Scient candidate during the D4 bootstrap.";
   }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";

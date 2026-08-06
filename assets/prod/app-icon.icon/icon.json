@@ -6,10 +6,20 @@
     {
       "layers": [
         {
-          "image-name": "text.svg",
-          "name": "Text",
+          "glass": false,
+          "image-name": "symbol.svg",
+          "name": "Scient Symbol",
           "position": {
-            "scale": 8.5,
+            "scale": 8.0,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "glass": true,
+          "image-name": "background.svg",
+          "name": "Background",
+          "position": {
+            "scale": 8.1,
             "translation-in-points": [0, 0]
           }
         }
@@ -20,7 +30,7 @@
       },
       "translucency": {
         "enabled": true,
-        "value": 0.5
+        "value": 0.2
       }
     }
   ],

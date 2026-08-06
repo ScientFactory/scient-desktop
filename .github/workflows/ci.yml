@@ -42,6 +42,9 @@ jobs:
       - name: Check
         run: vp check
 
+      - name: Verify Scient product identity
+        run: vp run brand:check
+
       - name: Typecheck
         run: vpr typecheck
 

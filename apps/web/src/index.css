@@ -76,6 +76,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 :root {
+  --scient-burgundy: #471a1a;
+  --scient-slate: #46587e;
+  --scient-warm-white: #faf9f6;
   --app-scrollbar-width: 6px;
   --app-scrollbar-thumb: rgb(217 217 217);
   --app-scrollbar-thumb-hover: rgb(191 191 191);
@@ -271,7 +274,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 48rem) {
-    @container sidebar-header (min-width: 13.5rem) {
+    /* The resizable desktop sidebar bottoms out at 13rem. On macOS the
+       titlebar reserve leaves 78px there, enough for the compact 16px Scient
+       mark and name; below that width the identity yields to window controls. */
+    @container sidebar-header (min-width: 13rem) {
       .sidebar-brand {
         display: flex;
       }
@@ -284,10 +290,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  /* Stage-channel sidebar art; ::after ramps to the sidebar bg color and the
-     mask lets the surface grain show through at the boundary. Panels whose
-     background differs from the app chrome (e.g. sidebar v2) override
-     --sidebar-stage-fade so the art fades into their own surface color. */
+  /* Scient stage branding stays deliberately quiet. The fade preserves the
+     sidebar hierarchy while Dev and Nightly use the same product palette. */
   .sidebar-stage-backdrop {
     --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
     mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
@@ -311,16 +315,107 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     );
   }
 
-  .stage-blueprint {
-    --stage-bp-top: #67c2ff;
-    --stage-bp-mid: #347ff8;
-    --stage-bp-bottom: #1538d0;
+  .scient-stage-art {
+    background:
+      radial-gradient(
+        18rem 7rem at 82% -30%,
+        color-mix(in srgb, var(--scient-slate) 20%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(
+        14rem 6rem at 14% 10%,
+        color-mix(in srgb, var(--scient-burgundy) 10%, transparent),
+        transparent 76%
+      ),
+      var(--scient-warm-white);
   }
 
-  .dark .stage-blueprint {
-    --stage-bp-top: #3a7ad1;
-    --stage-bp-mid: #2050ae;
-    --stage-bp-bottom: #101f6e;
+  .scient-stage-art-nightly {
+    background:
+      radial-gradient(
+        18rem 7rem at 82% -30%,
+        color-mix(in srgb, var(--scient-burgundy) 20%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(
+        14rem 6rem at 14% 10%,
+        color-mix(in srgb, var(--scient-slate) 12%, transparent),
+        transparent 76%
+      ),
+      var(--scient-warm-white);
+  }
+
+  .scient-stage-watermark {
+    opacity: 0.07;
+  }
+
+  .sidebar-brand-on-stage {
+    color: var(--scient-burgundy);
+  }
+
+  .sidebar-brand-stage-label {
+    color: color-mix(in srgb, var(--scient-slate) 78%, transparent);
+  }
+
+  .sidebar-stage-trigger {
+    --tw-ring-offset-color: var(--scient-warm-white);
+  }
+
+  .sidebar-stage-trigger:is(:hover, [data-pressed]) {
+    background: color-mix(in srgb, var(--scient-slate) 10%, transparent);
+  }
+
+  .sidebar-stage-trigger:focus-visible {
+    --tw-ring-color: color-mix(in srgb, var(--scient-slate) 68%, transparent);
+  }
+
+  .sidebar-stage-trigger svg {
+    stroke: var(--scient-slate) !important;
+    opacity: 1 !important;
+  }
+
+  .dark .scient-stage-art,
+  .dark .scient-stage-art-nightly {
+    background:
+      radial-gradient(
+        18rem 7rem at 82% -30%,
+        color-mix(in srgb, var(--scient-slate) 28%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(
+        14rem 6rem at 14% 10%,
+        color-mix(in srgb, var(--scient-burgundy) 34%, transparent),
+        transparent 76%
+      ),
+      #1b1819;
+  }
+
+  .dark .scient-stage-watermark {
+    opacity: 0.12;
+  }
+
+  .dark .sidebar-brand-on-stage {
+    color: var(--scient-warm-white);
+  }
+
+  .dark .sidebar-brand-stage-label {
+    color: color-mix(in srgb, var(--scient-warm-white) 64%, transparent);
+  }
+
+  .dark .sidebar-stage-trigger {
+    --tw-ring-offset-color: #1b1819;
+  }
+
+  .dark .sidebar-stage-trigger:is(:hover, [data-pressed]) {
+    background: color-mix(in srgb, var(--scient-warm-white) 10%, transparent);
+  }
+
+  .dark .sidebar-stage-trigger:focus-visible {
+    --tw-ring-color: color-mix(in srgb, var(--scient-warm-white) 72%, transparent);
+  }
+
+  .dark .sidebar-stage-trigger svg {
+    stroke: color-mix(in srgb, var(--scient-warm-white) 86%, transparent) !important;
   }
 
   .workspace-topbar {
