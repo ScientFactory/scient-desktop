@@ -108,6 +108,8 @@ The D4 runtime also:
 - keeps the inherited service/self-update implementation in the source tree for
   later review, but does not expose `service` or `__service-preflight` commands
   in D4 because the donor currently targets the global `t3code.service` unit;
+  the T3 Connect onboarding flow also skips its inherited background-service
+  offer for the same reason;
   re-enabling service lifecycle requires a distinct Scient service identity and
   a separate release/security review;
 - guards the release, relay-deployment, mobile-publication, and screenshot
@@ -117,9 +119,10 @@ The D4 runtime also:
 - mobile source still carries T3's cloud/tracing foundations, but mobile builds
   and publication are outside D4 and explicitly unsupported until a later
   mobile safety review;
-- accepts an explicit `SCIENT_NEXT_HOME`/`--home-dir` only as an operator-owned
-  isolated override. It is never used to probe legacy data automatically; an
-  operator must not point it at `.t3` or the current Scient data root;
+- accepts an explicit `SCIENT_NEXT_HOME`/`--home-dir`/`--base-dir` only as an
+  operator-owned isolated override. It is never used to probe legacy data
+  automatically; an operator must not point any of these overrides at `.t3` or
+  the current Scient data root;
 - does not add scientific tables, migrations, project data, credentials, or
   user-data conversion. The host database remains the untouched T3 generic
   database boundary for this phase.
@@ -195,11 +198,11 @@ gate and a separate security/privacy review.
 
 ## Proof 1: candidate verification
 
-The final clean verification completed on 2026-08-06 at 11:54:56 Asia/Jerusalem
-(08:54:56 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
+The final clean verification completed on 2026-08-06 at 12:03:19 Asia/Jerusalem
+(09:03:19 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
 
 ```text
-pnpm run test                pass (207 files passed, 2 skipped; 1872 passed, 7 skipped)
+pnpm run test                pass (207 files passed, 2 skipped; 1873 passed, 7 skipped)
 focused D4 safety suites     pass (3 files; 42 tests)
 pnpm run typecheck           pass (existing suggestion diagnostics only)
 pnpm exec vp fmt --check     pass (2425 files)

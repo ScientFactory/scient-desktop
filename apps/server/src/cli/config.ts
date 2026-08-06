@@ -33,7 +33,7 @@ export const hostFlag = Flag.string("host").pipe(
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription(
-    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+    "Explicit Scient Next data directory; runtime state is stored under userdata.",
   ),
   Flag.optional,
 );
@@ -278,12 +278,18 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
       () => undefined,
     );
+    const cliBaseDir = normalizedFlags.baseDir.pipe(
+      Option.filter((value) => value.trim().length > 0),
+    );
+    const candidateEnvBaseDir = Option.fromUndefinedOr(env.scientNextHome).pipe(
+      Option.filter((value) => value.trim().length > 0),
+    );
     const explicitBaseDir = resolveOptionPrecedence(
-      normalizedFlags.baseDir,
+      cliBaseDir,
       // The candidate-owned name is authoritative for direct/server and
       // desktop child launches. Do not allow ambient T3CODE_HOME to redirect
       // a Scient Next process into an installed T3/current-Scient state root.
-      Option.fromUndefinedOr(env.scientNextHome),
+      candidateEnvBaseDir,
       SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
         ? Option.none()
         : Option.fromUndefinedOr(env.t3Home),
@@ -303,8 +309,9 @@ export const resolveServerConfig = (
       // than production userdata.
       developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
       baseDirIsExplicit:
-        Option.isSome(explicitBaseDir) &&
-        !(SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && env.scientNextHome !== undefined),
+        Option.isSome(cliBaseDir) ||
+        (Option.isSome(explicitBaseDir) &&
+          !(SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && Option.isSome(candidateEnvBaseDir))),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(

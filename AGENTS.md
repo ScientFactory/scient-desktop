@@ -22,8 +22,8 @@ authorization.
 - Never read, copy, seed, migrate, or write T3 or current-Scient live user data
   for D4. This overrides the inherited donor test-data guidance below. Use only
   synthetic fixtures in candidate-owned temporary directories.
-- Do not use production credentials or point `SCIENT_NEXT_HOME`/`--home-dir`
-  at `.t3` or a current Scient data root.
+- Do not use production credentials or point `SCIENT_NEXT_HOME`/`--home-dir`/
+  `--base-dir` at `.t3` or a current Scient data root.
 - No browser automation, screenshots, visual regression, geometry checks, or
   manual UI acceptance belong to D4. A later user-facing gate owns that proof.
 

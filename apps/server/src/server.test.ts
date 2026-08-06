@@ -2511,16 +2511,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects replayed cloud mint requests atomically", () =>
-    Effect.gen(function* () {
-      // This is a cloud protocol regression test; opt the test process into
-      // the otherwise-disabled D4 cloud route explicitly.
-      const previousCloudEnv = {
-        enabled: process.env.SCIENT_NEXT_CLOUD_ENABLED,
-        relay: process.env.T3CODE_RELAY_URL,
-        clerk: process.env.T3CODE_CLERK_PUBLISHABLE_KEY,
-        oauth: process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID,
-      };
+  it.effect("rejects replayed cloud mint requests atomically", () => {
+    // This is a cloud protocol regression test; opt the test process into
+    // the otherwise-disabled D4 cloud route explicitly.
+    const previousCloudEnv = {
+      enabled: process.env.SCIENT_NEXT_CLOUD_ENABLED,
+      relay: process.env.T3CODE_RELAY_URL,
+      clerk: process.env.T3CODE_CLERK_PUBLISHABLE_KEY,
+      oauth: process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID,
+    };
+    const restoreCloudEnv = Effect.sync(() => {
+      for (const [name, value] of [
+        ["SCIENT_NEXT_CLOUD_ENABLED", previousCloudEnv.enabled],
+        ["T3CODE_RELAY_URL", previousCloudEnv.relay],
+        ["T3CODE_CLERK_PUBLISHABLE_KEY", previousCloudEnv.clerk],
+        ["T3CODE_CLERK_CLI_OAUTH_CLIENT_ID", previousCloudEnv.oauth],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    });
+    return Effect.gen(function* () {
       process.env.SCIENT_NEXT_CLOUD_ENABLED = "true";
       process.env.T3CODE_RELAY_URL = "https://relay.example.test";
       process.env.T3CODE_CLERK_PUBLISHABLE_KEY = "pk_test_example";
@@ -2579,17 +2590,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(replayResponse.status, 409);
       assert.equal(replayBody._tag, "EnvironmentHttpConflictError");
       assert.equal(replayBody.message, "Cloud mint request was already consumed.");
-      for (const [name, value] of [
-        ["SCIENT_NEXT_CLOUD_ENABLED", previousCloudEnv.enabled],
-        ["T3CODE_RELAY_URL", previousCloudEnv.relay],
-        ["T3CODE_CLERK_PUBLISHABLE_KEY", previousCloudEnv.clerk],
-        ["T3CODE_CLERK_CLI_OAUTH_CLIENT_ID", previousCloudEnv.oauth],
-      ] as const) {
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-      }
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
+    }).pipe(Effect.ensuring(restoreCloudEnv), Effect.provide(NodeHttpServer.layerTest));
+  });
 
   it.effect("serves the documented T3 Connect mint credential endpoint", () =>
     Effect.gen(function* () {

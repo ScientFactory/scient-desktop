@@ -8,6 +8,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
@@ -143,6 +144,16 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
 );
 
 export const offerServiceDuringOnboarding = Effect.gen(function* () {
+  // The inherited service implementation still targets the global
+  // `t3code.service` unit.  Keep it unreachable for the D4 candidate even
+  // when a selected-user cloud route is explicitly enabled; cloud access must
+  // not mutate an installed T3 Code service or its lifecycle state.
+  if (SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled) {
+    yield* Console.log(
+      "Background service setup is disabled in Scient Next until it has a distinct Scient service identity.",
+    );
+    return false;
+  }
   const service = yield* BootService.BootService;
   const { supported, installed, current } = yield* service.status;
   if (!supported) {
