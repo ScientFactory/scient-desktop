@@ -1,6 +1,6 @@
 # Scient Next candidate instructions
 
-Status: private D4 migration candidate. These instructions override the
+Status: private post-D4 migration candidate. These instructions override the
 inherited T3 guidance below when the two conflict.
 
 ScientFactory owns this repository and the candidate product direction. Yaacov
@@ -15,10 +15,11 @@ authorization.
   application until a later cutover gate.
 - `Scient Next` is provisional private-candidate labeling, not a public brand
   or release identity.
-- D4 permits identity/state isolation and fail-closed telemetry, cloud,
-  updater, service, signing, and publication guards only. It does not permit
-  scientific features, legacy-data import, cloud or mobile enablement, signing,
-  release, or public distribution.
+- The integrated D4 envelope establishes identity/state isolation and
+  fail-closed telemetry, cloud, updater, service, signing, and publication
+  guards. Later work must follow the currently authorized parent migration
+  gate; D4 itself did not authorize scientific features, legacy-data import,
+  cloud or mobile enablement, signing, release, or public distribution.
 - Never read, copy, seed, migrate, or write T3 or current-Scient live user data
   for D4. This overrides the inherited donor test-data guidance below. Use only
   synthetic fixtures in candidate-owned temporary directories.
@@ -42,6 +43,12 @@ authorization.
 - Before changing a protected divergence, read [UPSTREAM.md](UPSTREAM.md),
   [upstream-state.json](upstream-state.json), and the
   [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
+- For any request to install, open, stop, refresh, or inspect the local
+  development app, follow the
+  [Scient Next local dev app runbook](docs/operations/local-dev-app.md). Always
+  identify the exact checkout, branch, and head before launch. The installed
+  launcher belongs to one stable checkout; feature worktrees run their own
+  isolated instance and must not silently repoint it.
 
 ## Verification
 

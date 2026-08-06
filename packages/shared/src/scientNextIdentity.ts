@@ -7,7 +7,7 @@
  */
 export const SCIENT_NEXT_IDENTITY = {
   baseName: "Scient Next",
-  developmentName: "Scient Next Dev",
+  developmentName: "Scient Next (Dev)",
   appId: "com.scientfactory.scient.next",
   developmentAppId: "com.scientfactory.scient.next.dev",
   baseDirName: ".scient-next",
