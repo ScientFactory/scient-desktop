@@ -153,8 +153,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, "/Users/yaacov/.scient-next");
-        assert.equal(env.SCIENT_NEXT_HOME, "/Users/yaacov/.scient-next");
+        const candidateHome = NodePath.join(NodeOS.homedir(), ".scient-next");
+        assert.equal(env.T3CODE_HOME, candidateHome);
+        assert.equal(env.SCIENT_NEXT_HOME, candidateHome);
         assert.equal(env.SCIENT_NEXT_SAFETY_ENVELOPE, "true");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
       }),
@@ -872,7 +873,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, "/Users/yaacov/.scient-next");
+        assert.equal(env.T3CODE_HOME, NodePath.join(NodeOS.homedir(), ".scient-next"));
       }),
     );
 
