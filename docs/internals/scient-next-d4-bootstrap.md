@@ -205,12 +205,12 @@ gate and a separate security/privacy review.
 
 ## Proof 1: candidate verification
 
-The final clean verification completed on 2026-08-06 at 12:18:53 Asia/Jerusalem
-(09:18:53 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
+The final clean verification completed on 2026-08-06 at 12:21:10 Asia/Jerusalem
+(09:21:10 UTC) from this worktree (Node `v24.14.0`, pnpm `11.10.0`):
 
 ```text
 pnpm run test                pass (207 files passed, 2 skipped; 1873 passed, 7 skipped)
-focused D4 safety suites     pass (4 files; 160 tests)
+focused D4 safety suites     pass (6 files; 183 tests)
 pnpm run typecheck           pass (existing suggestion diagnostics only)
 pnpm exec vp fmt --check     pass (2425 files)
 pnpm exec vp lint --report-unused-disable-directives  pass
