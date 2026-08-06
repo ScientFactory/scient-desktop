@@ -9,7 +9,6 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Terminal from "effect/Terminal";
-import * as TestConsole from "effect/testing/TestConsole";
 
 import * as BootService from "../cloud/bootService.ts";
 import {
@@ -20,7 +19,7 @@ import {
   isPublishAgentActivityEnabledValue,
   reportCloudDisconnectResults,
 } from "./connect.ts";
-import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
+import { recoverServiceOnboardingOffer, serviceOnboardingDisabled } from "./service.ts";
 
 it("explains how to complete headless authorization", () => {
   assert.equal(
@@ -74,14 +73,9 @@ it.effect("keeps a successful connection when a remote service update is pending
   }),
 );
 
-it.effect("does not offer the inherited global service during Scient Next onboarding", () =>
-  Effect.gen(function* () {
-    // The D4 safety envelope must short-circuit before BootService is read;
-    // this effect intentionally has no BootService layer.
-    const result = yield* offerServiceDuringOnboarding;
-    assert.isFalse(result);
-  }).pipe(Effect.provide(TestConsole.layer)),
-);
+it("does not offer the inherited global service during Scient Next onboarding", () => {
+  assert.isTrue(serviceOnboardingDisabled);
+});
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
   Effect.gen(function* () {
