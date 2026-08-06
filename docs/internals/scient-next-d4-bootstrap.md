@@ -89,8 +89,10 @@ The D4 runtime also:
   artifact requests so D4 cannot consume production signing credentials;
 - blocks the server connect handlers while the D4 safety marker is active,
   even if cloud/relay variables are present. The cloud source remains in the
-  tree for a later selected-user enablement phase. That phase has an explicit
-  opt-in (`SCIENT_NEXT_CLOUD_ENABLED=true`) and is not enabled by D4 defaults;
+  tree for a later selected-user enablement phase. The server/CLI test harness
+  has an explicit opt-in (`SCIENT_NEXT_CLOUD_ENABLED=true`) for protocol tests;
+  D4 defaults do not enable it, and browser/web enablement remains a later
+  implementation decision;
 - keeps the T3 cloud/relay/mobile source and build foundations present, but the
   D4 identity explicitly disables cloud configuration and relay tracing. It
   does not enable a live Scient service endpoint, production credential, cloud
