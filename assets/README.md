@@ -19,6 +19,11 @@ channel project. This is a 5.88% linear reduction from the initial `8.5`
 placement: the mark remains mathematically centered while gaining a little more
 breathing room inside the icon body.
 
+The canonical symbol uses the approved 16-unit geometry inside its unchanged
+`376 x 400` design footprint. Its outer bounds and center `(188, 200)` are the
+same as the preceding 10-unit mark, so the heavier lines do not enlarge or
+reposition the symbol inside the icon.
+
 The in-app masthead, splash screen, and authentication surfaces use the same
 canonical mark from `apps/web/src/assets/scient-symbol.svg`. Keep that compact
 web asset geometrically and chromatically aligned with the Icon Composer

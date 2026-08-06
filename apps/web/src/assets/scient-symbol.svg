@@ -1,10 +1,10 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <g transform="translate(18.88 16) scale(0.24)">
-    <path d="M295 105H95V95H295V105Z" fill="#46587E"/>
-    <path d="M376 210H201V200H376V210Z" fill="#471A1A"/>
-    <path d="M190 200V0H200V200H190Z" fill="#471A1A"/>
-    <path d="M95 295V95H105V295H95Z" fill="#46587E"/>
-    <path d="M200 200H0V190H200V200Z" fill="#471A1A"/>
-    <path d="M200 400V200H210V400H200Z" fill="#471A1A"/>
+    <path d="M292 108L92 108V92L292 92V108Z" fill="#46587E"/>
+    <path d="M376 216L201 216V200L376 200V216Z" fill="#471A1A"/>
+    <rect x="184" y="200" width="200" height="16" transform="rotate(-90 184 200)" fill="#471A1A"/>
+    <rect x="92" y="292" width="200" height="16" transform="rotate(-90 92 292)" fill="#46587E"/>
+    <path d="M200 200L0 200V184L200 184V200Z" fill="#471A1A"/>
+    <rect x="200" y="400" width="200" height="16" transform="rotate(-90 200 400)" fill="#471A1A"/>
   </g>
 </svg>
