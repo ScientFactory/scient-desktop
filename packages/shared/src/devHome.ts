@@ -101,3 +101,14 @@ export const resolveWorktreeT3Home = (
     const path = yield* Path.Path;
     return path.join(worktreePath, ".t3");
   });
+
+/** Candidate-specific worktree home used by the Scient Next D4 runner. */
+export const resolveWorktreeScientNextHome = (
+  cwd: string,
+): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const worktreePath = yield* resolveGitWorktreePath(cwd);
+    if (worktreePath === undefined) return undefined;
+    const path = yield* Path.Path;
+    return path.join(worktreePath, ".scient-next");
+  });

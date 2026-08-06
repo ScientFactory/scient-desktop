@@ -5,7 +5,7 @@
  * Discovery reads the `server-runtime.json` a live server persists next to its
  * database, then confirms the process is actually answering by fetching its
  * public environment descriptor. Inside a linked git worktree the worktree's
- * own `.t3` is checked first (matching dev-runner precedence); otherwise the
+ * own `.scient-next` is checked first (matching dev-runner precedence); otherwise the
  * shared T3 home. `--tailscale` publishes the server over Tailscale Serve
  * HTTPS and pairs through the tailnet URL instead.
  */
@@ -14,7 +14,8 @@ import {
   ExecutionEnvironmentDescriptor,
   PortSchema,
 } from "@t3tools/contracts";
-import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+import { resolveWorktreeScientNextHome } from "@t3tools/shared/devHome";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
@@ -254,10 +255,10 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
-    // Same precedence as dev-runner: inside a linked worktree its own `.t3`
+    // Same precedence as dev-runner: inside a linked worktree its own `.scient-next`
     // outranks the shared home, so `t3 pair` in a worktree pairs with the dev
     // server under test rather than the daily-driver install.
-    const worktreeHome = yield* resolveWorktreeT3Home(process.cwd());
+    const worktreeHome = yield* resolveWorktreeScientNextHome(process.cwd());
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
     }
@@ -271,7 +272,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
         baseDir,
         variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
-        {},
+        { developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName },
       );
       const statePath = derivedPaths.serverRuntimeStatePath;
       checkedStatePaths.push(statePath);
@@ -312,14 +313,12 @@ const makePairServerConfig = Effect.fn(function* (input: {
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
   const { baseDir, variant, state } = input.target;
-  // The state-dir variant does not imply dev-ness: a worktree dev server uses
-  // an explicit home and therefore lands in `userdata`. The recorded devUrl is
-  // what actually marks a dev server.
-  const devUrl = state.devUrl !== undefined ? new URL(state.devUrl) : undefined;
+  // The recorded devUrl marks the development state directory. Keep the
+  // candidate-specific directory name aligned with server startup.
   const derivedPaths = yield* ServerConfig.deriveServerPaths(
     baseDir,
     variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
-    {},
+    { developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName },
   );
   return ServerConfig.make({
     logLevel: input.logLevel,

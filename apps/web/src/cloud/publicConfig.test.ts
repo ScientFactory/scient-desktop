@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   CloudPublicConfigMissingError,
   hasCloudPublicConfig,
+  resolveCloudPublicConfig,
+  resolveRelayTracingConfig,
   resolveRelayClerkTokenOptions,
 } from "./publicConfig.ts";
 
@@ -24,7 +26,16 @@ describe("hasCloudPublicConfig", () => {
     expect(hasCloudPublicConfig()).toBe(false);
 
     vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    expect(hasCloudPublicConfig()).toBe(true);
+    // D4 keeps the cloud foundation present but disables live startup/route
+    // activation until an explicit selected-user enablement phase.
+    expect(hasCloudPublicConfig()).toBe(false);
+    expect(resolveCloudPublicConfig()).toEqual({
+      clerkPublishableKey: "pk_test_example",
+      clerkJwtTemplate: "t3-relay",
+      relayUrl: "https://relay.example.test",
+      relayTracing: { tracesUrl: null, tracesDataset: null, tracesToken: null },
+    });
+    expect(resolveRelayTracingConfig()).toBeNull();
   });
 
   it("rejects an insecure relay URL", () => {

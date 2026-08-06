@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -76,6 +77,13 @@ export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  scientNextHome: Config.string("SCIENT_NEXT_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  scientNextSafetyEnvelope: Config.boolean("SCIENT_NEXT_SAFETY_ENVELOPE").pipe(
+    Config.withDefault(false),
+  ),
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.logLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
@@ -272,6 +280,10 @@ export const resolveServerConfig = (
     );
     const explicitBaseDir = resolveOptionPrecedence(
       normalizedFlags.baseDir,
+      // The candidate-owned name is authoritative for direct/server and
+      // desktop child launches. Keep T3CODE_HOME as a compatibility alias
+      // for ordinary T3-derived CLI usage.
+      Option.fromUndefinedOr(env.scientNextHome),
       Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
     const baseDir = yield* resolveBaseDir(
@@ -283,7 +295,14 @@ export const resolveServerConfig = (
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      baseDirIsExplicit: Option.isSome(explicitBaseDir),
+      // The candidate runner supplies a candidate home to avoid ambient T3
+      // state, but that is still implicit development state when a dev URL is
+      // present. Keep it under the candidate development directory rather
+      // than production userdata.
+      developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
+      baseDirIsExplicit:
+        Option.isSome(explicitBaseDir) &&
+        !(env.scientNextSafetyEnvelope && env.scientNextHome !== undefined),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
@@ -357,13 +376,17 @@ export const resolveServerConfig = (
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
       otlpTracesUrl:
-        env.otlpTracesUrl ??
-        bootstrap?.otlpTracesUrl ??
-        persistedObservabilitySettings.otlpTracesUrl,
+        SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+          ? undefined
+          : (env.otlpTracesUrl ??
+            bootstrap?.otlpTracesUrl ??
+            persistedObservabilitySettings.otlpTracesUrl),
       otlpMetricsUrl:
-        env.otlpMetricsUrl ??
-        bootstrap?.otlpMetricsUrl ??
-        persistedObservabilitySettings.otlpMetricsUrl,
+        SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+          ? undefined
+          : (env.otlpMetricsUrl ??
+            bootstrap?.otlpMetricsUrl ??
+            persistedObservabilitySettings.otlpMetricsUrl),
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
       mode,

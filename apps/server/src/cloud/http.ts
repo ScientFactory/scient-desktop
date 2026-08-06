@@ -78,6 +78,22 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
+// The D4 desktop/server launcher sets this marker unconditionally. Keep the
+// guard runtime-based so the inherited cloud contract remains unit-testable
+// and available for a later selected-user enablement phase, while a real D4
+// candidate process cannot execute connect handlers merely because cloud
+// environment variables are present.
+const candidateSafetyEnvelopeEnabled = () =>
+  process.env.SCIENT_NEXT_SAFETY_ENVELOPE === "true" &&
+  process.env.SCIENT_NEXT_CLOUD_ENABLED !== "true";
+
+const cloudIntegrationDisabled = () =>
+  Effect.fail(
+    new EnvironmentHttpInternalServerError({
+      message: "Cloud integration is disabled in the Scient Next D4 candidate.",
+    }),
+  );
+
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
@@ -1018,6 +1034,18 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "connect",
   Effect.fnUntraced(function* (handlers) {
+    if (candidateSafetyEnvelopeEnabled()) {
+      return handlers
+        .handle("linkProof", () => cloudIntegrationDisabled())
+        .handle("relayConfig", () => cloudIntegrationDisabled())
+        .handle("linkState", () => cloudIntegrationDisabled())
+        .handle("unlink", () => cloudIntegrationDisabled())
+        .handle("preferences", () => cloudIntegrationDisabled())
+        .handle("health", () => cloudIntegrationDisabled())
+        .handle("mintCredential", () => cloudIntegrationDisabled())
+        .handle("t3MintCredential", () => cloudIntegrationDisabled());
+    }
+
     const dependencies = yield* cloudHttpDependencies;
     return handlers
       .handle("linkProof", ({ payload }) => cloudLinkProofHandler(dependencies, payload))

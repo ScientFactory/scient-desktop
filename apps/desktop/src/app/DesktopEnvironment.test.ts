@@ -40,7 +40,7 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          T3CODE_HOME: " /tmp/t3 ",
+          SCIENT_NEXT_HOME: " /tmp/scient-next ",
           T3CODE_COMMIT_HASH: " 0123456789abcdef ",
           T3CODE_PORT: "4949",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
@@ -52,23 +52,35 @@ describe("DesktopEnvironment", () => {
 
       assert.equal(environment.isDevelopment, true);
       assert.equal(environment.appDataDirectory, "/Users/alice/Library/Application Support");
-      assert.equal(environment.baseDir, "/tmp/t3");
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
-      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
+      assert.equal(environment.baseDir, "/tmp/scient-next");
+      assert.equal(environment.stateDir, "/tmp/scient-next/scient-next-dev");
+      assert.equal(
+        environment.desktopSettingsPath,
+        "/tmp/scient-next/scient-next-dev/desktop-settings.json",
+      );
+      assert.equal(
+        environment.clientSettingsPath,
+        "/tmp/scient-next/scient-next-dev/client-settings.json",
+      );
       assert.equal(
         environment.savedEnvironmentRegistryPath,
-        "/tmp/t3/userdata/saved-environments.json",
+        "/tmp/scient-next/scient-next-dev/saved-environments.json",
       );
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
+      assert.equal(
+        environment.serverSettingsPath,
+        "/tmp/scient-next/scient-next-dev/settings.json",
+      );
+      assert.equal(environment.logDir, "/tmp/scient-next/scient-next-dev/logs");
+      assert.equal(
+        environment.browserArtifactsDir,
+        "/tmp/scient-next/scient-next-dev/browser-artifacts",
+      );
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
-      assert.equal(environment.linuxWmClass, "t3code-dev");
+      assert.equal(environment.appUserModelId, "com.scientfactory.scient.next.dev");
+      assert.equal(environment.linuxWmClass, "scient-next-dev");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -86,15 +98,15 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          T3CODE_HOME: "/tmp/t3",
+          SCIENT_NEXT_HOME: "/tmp/scient-next",
         },
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.stateDir, "/tmp/scient-next/userdata");
+      assert.equal(environment.logDir, "/tmp/scient-next/userdata/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/scient-next/userdata/browser-artifacts");
+      assert.equal(environment.serverSettingsPath, "/tmp/scient-next/userdata/settings.json");
     }),
   );
 
@@ -106,12 +118,12 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      assert.equal(development.stateDir, "/Users/alice/.scient-next/scient-next-dev");
+      assert.equal(production.stateDir, "/Users/alice/.scient-next/userdata");
     }),
   );
 
-  it.effect("uses a configured app user model id override", () =>
+  it.effect("keeps the candidate app identity fixed", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -121,7 +133,7 @@ describe("DesktopEnvironment", () => {
         },
       );
 
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev.local");
+      assert.equal(environment.appUserModelId, "com.scientfactory.scient.next.dev");
     }),
   );
 

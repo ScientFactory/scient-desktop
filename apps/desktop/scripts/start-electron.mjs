@@ -4,6 +4,7 @@ import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mj
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+childEnv.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 
 const electronCommand = resolveElectronLaunchCommand(["dist-electron/main.cjs"]);
 const child = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {

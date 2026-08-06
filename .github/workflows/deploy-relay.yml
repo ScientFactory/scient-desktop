@@ -17,6 +17,9 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
+    # D4 candidate: production infrastructure remains disabled until a later
+    # cutover review explicitly restores release authority.
+    if: ${{ false }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     environment:

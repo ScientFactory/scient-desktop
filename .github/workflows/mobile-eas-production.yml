@@ -33,6 +33,9 @@ on:
 jobs:
   production:
     name: EAS Production ${{ inputs.mode }}
+    # D4 candidate: mobile release and OTA publication are deferred until
+    # the later mobile/cutover authority review.
+    if: ${{ false }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read

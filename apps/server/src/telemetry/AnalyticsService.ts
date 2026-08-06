@@ -29,12 +29,8 @@ interface BufferedAnalyticsEvent {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.string("T3CODE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
-  posthogHost: Config.string("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://us.i.posthog.com"),
-  ),
+  posthogKey: Config.string("T3CODE_POSTHOG_KEY").pipe(Config.withDefault("")),
+  posthogHost: Config.string("T3CODE_POSTHOG_HOST").pipe(Config.withDefault("")),
   enabled: Config.boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
   flushBatchSize: Config.number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
@@ -57,13 +53,15 @@ export class AnalyticsService extends Context.Service<
   }
 >()("t3/telemetry/AnalyticsService") {
   /** No-op layer for callers that intentionally disable telemetry. */
-  static readonly layerTest = Layer.succeed(
+  static readonly layerDisabled = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
       record: () => Effect.void,
       flush: Effect.void,
     }),
   );
+  /** Backward-compatible test alias; production candidate code uses layerDisabled. */
+  static readonly layerTest = AnalyticsService.layerDisabled;
 }
 
 export const make = Effect.gen(function* () {
@@ -106,7 +104,14 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (
+      !telemetryConfig.enabled ||
+      !identifier ||
+      !telemetryConfig.posthogKey ||
+      !telemetryConfig.posthogHost
+    ) {
+      return;
+    }
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -184,3 +189,4 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(AnalyticsService, make);
 
 export const layerTest = AnalyticsService.layerTest;
+export const layerDisabled = AnalyticsService.layerDisabled;

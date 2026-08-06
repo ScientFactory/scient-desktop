@@ -2499,6 +2499,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("rejects replayed cloud mint requests atomically", () =>
     Effect.gen(function* () {
+      // This is a cloud protocol regression test; opt the test process into
+      // the otherwise-disabled D4 cloud route explicitly.
+      const previousCloudEnv = {
+        enabled: process.env.SCIENT_NEXT_CLOUD_ENABLED,
+        relay: process.env.T3CODE_RELAY_URL,
+        clerk: process.env.T3CODE_CLERK_PUBLISHABLE_KEY,
+        oauth: process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID,
+      };
+      process.env.SCIENT_NEXT_CLOUD_ENABLED = "true";
+      process.env.T3CODE_RELAY_URL = "https://relay.example.test";
+      process.env.T3CODE_CLERK_PUBLISHABLE_KEY = "pk_test_example";
+      process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID = "oauth_test";
       yield* buildAppUnderTest();
 
       const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
@@ -2553,6 +2565,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(replayResponse.status, 409);
       assert.equal(replayBody._tag, "EnvironmentHttpConflictError");
       assert.equal(replayBody.message, "Cloud mint request was already consumed.");
+      for (const [name, value] of [
+        ["SCIENT_NEXT_CLOUD_ENABLED", previousCloudEnv.enabled],
+        ["T3CODE_RELAY_URL", previousCloudEnv.relay],
+        ["T3CODE_CLERK_PUBLISHABLE_KEY", previousCloudEnv.clerk],
+        ["T3CODE_CLERK_CLI_OAUTH_CLIENT_ID", previousCloudEnv.oauth],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -3466,7 +3487,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+  for (const desktopOrigin of ["scient-next://app", "scient-next-dev://app"]) {
     it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({

@@ -19,6 +19,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -74,6 +75,8 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
 };
 
 const DESKTOP_BACKEND_ENV_NAMES = [
+  "T3CODE_HOME",
+  "SCIENT_NEXT_HOME",
   "T3CODE_PORT",
   "T3CODE_MODE",
   "T3CODE_NO_BROWSER",
@@ -91,6 +94,11 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 // handled separately via a `--dev-url` CLI flag because WSLENV translation of
 // URL-shaped values (colons / slashes) is unreliable.
 const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const WSL_CANDIDATE_ENV_NAMES = [
+  "T3CODE_HOME",
+  "SCIENT_NEXT_HOME",
+  "SCIENT_NEXT_SAFETY_ENVELOPE",
+] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -351,16 +359,24 @@ const isLocalHostIpv4 = (ip: string): boolean => {
   return false;
 };
 
-const buildObservabilityFragment = (observabilitySettings: BackendObservabilitySettings) => ({
-  ...Option.match(observabilitySettings.otlpTracesUrl, {
-    onNone: () => ({}),
-    onSome: (otlpTracesUrl) => ({ otlpTracesUrl }),
-  }),
-  ...Option.match(observabilitySettings.otlpMetricsUrl, {
-    onNone: () => ({}),
-    onSome: (otlpMetricsUrl) => ({ otlpMetricsUrl }),
-  }),
-});
+const buildObservabilityFragment = (
+  observabilitySettings: BackendObservabilitySettings,
+  safetyEnvelopeEnabled: boolean,
+) => {
+  // Candidate D4 deliberately does not forward persisted OTLP destinations.
+  // Local trace files remain available for diagnostics.
+  if (safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled) return {};
+  return {
+    ...Option.match(observabilitySettings.otlpTracesUrl, {
+      onNone: () => ({}),
+      onSome: (otlpTracesUrl) => ({ otlpTracesUrl }),
+    }),
+    ...Option.match(observabilitySettings.otlpMetricsUrl, {
+      onNone: () => ({}),
+      onSome: (otlpMetricsUrl) => ({ otlpMetricsUrl }),
+    }),
+  };
+};
 
 const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolvePrimary")(
   function* (
@@ -391,7 +407,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
       }),
-      ...buildObservabilityFragment(input.observabilitySettings),
+      ...buildObservabilityFragment(input.observabilitySettings, environment.safetyEnvelopeEnabled),
     };
 
     return {
@@ -402,6 +418,13 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        // Keep the server's derived state directory identical to the
+        // desktop-owned candidate directory. The server still understands
+        // T3CODE_HOME for upstream compatibility, but D4 launches use the
+        // candidate-owned alias explicitly.
+        T3CODE_HOME: environment.baseDir,
+        SCIENT_NEXT_HOME: environment.baseDir,
+        SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_NEXT_IDENTITY.safetyEnvelopeMarker,
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -461,7 +484,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // Linux WSL backend. Keep the field absent instead of passing an unusable
     // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
     // See docs/architecture/resource-telemetry.md.
-    ...buildObservabilityFragment(input.observabilitySettings),
+    ...buildObservabilityFragment(input.observabilitySettings, environment.safetyEnvelopeEnabled),
   };
 
   // In packaged builds environment.appRoot is .../resources/app.asar — an
@@ -520,29 +543,36 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     }
   }
 
-  // Build an explicit copy of process.env minus T3CODE_HOME (dev-runner
-  // exports the Windows-side base dir for the primary; if it leaks into
-  // the WSL backend the Linux side ends up sharing C:\Users\...\.t3 via
-  // /mnt/c, which means both backends read/write the same database and
-  // their env-ids collide).
-  const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
+  // Build an explicit copy of process.env minus both desktop home aliases
+  // (dev-runner exports the Windows-side base dir for the primary; if either
+  // leaks into the WSL backend the Linux side can resolve a Windows path via
+  // /mnt/c, share the primary database, and collide on environment ids).
+  const parentEnvWithoutDesktopHome: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (key === "T3CODE_HOME") continue;
-    parentEnvWithoutT3Home[key] = value;
+    if (key === "T3CODE_HOME" || key === "SCIENT_NEXT_HOME") continue;
+    parentEnvWithoutDesktopHome[key] = value;
   }
-  const wslEnv = mergeWslEnv(parentEnvWithoutT3Home.WSLENV, forwardedEnvNames);
+  const wslEnv = mergeWslEnv(parentEnvWithoutDesktopHome.WSLENV, [
+    ...WSL_CANDIDATE_ENV_NAMES,
+    ...forwardedEnvNames,
+  ]);
 
   const baseConfig = {
     executablePath: "wsl.exe",
     entryPath: wslEntryPath,
     cwd: environment.backendCwd,
     env: {
-      ...parentEnvWithoutT3Home,
+      ...parentEnvWithoutDesktopHome,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
+      // Keep WSL state on the Linux filesystem and outside any installed T3
+      // home. The server expands this POSIX path against the distro HOME.
+      T3CODE_HOME: "~/.scient-next",
+      SCIENT_NEXT_HOME: "~/.scient-next",
+      SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_NEXT_IDENTITY.safetyEnvelopeMarker,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env is already a complete process.env minus T3CODE_HOME; pass it
+    // env is already a complete process.env minus both desktop home aliases; pass it
     // verbatim instead of letting the spawner re-merge process.env on top.
     extendEnv: false,
     bootstrap,

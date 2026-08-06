@@ -55,6 +55,7 @@ function makeEnvironmentLayer(
     readonly dirname?: string;
     readonly isPackaged?: boolean;
     readonly devServerUrl?: string;
+    readonly safetyEnvelopeEnabled?: boolean;
     readonly platform?: NodeJS.Platform;
     readonly resourcesPath?: string;
   },
@@ -74,11 +75,12 @@ function makeEnvironmentLayer(
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          T3CODE_HOME: baseDir,
+          SCIENT_NEXT_HOME: baseDir,
           T3CODE_PORT: "9999",
           T3CODE_MODE: "desktop",
           T3CODE_DESKTOP_LAN_HOST: "192.168.1.50",
           VITE_DEV_SERVER_URL: options?.devServerUrl,
+          SCIENT_NEXT_SAFETY_ENVELOPE: options?.safetyEnvelopeEnabled ? "true" : undefined,
         }),
       ),
     ),
@@ -102,6 +104,7 @@ const withHarness = <A, E, R>(
     | FileSystem.FileSystem
     | DesktopBackendConfiguration.DesktopBackendConfiguration
   >,
+  environmentOptions?: Parameters<typeof makeEnvironmentLayer>[1],
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -115,7 +118,7 @@ const withHarness = <A, E, R>(
           Layer.provideMerge(serverExposureLayer),
           Layer.provideMerge(DesktopAppSettings.layerTest()),
           Layer.provideMerge(DesktopWslEnvironment.layerTest()),
-          Layer.provideMerge(makeEnvironmentLayer(baseDir)),
+          Layer.provideMerge(makeEnvironmentLayer(baseDir, environmentOptions)),
         ),
       ),
     );
@@ -293,6 +296,65 @@ describe("DesktopBackendConfiguration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl does not inherit the primary desktop data directory", () =>
+    Effect.gen(function* () {
+      const previousT3Home = process.env.T3CODE_HOME;
+      const previousScientNextHome = process.env.SCIENT_NEXT_HOME;
+      process.env.T3CODE_HOME = "C:/Users/alice/.t3";
+      process.env.SCIENT_NEXT_HOME = "C:/Users/alice/.scient-next";
+      try {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+        const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+        yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+        yield* fileSystem.writeFileString(entryPath, "");
+
+        const config = yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        }).pipe(
+          Effect.provide(
+            DesktopBackendConfiguration.layer.pipe(
+              Layer.provideMerge(serverExposureLayer),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                  windowsToWslPath: () => Option.some("/tmp/server/dist/bin.mjs"),
+                  ensureNodePty: () => ({
+                    ok: true,
+                    nodePath: "/usr/bin/node",
+                    resolvedPath: "/usr/bin:/bin",
+                  }),
+                  getDistroIp: () => Option.some("172.27.0.99"),
+                }),
+              ),
+              Layer.provideMerge(
+                makeEnvironmentLayer(baseDir, {
+                  appPath: baseDir,
+                  platform: "win32",
+                  resourcesPath: baseDir,
+                }),
+              ),
+            ),
+          ),
+        );
+
+        assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
+        assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
+        assert.notInclude(config.env.T3CODE_HOME, ":/");
+        assert.notInclude(config.env.SCIENT_NEXT_HOME, ":/");
+      } finally {
+        restoreEnv("T3CODE_HOME", previousT3Home);
+        restoreEnv("SCIENT_NEXT_HOME", previousScientNextHome);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolvePrimary and resolveWsl share one token under concurrent resolution", () =>
     withHarness(
       Effect.gen(function* () {
@@ -334,9 +396,10 @@ describe("DesktopBackendConfiguration", () => {
         );
 
         const config = yield* configuration.resolvePrimary;
-        assert.equal(config.bootstrap.otlpTracesUrl, "http://127.0.0.1:4318/v1/traces");
-        assert.equal(config.bootstrap.otlpMetricsUrl, "http://127.0.0.1:4318/v1/metrics");
+        assert.isUndefined(config.bootstrap.otlpTracesUrl);
+        assert.isUndefined(config.bootstrap.otlpMetricsUrl);
       }),
+      { safetyEnvelopeEnabled: true },
     ),
   );
 
@@ -473,13 +536,16 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
+          assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
+          assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
+          assert.equal(config.env.SCIENT_NEXT_SAFETY_ENVELOPE, "true");
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
           // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
           // already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY",
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_SAFETY_ENVELOPE:ANTHROPIC_API_KEY",
           );
         }).pipe(
           Effect.provide(

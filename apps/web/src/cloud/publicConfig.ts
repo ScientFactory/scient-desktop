@@ -1,5 +1,6 @@
 import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import * as Schema from "effect/Schema";
 
 export class CloudPublicConfigMissingError extends Schema.TaggedErrorClass<CloudPublicConfigMissingError>()(
@@ -59,6 +60,7 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 }
 
 export function resolveRelayTracingConfig() {
+  if (!SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled) return null;
   const { relayTracing } = resolveCloudPublicConfig();
   return relayTracing.tracesUrl && relayTracing.tracesDataset && relayTracing.tracesToken
     ? {
@@ -71,7 +73,10 @@ export function resolveRelayTracingConfig() {
 
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
-  return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
+  return (
+    SCIENT_NEXT_IDENTITY.cloudEnabled &&
+    Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl)
+  );
 }
 
 export function resolveRelayClerkTokenOptions() {
