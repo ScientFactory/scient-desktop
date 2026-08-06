@@ -1,4 +1,4 @@
-# Scient Next migration candidate
+# Scient desktop migration candidate
 
 This private repository is ScientFactory's provisional T3-derived desktop
 candidate. It preserves the complete official T3 history and has integrated
@@ -8,15 +8,17 @@ release, production cloud, or user-data migration authority.
 
 The exact donor base, safety envelope, verification, limitations, and rollback
 are recorded in the
-[Scient Next D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
+[D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
 Contributor boundaries are in [AGENTS.md](AGENTS.md), and the continuing T3
 relationship is in [UPSTREAM.md](UPSTREAM.md).
 
-Maintainers can run the isolated **Scient Next (Dev)** application with
+Maintainers can run the isolated **Scient (Dev)** application with
 `pnpm dev:app`. The canonical installation, lifecycle, feature-worktree, and
 recovery procedure is the
 [local dev app runbook](docs/operations/local-dev-app.md). This development app
-is not a public build or release candidate.
+is not a public build or release candidate. Its visible Scient identity is
+separate from the still-isolated candidate runtime IDs, state, protocols, and
+disabled release authorities.
 
 The remainder of this README is inherited T3 product documentation. It remains
 useful for understanding the host platform but does not describe the

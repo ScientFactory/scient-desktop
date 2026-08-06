@@ -2,10 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 
 import { SCIENT_NEXT_IDENTITY } from "./scientNextIdentity.ts";
 
-describe("Scient Next D4 identity", () => {
-  it("keeps product, protocol, state, and preview namespaces distinct from T3", () => {
-    assert.equal(SCIENT_NEXT_IDENTITY.baseName, "Scient Next");
-    assert.equal(SCIENT_NEXT_IDENTITY.developmentName, "Scient Next (Dev)");
+describe("Scient candidate identity", () => {
+  it("uses the Scient product label while keeping runtime namespaces distinct from T3", () => {
+    assert.equal(SCIENT_NEXT_IDENTITY.baseName, "Scient");
+    assert.equal(SCIENT_NEXT_IDENTITY.developmentName, "Scient (Dev)");
     assert.equal(SCIENT_NEXT_IDENTITY.appId, "com.scientfactory.scient.next");
     assert.equal(SCIENT_NEXT_IDENTITY.developmentAppId, "com.scientfactory.scient.next.dev");
     assert.equal(SCIENT_NEXT_IDENTITY.productionScheme, "scient-next");

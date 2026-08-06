@@ -91,7 +91,7 @@ export const isCandidateCloudIntegrationDisabled = (
 const cloudIntegrationDisabled = () =>
   Effect.fail(
     new EnvironmentHttpInternalServerError({
-      message: "Cloud integration is disabled in the Scient Next D4 candidate.",
+      message: "Cloud integration is disabled in this Scient candidate.",
     }),
   );
 

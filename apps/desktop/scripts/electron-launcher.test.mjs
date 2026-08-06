@@ -74,18 +74,18 @@ describe("electron development launcher", () => {
 
   it("keeps the native Electron executable name inside the branded macOS bundle", () => {
     const paths = resolveMacLauncherPaths(
-      "/repo/apps/desktop/.electron-runtime/Scient Next (Dev).app",
-      "Scient Next (Dev)",
+      "/repo/apps/desktop/.electron-runtime/Scient (Dev).app",
+      "Scient (Dev)",
     );
 
-    assert.equal(paths.launcherExecutableName, "Scient Next (Dev) Launcher");
+    assert.equal(paths.launcherExecutableName, "Scient (Dev) Launcher");
     assert.equal(
       paths.launcherBinaryPath,
-      "/repo/apps/desktop/.electron-runtime/Scient Next (Dev).app/Contents/MacOS/Scient Next (Dev) Launcher",
+      "/repo/apps/desktop/.electron-runtime/Scient (Dev).app/Contents/MacOS/Scient (Dev) Launcher",
     );
     assert.equal(
       paths.runtimeElectronBinaryPath,
-      "/repo/apps/desktop/.electron-runtime/Scient Next (Dev).app/Contents/MacOS/Electron",
+      "/repo/apps/desktop/.electron-runtime/Scient (Dev).app/Contents/MacOS/Electron",
     );
 
     const script = makeDevelopmentLauncherScript({
@@ -96,7 +96,7 @@ describe("electron development launcher", () => {
     });
     assert.include(
       script,
-      "exec '/repo/apps/desktop/.electron-runtime/Scient Next (Dev).app/Contents/MacOS/Electron'",
+      "exec '/repo/apps/desktop/.electron-runtime/Scient (Dev).app/Contents/MacOS/Electron'",
     );
     assert.notInclude(script, "node_modules/electron");
   });

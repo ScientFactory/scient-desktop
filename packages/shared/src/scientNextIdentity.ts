@@ -1,13 +1,13 @@
 /**
- * The provisional Scient desktop identity used during D4.
+ * Scient's product label plus the collision-safe candidate runtime identity.
  *
  * Keep this small, explicit, and separate from T3's internal package names.
  * It is the boundary that prevents the private candidate from colliding with
  * an installed T3 Code build or the current Scient desktop build.
  */
 export const SCIENT_NEXT_IDENTITY = {
-  baseName: "Scient Next",
-  developmentName: "Scient Next (Dev)",
+  baseName: "Scient",
+  developmentName: "Scient (Dev)",
   appId: "com.scientfactory.scient.next",
   developmentAppId: "com.scientfactory.scient.next.dev",
   baseDirName: ".scient-next",

@@ -1,4 +1,4 @@
-# Scient Next candidate instructions
+# Scient desktop candidate instructions
 
 Status: private post-D4 migration candidate. These instructions override the
 inherited T3 guidance below when the two conflict.
@@ -13,8 +13,9 @@ authorization.
 - This repository is the fresh, literal-ancestry T3-derived successor
   candidate. `ScientFactory/scient-desktop` remains the supported continuity
   application until a later cutover gate.
-- `Scient Next` is provisional private-candidate labeling, not a public brand
-  or release identity.
+- The product label is `Scient`; development builds are visibly labeled
+  `Scient (Dev)`. Collision-safe candidate runtime identifiers deliberately
+  remain `scient-next` until the separate cutover audit.
 - The integrated D4 envelope establishes identity/state isolation and
   fail-closed telemetry, cloud, updater, service, signing, and publication
   guards. Later work must follow the currently authorized parent migration
@@ -45,7 +46,7 @@ authorization.
   [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
 - For any request to install, open, stop, refresh, or inspect the local
   development app, follow the
-  [Scient Next local dev app runbook](docs/operations/local-dev-app.md). Always
+  [Scient local dev app runbook](docs/operations/local-dev-app.md). Always
   identify the exact checkout, branch, and head before launch. The installed
   launcher belongs to one stable checkout; feature worktrees run their own
   isolated instance and must not silently repoint it.
@@ -68,6 +69,12 @@ git diff --check
 These commands are the repository-specific baseline established from the exact
 official T3 integration base. Do not substitute commands from the current
 Synara-derived Scient repository.
+
+User-facing desktop, web, server, provider, and release copy belongs to Scient.
+Keep T3 package names, CLI names, file formats, environment variables, remote
+names, history, and license attribution stable unless a separate compatibility
+decision changes them. Run `pnpm brand:check` after upstream merges and brand
+changes so inherited public T3 labels cannot silently return.
 
 ---
 

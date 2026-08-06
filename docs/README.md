@@ -1,4 +1,9 @@
-# T3 Code docs
+# Scient desktop candidate docs
+
+The current application surfaces use the Scient product identity. Most user
+and internal documents below remain inherited T3 host documentation until each
+owner is reconciled through the migration; they must not be mistaken for
+Scient release authority.
 
 ## Using T3 Code
 
@@ -31,13 +36,13 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
-- [Scient Next D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
+- [D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
 - [Candidate upstream maintenance](../UPSTREAM.md)
 - [CI gates](./internals/ci.md)
 
 ### Runbooks
 
-- [Scient Next local dev app](./operations/local-dev-app.md)
+- [Scient local dev app](./operations/local-dev-app.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)

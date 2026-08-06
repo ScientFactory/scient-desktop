@@ -1,4 +1,5 @@
 import type { DesktopAppBranding } from "@t3tools/contracts";
+import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import { formatAppDisplayName } from "./branding.logic";
 
 function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
@@ -16,9 +17,7 @@ export const HOSTED_APP_CHANNEL =
   hostedAppChannel === "latest" || hostedAppChannel === "nightly" ? hostedAppChannel : null;
 export const HOSTED_APP_CHANNEL_LABEL =
   HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
-// Hosted/web builds retain T3's inherited label until the later public
-// rebrand. Desktop injects the private candidate label through its shell.
-export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "T3 Code";
+export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? SCIENT_NEXT_IDENTITY.baseName;
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ??
   HOSTED_APP_CHANNEL_LABEL ??

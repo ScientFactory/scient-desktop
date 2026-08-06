@@ -33,7 +33,7 @@ export const hostFlag = Flag.string("host").pipe(
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription(
-    "Explicit Scient Next data directory; runtime state is stored under userdata.",
+    "Explicit Scient candidate data directory; runtime state is stored under userdata.",
   ),
   Flag.optional,
 );

@@ -49,7 +49,7 @@ export const makeCli = ({
   serviceEnabled = !SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled,
 } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
-    Command.withDescription("Run the T3 Code server."),
+    Command.withDescription("Run the Scient server."),
     Command.withHandler((flags) => runServerCommand(flags)),
     Command.withSubcommands([
       startCommand,

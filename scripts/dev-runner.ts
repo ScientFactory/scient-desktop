@@ -844,7 +844,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   t3Home: Flag.string("home-dir").pipe(
     Flag.withDescription(
-      "Explicit Scient Next data directory; runtime state is stored under candidate userdata. Inside a git worktree this defaults to that worktree's own .scient-next so dev state stays off the shared home.",
+      "Explicit Scient candidate data directory; runtime state is stored under candidate userdata. Inside a git worktree this defaults to that worktree's own .scient-next so dev state stays off the shared home.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),

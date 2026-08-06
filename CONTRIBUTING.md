@@ -1,6 +1,6 @@
 # Contributing
 
-## Scient Next candidate boundary
+## Scient candidate boundary
 
 This repository is currently a private ScientFactory migration candidate. The
 D4 scope and verification rules in [AGENTS.md](AGENTS.md) govern contributions

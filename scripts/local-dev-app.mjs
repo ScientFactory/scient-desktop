@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-export const LOCAL_DEV_APP_NAME = "Scient Next (Dev)";
+export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_SCHEMA = "scient-next.local-dev-app/v1";
 export const MACOS_LSREGISTER_PATH =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -408,7 +408,7 @@ async function main() {
   const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
   if (nodeMajor !== 24) {
     throw new Error(
-      `Scient Next development requires Node 24; received ${process.version}. Activate the repository's Node 24 runtime and retry.`,
+      `Scient development requires Node 24; received ${process.version}. Activate the repository's Node 24 runtime and retry.`,
     );
   }
   const [command, ...rawFlags] = process.argv.slice(2);
