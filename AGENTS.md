@@ -13,7 +13,8 @@ authorization.
 - This repository is the fresh, literal-ancestry T3-derived successor
   candidate. `ScientFactory/scient-desktop` remains the supported continuity
   application until a later cutover gate.
-- The product label is `Scient`; development builds are visibly labeled
+- The product label is `Scient`. The canonical local baseline is named
+  `Scient (Dev) Stable`; disposable feature-worktree instances remain
   `Scient (Dev)`. Collision-safe candidate runtime identifiers deliberately
   remain `scient-next` until the separate cutover audit.
 - The integrated D4 envelope establishes identity/state isolation and

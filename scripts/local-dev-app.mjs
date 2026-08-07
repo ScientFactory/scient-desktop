@@ -7,7 +7,10 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
+export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
 export const LOCAL_DEV_APP_SCHEMA = "scient-next.local-dev-app/v1";
+export const SCIENT_DEV_APP_ROLE_ENV = "SCIENT_DEV_APP_ROLE";
+export const SCIENT_NEXT_HOME_ENV = "SCIENT_NEXT_HOME";
 export const MACOS_LSREGISTER_PATH =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 const RUNNER_START_GRACE_MS = 5_000;
@@ -66,11 +69,21 @@ function processMatchesRunner(pid, root) {
   return cwdPath !== undefined && NodePath.resolve(cwdPath) === NodePath.resolve(root);
 }
 
-export function resolveLocalDevAppPaths({ root = repoRoot, homeDir = NodeOS.homedir() } = {}) {
+export function resolveLocalDevAppPaths({
+  root = repoRoot,
+  homeDir = NodeOS.homedir(),
+  role = process.env[SCIENT_DEV_APP_ROLE_ENV],
+} = {}) {
+  const appName = role === "stable" ? LOCAL_DEV_APP_STABLE_NAME : LOCAL_DEV_APP_NAME;
+  const stateRoot =
+    role === "stable" ? resolveStableDevHome(homeDir) : NodePath.join(root, ".scient-next");
   const applicationsDir = NodePath.join(homeDir, "Applications");
-  const appBundlePath = NodePath.join(applicationsDir, `${LOCAL_DEV_APP_NAME}.app`);
+  const appBundlePath = NodePath.join(applicationsDir, `${appName}.app`);
   return {
     root,
+    role: role === "stable" ? "stable" : "candidate",
+    appName,
+    stateRoot,
     applicationsDir,
     appBundlePath,
     markerPath: NodePath.join(
@@ -79,10 +92,14 @@ export function resolveLocalDevAppPaths({ root = repoRoot, homeDir = NodeOS.home
       "Resources",
       "scient-next-local-dev-app.json",
     ),
-    runnerDir: NodePath.join(root, ".scient-next", "local-dev-app-runner"),
-    runnerStatePath: NodePath.join(root, ".scient-next", "local-dev-app-runner", "state.json"),
-    logPath: NodePath.join(root, ".scient-next", "local-dev-app.log"),
+    runnerDir: NodePath.join(stateRoot, "local-dev-app-runner"),
+    runnerStatePath: NodePath.join(stateRoot, "local-dev-app-runner", "state.json"),
+    logPath: NodePath.join(stateRoot, "local-dev-app.log"),
   };
+}
+
+export function resolveStableDevHome(homeDir = NodeOS.homedir()) {
+  return NodePath.join(homeDir, ".scient-next", "scient-dev-stable");
 }
 
 export function readLocalDevAppMarker(paths) {
@@ -150,6 +167,7 @@ export function installDevelopmentAppBundle({
         {
           schema: LOCAL_DEV_APP_SCHEMA,
           repoRoot: paths.root,
+          role: paths.role,
           installedAt: new Date().toISOString(),
         },
         null,
@@ -323,6 +341,9 @@ async function installApp({ replace }) {
   if (process.platform !== "darwin") {
     throw new Error("The clickable local dev app installer currently supports macOS only.");
   }
+  if (process.env[SCIENT_DEV_APP_ROLE_ENV] === "stable" && !process.env[SCIENT_NEXT_HOME_ENV]) {
+    process.env[SCIENT_NEXT_HOME_ENV] = resolveStableDevHome();
+  }
   process.env.VITE_DEV_SERVER_URL = "http://127.0.0.1:5733";
   const { resolveDevProtocolClient } =
     await import("../apps/desktop/scripts/electron-launcher.mjs");
@@ -335,7 +356,7 @@ async function installApp({ replace }) {
     replace,
     register: registerDevelopmentAppBundle,
   });
-  console.log(`Installed ${LOCAL_DEV_APP_NAME} at ${installedPath}`);
+  console.log(`Installed ${paths.appName} at ${installedPath}`);
   console.log(`Owning checkout: ${paths.root}`);
 }
 
@@ -344,24 +365,23 @@ export function statusApp({
   matchesRunner = processMatchesRunner,
   writeLine = console.log,
 } = {}) {
+  const appName = paths.appName ?? LOCAL_DEV_APP_NAME;
   const state = clearStaleRunner(paths, { matchesRunner });
   if (!state) {
-    writeLine(`${LOCAL_DEV_APP_NAME} is stopped for ${paths.root}`);
+    writeLine(`${appName} is stopped for ${paths.root}`);
     return;
   }
   if (state.starting) {
-    writeLine(`${LOCAL_DEV_APP_NAME} is starting for ${paths.root}`);
+    writeLine(`${appName} is starting for ${paths.root}`);
     return;
   }
-  writeLine(
-    `${LOCAL_DEV_APP_NAME} is running for ${paths.root} (runner PID ${String(state.pid)}).`,
-  );
+  writeLine(`${appName} is running for ${paths.root} (runner PID ${String(state.pid)}).`);
 }
 
 function printLogs() {
   const paths = resolveLocalDevAppPaths();
   if (!pathExists(paths.logPath)) {
-    console.log(`No local dev app log exists at ${paths.logPath}`);
+    console.log(`No ${paths.appName} log exists at ${paths.logPath}`);
     return;
   }
   const lines = NodeFS.readFileSync(paths.logPath, "utf8").split(/\r?\n/);
@@ -374,13 +394,14 @@ export function stopApp({
   killProcess = process.kill,
   writeLine = console.log,
 } = {}) {
+  const appName = paths.appName ?? LOCAL_DEV_APP_NAME;
   const state = clearStaleRunner(paths, { matchesRunner });
   if (!state) {
-    writeLine(`${LOCAL_DEV_APP_NAME} is already stopped for ${paths.root}`);
+    writeLine(`${appName} is already stopped for ${paths.root}`);
     return;
   }
   if (state.starting) {
-    writeLine(`${LOCAL_DEV_APP_NAME} is still starting for ${paths.root}; try again shortly.`);
+    writeLine(`${appName} is still starting for ${paths.root}; try again shortly.`);
     return;
   }
   try {
@@ -388,10 +409,10 @@ export function stopApp({
   } catch (error) {
     if (error?.code !== "ESRCH") throw error;
     NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
-    writeLine(`${LOCAL_DEV_APP_NAME} is already stopped for ${paths.root}`);
+    writeLine(`${appName} is already stopped for ${paths.root}`);
     return;
   }
-  writeLine(`Requested stop for ${LOCAL_DEV_APP_NAME} runner PID ${String(state.pid)}.`);
+  writeLine(`Requested stop for ${appName} runner PID ${String(state.pid)}.`);
 }
 
 function uninstallApp() {
@@ -399,8 +420,8 @@ function uninstallApp() {
   const removed = uninstallDevelopmentAppBundle(paths);
   console.log(
     removed
-      ? `Removed ${paths.appBundlePath}`
-      : `${LOCAL_DEV_APP_NAME} is not installed at ${paths.appBundlePath}`,
+      ? `Removed ${paths.appName} at ${paths.appBundlePath}`
+      : `${paths.appName} is not installed at ${paths.appBundlePath}`,
   );
 }
 
@@ -414,8 +435,17 @@ async function main() {
   const [command, ...rawFlags] = process.argv.slice(2);
   const flags = rawFlags.filter((flag) => flag !== "--");
   const replace = flags.includes("--replace");
-  if (flags.some((flag) => flag !== "--replace")) {
-    throw new Error(`Unknown option: ${flags.find((flag) => flag !== "--replace")}`);
+  const stable = flags.includes("--stable");
+  if (flags.some((flag) => flag !== "--replace" && flag !== "--stable")) {
+    throw new Error(
+      `Unknown option: ${flags.find((flag) => flag !== "--replace" && flag !== "--stable")}`,
+    );
+  }
+  if (stable) {
+    process.env[SCIENT_DEV_APP_ROLE_ENV] = "stable";
+    if (!process.env[SCIENT_NEXT_HOME_ENV]) {
+      process.env[SCIENT_NEXT_HOME_ENV] = resolveStableDevHome();
+    }
   }
   if (command === "run") return runApp();
   if (command === "install") return installApp({ replace });
@@ -424,7 +454,7 @@ async function main() {
   if (command === "stop") return stopApp();
   if (command === "uninstall") return uninstallApp();
   throw new Error(
-    "Usage: node scripts/local-dev-app.mjs <run|install|logs|status|stop|uninstall> [--replace]",
+    "Usage: node scripts/local-dev-app.mjs <run|install|logs|status|stop|uninstall> [--stable] [--replace]",
   );
 }
 
