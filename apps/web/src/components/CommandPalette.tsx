@@ -49,7 +49,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -58,6 +57,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useProjectFolderDrop } from "../hooks/useProjectFolderDrop";
 import { useScientProjectInitialization } from "../hooks/useScientProjectInitialization";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
@@ -66,7 +66,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
-import { readPreparedConnection, usePreparedConnection } from "../state/session";
+import { usePreparedConnection } from "../state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -74,19 +74,13 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments"
 import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import {
-  getAvailableNewFolderName,
-  getAvailableNewProjectPath,
-  resolveDroppedProjectFolder,
-} from "../lib/projectEntry";
-import { inspectScientProjectForOpening } from "../lib/scientProjectInitialization";
+import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
   hasTrailingPathSeparator,
-  hasTrailingProjectPathWhitespace,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
@@ -134,6 +128,7 @@ import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ScientProjectInitializationDialog } from "./ScientProjectInitializationDialog";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectFolderDropTarget } from "./ProjectFolderDropTarget";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
@@ -643,11 +638,9 @@ function OpenCommandPaletteDialog(props: {
   const {
     initializeWithFeedback: initializeProjectWithFeedback,
     inspection: projectInitializationInspection,
-    requestDecision: requestProjectInitializationDecision,
+    prepareForOpening: prepareScientProjectForOpening,
     resolveDecision: resolveProjectInitializationDecision,
   } = useScientProjectInitialization();
-  const [isProjectFolderDragActive, setIsProjectFolderDragActive] = useState(false);
-  const projectFolderDragDepthRef = useRef(0);
   const projectPathInputRef = useRef<HTMLInputElement>(null);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
@@ -1582,18 +1575,6 @@ function OpenCommandPaletteDialog(props: {
       }
       const rawCwd = input.rawCwd;
 
-      if (hasTrailingProjectPathWhitespace(rawCwd)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Folder name is ambiguous",
-            description:
-              "This folder name ends with whitespace, which Scient cannot safely preserve yet. Rename the folder before adding it.",
-          }),
-        );
-        return;
-      }
-
       if (isUnsupportedWindowsProjectPath(rawCwd.trim(), input.platform)) {
         toastManager.add(
           stackedThreadToast({
@@ -1619,43 +1600,23 @@ function OpenCommandPaletteDialog(props: {
       let cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
-      const projectSetupConnection = input.prepared ?? readPreparedConnection(input.environmentId);
-      let initializeProject = false;
-      if (projectSetupConnection === null) {
-        toastManager.add({
-          type: "warning",
-          title: "Scient project setup could not be checked",
-          description:
-            "The selected environment is still connecting. The folder will open without changing its files.",
-        });
-      } else {
-        try {
-          const inspection = await inspectScientProjectForOpening(projectSetupConnection, cwd);
-          // The server owns filesystem identity. Use its canonical root for the
-          // host project record and the later Scient initialization so a
-          // user-facing path such as ~/Studies cannot resolve differently at
-          // the two boundaries.
-          cwd = inspection.root;
-          if (inspection.state !== "initialized") {
-            const decision = await requestProjectInitializationDecision(inspection);
-            if (decision === "cancel") return;
-            initializeProject = decision === "initialize";
-          }
-        } catch (error) {
-          toastManager.add({
-            type: "warning",
-            title: "Scient project setup could not be checked",
-            description: `${errorMessage(error)} The folder will open without changing its files.`,
-          });
-        }
-      }
+      const projectPreparation = await prepareScientProjectForOpening({
+        environmentId: input.environmentId,
+        prepared: input.prepared,
+        root: cwd,
+      });
+      if (projectPreparation === null) return;
+      // The server owns filesystem identity. Use its canonical root for both
+      // the host project record and the optional Scient initialization.
+      cwd = projectPreparation.root;
+      const initializeProject = projectPreparation.initialize;
 
       const existing = findProjectByPath(
         projects.filter((project) => project.environmentId === input.environmentId),
         cwd,
       );
       if (existing) {
-        if (initializeProject && projectSetupConnection !== null) {
+        if (initializeProject) {
           void initializeProjectWithFeedback({
             environmentId: input.environmentId,
             root: cwd,
@@ -1725,7 +1686,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      if (initializeProject && projectSetupConnection !== null) {
+      if (initializeProject) {
         void initializeProjectWithFeedback({
           environmentId: input.environmentId,
           root: cwd,
@@ -1757,7 +1718,7 @@ function OpenCommandPaletteDialog(props: {
       projects,
       providers,
       initializeProjectWithFeedback,
-      requestProjectInitializationDecision,
+      prepareScientProjectForOpening,
       setOpen,
       clientSettings.sidebarThreadSortOrder,
       threads,
@@ -2089,65 +2050,17 @@ function OpenCommandPaletteDialog(props: {
     query,
   ]);
 
-  const resetProjectFolderDrag = useCallback(() => {
-    projectFolderDragDepthRef.current = 0;
-    setIsProjectFolderDragActive(false);
-  }, []);
-
-  useEffect(() => {
-    if (!canDropProjectFolder) resetProjectFolderDrag();
-  }, [canDropProjectFolder, resetProjectFolderDrag]);
-
-  const handleProjectFolderDragEnter = useCallback(
-    (event: ReactDragEvent<HTMLElement>) => {
-      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
-      event.preventDefault();
-      projectFolderDragDepthRef.current += 1;
-      setIsProjectFolderDragActive(true);
+  const handleDroppedProjectFolder = useCallback(
+    (path: string) => {
+      setQuery(path);
+      void handleAddProject(path);
     },
-    [canDropProjectFolder],
+    [handleAddProject],
   );
-
-  const handleProjectFolderDragOver = useCallback(
-    (event: ReactDragEvent<HTMLElement>) => {
-      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "copy";
-    },
-    [canDropProjectFolder],
-  );
-
-  const handleProjectFolderDragLeave = useCallback(
-    (event: ReactDragEvent<HTMLElement>) => {
-      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
-      projectFolderDragDepthRef.current = Math.max(0, projectFolderDragDepthRef.current - 1);
-      if (projectFolderDragDepthRef.current === 0) setIsProjectFolderDragActive(false);
-    },
-    [canDropProjectFolder],
-  );
-
-  const handleProjectFolderDrop = useCallback(
-    (event: ReactDragEvent<HTMLElement>) => {
-      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
-      event.preventDefault();
-      event.stopPropagation();
-      resetProjectFolderDrag();
-      const getPathForFile = window.desktopBridge?.getPathForFile;
-      if (!getPathForFile) return;
-      const dropped = resolveDroppedProjectFolder(event.dataTransfer, getPathForFile);
-      if ("error" in dropped) {
-        toastManager.add({
-          type: "warning",
-          title: "Unable to add folder",
-          description: dropped.error,
-        });
-        return;
-      }
-      setQuery(dropped.path);
-      void handleAddProject(dropped.path);
-    },
-    [canDropProjectFolder, handleAddProject, resetProjectFolderDrag],
-  );
+  const projectFolderDrop = useProjectFolderDrop({
+    enabled: canDropProjectFolder,
+    onFolder: handleDroppedProjectFolder,
+  });
 
   function isPrimaryModifierPressed(event: KeyboardEvent<HTMLElement>): boolean {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -2491,10 +2404,10 @@ function OpenCommandPaletteDialog(props: {
       aria-label="Command palette"
       autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
       containerProps={{
-        onDragEnter: handleProjectFolderDragEnter,
-        onDragLeave: handleProjectFolderDragLeave,
-        onDragOver: handleProjectFolderDragOver,
-        onDrop: handleProjectFolderDrop,
+        onDragEnter: projectFolderDrop.onDragEnter,
+        onDragLeave: projectFolderDrop.onDragLeave,
+        onDragOver: projectFolderDrop.onDragOver,
+        onDrop: projectFolderDrop.onDrop,
         onKeyDownCapture: handleBrowseKeyDownCapture,
       }}
       footerActionLabel={footerActionLabel}
@@ -2558,42 +2471,14 @@ function OpenCommandPaletteDialog(props: {
         </div>
       ) : null}
       {canDropProjectFolder ? (
-        <div className="px-3 pt-2">
-          <button
-            type="button"
-            aria-live="polite"
-            title={`Open in ${fileManagerName}`}
-            disabled={isPickingProjectFolder}
-            onClick={() => {
-              void handleOpenProjectFromFileManager();
-            }}
-            data-drop-state={isProjectFolderDragActive ? "active" : "idle"}
-            className={cn(
-              "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-64",
-              isProjectFolderDragActive
-                ? "text-foreground"
-                : "text-muted-foreground hover:bg-muted/40",
-            )}
-          >
-            <span
-              className={cn(
-                "flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.035] text-blue-500 shadow-[0_3px_10px_rgb(0_0_0/0.08)] transition-[color,background-color,box-shadow] duration-150 dark:bg-foreground/[0.07] dark:shadow-[0_3px_12px_rgb(0_0_0/0.24)]",
-                isProjectFolderDragActive &&
-                  "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400",
-              )}
-            >
-              <FolderPlusIcon aria-hidden className="size-4" />
-            </span>
-            {isProjectFolderDragActive ? (
-              <span className="font-medium text-foreground">Release to add this folder</span>
-            ) : (
-              <span className="text-foreground">
-                Drop your folder here
-                <span className="text-muted-foreground"> or browse below</span>
-              </span>
-            )}
-          </button>
-        </div>
+        <ProjectFolderDropTarget
+          fileManagerName={fileManagerName}
+          isActive={projectFolderDrop.isActive}
+          isPicking={isPickingProjectFolder}
+          onBrowse={() => {
+            void handleOpenProjectFromFileManager();
+          }}
+        />
       ) : null}
       <CommandPaletteResults
         groups={displayedGroups}

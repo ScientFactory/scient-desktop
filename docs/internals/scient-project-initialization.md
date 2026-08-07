@@ -17,8 +17,10 @@ The Scient-owned boundary is split into four narrow seams:
    schemas.
 3. The server exposes authenticated inspect and initialize endpoints for the
    selected environment.
-4. The web command palette adds the user decision, desktop drag/drop, and
-   retry feedback while preserving the existing provider and picker flows.
+4. A Scient-owned hook adds the inspection, user decision, initialization, and
+   retry lifecycle. Small project-entry helpers and a dedicated drop target
+   connect it to the existing command palette without replacing its provider
+   or picker flows.
 
 This shape keeps scientific project meaning out of host internals, works
 through the existing local, remote, relay, and future cloud connection model,
@@ -77,6 +79,10 @@ PDF or source ingestion, provider changes, annotations, scientific operations,
 or cloud/mobile UI. Those remain separate product slices. The environment API
 keeps the project foundation usable by remote and selected-cloud clients later;
 mobile presentation should be designed when its product flow is scheduled.
+
+Folders whose names differ only by boundary whitespace remain an inherited
+filesystem-transport limitation. This slice deliberately does not broaden the
+shared filesystem contract to address that rare edge case.
 
 ## Verification boundary
 

@@ -34,16 +34,6 @@ export function hasTrailingPathSeparator(value: string): boolean {
   return (getAbsolutePathKind(value) === "unix" ? /\/$/ : /[\\/]$/).test(value);
 }
 
-/**
- * Project-path normalization trims boundary whitespace. Detect a real trailing
- * whitespace character before normalization so callers never silently target a
- * different sibling folder.
- */
-export function hasTrailingProjectPathWhitespace(value: string): boolean {
-  const pathWithoutTrailingSeparators = value.replace(/[\\/]+$/, "");
-  return pathWithoutTrailingSeparators.trimEnd() !== pathWithoutTrailingSeparators;
-}
-
 export { isExplicitRelativePath as isExplicitRelativeProjectPath };
 
 function splitPathSegments(value: string, separator: "/" | "\\"): string[] {

@@ -398,35 +398,4 @@ describe("buildBrowseGroups", () => {
     await action;
     expect(actionSettled).toBe(true);
   });
-
-  it("distinguishes directory names whose boundary whitespace is otherwise invisible", async () => {
-    const browseTo = vi.fn();
-    const groups = buildBrowseGroups({
-      browseEntries: [
-        { name: "Study", fullPath: "/Users/test/Study" },
-        { name: "Study ", fullPath: "/Users/test/Study " },
-      ],
-      browseQuery: "~/",
-      canBrowseUp: false,
-      upIcon: null,
-      directoryIcon: null,
-      browseUp: vi.fn(),
-      browseTo,
-    });
-
-    expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "browse:%2FUsers%2Ftest%2FStudy",
-      "browse:%2FUsers%2Ftest%2FStudy%20",
-    ]);
-    expect(groups[0]?.items.map((item) => item.description)).toEqual([
-      undefined,
-      "Name ends with whitespace",
-    ]);
-
-    const trailingWhitespaceItem = groups[0]?.items[1];
-    expect(trailingWhitespaceItem?.kind).toBe("action");
-    if (trailingWhitespaceItem?.kind !== "action") return;
-    await trailingWhitespaceItem.run();
-    expect(browseTo).toHaveBeenCalledWith("Study ");
-  });
 });

@@ -52,8 +52,5 @@ export function resolveDroppedProjectFolder(
   if (!file) return { error: "Could not read the dropped folder. Use browse instead." };
   const resolved = getPathForFile(file);
   if (!resolved) return { error: "Could not read the folder path. Use browse instead." };
-  if (resolved !== resolved.trim()) {
-    return { error: "Folders with names ending in whitespace are not supported." };
-  }
   return { path: resolved };
 }

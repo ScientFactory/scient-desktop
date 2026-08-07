@@ -1,9 +1,11 @@
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ScientProjectInspection } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import {
   initializeScientProjectForOpening,
+  inspectScientProjectForOpening,
   type ScientProjectInitializationDecision,
 } from "../lib/scientProjectInitialization";
 import { inferProjectTitleFromPath } from "../lib/projectPaths";
@@ -104,5 +106,46 @@ export function useScientProjectInitialization() {
     [],
   );
 
-  return { initializeWithFeedback, inspection, requestDecision, resolveDecision } as const;
+  const prepareForOpening = useCallback(
+    async (input: {
+      readonly environmentId: EnvironmentId;
+      readonly prepared: PreparedConnection | null;
+      readonly root: string;
+    }): Promise<{ readonly root: string; readonly initialize: boolean } | null> => {
+      const prepared = input.prepared ?? readPreparedConnection(input.environmentId);
+      if (prepared === null) {
+        toastManager.add({
+          type: "warning",
+          title: "Scient project setup could not be checked",
+          description:
+            "The selected environment is still connecting. The folder will open without changing its files.",
+        });
+        return { root: input.root, initialize: false };
+      }
+
+      try {
+        const nextInspection = await inspectScientProjectForOpening(prepared, input.root);
+        if (nextInspection.state === "initialized") {
+          return { root: nextInspection.root, initialize: false };
+        }
+
+        const decision = await requestDecision(nextInspection);
+        if (decision === "cancel") return null;
+        return {
+          root: nextInspection.root,
+          initialize: decision === "initialize",
+        };
+      } catch (error) {
+        toastManager.add({
+          type: "warning",
+          title: "Scient project setup could not be checked",
+          description: `${errorMessage(error)} The folder will open without changing its files.`,
+        });
+        return { root: input.root, initialize: false };
+      }
+    },
+    [requestDecision],
+  );
+
+  return { initializeWithFeedback, inspection, prepareForOpening, resolveDecision } as const;
 }
