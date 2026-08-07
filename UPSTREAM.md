@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-foundation-refresh-20260807.md`](docs/internals/t3-foundation-refresh-20260807.md)
-and in `upstream-state.json`. The refresh merged the exact fetched
-`upstream/main` tip `a8cd2ad2ebb32ad789e8e0ecd2fc713c2edc38f4` into owned head
-`13b30b6c4af2d928ecd38d31dcc8be72ae1598d2`, preserving the full T3 range from
-the previous owned T3 tip `4f5834ba72c5905a318c00456dd21271b2fa9d6f`. Later
+[`docs/internals/t3-foundation-refresh-20260807-b.md`](docs/internals/t3-foundation-refresh-20260807-b.md)
+and in `upstream-state.json`. The latest refresh merged the exact fetched
+`upstream/main` tip `b98a0f0d2292d180db0ac7c6ae8ccdbc9f6478f7` into owned head
+`456bc41bf1e1441fac889e8eb2f88e92445081f9`, preserving the full T3 range from
+the previous owned T3 tip `a8cd2ad2ebb32ad789e8e0ecd2fc713c2edc38f4`. Later
 observed T3 tips never move `integrationBase` by themselves; it advances only
 after the exact ancestry and verification gate are complete.
 
@@ -46,12 +46,17 @@ after the exact ancestry and verification gate are complete.
 7. Advance `integrationBase` only when the exact upstream ancestry is actually
    present in owned history and the resulting owned head has passed its gate.
 
-The 2026-08-07 refresh was one such bounded update. It required one small
+The first 2026-08-07 refresh was one such bounded update. It required one small
 Scient-owned adaptation because the upstream transfer-budget report exposed a
 public `T3 Code` heading; the report now uses the `Scient` product label while
 retaining T3 compatibility environment-variable names and repository
 attribution. The upstream plan-to-chat, thread-pagination, orchestration,
 connection, mobile, and CI changes remain ordinary T3 history.
+
+The second 2026-08-07 refresh was conflict-free and required no Scient-owned
+code adaptation. It received T3's plan-mode simplification, per-device provider
+settings, and mobile connection visibility fix while preserving the candidate
+safety envelope and visible Scient identity.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
