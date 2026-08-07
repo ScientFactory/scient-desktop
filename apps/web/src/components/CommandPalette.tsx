@@ -1980,8 +1980,7 @@ function OpenCommandPaletteDialog(props: {
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
-    canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
-    Option.isSome(browsePreparedConnection);
+    canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath = shouldOfferProjectPathCreation({
     canSubmitBrowsePath,
     isBrowsePending,
@@ -2461,7 +2460,7 @@ function OpenCommandPaletteDialog(props: {
         setHighlightedItemValue(nextValue);
       }}
       onValueChange={handleQueryChange}
-      panelClassName="max-h-[min(28rem,70vh)]"
+      panelClassName="flex max-h-[min(28rem,70vh)] flex-col"
       showBackHint={isSubmenu && !isBrowsing}
       value={query}
     >
