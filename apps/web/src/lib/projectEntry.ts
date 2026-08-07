@@ -26,6 +26,13 @@ export function joinProjectPath(basePath: string, childName: string): string {
   return `${basePath.replace(/[\\/]+$/u, "")}${separator}${childName}`;
 }
 
+export function getAvailableNewProjectPath(
+  browseDirectoryPath: string,
+  directoryNames: ReadonlyArray<string>,
+): string {
+  return joinProjectPath(browseDirectoryPath, getAvailableNewFolderName(directoryNames));
+}
+
 export function resolveDroppedProjectFolder(
   data: DroppedProjectFolderData,
   getPathForFile: (file: File) => string | null,

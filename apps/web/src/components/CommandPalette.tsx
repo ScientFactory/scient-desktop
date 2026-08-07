@@ -2,7 +2,7 @@
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { connectionStatusText, type PreparedConnection } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   canPreloadBrowsePath,
@@ -66,6 +66,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { usePreparedConnection } from "../state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -75,7 +76,7 @@ import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   getAvailableNewFolderName,
-  joinProjectPath,
+  getAvailableNewProjectPath,
   resolveDroppedProjectFolder,
 } from "../lib/projectEntry";
 import {
@@ -780,6 +781,7 @@ function OpenCommandPaletteDialog(props: {
     [addProjectEnvironmentOptions, environments],
   );
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const browsePreparedConnection = usePreparedConnection(browseEnvironmentId);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
   // A desktop-local secondary backend (today: the WSL backend). The picker is
@@ -1585,10 +1587,10 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const initializeProjectWithFeedback = useCallback(
-    async (input: { readonly environmentId: EnvironmentId; readonly root: string }) => {
+    async (input: { readonly prepared: PreparedConnection; readonly root: string }) => {
       const runInitialization = async () => {
         const result = await initializeScientProjectForOpening({
-          environmentId: input.environmentId,
+          prepared: input.prepared,
           root: input.root,
           title: inferProjectTitleFromPath(input.root),
         });
@@ -1642,6 +1644,7 @@ function OpenCommandPaletteDialog(props: {
       readonly rawCwd: string;
       readonly platform: string;
       readonly currentProjectCwd: string | null;
+      readonly prepared: PreparedConnection | null;
     }) => {
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
@@ -1652,6 +1655,16 @@ function OpenCommandPaletteDialog(props: {
             type: "error",
             title: "Environment unavailable",
             description: `${environment?.label ?? "The selected environment"} is not connected.`,
+          }),
+        );
+        return;
+      }
+      if (input.prepared === null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Environment unavailable",
+            description: `${environment?.label ?? "The selected environment"} is still connecting. Try again in a moment.`,
           }),
         );
         return;
@@ -1685,7 +1698,7 @@ function OpenCommandPaletteDialog(props: {
 
       let initializeProject = false;
       try {
-        const inspection = await inspectScientProjectForOpening(input.environmentId, cwd);
+        const inspection = await inspectScientProjectForOpening(input.prepared, cwd);
         if (inspection.state !== "initialized") {
           const decision = await requestProjectInitializationDecision(inspection);
           if (decision === "cancel") return;
@@ -1705,7 +1718,10 @@ function OpenCommandPaletteDialog(props: {
       );
       if (existing) {
         if (initializeProject) {
-          void initializeProjectWithFeedback({ environmentId: input.environmentId, root: cwd });
+          void initializeProjectWithFeedback({
+            prepared: input.prepared,
+            root: cwd,
+          });
         }
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
@@ -1772,7 +1788,10 @@ function OpenCommandPaletteDialog(props: {
       }
 
       if (initializeProject) {
-        void initializeProjectWithFeedback({ environmentId: input.environmentId, root: cwd });
+        void initializeProjectWithFeedback({
+          prepared: input.prepared,
+          root: cwd,
+        });
       }
 
       const navigationResult = await settlePromise(() =>
@@ -1815,11 +1834,13 @@ function OpenCommandPaletteDialog(props: {
         rawCwd,
         platform: browseEnvironmentPlatform,
         currentProjectCwd: currentProjectCwdForBrowse,
+        prepared: Option.getOrNull(browsePreparedConnection),
       });
     },
     [
       browseEnvironmentId,
       browseEnvironmentPlatform,
+      browsePreparedConnection,
       currentProjectCwdForBrowse,
       handleAddProjectForEnvironment,
     ],
@@ -2050,7 +2071,8 @@ function OpenCommandPaletteDialog(props: {
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
-    canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
+    canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
+    Option.isSome(browsePreparedConnection);
   const willCreateProjectPath =
     canSubmitBrowsePath &&
     !isBrowsePending &&
@@ -2348,6 +2370,10 @@ function OpenCommandPaletteDialog(props: {
         rawCwd: selection.linuxPath,
         platform: "Linux",
         currentProjectCwd: null,
+        prepared:
+          selection.environmentId === browseEnvironmentId
+            ? Option.getOrNull(browsePreparedConnection)
+            : null,
       });
       return;
     }
@@ -2356,6 +2382,7 @@ function OpenCommandPaletteDialog(props: {
     browseDesktopInstanceId,
     browseEnvironmentId,
     browseEnvironmentPlatform,
+    browsePreparedConnection,
     canOpenProjectFromFileManager,
     desktopLocalBootstraps,
     environments,
@@ -2368,10 +2395,10 @@ function OpenCommandPaletteDialog(props: {
 
   const beginNewProjectFolder = useCallback(() => {
     if (!isBrowsing || isCloneDestinationStep || relativePathNeedsActiveProject) return;
-    const parentPath = browseResult?.parentPath ?? browseDirectoryPath;
-    if (!parentPath) return;
-    const folderName = getAvailableNewFolderName(browseEntries.map((entry) => entry.name));
-    const nextQuery = joinProjectPath(parentPath, folderName);
+    if (!browseDirectoryPath) return;
+    const directoryNames = browseEntries.map((entry) => entry.name);
+    const folderName = getAvailableNewFolderName(directoryNames);
+    const nextQuery = getAvailableNewProjectPath(browseDirectoryPath, directoryNames);
     setHighlightedItemValue(null);
     setQuery(nextQuery);
     requestAnimationFrame(() => {
@@ -2384,7 +2411,6 @@ function OpenCommandPaletteDialog(props: {
   }, [
     browseDirectoryPath,
     browseEntries,
-    browseResult?.parentPath,
     isBrowsing,
     isCloneDestinationStep,
     relativePathNeedsActiveProject,

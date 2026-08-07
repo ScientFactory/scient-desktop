@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   getAvailableNewFolderName,
+  getAvailableNewProjectPath,
   joinProjectPath,
   resolveDroppedProjectFolder,
 } from "./projectEntry";
@@ -16,6 +17,12 @@ describe("project entry helpers", () => {
       "/Users/me/Studies/New folder",
     );
     expect(joinProjectPath("C:\\Studies\\", "New folder")).toBe("C:\\Studies\\New folder");
+  });
+
+  it("creates a new project inside the directory currently being browsed", () => {
+    expect(getAvailableNewProjectPath("/Users/me/Studies/", ["New folder"])).toBe(
+      "/Users/me/Studies/New folder 2",
+    );
   });
 
   it("accepts one Electron-resolved folder and rejects files", () => {

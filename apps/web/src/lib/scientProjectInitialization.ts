@@ -2,38 +2,29 @@ import {
   initializeEnvironmentScientProject,
   inspectEnvironmentScientProject,
 } from "@t3tools/client-runtime/state/scient-project";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type {
-  EnvironmentId,
   ScientProjectInitializationResult,
   ScientProjectInspection,
 } from "@t3tools/contracts";
 
 import { runtime } from "./runtime";
-import { readPreparedConnection } from "../state/session";
-
-function preparedConnection(environmentId: EnvironmentId) {
-  const prepared = readPreparedConnection(environmentId);
-  if (!prepared) throw new Error("The selected environment is not connected.");
-  return prepared;
-}
 
 export function inspectScientProjectForOpening(
-  environmentId: EnvironmentId,
+  prepared: PreparedConnection,
   root: string,
 ): Promise<ScientProjectInspection> {
-  return runtime.runPromise(
-    inspectEnvironmentScientProject({ prepared: preparedConnection(environmentId), root }),
-  );
+  return runtime.runPromise(inspectEnvironmentScientProject({ prepared, root }));
 }
 
 export function initializeScientProjectForOpening(input: {
-  readonly environmentId: EnvironmentId;
+  readonly prepared: PreparedConnection;
   readonly root: string;
   readonly title: string;
 }): Promise<ScientProjectInitializationResult> {
   return runtime.runPromise(
     initializeEnvironmentScientProject({
-      prepared: preparedConnection(input.environmentId),
+      prepared: input.prepared,
       root: input.root,
       title: input.title,
     }),
