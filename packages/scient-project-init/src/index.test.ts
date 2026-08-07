@@ -32,6 +32,14 @@ afterEach(async () => {
 });
 
 describe("Scient project initialization", () => {
+  it("expands a home-relative root before inspecting it", async () => {
+    const directoryName = `.scient-project-init-missing-${NodeCrypto.randomUUID()}`;
+    const inspection = await inspectScientProject(`~/${directoryName}`);
+
+    expect(inspection.root).toBe(NodePath.join(NodeOS.homedir(), directoryName));
+    await expect(NodeFSP.stat(inspection.root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("creates the portable foundation and writes identity last", async () => {
     const root = await fixture();
     expect((await inspectScientProject(root)).state).toBe("ordinary");

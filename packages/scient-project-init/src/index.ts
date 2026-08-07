@@ -2,6 +2,7 @@
 // @effect-diagnostics globalDate:off -- Project manifests record interoperable ISO timestamps.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 export const SCIENT_PROJECT_FILE = "PROJECT.md";
@@ -176,8 +177,15 @@ function parseTransaction(content: string): ProjectInitializationTransaction | n
 }
 
 async function validateRoot(root: string, createIfMissing: boolean): Promise<string> {
-  const normalized = NodePath.resolve(root.trim());
-  if (root.trim().length === 0) throw new Error("Enter a project folder path.");
+  const trimmedRoot = root.trim();
+  if (trimmedRoot.length === 0) throw new Error("Enter a project folder path.");
+  const expandedRoot =
+    trimmedRoot === "~"
+      ? NodeOS.homedir()
+      : trimmedRoot.startsWith("~/") || trimmedRoot.startsWith("~\\")
+        ? NodePath.join(NodeOS.homedir(), trimmedRoot.slice(2))
+        : trimmedRoot;
+  const normalized = NodePath.resolve(expandedRoot);
   if (createIfMissing) await NodeFSP.mkdir(normalized, { recursive: true });
   let rootStat;
   try {

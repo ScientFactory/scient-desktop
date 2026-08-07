@@ -1693,12 +1693,17 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
+      let cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
       let initializeProject = false;
       try {
         const inspection = await inspectScientProjectForOpening(input.prepared, cwd);
+        // The server owns filesystem identity. Use its canonical root for the
+        // host project record and the later Scient initialization so a
+        // user-facing path such as ~/Studies cannot resolve differently at
+        // the two boundaries.
+        cwd = inspection.root;
         if (inspection.state !== "initialized") {
           const decision = await requestProjectInitializationDecision(inspection);
           if (decision === "cancel") return;
@@ -2449,11 +2454,11 @@ function OpenCommandPaletteDialog(props: {
         <TooltipTrigger
           render={
             <Button
-              variant="default"
+              variant="outline"
               size="xs"
               tabIndex={-1}
               className={cn(
-                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+                "absolute inset-e-2.5 top-1/2 border-info/32 bg-info/4 pe-1 ps-2 text-info-foreground shadow-none -translate-y-1/2 before:shadow-none [:hover,[data-pressed]]:border-info/45 [:hover,[data-pressed]]:bg-info/8 dark:bg-info/4 dark:[:hover,[data-pressed]]:bg-info/8",
                 hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
               )}
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
@@ -2601,22 +2606,40 @@ function OpenCommandPaletteDialog(props: {
       ) : null}
       {canDropProjectFolder ? (
         <div className="px-3 pt-2">
-          <div
+          <button
+            type="button"
+            aria-live="polite"
+            title={`Open in ${fileManagerName}`}
+            disabled={isPickingProjectFolder}
+            onClick={() => {
+              void handleOpenProjectFromFileManager();
+            }}
+            data-drop-state={isProjectFolderDragActive ? "active" : "idle"}
             className={cn(
-              "flex items-center gap-3 rounded-lg border border-border/70 px-3 py-2.5 text-sm transition-colors",
+              "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-64",
               isProjectFolderDragActive
-                ? "border-primary/45 bg-primary/8 text-foreground"
-                : "bg-muted/25 text-muted-foreground",
+                ? "bg-emerald-500/[0.06] text-foreground"
+                : "text-muted-foreground hover:bg-muted/40",
             )}
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-primary shadow-xs ring-1 ring-border/60">
+            <span
+              className={cn(
+                "flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.035] text-blue-500 shadow-[0_3px_10px_rgb(0_0_0/0.08)] transition-[color,background-color,box-shadow] duration-150 dark:bg-foreground/[0.07] dark:shadow-[0_3px_12px_rgb(0_0_0/0.24)]",
+                isProjectFolderDragActive &&
+                  "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400",
+              )}
+            >
               <FolderPlusIcon aria-hidden className="size-4" />
             </span>
-            <span>
-              <span className="font-medium text-foreground">Drop your folder here</span>
-              <span> or browse below</span>
-            </span>
-          </div>
+            {isProjectFolderDragActive ? (
+              <span className="font-medium text-foreground">Release to add this folder</span>
+            ) : (
+              <span className="text-foreground">
+                Drop your folder here
+                <span className="text-muted-foreground"> or browse below</span>
+              </span>
+            )}
+          </button>
         </div>
       ) : null}
       <CommandPaletteResults
