@@ -15,6 +15,7 @@ import {
 describe("resolveBrowseEnterAction", () => {
   const enter = {
     canSubmitBrowsePath: true,
+    forceSubmitCurrentPath: false,
     key: "Enter",
     isComposing: false,
     isPrimaryModifierPressed: false,
@@ -36,6 +37,16 @@ describe("resolveBrowseEnterAction", () => {
       resolveBrowseEnterAction({
         ...enter,
         isPrimaryModifierPressed: true,
+        highlightedItemValue: "browse:up",
+      }),
+    ).toBe("submit-current-path");
+  });
+
+  it("submits a new-folder draft even when the picker retained its previous row", () => {
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        forceSubmitCurrentPath: true,
         highlightedItemValue: "browse:up",
       }),
     ).toBe("submit-current-path");

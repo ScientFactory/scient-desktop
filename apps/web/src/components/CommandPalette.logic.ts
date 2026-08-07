@@ -130,6 +130,7 @@ export type BrowseEnterAction = "ignore" | "activate-highlighted" | "submit-curr
 
 export function resolveBrowseEnterAction(input: {
   readonly canSubmitBrowsePath: boolean;
+  readonly forceSubmitCurrentPath: boolean;
   readonly key: string;
   readonly isComposing: boolean;
   readonly isPrimaryModifierPressed: boolean;
@@ -137,6 +138,7 @@ export function resolveBrowseEnterAction(input: {
 }): BrowseEnterAction {
   if (!input.canSubmitBrowsePath || input.key !== "Enter" || input.isComposing) return "ignore";
   if (
+    input.forceSubmitCurrentPath ||
     input.isPrimaryModifierPressed ||
     input.highlightedItemValue?.startsWith("browse:") !== true
   ) {

@@ -573,6 +573,7 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const highlightedItemValueRef = useRef<string | null>(null);
+  const [isNewProjectFolderDraft, setIsNewProjectFolderDraft] = useState(false);
   const clientSettings = useClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -1069,6 +1070,7 @@ function OpenCommandPaletteDialog(props: {
       ]);
       highlightedItemValueRef.current = null;
       setHighlightedItemValue(null);
+      setIsNewProjectFolderDraft(false);
       setQuery(view.initialQuery ?? "");
     },
     [browseNavigation],
@@ -1091,6 +1093,7 @@ function OpenCommandPaletteDialog(props: {
     setViewStack((previousViews) => previousViews.slice(0, -1));
     highlightedItemValueRef.current = null;
     setHighlightedItemValue(null);
+    setIsNewProjectFolderDraft(false);
     setQuery("");
   }
 
@@ -1893,6 +1896,7 @@ function OpenCommandPaletteDialog(props: {
         () => {
           highlightedItemValueRef.current = null;
           setHighlightedItemValue(null);
+          setIsNewProjectFolderDraft(false);
           setQuery(nextQuery);
           setBrowseGeneration((generation) => generation + 1);
         },
@@ -1912,6 +1916,7 @@ function OpenCommandPaletteDialog(props: {
       () => {
         highlightedItemValueRef.current = null;
         setHighlightedItemValue(null);
+        setIsNewProjectFolderDraft(false);
         setQuery(parentPath);
         setBrowseGeneration((generation) => generation + 1);
       },
@@ -1970,7 +1975,8 @@ function OpenCommandPaletteDialog(props: {
     remoteProjectInputPlaceholder(addProjectCloneFlow) ??
     getCommandPaletteInputPlaceholder(paletteMode);
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
-  const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
+  const hasHighlightedBrowseItem =
+    !isNewProjectFolderDraft && (highlightedItemValue?.startsWith("browse:") ?? false);
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
@@ -2052,6 +2058,7 @@ function OpenCommandPaletteDialog(props: {
 
   const handleDroppedProjectFolder = useCallback(
     (path: string) => {
+      setIsNewProjectFolderDraft(false);
       setQuery(path);
       void handleAddProject(path);
     },
@@ -2070,6 +2077,7 @@ function OpenCommandPaletteDialog(props: {
     if (event.target !== projectPathInputRef.current) return;
     const browseEnterAction = resolveBrowseEnterAction({
       canSubmitBrowsePath,
+      forceSubmitCurrentPath: isNewProjectFolderDraft,
       key: event.key,
       isComposing: event.nativeEvent.isComposing,
       isPrimaryModifierPressed: isPrimaryModifierPressed(event),
@@ -2268,6 +2276,7 @@ function OpenCommandPaletteDialog(props: {
     const nextQuery = getAvailableNewProjectPath(browseDirectoryPath, directoryNames);
     highlightedItemValueRef.current = null;
     setHighlightedItemValue(null);
+    setIsNewProjectFolderDraft(true);
     setQuery(nextQuery);
     requestAnimationFrame(() => {
       projectPathInputRef.current?.focus();
