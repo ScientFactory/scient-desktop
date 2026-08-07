@@ -307,9 +307,13 @@ async function runApp() {
   const cleanup = () => NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
   process.once("exit", cleanup);
   const pnpmExecPath = process.env.npm_execpath?.trim();
+  const devDesktopArgs = ["dev:desktop"];
+  if (paths.role === "stable") {
+    devDesktopArgs.push("--home-dir", paths.stateRoot);
+  }
   const child = NodeChildProcess.spawn(
     pnpmExecPath ? process.execPath : "pnpm",
-    pnpmExecPath ? [pnpmExecPath, "dev:desktop"] : ["dev:desktop"],
+    pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
     {
       cwd: paths.root,
       env: process.env,
