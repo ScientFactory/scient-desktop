@@ -20,6 +20,7 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
+  type ScientProjectInspection,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -49,6 +50,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -71,6 +73,15 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments"
 import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  getAvailableNewFolderName,
+  joinProjectPath,
+  resolveDroppedProjectFolder,
+} from "../lib/projectEntry";
+import {
+  initializeScientProjectForOpening,
+  inspectScientProjectForOpening,
+} from "../lib/scientProjectInitialization";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -119,6 +130,10 @@ import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sideb
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
+import {
+  ScientProjectInitializationDialog,
+  type ScientProjectInitializationDecision,
+} from "./ScientProjectInitializationDialog";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -176,6 +191,12 @@ function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
     return "Linux";
   }
   return typeof navigator === "undefined" ? "" : navigator.platform;
+}
+
+function isMatchingLocalPlatform(environmentPlatform: string, browserPlatform: string): boolean {
+  if (environmentPlatform === "MacIntel") return isMacPlatform(browserPlatform);
+  if (environmentPlatform === "Win32") return isWindowsPlatform(browserPlatform);
+  return environmentPlatform === "Linux" && /linux/u.test(browserPlatform.toLowerCase());
 }
 
 interface AddProjectEnvironmentOption {
@@ -620,6 +641,14 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [projectInitializationInspection, setProjectInitializationInspection] =
+    useState<ScientProjectInspection | null>(null);
+  const projectInitializationDecisionRef = useRef<
+    ((decision: ScientProjectInitializationDecision) => void) | null
+  >(null);
+  const [isProjectFolderDragActive, setIsProjectFolderDragActive] = useState(false);
+  const projectFolderDragDepthRef = useRef(0);
+  const projectPathInputRef = useRef<HTMLInputElement>(null);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1526,6 +1555,87 @@ function OpenCommandPaletteDialog(props: {
     threadSearchItems: allThreadItems,
   });
 
+  const requestProjectInitializationDecision = useCallback(
+    (inspection: ScientProjectInspection): Promise<ScientProjectInitializationDecision> =>
+      new Promise((resolve) => {
+        projectInitializationDecisionRef.current?.("cancel");
+        projectInitializationDecisionRef.current = resolve;
+        setProjectInitializationInspection(inspection);
+      }),
+    [],
+  );
+
+  const resolveProjectInitializationDecision = useCallback(
+    (decision: ScientProjectInitializationDecision) => {
+      const resolve = projectInitializationDecisionRef.current;
+      if (!resolve) return;
+      projectInitializationDecisionRef.current = null;
+      setProjectInitializationInspection(null);
+      resolve(decision);
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      projectInitializationDecisionRef.current?.("cancel");
+      projectInitializationDecisionRef.current = null;
+    },
+    [],
+  );
+
+  const initializeProjectWithFeedback = useCallback(
+    async (input: { readonly environmentId: EnvironmentId; readonly root: string }) => {
+      const runInitialization = async () => {
+        const result = await initializeScientProjectForOpening({
+          environmentId: input.environmentId,
+          root: input.root,
+          title: inferProjectTitleFromPath(input.root),
+        });
+        if (result.state !== "initialized") {
+          throw new Error(
+            result.issues[0]?.message ?? "This folder could not be initialized safely.",
+          );
+        }
+        toastManager.add({
+          type: "success",
+          title: "Scient project ready",
+          description:
+            result.created.length > 0
+              ? `Created ${result.created.join(", ")}.`
+              : "The existing Scient project foundation is ready.",
+        });
+      };
+
+      try {
+        await runInitialization();
+      } catch (error) {
+        const description = errorMessage(error);
+        toastManager.add({
+          type: "error",
+          title: "Project opened without Scient setup",
+          description,
+          data: {
+            secondaryActionProps: {
+              children: "Retry setup",
+              onClick: () => {
+                void runInitialization().catch((retryError) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Scient project setup still needs attention",
+                    description: errorMessage(retryError),
+                  });
+                });
+              },
+            },
+            secondaryActionVariant: "outline",
+          },
+        });
+      }
+    },
+    [],
+  );
+
   const handleAddProjectForEnvironment = useCallback(
     async (input: {
       readonly environmentId: EnvironmentId;
@@ -1573,11 +1683,30 @@ function OpenCommandPaletteDialog(props: {
       const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
+      let initializeProject = false;
+      try {
+        const inspection = await inspectScientProjectForOpening(input.environmentId, cwd);
+        if (inspection.state !== "initialized") {
+          const decision = await requestProjectInitializationDecision(inspection);
+          if (decision === "cancel") return;
+          initializeProject = decision === "initialize";
+        }
+      } catch (error) {
+        toastManager.add({
+          type: "warning",
+          title: "Scient project setup could not be checked",
+          description: `${errorMessage(error)} The folder will open without changing its files.`,
+        });
+      }
+
       const existing = findProjectByPath(
         projects.filter((project) => project.environmentId === input.environmentId),
         cwd,
       );
       if (existing) {
+        if (initializeProject) {
+          void initializeProjectWithFeedback({ environmentId: input.environmentId, root: cwd });
+        }
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -1642,6 +1771,10 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      if (initializeProject) {
+        void initializeProjectWithFeedback({ environmentId: input.environmentId, root: cwd });
+      }
+
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
       );
@@ -1666,6 +1799,8 @@ function OpenCommandPaletteDialog(props: {
       primaryEnvironmentId,
       projects,
       providers,
+      initializeProjectWithFeedback,
+      requestProjectInitializationDecision,
       setOpen,
       clientSettings.sidebarThreadSortOrder,
       threads,
@@ -1957,6 +2092,12 @@ function OpenCommandPaletteDialog(props: {
       (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&
     typeof window !== "undefined" &&
     window.desktopBridge !== undefined;
+  const canDropProjectFolder =
+    canOpenProjectFromFileManager &&
+    !isCloneDestinationStep &&
+    browseEnvironmentId === primaryEnvironmentId &&
+    isMatchingLocalPlatform(browseEnvironmentPlatform, navigator.platform) &&
+    typeof window.desktopBridge?.getPathForFile === "function";
   const fileManagerInitialPath = useMemo(() => {
     if (!canOpenProjectFromFileManager) {
       return undefined;
@@ -1980,6 +2121,66 @@ function OpenCommandPaletteDialog(props: {
     currentProjectCwdForBrowse,
     query,
   ]);
+
+  const resetProjectFolderDrag = useCallback(() => {
+    projectFolderDragDepthRef.current = 0;
+    setIsProjectFolderDragActive(false);
+  }, []);
+
+  useEffect(() => {
+    if (!canDropProjectFolder) resetProjectFolderDrag();
+  }, [canDropProjectFolder, resetProjectFolderDrag]);
+
+  const handleProjectFolderDragEnter = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      projectFolderDragDepthRef.current += 1;
+      setIsProjectFolderDragActive(true);
+    },
+    [canDropProjectFolder],
+  );
+
+  const handleProjectFolderDragOver = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    },
+    [canDropProjectFolder],
+  );
+
+  const handleProjectFolderDragLeave = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
+      projectFolderDragDepthRef.current = Math.max(0, projectFolderDragDepthRef.current - 1);
+      if (projectFolderDragDepthRef.current === 0) setIsProjectFolderDragActive(false);
+    },
+    [canDropProjectFolder],
+  );
+
+  const handleProjectFolderDrop = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!canDropProjectFolder || !event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      resetProjectFolderDrag();
+      const getPathForFile = window.desktopBridge?.getPathForFile;
+      if (!getPathForFile) return;
+      const dropped = resolveDroppedProjectFolder(event.dataTransfer, getPathForFile);
+      if ("error" in dropped) {
+        toastManager.add({
+          type: "warning",
+          title: "Unable to add folder",
+          description: dropped.error,
+        });
+        return;
+      }
+      setQuery(dropped.path);
+      void handleAddProject(dropped.path);
+    },
+    [canDropProjectFolder, handleAddProject, resetProjectFolderDrag],
+  );
 
   function isPrimaryModifierPressed(event: KeyboardEvent<HTMLInputElement>): boolean {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -2165,6 +2366,30 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
+  const beginNewProjectFolder = useCallback(() => {
+    if (!isBrowsing || isCloneDestinationStep || relativePathNeedsActiveProject) return;
+    const parentPath = browseResult?.parentPath ?? browseDirectoryPath;
+    if (!parentPath) return;
+    const folderName = getAvailableNewFolderName(browseEntries.map((entry) => entry.name));
+    const nextQuery = joinProjectPath(parentPath, folderName);
+    setHighlightedItemValue(null);
+    setQuery(nextQuery);
+    requestAnimationFrame(() => {
+      projectPathInputRef.current?.focus();
+      projectPathInputRef.current?.setSelectionRange(
+        nextQuery.length - folderName.length,
+        nextQuery.length,
+      );
+    });
+  }, [
+    browseDirectoryPath,
+    browseEntries,
+    browseResult?.parentPath,
+    isBrowsing,
+    isCloneDestinationStep,
+    relativePathNeedsActiveProject,
+  ]);
+
   const inputAccessory =
     addProjectCloneFlow?.step === "repository" ? (
       <Tooltip>
@@ -2198,7 +2423,7 @@ function OpenCommandPaletteDialog(props: {
         <TooltipTrigger
           render={
             <Button
-              variant="outline"
+              variant="default"
               size="xs"
               tabIndex={-1}
               className={cn(
@@ -2247,29 +2472,54 @@ function OpenCommandPaletteDialog(props: {
         ? "Select"
         : undefined;
 
-  const footerTrailing = canOpenProjectFromFileManager ? (
-    <Button
-      variant="ghost"
-      size="xs"
-      className="h-auto px-2 text-muted-foreground text-xs hover:bg-transparent hover:text-foreground"
-      disabled={isPickingProjectFolder}
-      onClick={() => {
-        void handleOpenProjectFromFileManager();
-      }}
-    >
-      {`Open in ${fileManagerName}`}
-    </Button>
-  ) : null;
+  const canBeginNewProjectFolder =
+    isBrowsing && !isCloneDestinationStep && !relativePathNeedsActiveProject;
+  const footerTrailing =
+    canBeginNewProjectFolder || canOpenProjectFromFileManager ? (
+      <div className="ms-auto flex items-center gap-1">
+        {canBeginNewProjectFolder ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-auto gap-1.5 px-2 text-xs"
+            onClick={beginNewProjectFolder}
+          >
+            <FolderPlusIcon aria-hidden className="size-3.5" />
+            New folder
+          </Button>
+        ) : null}
+        {canOpenProjectFromFileManager ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-auto px-2 text-muted-foreground text-xs hover:bg-transparent hover:text-foreground"
+            disabled={isPickingProjectFolder}
+            onClick={() => {
+              void handleOpenProjectFromFileManager();
+            }}
+          >
+            {`Open in ${fileManagerName}`}
+          </Button>
+        ) : null}
+      </div>
+    ) : null;
 
   return (
     <CommandPaletteContent
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}`}
       aria-label="Command palette"
       autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
+      containerProps={{
+        onDragEnter: handleProjectFolderDragEnter,
+        onDragLeave: handleProjectFolderDragLeave,
+        onDragOver: handleProjectFolderDragOver,
+        onDrop: handleProjectFolderDrop,
+      }}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
       inputProps={{
+        ref: projectPathInputRef,
         className:
           addProjectCloneFlow?.step === "repository"
             ? "pe-32"
@@ -2306,7 +2556,7 @@ function OpenCommandPaletteDialog(props: {
       }}
       onValueChange={handleQueryChange}
       panelClassName="max-h-[min(28rem,70vh)]"
-      showBackHint={isSubmenu}
+      showBackHint={isSubmenu && !isBrowsing}
       value={query}
     >
       {remoteProjectContext ? (
@@ -2319,6 +2569,26 @@ function OpenCommandPaletteDialog(props: {
               <span className="truncate text-muted-foreground/85 text-xs">
                 {remoteProjectContext.description}
               </span>
+            </span>
+          </div>
+        </div>
+      ) : null}
+      {canDropProjectFolder ? (
+        <div className="px-3 pt-2">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-lg border border-border/70 px-3 py-2.5 text-sm transition-colors",
+              isProjectFolderDragActive
+                ? "border-primary/45 bg-primary/8 text-foreground"
+                : "bg-muted/25 text-muted-foreground",
+            )}
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-primary shadow-xs ring-1 ring-border/60">
+              <FolderPlusIcon aria-hidden className="size-4" />
+            </span>
+            <span>
+              <span className="font-medium text-foreground">Drop your folder here</span>
+              <span> or browse below</span>
             </span>
           </div>
         </div>
@@ -2347,6 +2617,10 @@ function OpenCommandPaletteDialog(props: {
                 : threadSearch.isPending
                   ? { emptyStateMessage: "Searching thread messages…" }
                   : {})}
+      />
+      <ScientProjectInitializationDialog
+        inspection={projectInitializationInspection}
+        onDecision={resolveProjectInitializationDecision}
       />
     </CommandPaletteContent>
   );

@@ -42,6 +42,12 @@ import {
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
 } from "./relay.ts";
+import {
+  ScientProjectInspectRequest,
+  ScientProjectInspection,
+  ScientProjectInitializeRequest,
+  ScientProjectInitializationResult,
+} from "./scientProject.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -84,6 +90,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  "scient_project_inspection_failed",
+  "scient_project_initialization_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -500,6 +508,24 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentScientProjectHttpApi extends HttpApiGroup.make("scientProject")
+  .add(
+    HttpApiEndpoint.post("inspect", "/api/scient/projects/inspect", {
+      headers: OptionalBearerHeaders,
+      payload: ScientProjectInspectRequest,
+      success: ScientProjectInspection,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("initialize", "/api/scient/projects/initialize", {
+      headers: OptionalBearerHeaders,
+      payload: ScientProjectInitializeRequest,
+      success: ScientProjectInitializationResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -565,4 +591,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentScientProjectHttpApi)
   .add(EnvironmentConnectHttpApi) {}
