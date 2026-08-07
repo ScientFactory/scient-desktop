@@ -393,11 +393,25 @@ export function buildBrowseGroups(input: {
   }
 
   for (const entry of input.browseEntries) {
+    const hasLeadingWhitespace = entry.name.trimStart() !== entry.name;
+    const hasTrailingWhitespace = entry.name.trimEnd() !== entry.name;
+    const whitespaceWarning =
+      hasLeadingWhitespace || hasTrailingWhitespace
+        ? hasLeadingWhitespace && hasTrailingWhitespace
+          ? "Name starts and ends with whitespace"
+          : hasLeadingWhitespace
+            ? "Name starts with whitespace"
+            : "Name ends with whitespace"
+        : undefined;
     items.push({
       kind: "action",
-      value: `browse:${entry.fullPath}`,
+      // Base UI normalizes string values while managing active items. Encode
+      // the filesystem path so sibling names that differ only by boundary
+      // whitespace remain distinct selectable rows.
+      value: `browse:${encodeURIComponent(entry.fullPath)}`,
       searchTerms: [input.browseQuery, entry.fullPath, entry.name],
       title: entry.name,
+      ...(whitespaceWarning ? { description: whitespaceWarning } : {}),
       icon: input.directoryIcon,
       keepOpen: true,
       run: async () => {

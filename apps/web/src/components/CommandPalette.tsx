@@ -86,6 +86,7 @@ import {
   findProjectByPath,
   getBrowseDirectoryPath,
   hasTrailingPathSeparator,
+  hasTrailingProjectPathWhitespace,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
@@ -1581,6 +1582,18 @@ function OpenCommandPaletteDialog(props: {
       }
       const rawCwd = input.rawCwd;
 
+      if (hasTrailingProjectPathWhitespace(rawCwd)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Folder name is ambiguous",
+            description:
+              "This folder name ends with whitespace, which Scient cannot safely preserve yet. Rename the folder before adding it.",
+          }),
+        );
+        return;
+      }
+
       if (isUnsupportedWindowsProjectPath(rawCwd.trim(), input.platform)) {
         toastManager.add(
           stackedThreadToast({
@@ -2136,8 +2149,32 @@ function OpenCommandPaletteDialog(props: {
     [canDropProjectFolder, handleAddProject, resetProjectFolderDrag],
   );
 
-  function isPrimaryModifierPressed(event: KeyboardEvent<HTMLInputElement>): boolean {
+  function isPrimaryModifierPressed(event: KeyboardEvent<HTMLElement>): boolean {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  }
+
+  function handleBrowseKeyDownCapture(event: KeyboardEvent<HTMLElement>): void {
+    if (event.target !== projectPathInputRef.current) return;
+    const browseEnterAction = resolveBrowseEnterAction({
+      canSubmitBrowsePath,
+      key: event.key,
+      isComposing: event.nativeEvent.isComposing,
+      isPrimaryModifierPressed: isPrimaryModifierPressed(event),
+      highlightedItemValue: highlightedItemValueRef.current,
+    });
+    if (browseEnterAction !== "submit-current-path") return;
+
+    // Base UI can retain an internal active row after the visible highlight is
+    // cleared. Intercept current-path submission during capture so that hidden
+    // state cannot activate the previous row (notably `..`) on the way down to
+    // the input's own combobox handler.
+    event.preventDefault();
+    event.stopPropagation();
+    if (isCloneDestinationStep) {
+      void submitAddProjectCloneFlow(resolvedAddProjectPath);
+    } else {
+      void handleAddProject(resolvedAddProjectPath);
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
@@ -2160,33 +2197,6 @@ function OpenCommandPaletteDialog(props: {
     if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
       event.preventDefault();
       void submitAddProjectCloneFlow();
-      return;
-    }
-
-    const browseEnterAction = resolveBrowseEnterAction({
-      canSubmitBrowsePath,
-      key: event.key,
-      isComposing: event.nativeEvent.isComposing,
-      isPrimaryModifierPressed: isPrimaryModifierPressed(event),
-      highlightedItemValue: highlightedItemValueRef.current,
-    });
-    if (browseEnterAction !== "ignore") {
-      const submitBrowsePath = () => {
-        if (isCloneDestinationStep) {
-          void submitAddProjectCloneFlow(resolvedAddProjectPath);
-        } else {
-          void handleAddProject(resolvedAddProjectPath);
-        }
-      };
-      if (browseEnterAction === "submit-current-path") {
-        event.preventDefault();
-        (
-          event as KeyboardEvent<HTMLInputElement> & {
-            preventBaseUIHandler?: () => void;
-          }
-        ).preventBaseUIHandler?.();
-        submitBrowsePath();
-      }
       return;
     }
 
@@ -2485,6 +2495,7 @@ function OpenCommandPaletteDialog(props: {
         onDragLeave: handleProjectFolderDragLeave,
         onDragOver: handleProjectFolderDragOver,
         onDrop: handleProjectFolderDrop,
+        onKeyDownCapture: handleBrowseKeyDownCapture,
       }}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}

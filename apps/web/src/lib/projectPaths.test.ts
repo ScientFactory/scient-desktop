@@ -8,6 +8,7 @@ import {
   getBrowseLeafPathSegment,
   getBrowseParentPath,
   hasTrailingPathSeparator,
+  hasTrailingProjectPathWhitespace,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isFilesystemBrowseQuery,
@@ -105,6 +106,15 @@ describe("projectPaths", () => {
     expect(getBrowseLeafPathSegment("C:\\Work\\Repo\\Docs")).toBe("Docs");
     expect(getBrowseDirectoryPath("/home/user\\project/docs")).toBe("/home/user\\project/");
     expect(getBrowseLeafPathSegment("/home/user\\project/docs")).toBe("docs");
+  });
+
+  it("detects trailing whitespace that project-path normalization would discard", () => {
+    expect(hasTrailingProjectPathWhitespace("/repo/project ")).toBe(true);
+    expect(hasTrailingProjectPathWhitespace("/repo/project /")).toBe(true);
+    expect(hasTrailingProjectPathWhitespace("/repo/project\t")).toBe(true);
+    expect(hasTrailingProjectPathWhitespace("/repo/project name")).toBe(false);
+    expect(hasTrailingProjectPathWhitespace("/repo/project/")).toBe(false);
+    expect(hasTrailingProjectPathWhitespace(" /repo/project")).toBe(false);
   });
 
   it("only allows browse-up after entering a directory", () => {
