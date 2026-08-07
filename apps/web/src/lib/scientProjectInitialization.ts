@@ -10,6 +10,8 @@ import type {
 
 import { runtime } from "./runtime";
 
+export type ScientProjectInitializationDecision = "cancel" | "initialize" | "open-only";
+
 export function inspectScientProjectForOpening(
   prepared: PreparedConnection,
   root: string,

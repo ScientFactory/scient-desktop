@@ -20,7 +20,6 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
-  type ScientProjectInspection,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -59,6 +58,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useScientProjectInitialization } from "../hooks/useScientProjectInitialization";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
@@ -66,7 +66,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
-import { usePreparedConnection } from "../state/session";
+import { readPreparedConnection, usePreparedConnection } from "../state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -79,10 +79,7 @@ import {
   getAvailableNewProjectPath,
   resolveDroppedProjectFolder,
 } from "../lib/projectEntry";
-import {
-  initializeScientProjectForOpening,
-  inspectScientProjectForOpening,
-} from "../lib/scientProjectInitialization";
+import { inspectScientProjectForOpening } from "../lib/scientProjectInitialization";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -125,16 +122,15 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
+  resolveBrowseEnterAction,
+  shouldOfferProjectPathCreation,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
-import {
-  ScientProjectInitializationDialog,
-  type ScientProjectInitializationDecision,
-} from "./ScientProjectInitializationDialog";
+import { ScientProjectInitializationDialog } from "./ScientProjectInitializationDialog";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -580,6 +576,7 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  const highlightedItemValueRef = useRef<string | null>(null);
   const clientSettings = useClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -642,11 +639,12 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
-  const [projectInitializationInspection, setProjectInitializationInspection] =
-    useState<ScientProjectInspection | null>(null);
-  const projectInitializationDecisionRef = useRef<
-    ((decision: ScientProjectInitializationDecision) => void) | null
-  >(null);
+  const {
+    initializeWithFeedback: initializeProjectWithFeedback,
+    inspection: projectInitializationInspection,
+    requestDecision: requestProjectInitializationDecision,
+    resolveDecision: resolveProjectInitializationDecision,
+  } = useScientProjectInitialization();
   const [isProjectFolderDragActive, setIsProjectFolderDragActive] = useState(false);
   const projectFolderDragDepthRef = useRef(0);
   const projectPathInputRef = useRef<HTMLInputElement>(null);
@@ -1075,6 +1073,7 @@ function OpenCommandPaletteDialog(props: {
           ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
         },
       ]);
+      highlightedItemValueRef.current = null;
       setHighlightedItemValue(null);
       setQuery(view.initialQuery ?? "");
     },
@@ -1096,12 +1095,14 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(null);
     }
     setViewStack((previousViews) => previousViews.slice(0, -1));
+    highlightedItemValueRef.current = null;
     setHighlightedItemValue(null);
     setQuery("");
   }
 
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
+    highlightedItemValueRef.current = null;
     setHighlightedItemValue(null);
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
@@ -1557,87 +1558,6 @@ function OpenCommandPaletteDialog(props: {
     threadSearchItems: allThreadItems,
   });
 
-  const requestProjectInitializationDecision = useCallback(
-    (inspection: ScientProjectInspection): Promise<ScientProjectInitializationDecision> =>
-      new Promise((resolve) => {
-        projectInitializationDecisionRef.current?.("cancel");
-        projectInitializationDecisionRef.current = resolve;
-        setProjectInitializationInspection(inspection);
-      }),
-    [],
-  );
-
-  const resolveProjectInitializationDecision = useCallback(
-    (decision: ScientProjectInitializationDecision) => {
-      const resolve = projectInitializationDecisionRef.current;
-      if (!resolve) return;
-      projectInitializationDecisionRef.current = null;
-      setProjectInitializationInspection(null);
-      resolve(decision);
-    },
-    [],
-  );
-
-  useEffect(
-    () => () => {
-      projectInitializationDecisionRef.current?.("cancel");
-      projectInitializationDecisionRef.current = null;
-    },
-    [],
-  );
-
-  const initializeProjectWithFeedback = useCallback(
-    async (input: { readonly prepared: PreparedConnection; readonly root: string }) => {
-      const runInitialization = async () => {
-        const result = await initializeScientProjectForOpening({
-          prepared: input.prepared,
-          root: input.root,
-          title: inferProjectTitleFromPath(input.root),
-        });
-        if (result.state !== "initialized") {
-          throw new Error(
-            result.issues[0]?.message ?? "This folder could not be initialized safely.",
-          );
-        }
-        toastManager.add({
-          type: "success",
-          title: "Scient project ready",
-          description:
-            result.created.length > 0
-              ? `Created ${result.created.join(", ")}.`
-              : "The existing Scient project foundation is ready.",
-        });
-      };
-
-      try {
-        await runInitialization();
-      } catch (error) {
-        const description = errorMessage(error);
-        toastManager.add({
-          type: "error",
-          title: "Project opened without Scient setup",
-          description,
-          data: {
-            secondaryActionProps: {
-              children: "Retry setup",
-              onClick: () => {
-                void runInitialization().catch((retryError) => {
-                  toastManager.add({
-                    type: "error",
-                    title: "Scient project setup still needs attention",
-                    description: errorMessage(retryError),
-                  });
-                });
-              },
-            },
-            secondaryActionVariant: "outline",
-          },
-        });
-      }
-    },
-    [],
-  );
-
   const handleAddProjectForEnvironment = useCallback(
     async (input: {
       readonly environmentId: EnvironmentId;
@@ -1655,16 +1575,6 @@ function OpenCommandPaletteDialog(props: {
             type: "error",
             title: "Environment unavailable",
             description: `${environment?.label ?? "The selected environment"} is not connected.`,
-          }),
-        );
-        return;
-      }
-      if (input.prepared === null) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Environment unavailable",
-            description: `${environment?.label ?? "The selected environment"} is still connecting. Try again in a moment.`,
           }),
         );
         return;
@@ -1696,25 +1606,35 @@ function OpenCommandPaletteDialog(props: {
       let cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
+      const projectSetupConnection = input.prepared ?? readPreparedConnection(input.environmentId);
       let initializeProject = false;
-      try {
-        const inspection = await inspectScientProjectForOpening(input.prepared, cwd);
-        // The server owns filesystem identity. Use its canonical root for the
-        // host project record and the later Scient initialization so a
-        // user-facing path such as ~/Studies cannot resolve differently at
-        // the two boundaries.
-        cwd = inspection.root;
-        if (inspection.state !== "initialized") {
-          const decision = await requestProjectInitializationDecision(inspection);
-          if (decision === "cancel") return;
-          initializeProject = decision === "initialize";
-        }
-      } catch (error) {
+      if (projectSetupConnection === null) {
         toastManager.add({
           type: "warning",
           title: "Scient project setup could not be checked",
-          description: `${errorMessage(error)} The folder will open without changing its files.`,
+          description:
+            "The selected environment is still connecting. The folder will open without changing its files.",
         });
+      } else {
+        try {
+          const inspection = await inspectScientProjectForOpening(projectSetupConnection, cwd);
+          // The server owns filesystem identity. Use its canonical root for the
+          // host project record and the later Scient initialization so a
+          // user-facing path such as ~/Studies cannot resolve differently at
+          // the two boundaries.
+          cwd = inspection.root;
+          if (inspection.state !== "initialized") {
+            const decision = await requestProjectInitializationDecision(inspection);
+            if (decision === "cancel") return;
+            initializeProject = decision === "initialize";
+          }
+        } catch (error) {
+          toastManager.add({
+            type: "warning",
+            title: "Scient project setup could not be checked",
+            description: `${errorMessage(error)} The folder will open without changing its files.`,
+          });
+        }
       }
 
       const existing = findProjectByPath(
@@ -1722,9 +1642,9 @@ function OpenCommandPaletteDialog(props: {
         cwd,
       );
       if (existing) {
-        if (initializeProject) {
+        if (initializeProject && projectSetupConnection !== null) {
           void initializeProjectWithFeedback({
-            prepared: input.prepared,
+            environmentId: input.environmentId,
             root: cwd,
           });
         }
@@ -1792,9 +1712,9 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      if (initializeProject) {
+      if (initializeProject && projectSetupConnection !== null) {
         void initializeProjectWithFeedback({
-          prepared: input.prepared,
+          environmentId: input.environmentId,
           root: cwd,
         });
       }
@@ -1887,6 +1807,7 @@ function OpenCommandPaletteDialog(props: {
           repository: null,
           remoteUrl: rawRepository,
         });
+        highlightedItemValueRef.current = null;
         setHighlightedItemValue(null);
         setQuery(destinationPath);
         setBrowseGeneration((generation) => generation + 1);
@@ -1924,6 +1845,7 @@ function OpenCommandPaletteDialog(props: {
         repository,
         remoteUrl: repository.sshUrl,
       });
+      highlightedItemValueRef.current = null;
       setHighlightedItemValue(null);
       setQuery(destinationPath);
       setBrowseGeneration((generation) => generation + 1);
@@ -1995,6 +1917,7 @@ function OpenCommandPaletteDialog(props: {
       await browseNavigation.run(
         () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
         () => {
+          highlightedItemValueRef.current = null;
           setHighlightedItemValue(null);
           setQuery(nextQuery);
           setBrowseGeneration((generation) => generation + 1);
@@ -2013,6 +1936,7 @@ function OpenCommandPaletteDialog(props: {
     await browseNavigation.run(
       () => prefetchBrowsePath(parentPath),
       () => {
+        highlightedItemValueRef.current = null;
         setHighlightedItemValue(null);
         setQuery(parentPath);
         setBrowseGeneration((generation) => generation + 1);
@@ -2078,12 +2002,15 @@ function OpenCommandPaletteDialog(props: {
     !relativePathNeedsActiveProject &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
     Option.isSome(browsePreparedConnection);
-  const willCreateProjectPath =
-    canSubmitBrowsePath &&
-    !isBrowsePending &&
-    query.trim().length > 0 &&
-    !hasHighlightedBrowseItem &&
-    (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
+  const willCreateProjectPath = shouldOfferProjectPathCreation({
+    canSubmitBrowsePath,
+    isBrowsePending,
+    hasBrowseResult: browseResult !== null,
+    query,
+    hasHighlightedBrowseItem,
+    hasTrailingPathSeparator: hasTrailingPathSeparator(query),
+    exactEntryExists: exactBrowseEntry !== null,
+  });
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
@@ -2236,17 +2163,29 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    const shouldSubmitBrowsePath =
-      canSubmitBrowsePath &&
-      event.key === "Enter" &&
-      (!hasHighlightedBrowseItem || isPrimaryModifierPressed(event));
-
-    if (shouldSubmitBrowsePath) {
-      event.preventDefault();
-      if (isCloneDestinationStep) {
-        void submitAddProjectCloneFlow(resolvedAddProjectPath);
-      } else {
-        void handleAddProject(resolvedAddProjectPath);
+    const browseEnterAction = resolveBrowseEnterAction({
+      canSubmitBrowsePath,
+      key: event.key,
+      isComposing: event.nativeEvent.isComposing,
+      isPrimaryModifierPressed: isPrimaryModifierPressed(event),
+      highlightedItemValue: highlightedItemValueRef.current,
+    });
+    if (browseEnterAction !== "ignore") {
+      const submitBrowsePath = () => {
+        if (isCloneDestinationStep) {
+          void submitAddProjectCloneFlow(resolvedAddProjectPath);
+        } else {
+          void handleAddProject(resolvedAddProjectPath);
+        }
+      };
+      if (browseEnterAction === "submit-current-path") {
+        event.preventDefault();
+        (
+          event as KeyboardEvent<HTMLInputElement> & {
+            preventBaseUIHandler?: () => void;
+          }
+        ).preventBaseUIHandler?.();
+        submitBrowsePath();
       }
       return;
     }
@@ -2404,6 +2343,7 @@ function OpenCommandPaletteDialog(props: {
     const directoryNames = browseEntries.map((entry) => entry.name);
     const folderName = getAvailableNewFolderName(directoryNames);
     const nextQuery = getAvailableNewProjectPath(browseDirectoryPath, directoryNames);
+    highlightedItemValueRef.current = null;
     setHighlightedItemValue(null);
     setQuery(nextQuery);
     requestAnimationFrame(() => {
@@ -2583,7 +2523,9 @@ function OpenCommandPaletteDialog(props: {
       }}
       mode="none"
       onItemHighlighted={(value) => {
-        setHighlightedItemValue(typeof value === "string" ? value : null);
+        const nextValue = typeof value === "string" ? value : null;
+        highlightedItemValueRef.current = nextValue;
+        setHighlightedItemValue(nextValue);
       }}
       onValueChange={handleQueryChange}
       panelClassName="max-h-[min(28rem,70vh)]"
@@ -2618,7 +2560,7 @@ function OpenCommandPaletteDialog(props: {
             className={cn(
               "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-64",
               isProjectFolderDragActive
-                ? "bg-emerald-500/[0.06] text-foreground"
+                ? "text-foreground"
                 : "text-muted-foreground hover:bg-muted/40",
             )}
           >

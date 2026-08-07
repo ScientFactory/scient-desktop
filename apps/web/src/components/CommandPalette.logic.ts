@@ -126,6 +126,45 @@ export function enumerateCommandPaletteItems(
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
+export type BrowseEnterAction = "ignore" | "activate-highlighted" | "submit-current-path";
+
+export function resolveBrowseEnterAction(input: {
+  readonly canSubmitBrowsePath: boolean;
+  readonly key: string;
+  readonly isComposing: boolean;
+  readonly isPrimaryModifierPressed: boolean;
+  readonly highlightedItemValue: string | null;
+}): BrowseEnterAction {
+  if (!input.canSubmitBrowsePath || input.key !== "Enter" || input.isComposing) return "ignore";
+  if (
+    input.isPrimaryModifierPressed ||
+    input.highlightedItemValue?.startsWith("browse:") !== true
+  ) {
+    return "submit-current-path";
+  }
+  return "activate-highlighted";
+}
+
+export function shouldOfferProjectPathCreation(input: {
+  readonly canSubmitBrowsePath: boolean;
+  readonly isBrowsePending: boolean;
+  readonly hasBrowseResult: boolean;
+  readonly query: string;
+  readonly hasHighlightedBrowseItem: boolean;
+  readonly hasTrailingPathSeparator: boolean;
+  readonly exactEntryExists: boolean;
+}): boolean {
+  return (
+    input.canSubmitBrowsePath &&
+    !input.isBrowsePending &&
+    input.hasBrowseResult &&
+    input.query.trim().length > 0 &&
+    !input.hasHighlightedBrowseItem &&
+    !input.hasTrailingPathSeparator &&
+    !input.exactEntryExists
+  );
+}
+
 export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }

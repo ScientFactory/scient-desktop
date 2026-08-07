@@ -1,7 +1,10 @@
 import type { ScientProjectInspection } from "@t3tools/contracts";
 import { FolderIcon, SparklesIcon } from "lucide-react";
 
-import { scientProjectFolderName } from "../lib/scientProjectInitialization";
+import {
+  scientProjectFolderName,
+  type ScientProjectInitializationDecision,
+} from "../lib/scientProjectInitialization";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -12,8 +15,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
-
-export type ScientProjectInitializationDecision = "cancel" | "initialize" | "open-only";
 
 const choiceClassName =
   "flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-[var(--color-background-elevated-primary-opaque)] p-3 text-left outline-none transition-colors hover:border-border hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
