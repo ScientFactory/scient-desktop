@@ -35,10 +35,11 @@ Initialization creates only missing files:
   success.
 
 Existing project and agent documents are preserved byte for byte. The identity
-is written last, so it is the commit marker for a completed setup. A temporary
-record includes hashes of files that setup intended to create. Recovery
-continues only when those files are absent or still exactly match the recorded
-contents.
+is written after those documents, then the temporary transaction record is
+removed as the final operation. Setup is complete only when a valid identity
+exists without a pending transaction. The transaction includes hashes of files
+that setup intended to create. Recovery continues only when those files are
+absent or still exactly match the recorded contents.
 
 The durable identity retains the compatible format already written by the
 previous Scient app. Its older skills lock, when present, remains untouched and
@@ -80,8 +81,9 @@ mobile presentation should be designed when its product flow is scheduled.
 ## Verification boundary
 
 The package regressions cover ordinary setup, exact preservation,
-idempotency, invalid identity, interrupted recovery, modified pending content,
-and concurrent requests. Contract and project-entry helpers are also tested.
+idempotency, invalid or mismatched identity, interrupted recovery before and
+after identity creation, modified pending content, and concurrent requests.
+Contract and project-entry helpers are also tested.
 Visual and interactive acceptance is performed by Yaacov in the managed
 Scient (Dev) app; automated browser, screenshot, geometry, and visual-regression
 checks are intentionally outside this slice.

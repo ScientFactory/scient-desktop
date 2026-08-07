@@ -13,11 +13,14 @@ import {
   SCIENT_PREVIOUS_TRANSACTION_FILE,
   SCIENT_PROJECT_FILE,
   SCIENT_TRANSACTION_FILE,
+  renderAgentsTemplate,
+  renderProjectTemplate,
 } from "./index.ts";
 
 const fixtures: string[] = [];
 
 const hash = (content: string) => NodeCrypto.createHash("sha256").update(content).digest("hex");
+const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 async function fixture(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-project-init-"));
@@ -32,6 +35,17 @@ afterEach(async () => {
 });
 
 describe("Scient project initialization", () => {
+  it("starts with broad project guidance without choosing the project's domain", () => {
+    const project = renderProjectTemplate("My project");
+    const agents = renderAgentsTemplate();
+
+    expect(project).toContain("## Goals and current focus");
+    expect(project).toContain("## Open questions and continuation");
+    expect(agents).toContain("different kinds of projects");
+    expect(agents).toContain("uncertainty, provenance");
+    expect(`${project}\n${agents}`).not.toMatch(/scientific domain|scientific project/iu);
+  });
+
   it("expands a home-relative root before inspecting it", async () => {
     const directoryName = `.scient-project-init-missing-${NodeCrypto.randomUUID()}`;
     const inspection = await inspectScientProject(`~/${directoryName}`);
@@ -40,7 +54,7 @@ describe("Scient project initialization", () => {
     await expect(NodeFSP.stat(inspection.root)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("creates the portable foundation and writes identity last", async () => {
+  it("creates the portable foundation and removes the transaction after writing identity", async () => {
     const root = await fixture();
     expect((await inspectScientProject(root)).state).toBe("ordinary");
 
@@ -172,6 +186,88 @@ describe("Scient project initialization", () => {
     expect(result.created).toEqual([SCIENT_PROJECT_FILE, SCIENT_AGENTS_FILE, SCIENT_IDENTITY_FILE]);
     expect(await NodeFSP.readFile(NodePath.join(root, SCIENT_IDENTITY_FILE), "utf8")).toContain(
       identity.projectId,
+    );
+  });
+
+  it("finishes recovery when identity was written before the transaction was removed", async () => {
+    const root = await fixture();
+    const identity = {
+      projectId: "8ea269ae-77fe-4325-bbb5-7a674e84412b",
+      formatVersion: 1,
+      createdAt: "2026-08-07T08:00:00.000Z",
+    } as const;
+    const project = "# Recovered project\n";
+    const agents = "# Project agent guidance\n";
+    const transaction = {
+      schemaVersion: 1,
+      operationId: "60566b72-884b-43a8-ada5-7b56efbfc7b2",
+      createdAt: "2026-08-07T08:00:00.000Z",
+      title: "Recovered project",
+      identity,
+      files: [
+        { path: SCIENT_PROJECT_FILE, content: project, sha256: hash(project) },
+        { path: SCIENT_AGENTS_FILE, content: agents, sha256: hash(agents) },
+      ],
+    };
+    await NodeFSP.mkdir(NodePath.join(root, ".scient"));
+    await Promise.all([
+      NodeFSP.writeFile(NodePath.join(root, SCIENT_PROJECT_FILE), project, "utf8"),
+      NodeFSP.writeFile(NodePath.join(root, SCIENT_AGENTS_FILE), agents, "utf8"),
+      NodeFSP.writeFile(NodePath.join(root, SCIENT_IDENTITY_FILE), json(identity), "utf8"),
+      NodeFSP.writeFile(NodePath.join(root, SCIENT_TRANSACTION_FILE), json(transaction), "utf8"),
+    ]);
+
+    expect((await inspectScientProject(root)).state).toBe("recoverable");
+    const result = await initializeScientProject({ root });
+
+    expect(result.state).toBe("initialized");
+    expect(result.created).toEqual([]);
+    expect(result.preserved).toEqual([
+      SCIENT_PROJECT_FILE,
+      SCIENT_AGENTS_FILE,
+      SCIENT_IDENTITY_FILE,
+    ]);
+    await expect(NodeFSP.stat(NodePath.join(root, SCIENT_TRANSACTION_FILE))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("reports a conflicting identity before retrying interrupted setup", async () => {
+    const root = await fixture();
+    const transactionIdentity = {
+      projectId: "1c5eecf4-28b4-47ba-8342-5ea7e837634c",
+      formatVersion: 1,
+      createdAt: "2026-08-07T08:00:00.000Z",
+    } as const;
+    const existingIdentity = {
+      ...transactionIdentity,
+      createdAt: "2026-08-07T09:00:00.000Z",
+    };
+    const transaction = {
+      schemaVersion: 1,
+      operationId: "75c60a5d-e3ce-4f20-8e81-76452d989d43",
+      createdAt: "2026-08-07T08:00:00.000Z",
+      title: "Interrupted project",
+      identity: transactionIdentity,
+      files: [],
+    };
+    await NodeFSP.mkdir(NodePath.join(root, ".scient"));
+    await Promise.all([
+      NodeFSP.writeFile(NodePath.join(root, SCIENT_IDENTITY_FILE), json(existingIdentity), "utf8"),
+      NodeFSP.writeFile(NodePath.join(root, SCIENT_TRANSACTION_FILE), json(transaction), "utf8"),
+    ]);
+
+    const inspection = await inspectScientProject(root);
+    const result = await initializeScientProject({ root });
+
+    expect(inspection.state).toBe("conflicting");
+    expect(inspection.issues).toContainEqual({
+      path: SCIENT_IDENTITY_FILE,
+      message: "The project identity does not exactly match the interrupted setup record.",
+    });
+    expect(result.state).toBe("conflicting");
+    expect(await NodeFSP.readFile(NodePath.join(root, SCIENT_TRANSACTION_FILE), "utf8")).toBe(
+      json(transaction),
     );
   });
 

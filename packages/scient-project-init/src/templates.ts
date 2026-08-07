@@ -1,0 +1,7 @@
+export function renderProjectTemplate(title: string): string {
+  return `# ${title}\n\n> This is a starting project brief. Replace the guidance below with the project's real context, and remove placeholders as they become unnecessary.\n\n## Purpose\n\nDescribe what this project is for and the outcome it is working toward.\n\n## Goals and current focus\n\nRecord the intended results, present priorities, and what is explicitly out of scope.\n\n## Context and constraints\n\nRecord relevant materials, references, constraints, decisions, and working assumptions.\n\n## Open questions and continuation\n\nRecord unresolved questions and what someone continuing the project should know.\n`;
+}
+
+export function renderAgentsTemplate(): string {
+  return `# Project agent guidance\n\nThis file starts broad so it can support different kinds of projects. Refine it with the user as the project becomes clear, and remove placeholder guidance once specific instructions replace it.\n\n- Read \`PROJECT.md\` before acting and stay within the project scope recorded there.\n- Help the user improve \`PROJECT.md\` and this file when goals, context, constraints, or working conventions become clearer.\n- Preserve user-authored files and instructions. Never replace existing project context merely to match this template.\n- Do not assume a domain, methodology, source hierarchy, or output format that the project has not established.\n- Make uncertainty, provenance, consequential assumptions, and validation needs explicit when they matter.\n`;
+}

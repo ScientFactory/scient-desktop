@@ -5,6 +5,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { renderAgentsTemplate, renderProjectTemplate } from "./templates.ts";
+
+export { renderAgentsTemplate, renderProjectTemplate } from "./templates.ts";
+
 export const SCIENT_PROJECT_FILE = "PROJECT.md";
 export const SCIENT_AGENTS_FILE = "AGENTS.md";
 export const SCIENT_IDENTITY_FILE = ".scient/project.json";
@@ -71,15 +75,7 @@ function stableJson(value: unknown): string {
 function projectTitle(root: string, requestedTitle?: string): string {
   const requested = requestedTitle?.trim();
   if (requested) return requested;
-  return NodePath.basename(root.replace(/[\\/]+$/u, "")) || "Scientific project";
-}
-
-export function renderProjectTemplate(title: string): string {
-  return `# ${title}\n\n> This is a starting project brief. Replace the guidance below with the project's real context, and remove placeholders as they become unnecessary.\n\n## Purpose\n\nDescribe the question, objective, or outcome this project is working toward.\n\n## Current work\n\nDescribe the present phase, priorities, and what is explicitly out of scope.\n\n## Sources and constraints\n\nRecord important evidence, methods, standards, limitations, and decisions here.\n`;
-}
-
-export function renderAgentsTemplate(): string {
-  return `# Project agent guidance\n\nThis file starts broad so it can support any scientific project. Refine it with the user as the project becomes clear, and remove placeholder guidance once specific instructions replace it.\n\n- Read \`PROJECT.md\` before acting and stay within the project scope recorded there.\n- Help the user improve \`PROJECT.md\` and this file when goals, methods, constraints, or working conventions become clearer.\n- Preserve user-authored files and instructions. Never replace existing project context merely to match this template.\n- Do not assume a scientific domain, method, source hierarchy, or output format that the project has not established.\n- Make uncertainty, provenance, consequential assumptions, and validation needs explicit.\n`;
+  return NodePath.basename(root.replace(/[\\/]+$/u, "")) || "Untitled project";
 }
 
 type KnownPathSnapshot =
@@ -224,6 +220,7 @@ async function inspectResolvedRoot(root: string): Promise<ScientProjectInspectio
     .map(([relativePath]) => relativePath);
   const issues: ScientProjectIssue[] = [];
   let identity: ProjectIdentity | null = null;
+  let identityContents: string | null = null;
   let transaction: ProjectInitializationTransaction | null = null;
 
   if (metadataDirectory.kind !== "missing" && metadataDirectory.kind !== "directory") {
@@ -244,9 +241,11 @@ async function inspectResolvedRoot(root: string): Promise<ScientProjectInspectio
 
   if (identityFile.kind === "file") {
     try {
-      identity = parseIdentity(
-        await readBoundedFile(NodePath.join(root, SCIENT_IDENTITY_FILE), MAX_IDENTITY_BYTES),
+      identityContents = await readBoundedFile(
+        NodePath.join(root, SCIENT_IDENTITY_FILE),
+        MAX_IDENTITY_BYTES,
       );
+      identity = parseIdentity(identityContents);
     } catch {
       identity = null;
     }
@@ -300,10 +299,10 @@ async function inspectResolvedRoot(root: string): Promise<ScientProjectInspectio
         });
       }
     }
-    if (identity && identity.projectId !== transaction.identity.projectId) {
+    if (identity && identityContents !== stableJson(transaction.identity)) {
       issues.push({
         path: SCIENT_IDENTITY_FILE,
-        message: "The project identity does not match the interrupted setup record.",
+        message: "The project identity does not exactly match the interrupted setup record.",
       });
     }
   }
