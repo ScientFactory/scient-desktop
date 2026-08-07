@@ -17,7 +17,10 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "Scient (Dev)" : "Scient";
+export function resolveDevelopmentAppDisplayName(environment = process.env) {
+  return environment.SCIENT_DEV_APP_ROLE === "stable" ? "Scient (Dev) Stable" : "Scient (Dev)";
+}
+export const APP_DISPLAY_NAME = isDevelopment ? resolveDevelopmentAppDisplayName() : "Scient";
 export const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
@@ -113,6 +116,7 @@ export function makeDevelopmentLauncherScript({
     ["T3CODE_PORT", environment.T3CODE_PORT],
     ["T3CODE_HOME", environment.T3CODE_HOME],
     ["SCIENT_NEXT_HOME", environment.SCIENT_NEXT_HOME],
+    ["SCIENT_DEV_APP_ROLE", environment.SCIENT_DEV_APP_ROLE],
     ["SCIENT_NEXT_SAFETY_ENVELOPE", "true"],
     ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],
     ["T3CODE_OTLP_TRACES_URL", environment.T3CODE_OTLP_TRACES_URL],
@@ -137,17 +141,29 @@ export function makeDevelopmentLauncherScript({
 
 export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
   const launcherRepoRoot = NodePath.resolve(desktopRoot, "..", "..");
-  const logPath = NodePath.join(launcherRepoRoot, ".scient-next", "local-dev-app.log");
+  const logRoot =
+    environment.SCIENT_DEV_APP_ROLE === "stable" && environment.SCIENT_NEXT_HOME
+      ? environment.SCIENT_NEXT_HOME
+      : NodePath.join(launcherRepoRoot, ".scient-next");
+  const logPath = NodePath.join(logRoot, "local-dev-app.log");
   const nodeBinDir = NodePath.dirname(process.execPath);
   const pnpmExecPath = environment.npm_execpath?.trim();
   const localDevInvocation = pnpmExecPath
     ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app`
     : "pnpm dev:app";
+  const roleExport = environment.SCIENT_DEV_APP_ROLE
+    ? `export SCIENT_DEV_APP_ROLE=${shellSingleQuote(environment.SCIENT_DEV_APP_ROLE)}`
+    : "";
+  const homeExport = environment.SCIENT_NEXT_HOME
+    ? `export SCIENT_NEXT_HOME=${shellSingleQuote(environment.SCIENT_NEXT_HOME)}`
+    : "";
   return [
     "#!/bin/sh",
     `mkdir -p ${shellSingleQuote(NodePath.dirname(logPath))}`,
     `export PATH=${shellSingleQuote(nodeBinDir)}:"$PATH"`,
     `cd ${shellSingleQuote(launcherRepoRoot)}`,
+    roleExport,
+    homeExport,
     `exec ${localDevInvocation} >> ${shellSingleQuote(logPath)} 2>&1`,
     "",
   ].join("\n");

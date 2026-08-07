@@ -6,10 +6,19 @@ import {
   makeDevelopmentCommandScript,
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
+  resolveDevelopmentAppDisplayName,
   resolveMacLauncherPaths,
 } from "./electron-launcher.mjs";
 
 describe("electron development launcher", () => {
+  it("gives the canonical launcher a distinct stable display name", () => {
+    assert.equal(resolveDevelopmentAppDisplayName({}), "Scient (Dev)");
+    assert.equal(
+      resolveDevelopmentAppDisplayName({ SCIENT_DEV_APP_ROLE: "stable" }),
+      "Scient (Dev) Stable",
+    );
+  });
+
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const script = makeDevelopmentLauncherScript({
       electronBinaryPath: "/repo/node_modules/electron/Electron",
@@ -40,15 +49,21 @@ describe("electron development launcher", () => {
   it("pins the clickable launcher to its checkout and installation runtime", () => {
     const script = makeDevelopmentCommandScript({
       desktopRoot: "/repo/apps/desktop",
-      environment: { npm_execpath: "/tool/pnpm.cjs" },
+      environment: {
+        npm_execpath: "/tool/pnpm.cjs",
+        SCIENT_DEV_APP_ROLE: "stable",
+        SCIENT_NEXT_HOME: "/tmp/scient-dev-stable",
+      },
     });
 
     assert.include(script, "cd '/repo'");
     assert.include(script, process.execPath);
     assert.include(script, `export PATH='${NodePath.dirname(process.execPath)}':"$PATH"`);
     assert.include(script, "/tool/pnpm.cjs");
+    assert.include(script, "export SCIENT_DEV_APP_ROLE='stable'");
     assert.include(script, "dev:app");
-    assert.include(script, ".scient-next/local-dev-app.log");
+    assert.include(script, "export SCIENT_NEXT_HOME='/tmp/scient-dev-stable'");
+    assert.include(script, "/tmp/scient-dev-stable/local-dev-app.log");
     assert.include(script, "2>&1");
   });
 

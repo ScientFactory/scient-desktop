@@ -9,11 +9,13 @@ import {
   clearStaleRunner,
   installDevelopmentAppBundle,
   LOCAL_DEV_APP_NAME,
+  LOCAL_DEV_APP_STABLE_NAME,
   LOCAL_DEV_APP_SCHEMA,
   MACOS_LSREGISTER_PATH,
   readLocalDevAppMarker,
   registerDevelopmentAppBundle,
   resolveLocalDevAppPaths,
+  resolveStableDevHome,
   statusApp,
   stopApp,
   uninstallDevelopmentAppBundle,
@@ -64,6 +66,20 @@ describe("local dev app installation", () => {
     assert.deepEqual(calls, [
       [MACOS_LSREGISTER_PATH, ["-f", "/Applications/Scient (Dev).app"], { encoding: "utf8" }],
     ]);
+  });
+
+  it("uses a separate stable launcher name without changing candidate paths", () => {
+    const { root } = fixture().paths;
+    const homeDir = NodePath.join(root, "home");
+    const candidate = resolveLocalDevAppPaths({ root, homeDir });
+    const stable = resolveLocalDevAppPaths({ root, homeDir, role: "stable" });
+
+    assert.equal(candidate.appName, LOCAL_DEV_APP_NAME);
+    assert.equal(stable.appName, LOCAL_DEV_APP_STABLE_NAME);
+    assert.notEqual(candidate.appBundlePath, stable.appBundlePath);
+    assert.equal(stable.role, "stable");
+    assert.equal(stable.stateRoot, resolveStableDevHome(homeDir));
+    assert.notEqual(candidate.stateRoot, stable.stateRoot);
   });
 
   it("reports LaunchServices registration failures", () => {

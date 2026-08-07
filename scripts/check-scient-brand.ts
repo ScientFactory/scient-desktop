@@ -16,6 +16,7 @@ const PRODUCT_SURFACE_ROOTS = [
 const PRODUCT_SURFACE_FILES = new Set([
   "packages/shared/src/relayClient.ts",
   "scripts/build-desktop-artifact.ts",
+  "scripts/canonical-main-sync.mjs",
   "scripts/local-dev-app.mjs",
   "scripts/notify-discord-release.ts",
   "scripts/resolve-nightly-release.ts",
@@ -32,7 +33,10 @@ const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
     "packages/shared/src/scientNextIdentity.ts",
     ['baseName: "Scient"', 'developmentName: "Scient (Dev)"'],
   ],
-  ["scripts/local-dev-app.mjs", ['LOCAL_DEV_APP_NAME = "Scient (Dev)"']],
+  [
+    "scripts/local-dev-app.mjs",
+    ['LOCAL_DEV_APP_NAME = "Scient (Dev)"', 'LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable"'],
+  ],
   [
     "assets/prod/app-icon.icon/Assets/symbol.svg",
     ['fill="#46587E"', 'fill="#471A1A"', 'd="M292 108', 'height="16"'],
