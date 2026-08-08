@@ -2,9 +2,19 @@
  * Scient migration 3: normalize-active-lineage.
  *
  * Adds remaining lifecycle columns (status, checkpoint/workspace status,
- * attempt count, error, timestamps), normalizes prototype mode values to the
- * canonical `transcript-bootstrap` active model, validates row integrity
- * (fail-closed on malformed data), and creates supporting indexes.
+ * attempt count, error, timestamps), quarantines malformed lineage rows into
+ * a dedicated evidence table, normalizes prototype mode values to the
+ * canonical `transcript-bootstrap` active model, and creates supporting
+ * indexes.
+ *
+ * Quarantine: rows with missing or invalid identity/mode/lifecycle values are
+ * copied to `scient_thread_lineage_quarantine` (full payload snapshot,
+ * machine-readable reason, timestamp) and removed from
+ * `scient_thread_lineage`. A malformed row therefore never blocks application
+ * startup and never leaks into active fork recovery, while remaining
+ * available for forensic repair. The migration itself stays transactional:
+ * either every malformed row is quarantined and the normalization commits,
+ * or nothing does.
  *
  * Physical compatibility columns (`provider_mode`, `fidelity_mode`) remain
  * queryable after this migration; only active runtime reads/writes use the
@@ -12,22 +22,14 @@
  *
  * SCIENT-OWNED.
  */
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-
-/**
- * Structured error raised when migration 3 encounters malformed lineage data.
- * The migration fails closed: no partial normalization is committed.
- */
-export class ScientMalformedLineageError extends Data.TaggedError("ScientMalformedLineageError")<{
-  readonly message: string;
-  readonly threadId: string;
-  readonly detail: string;
-}> {}
 
 const VALID_WORKSPACE_MODES = new Set(["local", "new-worktree"]);
 const VALID_STATUSES = new Set(["pending", "provisioning", "failed", "abandoned", "ready"]);
+
+const encodeEvidencePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -66,12 +68,22 @@ export default Effect.gen(function* () {
   yield* addColumn("last_error", "TEXT");
   yield* addColumn("updated_at", "TEXT");
 
-  // --- Validate row integrity (fail-closed on malformed data) ---
+  // --- Quarantine malformed rows ---
 
-  // NULL workspace_mode fails closed: the canonical schema requires an
-  // explicit workspace mode ('local' or 'new-worktree'). We cannot fabricate
-  // a value the original data did not carry, so the migration stops rather
-  // than silently normalizing NULL to a guessed default.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS scient_thread_lineage_quarantine (
+      thread_id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      quarantined_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `;
+
+  // NULL workspace_mode cannot be normalized: the canonical schema requires
+  // an explicit workspace mode ('local' or 'new-worktree') and fabricating a
+  // value the original data did not carry would be dishonest. The same holds
+  // for a null fork origin or an unrecognized mode/status. Such rows are
+  // quarantined with evidence instead of failing the whole migration.
   const malformedRows = yield* sql<{
     readonly thread_id: string;
     readonly workspace_mode: string | null;
@@ -86,8 +98,7 @@ export default Effect.gen(function* () {
        OR (status IS NOT NULL AND status NOT IN ('pending', 'provisioning', 'failed', 'abandoned', 'ready'))
   `;
 
-  if (malformedRows.length > 0) {
-    const row = malformedRows[0]!;
+  for (const row of malformedRows) {
     const problems: string[] = [];
     if (row.forked_from_thread_id === null) {
       problems.push("forked_from_thread_id is null");
@@ -100,11 +111,24 @@ export default Effect.gen(function* () {
     if (row.status !== null && !VALID_STATUSES.has(row.status)) {
       problems.push(`status '${row.status}' is not valid`);
     }
-    return yield* new ScientMalformedLineageError({
-      message: `Scient migration 3 encountered malformed lineage data`,
-      threadId: row.thread_id,
-      detail: problems.join("; "),
-    });
+    const reason = problems.join("; ");
+
+    // Snapshot the complete pre-normalization row as forensic evidence
+    // before removing it from active recovery.
+    const snapshots = yield* sql<Record<string, unknown>>`
+      SELECT * FROM scient_thread_lineage WHERE thread_id = ${row.thread_id}
+    `;
+    const payload = yield* encodeEvidencePayload(snapshots[0] ?? { thread_id: row.thread_id });
+
+    yield* sql`
+      INSERT INTO scient_thread_lineage_quarantine (thread_id, reason, payload_json)
+      VALUES (${row.thread_id}, ${reason}, ${payload})
+    `;
+    yield* sql`DELETE FROM scient_thread_lineage WHERE thread_id = ${row.thread_id}`;
+
+    yield* Effect.logWarning("Scient migration 3 quarantined a malformed lineage row").pipe(
+      Effect.annotateLogs({ thread_id: row.thread_id, reason }),
+    );
   }
 
   // --- Normalize prototype modes and NULL lifecycle fields ---

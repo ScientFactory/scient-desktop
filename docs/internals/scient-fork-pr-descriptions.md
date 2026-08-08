@@ -60,26 +60,30 @@ Typecheck, lint, format, and `git diff --check` pass.
 **Body:**
 
 Replace the monolithic startup schema inspection with a Scient-owned versioned
-migration runner using the repository's Effect SQL Migrator pattern and the
-separate `scient_schema_migrations` ledger. Normalize the active lineage model
-so `transcript-bootstrap` is the only active provider bootstrap mode, enforce
-terminal lifecycle guards in repository SQL predicates, and remove active
-runtime dependence on prototype concepts.
+migration runner built on the standard Effect SQL Migrator (`Migrator.make`)
+and the separate `scient_schema_migrations` ledger. Normalize the active
+lineage model so `transcript-bootstrap` is the only active provider bootstrap
+mode, enforce terminal lifecycle guards in repository SQL predicates, and
+remove active runtime dependence on prototype concepts.
 
 ### What changed
 
-- Introduced `scientMigrator.ts`, a versioned migration runner with three
-  migrations: `durable-thread-forks` (1), `durable-provider-bootstrap` (2),
-  and `normalize-active-lineage` (3). Each unapplied migration runs once,
+- Introduced `scientMigrator.ts`, a versioned migration runner delegating to
+  the standard Effect SQL Migrator with three migrations:
+  `durable-thread-forks` (1), `durable-provider-bootstrap` (2), and
+  `normalize-active-lineage` (3). Each unapplied migration runs once,
   transactionally, in ascending ID order.
-- Reconciled the legacy `applied_at` ledger column with the canonical
-  `created_at` column: existing databases get `created_at` added via
-  `ALTER TABLE` with all timestamp values copied; fresh databases get
-  `created_at` directly. No timestamp, ID, or name is lost.
+- Added a Scient-owned preflight: legacy `applied_at` ledgers are rebuilt
+  into the canonical `created_at` shape in one transaction (all IDs, names,
+  and timestamps preserved; `applied_at` kept as nullable residue), and the
+  recorded ledger is strictly validated as a contiguous prefix of the
+  manifest — gaps, renamed entries, and unknown future IDs fail closed.
 - Migration 3 normalizes prototype mode values (`cold-start`, `chat-only`,
   `replay`) to `transcript-bootstrap`, adds lifecycle columns with safe
-  defaults, validates row integrity (fail-closed on malformed data), and
-  creates supporting indexes. Physical compatibility columns remain.
+  defaults, quarantines malformed rows into
+  `scient_thread_lineage_quarantine` (payload snapshot, reason, timestamp)
+  instead of failing startup, and creates supporting indexes. Physical
+  compatibility columns remain.
 - Enforced terminal lifecycle guards in repository SQL predicates:
   `markForkFailed`, `markForkAbandoned`, `markForkReady`, and `claimFork`
   all prevent abandoned/ready regression. `markAccepted` requires

@@ -526,7 +526,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("pr15-cross-001-")))(
         const plannedEvents = yield* forkThread({
           command: forkCmd,
           readModel: decisionReadModel,
-          resolvedBoundaries: resolved.boundaries,
+          resolvedBoundaries: resolved,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         // 5. Persist and project fork events — lineage projector inserts
@@ -1036,7 +1036,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("pr15-cross-006-")))(
         const events1 = yield* forkThread({
           command: forkCmd1,
           readModel: decisionRM1,
-          resolvedBoundaries: resolved1.boundaries,
+          resolvedBoundaries: resolved1,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         const forkedEvent1 = events1.find((e) => e.type === "thread.forked");
@@ -1123,7 +1123,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("pr15-cross-006-")))(
         const events2 = yield* forkThread({
           command: forkCmd2,
           readModel: decisionRM2,
-          resolvedBoundaries: resolved2.boundaries,
+          resolvedBoundaries: resolved2,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         // 6. Assert the re-fork payload uses transcript-bootstrap.

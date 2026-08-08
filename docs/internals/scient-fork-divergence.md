@@ -208,17 +208,18 @@ T3 owns `effect_sql_migrations`; Scient owns `scient_schema_migrations`. Both
 ledgers use integer IDs starting from 1, but they are separate tables in the
 same SQLite database. The Scient migration runner (`runScientMigrations`)
 never inserts into, deletes from, or modifies T3's migration ledger or
-numbering. It follows the repository's Effect SQL Migrator pattern with its
-own table name and transactional, ordered, ledger-driven execution.
-Cross-area integration tests verify this separation on fresh startup.
+numbering. It runs the standard Effect SQL Migrator with its own table name,
+giving transactional, ordered, ledger-driven execution. Cross-area
+integration tests verify this separation on fresh startup.
 
-The runner explicitly reconciles the legacy `applied_at` timestamp column
-with the canonical `created_at` column. Existing databases that have
-`applied_at` get `created_at` added via `ALTER TABLE` (nullable, since SQLite
-does not allow expression defaults on ALTER), and all existing timestamp
-values are copied. New INSERTs set `created_at` explicitly. Fresh databases
-get `created_at` directly. Legacy migration IDs 1 (`durable-thread-forks`)
-and 2 (`durable-provider-bootstrap`) are preserved and never re-run.
+The runner reconciles the legacy `applied_at` timestamp column with the
+canonical `created_at` column by rebuilding a legacy ledger table in a single
+transaction: `created_at` is copied from `applied_at`, and `applied_at`
+remains as a nullable historical-residue column. Fresh databases get the
+canonical `created_at` table directly from the standard Migrator. No
+timestamp value, ledger ID, or migration name is lost or altered. Legacy
+migration IDs 1 (`durable-thread-forks`) and 2 (`durable-provider-bootstrap`)
+are preserved and never re-run.
 
 ### Cross-area integration tests
 
@@ -274,17 +275,26 @@ normalization are all Scient-owned and isolated from T3's migration ledger.
 
 ### Versioned migration runner
 
-The Scient migration runner (`scientMigrator.ts`) follows the repository's
-Effect SQL Migrator pattern with its own `scient_schema_migrations` ledger
-table. It runs as a side effect of `SqlitePersistenceMemory` layer
+The Scient migration runner (`scientMigrator.ts`) delegates to the standard
+Effect SQL Migrator (`Migrator.make`) with its own `scient_schema_migrations`
+ledger table. It runs as a side effect of `SqlitePersistenceMemory` layer
 construction, before `pipeline.bootstrap` runs T3 migrations. Three migrations
 are defined:
 
 1. `durable-thread-forks` — creates the initial `scient_thread_lineage` table.
 2. `durable-provider-bootstrap` — adds provider bootstrap columns.
-3. `normalize-active-lineage` — adds lifecycle columns, normalizes prototype
-   modes to `transcript-bootstrap`, validates row integrity (fail-closed on
-   malformed data), and creates supporting indexes.
+3. `normalize-active-lineage` — adds lifecycle columns, quarantines malformed
+   rows into `scient_thread_lineage_quarantine` (payload snapshot, reason,
+   timestamp) instead of failing startup, normalizes prototype modes to
+   `transcript-bootstrap`, and creates supporting indexes.
+
+Before the Migrator runs, two Scient-owned preflight passes execute: a
+transactional rebuild of legacy `applied_at` ledgers into the canonical
+`created_at` shape, and a strict integrity validation requiring the recorded
+ledger to be a contiguous prefix of the manifest with exact name matches.
+Gaps, renamed entries, and unknown future IDs fail closed with a `BadState`
+error before any migration runs — the standard Migrator's high-water mark
+alone would silently accept all three.
 
 Each unapplied migration runs once, transactionally, in ascending ID order.
 Migration failure rolls back the entire transaction: no partial records, no
@@ -294,13 +304,18 @@ conflicts as a lock: the loser gets an empty result.
 ### Ledger reconciliation
 
 Existing development databases created by the legacy `ensureScientForkSchema`
-have an `applied_at` timestamp column in the ledger. The Effect SQL Migrator
-pattern expects a `created_at` column. The runner explicitly detects the
-existing `applied_at` column, adds `created_at` via `ALTER TABLE` (nullable,
-since SQLite does not allow expression defaults on ALTER), copies all existing
-timestamp values, and maps reads/writes to `created_at` after reconciliation.
-Fresh databases receive `created_at` directly. No timestamp value, ledger ID,
-or migration name is lost or altered.
+have an `applied_at TEXT NOT NULL` timestamp column in the ledger and no
+`created_at`. The standard Effect Migrator expects the canonical
+`(migration_id, created_at, name)` shape and inserts only `(migration_id,
+name)`, relying on `DEFAULT current_timestamp`. The runner detects a legacy
+ledger (`applied_at` still `NOT NULL`) and rebuilds it in one transaction: a
+canonical replacement table is created, `created_at` is copied from
+`applied_at`, `applied_at` is retained as a nullable historical-residue
+column, and the old table is dropped and the replacement renamed over it. A
+nullable `applied_at` residue marks a completed rebuild, so the pass is
+idempotent, and a crash mid-rebuild rolls back cleanly. Fresh databases
+receive `created_at` directly. No timestamp value, ledger ID, or migration
+name is lost or altered.
 
 ### Normalization and lifecycle guards
 
@@ -409,10 +424,11 @@ building a parallel generic platform.
 - Durable schema upgrade, lifecycle projection, recovery, idempotency,
   checkpoint, worktree, and failure cases.
 - Migration runner: fresh install, prototype upgrade, current schema upgrade,
-  legacy ledger immutability, ordering, transactional failure, restart
-  idempotence, concurrent startup, T3 ledger isolation, malformed rows,
-  canonical defaults, physical compatibility columns, and `applied_at` /
-  `created_at` reconciliation.
+  legacy ledger immutability, ordering, malformed-row quarantine, restart
+  idempotence, concurrent startup, T3 ledger isolation, ledger integrity
+  preflight (gaps, name mismatches, unknown future IDs), canonical defaults,
+  physical compatibility columns, and `applied_at` / `created_at`
+  reconciliation.
 - Lifecycle guards: pending durability, bounded claims, failed retry, abandoned
   terminal truthfulness, restart recovery, attachment replay, workspace/
   checkpoint truthfulness, provider bootstrap normal and crash recovery,

@@ -1,23 +1,38 @@
 /**
  * Scient-owned versioned migration runner.
  *
- * Follows the repository's Effect SQL Migrator pattern (ledger-based,
- * transactional, ordered) but is Scient-owned and uses a separate
+ * Built on the standard Effect SQL Migrator (`Migrator.make`) with a separate
  * `scient_schema_migrations` ledger table. T3's `effect_sql_migrations` table
  * and numbering are never modified.
  *
- * Key reconciliation: existing development databases created by the legacy
- * `ensureScientForkSchema` have an `applied_at` timestamp column in the ledger.
- * The Effect SQL Migrator pattern expects a `created_at` column. This runner
- * explicitly detects the existing `applied_at` column, preserves all recorded
- * timestamp values and ledger IDs/names, and maps reads/writes to `created_at`
- * after reconciliation. Fresh databases receive `created_at` directly.
+ * Before delegating to the standard Migrator, the runner performs two
+ * Scient-owned preflight passes:
+ *
+ * 1. Ledger reconciliation. Existing development databases created by the
+ *    legacy `ensureScientForkSchema` recorded the ledger with an
+ *    `applied_at TEXT NOT NULL` column and no `created_at`. The standard
+ *    Migrator expects the canonical `(migration_id, created_at, name)` shape
+ *    and inserts only `(migration_id, name)`, relying on
+ *    `DEFAULT current_timestamp`. The preflight rebuilds a legacy ledger into
+ *    that canonical shape in a single transaction, copying `applied_at` into
+ *    `created_at` and keeping `applied_at` as a nullable historical-residue
+ *    column. No timestamp value, ledger ID, or migration name is lost or
+ *    altered. Fresh databases skip reconciliation; the Migrator creates the
+ *    canonical table directly.
+ *
+ * 2. Strict ledger integrity validation. The standard Migrator treats the
+ *    latest recorded ID as a high-water mark and never inspects earlier rows,
+ *    so a gapped, renamed, or newer-than-this-build ledger would be silently
+ *    accepted. Scient additionally requires the recorded ledger to be a
+ *    contiguous prefix of the manifest with exact name matches: no gaps, no
+ *    unknown future IDs, no mismatched names. Violations fail closed with a
+ *    `ScientMigrationError` of kind `BadState` before any migration runs.
  *
  * SCIENT-OWNED.
  */
 import * as Data from "effect/Data";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
@@ -30,12 +45,17 @@ import Migration003 from "./migrations/003_NormalizeActiveLineage.ts";
 // ---------------------------------------------------------------------------
 
 export class ScientMigrationError extends Data.TaggedError("ScientMigrationError")<{
-  readonly kind: "Duplicates" | "Failed" | "Locked";
+  readonly kind: "BadState" | "Duplicates" | "Failed" | "ImportError" | "Locked";
   readonly message: string;
-  readonly migrationId?: number;
-  readonly migrationName?: string;
   readonly cause?: unknown;
 }> {}
+
+const fromMigrationError = (error: Migrator.MigrationError): ScientMigrationError =>
+  new ScientMigrationError({
+    kind: error.kind,
+    message: error.message,
+    cause: error.cause,
+  });
 
 // ---------------------------------------------------------------------------
 // Migration manifest
@@ -44,9 +64,8 @@ export class ScientMigrationError extends Data.TaggedError("ScientMigrationError
 export interface ScientMigration {
   readonly id: number;
   readonly name: string;
-  // Migration effects use SqlClient and can fail with SqlError or structured
-  // errors (e.g. ScientMalformedLineageError). The runner wraps all failures
-  // into ScientMigrationError.
+  // Migration effects use SqlClient and fail with SqlError. The runner wraps
+  // all failures into ScientMigrationError.
   readonly effect: Effect.Effect<void, SqlError | Error, SqlClient.SqlClient>;
 }
 
@@ -55,7 +74,7 @@ export interface ScientMigration {
  *
  * IDs 1 and 2 match the names recorded by the legacy `ensureScientForkSchema`
  * function. Existing databases that already have these ledger entries will not
- * re-run them. Migration 3 is the new normalization pass.
+ * re-run them. Migration 3 is the normalization pass.
  */
 export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 1, name: "durable-thread-forks", effect: Migration001 },
@@ -63,277 +82,164 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 3, name: "normalize-active-lineage", effect: Migration003 },
 ] as const;
 
+const loader = Migrator.fromRecord(
+  Object.fromEntries(
+    SCIENT_MIGRATIONS.map((migration) => [`${migration.id}_${migration.name}`, migration.effect]),
+  ),
+);
+
 // ---------------------------------------------------------------------------
-// Ledger reconciliation: applied_at -> created_at
+// Preflight: legacy ledger reconciliation (applied_at -> created_at)
 // ---------------------------------------------------------------------------
+
+const LEDGER_TABLE = "scient_schema_migrations";
 
 interface TableColumn {
   readonly name: string;
+  readonly notnull: number;
 }
 
 /**
- * Reconcile the `scient_schema_migrations` ledger from the legacy `applied_at`
- * column to the canonical `created_at` column expected by the Effect SQL
- * Migrator pattern.
+ * Rebuild a legacy `applied_at` ledger into the canonical Effect Migrator
+ * shape, transactionally.
  *
- * The runner must not assume `CREATE TABLE IF NOT EXISTS` can alter an existing
- * table's column schema — SQLite silently ignores the statement when the table
- * already exists, so the original `applied_at` column would remain.
- *
- * Concurrency safety: under concurrent startup, two runners may both detect
- * `applied_at` without `created_at` and race to add the column. The ALTER is
- * guarded so a "duplicate column name" error from a winning runner is treated
- * as success.
- *
- * Crash/retry safety: the backfill UPDATE is idempotent
- * (`WHERE created_at IS NULL`), so a partial reconciliation (ALTER committed,
- * UPDATE did not) is safely recovered on retry. Even after `created_at` exists
- * alongside `applied_at`, any rows that still have NULL `created_at` are
- * populated from `applied_at`.
- *
- * No timestamp value, ledger ID, or migration name is lost or altered.
+ * Detection key: a legacy ledger declares `applied_at TEXT NOT NULL`. A
+ * ledger that already went through reconciliation keeps `applied_at` as a
+ * *nullable* residue column, so `notnull = 0` marks a completed rebuild and
+ * makes the pass idempotent. Both a missing `created_at` (pure legacy) and a
+ * partially populated one (crash between an earlier runner's ALTER and
+ * backfill) are handled by reading `COALESCE(created_at, applied_at)` when
+ * the column exists.
  */
 const reconcileLedger = Effect.fn("reconcileScientLedger")(function* (sql: SqlClient.SqlClient) {
-  // Check if the ledger table exists at all.
   const tables = yield* sql<{ readonly name: string }>`
-      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_schema_migrations'
-    `;
-  if (tables.length === 0) return; // Fresh database — ensureLedgerTable will create it.
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_schema_migrations'
+  `;
+  if (tables.length === 0) return; // Fresh database — the Migrator creates the canonical table.
 
-  // Check existing columns directly to handle all reconciliation states:
-  // - applied_at only (legacy, needs created_at added + backfill)
-  // - applied_at + created_at (partially or fully reconciled, may need backfill)
-  // - created_at only (fresh or fully reconciled, nothing to do)
   const columns = yield* sql<TableColumn>`PRAGMA table_info(scient_schema_migrations)`;
-  const columnNames = new Set(columns.map((column) => column.name));
+  const appliedAt = columns.find((column) => column.name === "applied_at");
+  if (!appliedAt || appliedAt.notnull === 0) return; // Canonical or already reconciled.
 
-  const hasAppliedAt = columnNames.has("applied_at");
-  const hasCreatedAt = columnNames.has("created_at");
+  const hasCreatedAt = columns.some((column) => column.name === "created_at");
+  const createdAtExpr = hasCreatedAt ? "COALESCE(created_at, applied_at)" : "applied_at";
 
-  // No legacy column to reconcile — fresh or already fully canonical.
-  if (!hasAppliedAt) return;
-
-  if (!hasCreatedAt) {
-    // Add created_at as a nullable column. SQLite ALTER TABLE only allows
-    // constant defaults, not expressions like datetime('now') or
-    // CURRENT_TIMESTAMP. The runner always sets created_at explicitly in the
-    // INSERT, so no DEFAULT is needed.
-    //
-    // Under concurrent startup, another runner may have already added the
-    // column between our PRAGMA check and this ALTER. Catch the "duplicate
-    // column name" error and treat it as success.
-    yield* sql.unsafe("ALTER TABLE scient_schema_migrations ADD COLUMN created_at TEXT").pipe(
-      Effect.catchTag("SqlError", (error: SqlError) => {
-        const msg = String(error.message ?? error);
-        if (msg.includes("duplicate column name")) {
-          return Effect.void;
-        }
-        return Effect.fail(error);
-      }),
-    );
-  }
-
-  // Always backfill any missing created_at values from applied_at. This is
-  // idempotent (only touches rows where created_at IS NULL) and handles
-  // partial reconciliation recovery: if the ALTER committed but the UPDATE
-  // did not (crash), the retry detects both columns exist, skips the ALTER,
-  // and still populates uncopied timestamps.
-  yield* sql`UPDATE scient_schema_migrations SET created_at = applied_at WHERE created_at IS NULL`;
-});
-
-// ---------------------------------------------------------------------------
-// Ledger table management
-// ---------------------------------------------------------------------------
-
-/**
- * Ensure the ledger table exists. For fresh databases this creates it with the
- * canonical `created_at` column. For existing databases (after reconciliation)
- * this is a no-op (`IF NOT EXISTS`).
- */
-const ensureLedgerTable = Effect.fn("ensureScientLedgerTable")(function* (
-  sql: SqlClient.SqlClient,
-) {
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS scient_schema_migrations (
-      migration_id INTEGER PRIMARY KEY NOT NULL,
-      name TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `;
-});
-
-/**
- * Read the high-water mark (maximum applied migration ID) from the ledger.
- * Returns 0 for an empty ledger (fresh database).
- */
-const getHighWaterMark = Effect.fn("getScientMigrationHighWaterMark")(function* (
-  sql: SqlClient.SqlClient,
-) {
-  const rows = yield* sql<{ readonly max_id: number | null }>`
-    SELECT MAX(migration_id) AS max_id FROM scient_schema_migrations
-  `;
-  return rows[0]?.max_id ?? 0;
-});
-
-// ---------------------------------------------------------------------------
-// Duplicate detection
-// ---------------------------------------------------------------------------
-
-function checkDuplicateIds(
-  migrations: ReadonlyArray<ScientMigration>,
-): Effect.Effect<void, ScientMigrationError> {
-  const ids = migrations.map((migration) => migration.id);
-  if (new Set(ids).size !== ids.length) {
-    return Effect.fail(
-      new ScientMigrationError({
-        kind: "Duplicates",
-        message: "Found duplicate migration IDs in the Scient migration manifest",
-      }),
-    );
-  }
-  return Effect.void;
-}
-
-// ---------------------------------------------------------------------------
-// Constraint conflict detection (for concurrent runner locking)
-// ---------------------------------------------------------------------------
-
-function isConstraintConflict(error: SqlError): boolean {
-  return error.reason._tag === "ConstraintError" || error.reason._tag === "UniqueViolation";
-}
-
-// ---------------------------------------------------------------------------
-// Pending migration execution
-// ---------------------------------------------------------------------------
-
-/**
- * Run pending migrations inside a single transaction.
- *
- * All pending migration records are INSERTed first (serving as both a
- * reservation and a concurrent-runner lock via PRIMARY KEY constraint). Then
- * each migration effect runs in ascending ID order. If any migration fails,
- * the entire transaction rolls back — no partial records, no partial schema
- * changes.
- *
- * If a concurrent runner has already INSERTed the same IDs, the constraint
- * conflict is caught and an empty array is returned (the loser).
- */
-function runPendingMigrations(
-  sql: SqlClient.SqlClient,
-  pending: ReadonlyArray<ScientMigration>,
-  hasAppliedAt: boolean,
-): Effect.Effect<
-  ReadonlyArray<readonly [id: number, name: string]>,
-  ScientMigrationError | SqlError,
-  SqlClient.SqlClient
-> {
-  if (pending.length === 0) {
-    return Effect.succeed([]);
-  }
-
-  const runTx = Effect.gen(function* () {
-    // Use a single timestamp for all pending migrations in this batch.
-    const now = DateTime.formatIso(yield* DateTime.now);
-
-    // INSERT all pending records first (lock + reservation).
-    // If a concurrent runner already inserted these IDs, the PRIMARY KEY
-    // constraint fires and the whole transaction is abandoned.
-    // created_at is set explicitly so it works on both fresh databases
-    // (DEFAULT available) and reconciled databases (nullable column, no
-    // DEFAULT from ALTER TABLE).
-    // applied_at is included when the column exists (legacy databases where
-    // the original schema had `applied_at TEXT NOT NULL`).
-    const insertRows = pending.map((migration) => {
-      const row: Record<string, unknown> = {
-        migration_id: migration.id,
-        name: migration.name,
-        created_at: now,
-      };
-      if (hasAppliedAt) {
-        row.applied_at = now;
-      }
-      return row;
-    });
-
-    yield* sql`
-      INSERT INTO scient_schema_migrations ${sql.insert(insertRows)}
-    `.withoutTransform;
-
-    // Run each migration in ascending ID order.
-    for (const migration of pending) {
-      yield* migration.effect.pipe(
-        Effect.catch((error: SqlError | Error) =>
-          Effect.fail(
-            new ScientMigrationError({
-              kind: "Failed" as const,
-              migrationId: migration.id,
-              migrationName: migration.name,
-              message: `Scient migration "${migration.id}_${migration.name}" failed: ${String(error)}`,
-              cause: error,
-            }),
-          ),
-        ),
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql.unsafe(`CREATE TABLE scient_schema_migrations_rebuild (
+  migration_id integer PRIMARY KEY NOT NULL,
+  created_at datetime NOT NULL DEFAULT current_timestamp,
+  name VARCHAR(255) NOT NULL,
+  applied_at TEXT
+)`);
+      yield* sql.unsafe(`INSERT INTO scient_schema_migrations_rebuild (migration_id, name, created_at, applied_at)
+  SELECT migration_id, name, ${createdAtExpr}, applied_at FROM scient_schema_migrations`);
+      yield* sql.unsafe(`DROP TABLE scient_schema_migrations`);
+      yield* sql.unsafe(
+        `ALTER TABLE scient_schema_migrations_rebuild RENAME TO scient_schema_migrations`,
       );
-    }
-
-    return pending.map((migration) => [migration.id, migration.name] as const);
-  });
-
-  return sql.withTransaction(runTx).pipe(
-    Effect.catchTag("SqlError", (error: SqlError) => {
-      if (isConstraintConflict(error)) {
-        return Effect.succeed([] as ReadonlyArray<readonly [id: number, name: string]>);
-      }
-      return Effect.fail(error);
     }),
   );
-}
+});
+
+// ---------------------------------------------------------------------------
+// Preflight: strict ledger integrity validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate that the recorded ledger is a contiguous prefix of
+ * `SCIENT_MIGRATIONS` with exact name matches.
+ *
+ * - A recorded ID beyond the manifest means the database was migrated by a
+ *   newer build; running older migrations against it must fail closed.
+ * - A recorded ID that skips a manifest entry means the ledger was gapped or
+ *   hand-modified; the high-water mark alone would silently ignore the hole.
+ * - A recorded name that differs from the manifest means the ledger no longer
+ *   describes the migrations this build would have run.
+ */
+const validateLedger = Effect.fn("validateScientLedger")(function* (sql: SqlClient.SqlClient) {
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_schema_migrations'
+  `;
+  if (tables.length === 0) return; // Fresh database — nothing recorded yet.
+
+  const rows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+    SELECT migration_id, name FROM scient_schema_migrations ORDER BY migration_id
+  `;
+
+  const latestKnown = SCIENT_MIGRATIONS[SCIENT_MIGRATIONS.length - 1]!;
+  for (const [index, row] of rows.entries()) {
+    const expected = SCIENT_MIGRATIONS[index];
+    if (!expected) {
+      return yield* new ScientMigrationError({
+        kind: "BadState",
+        message:
+          `Scient migration ledger records unknown migration ${row.migration_id} ("${row.name}") ` +
+          `beyond the latest known migration ${latestKnown.id} ("${latestKnown.name}"). ` +
+          `The database was migrated by a newer build; refusing to run this build's migrations against it.`,
+      });
+    }
+    if (row.migration_id !== expected.id) {
+      return yield* new ScientMigrationError({
+        kind: "BadState",
+        message:
+          `Scient migration ledger is not a contiguous prefix of the manifest: ` +
+          `position ${index + 1} records ${row.migration_id} ("${row.name}") but expected ` +
+          `${expected.id} ("${expected.name}"). The ledger has a gap or was modified; refusing to continue.`,
+      });
+    }
+    if (row.name !== expected.name) {
+      return yield* new ScientMigrationError({
+        kind: "BadState",
+        message:
+          `Scient migration ledger records migration ${row.migration_id} as "${row.name}" ` +
+          `but the manifest names it "${expected.name}". The ledger was modified; refusing to continue.`,
+      });
+    }
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Public runner
 // ---------------------------------------------------------------------------
 
+const migrator = Migrator.make({});
+
 /**
  * Run all pending Scient schema migrations.
  *
- * 1. Reconcile the `applied_at` / `created_at` ledger column mismatch.
- * 2. Ensure the `scient_schema_migrations` ledger table exists.
- * 3. Check for duplicate migration IDs in the manifest.
- * 4. Read the high-water mark from the ledger.
- * 5. Filter to pending migrations (ID > high-water mark).
- * 6. Run pending migrations transactionally in ascending order.
+ * 1. Reconcile a legacy `applied_at` ledger into the canonical shape.
+ * 2. Validate ledger integrity (contiguous prefix, exact names, no unknown
+ *    IDs).
+ * 3. Delegate to the standard Effect SQL Migrator with the
+ *    `scient_schema_migrations` table. The Migrator creates the ledger on
+ *    fresh databases, inserts reservation rows for all pending migrations
+ *    first (doubling as the concurrent-runner lock), runs each migration in
+ *    ascending order inside one transaction, and treats a reservation
+ *    conflict from a concurrent runner as a locked no-op.
  *
  * @returns Array of `[id, name]` tuples for migrations that were run.
  */
 export const runScientMigrations = Effect.fn("runScientMigrations")(function* (
   sql: SqlClient.SqlClient,
 ) {
-  // 1. Reconcile applied_at -> created_at if needed.
   yield* reconcileLedger(sql);
+  yield* validateLedger(sql);
 
-  // 2. Ensure ledger table exists.
-  yield* ensureLedgerTable(sql);
-
-  // 2b. Detect whether the legacy `applied_at` column is present so the
-  //     INSERT can satisfy its NOT NULL constraint on reconciled databases.
-  const ledgerColumns = yield* sql<TableColumn>`PRAGMA table_info(scient_schema_migrations)`;
-  const hasAppliedAt = ledgerColumns.some((column) => column.name === "applied_at");
-
-  // 3. Check for duplicate IDs.
-  yield* checkDuplicateIds(SCIENT_MIGRATIONS);
-
-  // 4. Get high-water mark.
-  const highWaterMark = yield* getHighWaterMark(sql);
-
-  // 5. Filter to pending.
-  const pending = SCIENT_MIGRATIONS.filter((migration) => migration.id > highWaterMark).sort(
-    (a, b) => a.id - b.id,
+  const executed = yield* migrator({ loader, table: LEDGER_TABLE }).pipe(
+    Effect.provideService(SqlClient.SqlClient, sql),
+    Effect.mapError((error) =>
+      error instanceof Migrator.MigrationError ? fromMigrationError(error) : error,
+    ),
+    // The standard Migrator dies with a MigrationError when a migration
+    // effect fails; surface it as a typed ScientMigrationError instead.
+    Effect.catchDefect((defect) =>
+      defect instanceof Migrator.MigrationError
+        ? Effect.fail(fromMigrationError(defect))
+        : Effect.die(defect),
+    ),
   );
 
-  // 6. Run pending migrations.
-  const executed = yield* runPendingMigrations(sql, pending, hasAppliedAt);
-
-  // 7. Log.
   yield* executed.length === 0
     ? Effect.logDebug("Scient schema is current")
     : Effect.log("Scient migrations ran successfully").pipe(

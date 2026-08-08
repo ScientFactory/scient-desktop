@@ -2,8 +2,9 @@
  * Comprehensive Scient migration runner tests.
  *
  * Covers VAL-MIGRATE-01 through VAL-MIGRATE-12, VAL-MIGRATE-14, and
- * VAL-MIGRATE-15. All fixtures are synthetic in-memory or temporary file
- * SQLite databases. No live user data is used.
+ * VAL-MIGRATE-15, plus strict ledger-integrity preflight tests (gaps, name
+ * mismatches, unknown future IDs). All fixtures are synthetic in-memory or
+ * temporary file SQLite databases. No live user data is used.
  *
  * Each test gets its own fresh in-memory database via `Effect.provide` so
  * schema state never leaks between tests.
@@ -16,7 +17,7 @@ import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
@@ -51,6 +52,17 @@ function tableInfo(sql: SqlClient.SqlClient, table: string) {
 function indexList(sql: SqlClient.SqlClient, table: string) {
   return sql.unsafe<{ readonly name: string }>(`PRAGMA index_list(${table})`);
 }
+
+/** Evidence payload schema for quarantined lineage rows. */
+const QuarantinePayloadEvidence = Schema.fromJsonString(
+  Schema.Struct({
+    thread_id: Schema.String,
+    forked_from_thread_id: Schema.NullOr(Schema.String),
+    workspace_mode: Schema.NullOr(Schema.String),
+    status: Schema.NullOr(Schema.String),
+  }),
+);
+const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
 // ---------------------------------------------------------------------------
 // VAL-MIGRATE-01: Fresh install creates canonical Scient schema
@@ -118,6 +130,16 @@ it.effect("fresh install creates canonical Scient schema with ledger and indexes
       const indexNames = new Set(indexes.map((index) => index.name));
       assert.isTrue(indexNames.has("idx_scient_thread_lineage_forked_from"));
       assert.isTrue(indexNames.has("idx_scient_thread_lineage_status"));
+
+      // Quarantine table exists for malformed-row evidence.
+      const quarantineColumns = yield* tableInfo(sql, "scient_thread_lineage_quarantine");
+      const quarantineColumnNames = new Set(quarantineColumns.map((column) => column.name));
+      for (const required of ["thread_id", "reason", "payload_json", "quarantined_at"]) {
+        assert.isTrue(
+          quarantineColumnNames.has(required),
+          `Missing quarantine column: ${required}`,
+        );
+      }
     }),
   ),
 );
@@ -420,7 +442,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
 );
 
 // ---------------------------------------------------------------------------
-// VAL-MIGRATE-06: Migration failure is transactional
+// VAL-MIGRATE-06: Malformed rows are quarantined, not fatal
 // ---------------------------------------------------------------------------
 
 /** Helper: create a full schema with a malformed row, pre-seed ledger with 1+2. */
@@ -478,41 +500,76 @@ function setupMalformedDatabase(
   });
 }
 
-it.effect("migration failure rolls back and is not recorded", () =>
+it.effect("malformed rows are quarantined with evidence while valid rows normalize", () =>
   withMemory(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* setupMalformedDatabase(sql, "bad-fork", "invalid-mode", "pending", "origin");
+      // A valid sibling row must survive and normalize.
+      yield* sql`
+        INSERT INTO scient_thread_lineage (
+          thread_id, forked_from_thread_id, fork_point_turn_count,
+          workspace_mode, fidelity_mode, created_at, status
+        ) VALUES (
+          'good-fork', 'origin', 2, 'local', 'chat-only', '2026-01-02T00:00:00.000Z', 'pending'
+        )
+      `;
 
-      const beforeColumns = yield* tableInfo(sql, "scient_thread_lineage");
-      const beforeColumnNames = beforeColumns.map((column) => column.name);
+      // Migration 3 succeeds despite the malformed row.
+      const executed = yield* runScientMigrations(sql);
+      assert.deepStrictEqual(
+        executed.map(([id]) => id),
+        [3],
+      );
 
-      // Migration 3 should fail (malformed workspace_mode).
-      const result = yield* Effect.exit(runScientMigrations(sql));
-      assert.isTrue(Exit.isFailure(result));
-
-      // Migration 3 was not recorded.
+      // Migration 3 is recorded.
       const ledger = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2],
+        [1, 2, 3],
       );
 
-      // Schema changes from migration 3 rolled back (no new columns, no indexes).
-      const afterColumns = yield* tableInfo(sql, "scient_thread_lineage");
-      assert.deepStrictEqual(
-        afterColumns.map((column) => column.name),
-        beforeColumnNames,
-      );
-
-      // The malformed row was not deleted or modified.
-      const rows = yield* sql<{ readonly thread_id: string; readonly workspace_mode: string }>`
-        SELECT thread_id, workspace_mode FROM scient_thread_lineage WHERE thread_id = 'bad-fork'
+      // The malformed row was quarantined out of active recovery; the valid
+      // sibling remains.
+      const lineage = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scient_thread_lineage
       `;
-      assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]!.workspace_mode, "invalid-mode");
+      assert.deepStrictEqual(
+        lineage.map((row) => row.thread_id),
+        ["good-fork"],
+      );
+
+      // Quarantine preserves the pre-normalization payload with a reason and
+      // a timestamp.
+      const quarantined = yield* sql<{
+        readonly thread_id: string;
+        readonly reason: string;
+        readonly payload_json: string;
+        readonly quarantined_at: string;
+      }>`
+        SELECT thread_id, reason, payload_json, quarantined_at
+        FROM scient_thread_lineage_quarantine
+      `;
+      assert.strictEqual(quarantined.length, 1);
+      assert.strictEqual(quarantined[0]!.thread_id, "bad-fork");
+      assert.isTrue(
+        quarantined[0]!.reason.includes("workspace_mode 'invalid-mode' is not valid"),
+        `Unexpected quarantine reason: ${quarantined[0]!.reason}`,
+      );
+      assert.isTrue(quarantined[0]!.quarantined_at.length > 0);
+      const payload = decodeQuarantinePayload(quarantined[0]!.payload_json);
+      assert.strictEqual(payload.thread_id, "bad-fork");
+      assert.strictEqual(payload.workspace_mode, "invalid-mode");
+
+      // The valid sibling normalized to canonical modes.
+      const good = yield* sql<{
+        readonly fidelity_mode: string;
+        readonly provider_mode: string;
+      }>`SELECT fidelity_mode, provider_mode FROM scient_thread_lineage WHERE thread_id = 'good-fork'`;
+      assert.strictEqual(good[0]!.fidelity_mode, "transcript-bootstrap");
+      assert.strictEqual(good[0]!.provider_mode, "transcript-bootstrap");
     }),
   ),
 );
@@ -550,42 +607,39 @@ it.effect("second clean run returns empty with no schema changes", () =>
   ),
 );
 
-it.effect("after a rolled-back failure is fixed, the pending migration applies exactly once", () =>
+it.effect("quarantine is durable across idempotent reruns", () =>
   withMemory(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* setupMalformedDatabase(sql, "fixable-fork", "invalid-mode", "pending", "origin");
 
-      // First attempt fails (malformed data).
-      const firstResult = yield* Effect.exit(runScientMigrations(sql));
-      assert.isTrue(Exit.isFailure(firstResult));
-
-      // Fix the malformed data.
-      yield* sql`UPDATE scient_thread_lineage SET workspace_mode = 'local' WHERE thread_id = 'fixable-fork'`;
-
-      // Retry — migration 3 should now succeed.
-      const retryResult = yield* runScientMigrations(sql);
-      assert.strictEqual(retryResult.length, 1);
-      assert.strictEqual(retryResult[0]![0], 3);
-
-      // Migration 3 is now in the ledger, applied exactly once.
-      const ledger = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-        SELECT migration_id, name FROM scient_schema_migrations ORDER BY migration_id
-      `;
+      // First run quarantines the malformed row and records migration 3.
+      const first = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
-        ledger.map((row) => row.migration_id),
-        [1, 2, 3],
+        first.map(([id]) => id),
+        [3],
       );
 
-      // Row is normalized.
-      const rows = yield* sql<{
-        readonly workspace_mode: string;
-        readonly fidelity_mode: string;
-        readonly provider_mode: string;
-      }>`SELECT workspace_mode, fidelity_mode, provider_mode FROM scient_thread_lineage WHERE thread_id = 'fixable-fork'`;
-      assert.strictEqual(rows[0]!.workspace_mode, "local");
-      assert.strictEqual(rows[0]!.fidelity_mode, "transcript-bootstrap");
-      assert.strictEqual(rows[0]!.provider_mode, "transcript-bootstrap");
+      const quarantinedBefore = yield* sql<{
+        readonly thread_id: string;
+        readonly reason: string;
+      }>`SELECT thread_id, reason FROM scient_thread_lineage_quarantine`;
+      assert.strictEqual(quarantinedBefore.length, 1);
+      assert.strictEqual(quarantinedBefore[0]!.thread_id, "fixable-fork");
+
+      // Second run: nothing pending, quarantine untouched, lineage stays empty.
+      const second = yield* runScientMigrations(sql);
+      assert.strictEqual(second.length, 0);
+
+      const quarantinedAfter = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scient_thread_lineage_quarantine
+      `;
+      assert.strictEqual(quarantinedAfter.length, 1);
+
+      const lineage = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scient_thread_lineage
+      `;
+      assert.strictEqual(lineage.length, 0);
     }),
   ),
 );
@@ -731,86 +785,119 @@ it.effect("running Scient migrations first does not affect T3 migrations", () =>
 );
 
 // ---------------------------------------------------------------------------
-// VAL-MIGRATE-10: Malformed rows fail closed
+// VAL-MIGRATE-10: Malformed rows are quarantined (startup stays safe)
 // ---------------------------------------------------------------------------
 
-it.effect("invalid workspace_mode stops normalization without deletion", () =>
+interface QuarantinedRow {
+  readonly thread_id: string;
+  readonly reason: string;
+  readonly payload_json: string;
+  readonly quarantined_at: string;
+}
+
+it.effect("invalid workspace_mode is quarantined with evidence", () =>
   withMemory(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* setupMalformedDatabase(sql, "malformed-1", "bad-mode", "pending", "origin");
 
-      const result = yield* Effect.exit(runScientMigrations(sql));
-      assert.isTrue(Exit.isFailure(result));
+      const executed = yield* runScientMigrations(sql);
+      assert.deepStrictEqual(
+        executed.map(([id]) => id),
+        [3],
+      );
 
       const ledger = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2],
+        [1, 2, 3],
       );
 
       const rows = yield* sql<{ readonly thread_id: string }>`
         SELECT thread_id FROM scient_thread_lineage
       `;
-      assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]!.thread_id, "malformed-1");
+      assert.strictEqual(rows.length, 0);
+
+      const quarantined = yield* sql<QuarantinedRow>`
+        SELECT thread_id, reason, payload_json, quarantined_at
+        FROM scient_thread_lineage_quarantine
+      `;
+      assert.strictEqual(quarantined.length, 1);
+      assert.strictEqual(quarantined[0]!.thread_id, "malformed-1");
+      assert.isTrue(
+        quarantined[0]!.reason.includes("workspace_mode 'bad-mode' is not valid"),
+        `Unexpected quarantine reason: ${quarantined[0]!.reason}`,
+      );
+      const payload = decodeQuarantinePayload(quarantined[0]!.payload_json);
+      assert.strictEqual(payload.workspace_mode, "bad-mode");
     }),
   ),
 );
 
-it.effect("null forked_from_thread_id stops normalization without fabrication", () =>
+it.effect("null forked_from_thread_id is quarantined without fabrication", () =>
   withMemory(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* setupMalformedDatabase(sql, "orphan-fork", "local", "pending", null);
 
-      const result = yield* Effect.exit(runScientMigrations(sql));
-      assert.isTrue(Exit.isFailure(result));
-
-      const ledger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
-      `;
+      const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
-        ledger.map((row) => row.migration_id),
-        [1, 2],
+        executed.map(([id]) => id),
+        [3],
       );
 
-      const rows = yield* sql<{
-        readonly thread_id: string;
-        readonly forked_from_thread_id: string | null;
-      }>`
-        SELECT thread_id, forked_from_thread_id FROM scient_thread_lineage
+      const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scient_thread_lineage
       `;
-      assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]!.forked_from_thread_id, null);
+      assert.strictEqual(rows.length, 0);
+
+      const quarantined = yield* sql<QuarantinedRow>`
+        SELECT thread_id, reason, payload_json, quarantined_at
+        FROM scient_thread_lineage_quarantine
+      `;
+      assert.strictEqual(quarantined.length, 1);
+      assert.strictEqual(quarantined[0]!.thread_id, "orphan-fork");
+      assert.isTrue(
+        quarantined[0]!.reason.includes("forked_from_thread_id is null"),
+        `Unexpected quarantine reason: ${quarantined[0]!.reason}`,
+      );
+      const payload = decodeQuarantinePayload(quarantined[0]!.payload_json);
+      assert.strictEqual(payload.forked_from_thread_id, null);
     }),
   ),
 );
 
-it.effect("invalid status stops normalization without deletion", () =>
+it.effect("invalid status is quarantined with evidence", () =>
   withMemory(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* setupMalformedDatabase(sql, "bad-status", "local", "bogus", "origin");
 
-      const result = yield* Effect.exit(runScientMigrations(sql));
-      assert.isTrue(Exit.isFailure(result));
-
-      const ledger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
-      `;
+      const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
-        ledger.map((row) => row.migration_id),
-        [1, 2],
+        executed.map(([id]) => id),
+        [3],
       );
 
-      const rows = yield* sql<{ readonly thread_id: string; readonly status: string }>`
-        SELECT thread_id, status FROM scient_thread_lineage
+      const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scient_thread_lineage
       `;
-      assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]!.status, "bogus");
+      assert.strictEqual(rows.length, 0);
+
+      const quarantined = yield* sql<QuarantinedRow>`
+        SELECT thread_id, reason, payload_json, quarantined_at
+        FROM scient_thread_lineage_quarantine
+      `;
+      assert.strictEqual(quarantined.length, 1);
+      assert.strictEqual(quarantined[0]!.thread_id, "bad-status");
+      assert.isTrue(
+        quarantined[0]!.reason.includes("status 'bogus' is not valid"),
+        `Unexpected quarantine reason: ${quarantined[0]!.reason}`,
+      );
+      const payload = decodeQuarantinePayload(quarantined[0]!.payload_json);
+      assert.strictEqual(payload.status, "bogus");
     }),
   ),
 );
@@ -1369,34 +1456,47 @@ it.effect("reconciled ledger with all created_at populated is idempotent on retr
 );
 
 // ---------------------------------------------------------------------------
-// Regression: NULL workspace_mode fails closed
+// Regression: NULL workspace_mode is quarantined without fabrication
 // ---------------------------------------------------------------------------
 
-it.effect("NULL workspace_mode fails closed during normalization", () =>
+it.effect("NULL workspace_mode is quarantined without fabrication", () =>
   withMemory(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* setupMalformedDatabase(sql, "null-mode-fork", null, "pending", "origin");
 
-      const result = yield* Effect.exit(runScientMigrations(sql));
-      assert.isTrue(Exit.isFailure(result));
+      const executed = yield* runScientMigrations(sql);
+      assert.deepStrictEqual(
+        executed.map(([id]) => id),
+        [3],
+      );
 
-      // Migration 3 was not recorded.
+      // Migration 3 is recorded; the row is quarantined, not fabricated.
       const ledger = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2],
+        [1, 2, 3],
       );
 
-      // Row preserved, not deleted or fabricated.
-      const rows = yield* sql<{
-        readonly thread_id: string;
-        readonly workspace_mode: string | null;
-      }>`SELECT thread_id, workspace_mode FROM scient_thread_lineage WHERE thread_id = 'null-mode-fork'`;
-      assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]!.workspace_mode, null);
+      const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scient_thread_lineage
+      `;
+      assert.strictEqual(rows.length, 0);
+
+      const quarantined = yield* sql<QuarantinedRow>`
+        SELECT thread_id, reason, payload_json, quarantined_at
+        FROM scient_thread_lineage_quarantine
+      `;
+      assert.strictEqual(quarantined.length, 1);
+      assert.strictEqual(quarantined[0]!.thread_id, "null-mode-fork");
+      assert.isTrue(
+        quarantined[0]!.reason.includes("workspace_mode is null"),
+        `Unexpected quarantine reason: ${quarantined[0]!.reason}`,
+      );
+      const payload = decodeQuarantinePayload(quarantined[0]!.payload_json);
+      assert.strictEqual(payload.workspace_mode, null);
     }),
   ),
 );
@@ -1415,6 +1515,132 @@ it.effect("manifest has no duplicate migration IDs", () =>
 
       const executed = yield* runScientMigrations(sql);
       assert.strictEqual(executed.length, 3);
+    }),
+  ),
+);
+
+// ---------------------------------------------------------------------------
+// Ledger integrity preflight: gaps, name mismatches, and future IDs fail
+// closed before the standard Migrator's high-water mark can hide them.
+// ---------------------------------------------------------------------------
+
+it.effect("a gapped ledger fails closed before any migration runs", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE scient_schema_migrations (
+          migration_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (1, 'durable-thread-forks')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (3, 'normalize-active-lineage')`;
+
+      const error = yield* Effect.flip(runScientMigrations(sql));
+      if (error._tag !== "ScientMigrationError") {
+        assert.fail(`Expected ScientMigrationError, got ${error._tag}`);
+      } else {
+        assert.strictEqual(error.kind, "BadState");
+        assert.isTrue(
+          error.message.includes("contiguous prefix"),
+          `Unexpected message: ${error.message}`,
+        );
+      }
+
+      // Nothing ran: ledger unchanged, lineage table never created.
+      const ledger = yield* sql<{ readonly migration_id: number }>`
+        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        ledger.map((row) => row.migration_id),
+        [1, 3],
+      );
+      const tables = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_thread_lineage'
+      `;
+      assert.strictEqual(tables.length, 0);
+    }),
+  ),
+);
+
+it.effect("a renamed ledger entry fails closed even through legacy reconciliation", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // Legacy applied_at ledger with a hand-modified name.
+      yield* sql`
+        CREATE TABLE scient_schema_migrations (
+          migration_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL
+        )
+      `;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name, applied_at) VALUES (1, 'renamed-by-hand', '2026-07-01T10:00:00.000Z')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name, applied_at) VALUES (2, 'durable-provider-bootstrap', '2026-07-02T12:00:00.000Z')`;
+
+      const error = yield* Effect.flip(runScientMigrations(sql));
+      if (error._tag !== "ScientMigrationError") {
+        assert.fail(`Expected ScientMigrationError, got ${error._tag}`);
+      } else {
+        assert.strictEqual(error.kind, "BadState");
+        assert.isTrue(
+          error.message.includes("renamed-by-hand"),
+          `Unexpected message: ${error.message}`,
+        );
+      }
+
+      // Reconciliation still preserved the recorded history exactly.
+      const ledger = yield* sql<{
+        readonly migration_id: number;
+        readonly name: string;
+        readonly created_at: string;
+        readonly applied_at: string;
+      }>`SELECT migration_id, name, created_at, applied_at FROM scient_schema_migrations ORDER BY migration_id`;
+      assert.strictEqual(ledger.length, 2);
+      assert.strictEqual(ledger[0]!.name, "renamed-by-hand");
+      assert.strictEqual(ledger[0]!.created_at, "2026-07-01T10:00:00.000Z");
+      assert.strictEqual(ledger[0]!.applied_at, "2026-07-01T10:00:00.000Z");
+    }),
+  ),
+);
+
+it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE scient_schema_migrations (
+          migration_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (1, 'durable-thread-forks')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (2, 'durable-provider-bootstrap')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (3, 'normalize-active-lineage')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (4, 'future-migration')`;
+
+      const error = yield* Effect.flip(runScientMigrations(sql));
+      if (error._tag !== "ScientMigrationError") {
+        assert.fail(`Expected ScientMigrationError, got ${error._tag}`);
+      } else {
+        assert.strictEqual(error.kind, "BadState");
+        assert.isTrue(
+          error.message.includes("unknown migration 4"),
+          `Unexpected message: ${error.message}`,
+        );
+      }
+
+      // Ledger untouched.
+      const ledger = yield* sql<{ readonly migration_id: number }>`
+        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        ledger.map((row) => row.migration_id),
+        [1, 2, 3, 4],
+      );
     }),
   ),
 );
