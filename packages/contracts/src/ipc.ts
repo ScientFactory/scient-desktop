@@ -1,4 +1,10 @@
 import type {
+  VoiceModelDownloadProgress,
+  VoiceModelState,
+  VoiceTranscribeRequest,
+  VoiceTranscript,
+} from "./voice.ts";
+import type {
   VcsCreateRefInput,
   VcsCreateRefResult,
   VcsCreateWorktreeInput,
@@ -1065,6 +1071,37 @@ export interface DesktopBridge {
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
+  /**
+   * Desktop-only local voice transcription surface. Present iff the renderer is
+   * hosted by the Electron desktop build; web builds have `voice === undefined`.
+   */
+  voice?: DesktopVoiceBridge;
+}
+
+/**
+ * Desktop-only local voice transcription bridge. All audio and the whisper
+ * runtime stay on-device; nothing here reaches the network except the one-time
+ * model download performed by the main process.
+ */
+export interface DesktopVoiceBridge {
+  /** Current install/download state of the local model. */
+  getModelState: () => Promise<VoiceModelState>;
+  /** Download + verify the local model. Resolves with the resulting state. */
+  downloadModel: () => Promise<VoiceModelState>;
+  /** Cancel the in-flight model download, preserving resumable partial data. */
+  cancelModelDownload: () => Promise<void>;
+  /** Remove the installed local model. Resolves with the resulting state. */
+  removeModel: () => Promise<VoiceModelState>;
+  /** Transcribe one validated clip. Rejects with a safe, user-facing message. */
+  transcribe: (request: VoiceTranscribeRequest) => Promise<VoiceTranscript>;
+  /** Cancel the in-flight transcription, if any. */
+  cancelTranscription: () => Promise<void>;
+  /**
+   * Observe model-download progress. Implemented by polling `getModelState`
+   * from the preload bridge, so it needs no dedicated push channel. Returns an
+   * unsubscribe function.
+   */
+  onModelDownloadProgress: (listener: (progress: VoiceModelDownloadProgress) => void) => () => void;
 }
 
 export interface DesktopPreviewBridge {

@@ -8,6 +8,7 @@ import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
 
 exposeClerkBridge({ passkeys: true });
 
@@ -256,4 +257,5 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
     },
   },
+  voice: makeDesktopVoiceBridge(ipcRenderer),
 } satisfies DesktopBridge);
