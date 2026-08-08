@@ -22,9 +22,12 @@ list gets one aggregate direction: any RTL prose makes the whole list RTL; an
 English-only list is LTR; items do not receive competing per-item overrides.
 Nested lists inherit their parent list direction. Tables use the same
 whole-group rule, so an English-only table can be LTR inside an RTL message.
-An explicit user mode remains authoritative. The transform does not duplicate
-or replace the T3 Markdown renderer and intentionally leaves code elements
-alone.
+The resolved table direction is authoritative for every normal cell and nested
+prose, so an English cell cannot flip a Hebrew table (or vice versa). An
+explicit user mode remains authoritative. Headings use the resolved message
+direction rather than their own text, except when they are inside a table and
+therefore inherit that table's direction. The transform does not duplicate or
+replace the T3 Markdown renderer and intentionally leaves code elements alone.
 
 The stylesheet is scoped to `.chat-markdown[data-scient-content-direction]` and
 uses logical properties for list padding, blockquote borders, task-list
