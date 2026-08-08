@@ -32,6 +32,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -3182,6 +3183,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                <ScientVoiceComposerControl
+                  onTranscript={(text) => {
+                    insertComposerTextAtEnd(text, { ensureLeadingBoundary: true });
+                  }}
+                  onSetDraft={(text) => {
+                    promptRef.current = text;
+                    setPrompt(text);
+                  }}
+                  getDraft={() => promptRef.current}
+                  onRequestSubmit={() => submitComposer()}
+                  disabled={projectSelectionRequired}
+                />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}

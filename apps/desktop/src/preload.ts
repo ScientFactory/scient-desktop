@@ -1,3 +1,5 @@
+// @effect-diagnostics globalTimers:off -- preload is a plain Electron context
+// bridge (no Effect runtime); the voice model-download poll uses a raw timer.
 import type {
   DesktopBridge,
   DesktopPreviewPointerEvent,
@@ -246,6 +248,47 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+    },
+  },
+  voice: {
+    getCapability: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_CAPABILITY_CHANNEL),
+    getModelState: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL),
+    downloadModel: () => ipcRenderer.invoke(IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL),
+    removeModel: () => ipcRenderer.invoke(IpcChannels.VOICE_REMOVE_MODEL_CHANNEL),
+    transcribe: (request) => ipcRenderer.invoke(IpcChannels.VOICE_TRANSCRIBE_CHANNEL, request),
+    cancelTranscription: () => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL),
+    onModelDownloadProgress: (listener) => {
+      // No dedicated push channel: poll the invoke-based model state and emit
+      // progress only while a download is active. Cheap and race-free.
+      let cancelled = false;
+      const poll = () => {
+        void ipcRenderer
+          .invoke(IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL)
+          .then((state: unknown) => {
+            if (
+              cancelled ||
+              typeof state !== "object" ||
+              state === null ||
+              (state as { state?: string }).state !== "downloading"
+            ) {
+              return;
+            }
+            const downloading = state as { downloadedBytes: number; totalBytes: number };
+            listener({
+              downloadedBytes: downloading.downloadedBytes,
+              totalBytes: downloading.totalBytes,
+            });
+          })
+          .catch(() => {
+            // Ignore transient polling errors; the next tick retries.
+          });
+      };
+      const interval = setInterval(poll, 500);
+      poll();
+      return () => {
+        cancelled = true;
+        clearInterval(interval);
+      };
     },
   },
 } satisfies DesktopBridge);

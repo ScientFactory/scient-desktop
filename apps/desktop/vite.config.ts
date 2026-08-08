@@ -46,7 +46,9 @@ export default defineConfig({
       entry: ["src/main.ts"],
       clean: true,
       deps: {
-        alwaysBundle: (id) => id.startsWith("@t3tools/"),
+        // Bundle owned workspace packages (published as TS source, no dist) into
+        // the Electron main artifact; Node can't resolve their `.ts` at runtime.
+        alwaysBundle: (id) => id.startsWith("@t3tools/") || id.startsWith("@scientfactory/"),
       },
       ...(shouldLaunchElectronAfterPack ? { onSuccess: "node scripts/dev-electron.mjs" } : {}),
     },

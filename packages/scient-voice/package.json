@@ -1,0 +1,28 @@
+{
+  "name": "@scientfactory/scient-voice",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./livePreview": {
+      "types": "./src/livePreview.ts",
+      "import": "./src/livePreview.ts"
+    },
+    "./livePreviewGate": {
+      "types": "./src/livePreviewGate.ts",
+      "import": "./src/livePreviewGate.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
