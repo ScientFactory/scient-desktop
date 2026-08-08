@@ -319,4 +319,243 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       }
     }),
   );
+
+  // -------------------------------------------------------------------------
+  // VAL-PERSIST-008: Provider bootstrap is normal-path once-only
+  // -------------------------------------------------------------------------
+
+  it.effect("markAccepted completes bootstrap and later sends are unchanged", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      const sql = yield* SqlClient.SqlClient;
+      const current = message({ id: "current", role: "user", text: "What next?" });
+      const forkThread = thread([
+        message({ id: "user-1", role: "user", text: "Inspect the evidence" }),
+        message({ id: "assistant-1", role: "assistant", text: "The evidence is consistent." }),
+        current,
+      ]);
+
+      // First turn: bootstrap is pending, transcript is injected.
+      const first = yield* service.prepareTurn({
+        thread: forkThread,
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+      assert.strictEqual(first.bootstrapPending, true);
+
+      // markAccepted completes the durable marker.
+      yield* service.markAccepted(THREAD);
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "completed");
+
+      // Second turn: bootstrap is no longer pending, no duplicate injection.
+      const second = yield* service.prepareTurn({
+        thread: forkThread,
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+      assert.deepStrictEqual(second, {
+        input: "What next?",
+        attachments: [],
+        bootstrapPending: false,
+      });
+    }),
+  );
+
+  it.effect("markAccepted is idempotent — calling twice does not error", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.markAccepted(THREAD);
+      // Second call is a no-op (provider_bootstrap_status already completed).
+      yield* service.markAccepted(THREAD);
+      const sql = yield* SqlClient.SqlClient;
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "completed");
+    }),
+  );
+
+  // -------------------------------------------------------------------------
+  // VAL-PERSIST-009: Provider bootstrap crash recovery is at-least-once
+  // -------------------------------------------------------------------------
+
+  it.effect("crash after acceptance but before markAccepted retries on restart", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      const sql = yield* SqlClient.SqlClient;
+      const current = message({ id: "current", role: "user", text: "What next?" });
+      const forkThread = thread([
+        message({ id: "user-1", role: "user", text: "Inspect the evidence" }),
+        message({ id: "assistant-1", role: "assistant", text: "The evidence is consistent." }),
+        current,
+      ]);
+
+      // Crash after prepareTurn but before markAccepted: bootstrap is still pending.
+      const first = yield* service.prepareTurn({
+        thread: forkThread,
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+      assert.strictEqual(first.bootstrapPending, true);
+
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "pending");
+
+      // Restart: prepareTurn again injects the transcript (at-least-once).
+      const retried = yield* service.prepareTurn({
+        thread: forkThread,
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+      assert.strictEqual(retried.bootstrapPending, true);
+
+      // Now markAccepted persists the receipt.
+      yield* service.markAccepted(THREAD);
+
+      // After receipt is persisted, restart injects nothing again.
+      const after = yield* service.prepareTurn({
+        thread: forkThread,
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+      assert.strictEqual(after.bootstrapPending, false);
+    }),
+  );
+
+  // -------------------------------------------------------------------------
+  // VAL-PERSIST-010: Bootstrap gates readiness and corruption
+  // -------------------------------------------------------------------------
+
+  it.effect("pending fork cannot send — prepareTurn fails closed", () =>
+    Effect.gen(function* () {
+      yield* insertFork("pending");
+      const service = yield* ScientForkContextBootstrap;
+      const current = message({ id: "current", role: "user", text: "Continue" });
+      const result = yield* Effect.result(
+        service.prepareTurn({
+          thread: thread([message({ id: "prior", role: "assistant", text: "Prior" }), current]),
+          currentMessageId: current.id,
+          messageText: current.text,
+          attachments: [],
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("failed fork cannot send — prepareTurn fails closed", () =>
+    Effect.gen(function* () {
+      yield* insertFork("failed");
+      const service = yield* ScientForkContextBootstrap;
+      const current = message({ id: "current", role: "user", text: "Continue" });
+      const result = yield* Effect.result(
+        service.prepareTurn({
+          thread: thread([message({ id: "prior", role: "assistant", text: "Prior" }), current]),
+          currentMessageId: current.id,
+          messageText: current.text,
+          attachments: [],
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("abandoned fork cannot send — prepareTurn fails closed", () =>
+    Effect.gen(function* () {
+      yield* insertFork("abandoned");
+      const service = yield* ScientForkContextBootstrap;
+      const current = message({ id: "current", role: "user", text: "Continue" });
+      const result = yield* Effect.result(
+        service.prepareTurn({
+          thread: thread([message({ id: "prior", role: "assistant", text: "Prior" }), current]),
+          currentMessageId: current.id,
+          messageText: current.text,
+          attachments: [],
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }),
+  );
+
+  // -------------------------------------------------------------------------
+  // VAL-PERSIST-013: markAccepted cannot complete bootstrap for non-ready forks
+  // -------------------------------------------------------------------------
+
+  it.effect("markAccepted does not complete bootstrap for a pending fork", () =>
+    Effect.gen(function* () {
+      yield* insertFork("pending");
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.markAccepted(THREAD);
+      const sql = yield* SqlClient.SqlClient;
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "pending");
+    }),
+  );
+
+  it.effect("markAccepted does not complete bootstrap for a provisioning fork", () =>
+    Effect.gen(function* () {
+      yield* insertFork("provisioning");
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.markAccepted(THREAD);
+      const sql = yield* SqlClient.SqlClient;
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "pending");
+    }),
+  );
+
+  it.effect("markAccepted does not complete bootstrap for a failed fork", () =>
+    Effect.gen(function* () {
+      yield* insertFork("failed");
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.markAccepted(THREAD);
+      const sql = yield* SqlClient.SqlClient;
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "pending");
+    }),
+  );
+
+  it.effect("markAccepted does not complete bootstrap for an abandoned fork", () =>
+    Effect.gen(function* () {
+      yield* insertFork("abandoned");
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.markAccepted(THREAD);
+      const sql = yield* SqlClient.SqlClient;
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "pending");
+    }),
+  );
+
+  it.effect("markAccepted completes bootstrap for a ready fork", () =>
+    Effect.gen(function* () {
+      yield* insertFork("ready");
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.markAccepted(THREAD);
+      const sql = yield* SqlClient.SqlClient;
+      const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
+        SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
+      `;
+      assert.strictEqual(marker[0]!.provider_bootstrap_status, "completed");
+    }),
+  );
 });
