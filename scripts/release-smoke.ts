@@ -26,6 +26,8 @@ const workspaceFiles = [
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
+  "packages/scient-project-init/package.json",
+  "packages/scient-voice/package.json",
   "packages/shared/package.json",
   "packages/ssh/package.json",
   "packages/tailscale/package.json",

@@ -6,6 +6,7 @@ import { Kbd, KbdGroup } from "./ui/kbd";
 
 type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children"> & {
   readonly children: ReactNode;
+  readonly containerProps?: Omit<ComponentProps<"div">, "className">;
   readonly escapeLabel?: ReactNode;
   readonly footerActionLabel?: ReactNode;
   readonly footerTrailing?: ReactNode;
@@ -23,6 +24,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
  */
 export function CommandPaletteContent({
   children,
+  containerProps,
   escapeLabel = "Close",
   footerActionLabel,
   footerTrailing,
@@ -34,7 +36,7 @@ export function CommandPaletteContent({
   ...commandProps
 }: CommandPaletteContentProps) {
   return (
-    <div className="contents" data-testid={testId}>
+    <div {...containerProps} className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
           <CommandInput {...inputProps} />
