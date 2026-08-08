@@ -94,6 +94,63 @@ describe("rehypeScientBidi", () => {
     expect(elements[1]?.properties?.dir).toBe("rtl");
   });
 
+  it("normalizes flow arrows only in RTL prose, not LTR or technical text", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלב ראשון → שלב שני" }],
+        },
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "Step one → step two" }],
+        },
+        {
+          type: "element",
+          tagName: "p",
+          children: [
+            {
+              type: "element",
+              tagName: "code",
+              children: [{ type: "text", value: "שלום → עולם" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraphs = tree.children as Array<{
+      children?: Array<{ value?: string }>;
+    }>;
+    expect(paragraphs[0]?.children?.[0]?.value).toBe("שלב ראשון ← שלב שני");
+    expect(paragraphs[1]?.children?.[0]?.value).toBe("Step one → step two");
+    const code = paragraphs[2]?.children?.[0] as {
+      children?: Array<{ value?: string }>;
+    };
+    expect(code.children?.[0]?.value).toBe("שלום → עולם");
+
+    const explicitlyLtrTree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלום → עולם" }],
+        },
+      ],
+    };
+    rehypeScientBidi({ direction: "ltr" })(explicitlyLtrTree);
+    const explicitlyLtrParagraph = explicitlyLtrTree.children?.[0] as {
+      children?: Array<{ value?: string }>;
+    };
+    expect(explicitlyLtrParagraph.children?.[0]?.value).toBe("שלום → עולם");
+  });
+
   it("uses one direction for an English-only list and keeps children inheriting", () => {
     const tree = {
       type: "root",

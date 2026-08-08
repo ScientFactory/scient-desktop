@@ -5,6 +5,7 @@ import {
   resolveFenceDirection,
   resolveMarkdownDirectionHint,
   resolveMarkdownDirection,
+  normalizeRtlFlowArrows,
   resolvePlainTextBoxDirection,
   resolveProseBlockDirection,
   resolveStreamingMarkdownDirection,
@@ -96,6 +97,16 @@ describe("message and block direction", () => {
         isStreaming: true,
       }),
     ).toBe("ltr");
+  });
+
+  it("normalizes only standalone flow arrows in RTL prose", () => {
+    expect(normalizeRtlFlowArrows("שלב ראשון → שלב שני ⇒ שלב שלישי")).toBe(
+      "שלב ראשון ← שלב שני ⇐ שלב שלישי",
+    );
+    expect(normalizeRtlFlowArrows("x→y and x=>y")).toBe("x→y and x=>y");
+    expect(normalizeRtlFlowArrows("שלב ראשון → x→y")).toBe("שלב ראשון ← x→y");
+    expect(normalizeRtlFlowArrows("עברית: H2O → CO2")).toBe("עברית: H2O → CO2");
+    expect(normalizeRtlFlowArrows("עברית: $A → B$")).toBe("עברית: $A → B$");
   });
 });
 

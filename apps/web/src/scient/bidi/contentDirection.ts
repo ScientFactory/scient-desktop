@@ -14,6 +14,16 @@ const MARKDOWN_INLINE_CODE = /`[^`\n]*`/g;
 const MARKDOWN_LINK_DESTINATION = /\]\([^)]*\)/g;
 const MARKDOWN_AUTOLINK = /<(?:https?:\/\/|mailto:)[^>]+>/gi;
 
+const RTL_FLOW_ARROW_REPLACEMENTS: Readonly<Record<string, string>> = {
+  "→": "←",
+  "⇒": "⇐",
+  "⟶": "⟵",
+  "⟹": "⟸",
+};
+const STANDALONE_RTL_FLOW_ARROW = /(^|\s)(→|⇒|⟶|⟹)(?=\s|$)/gu;
+const ASCII_TECHNICAL_TOKEN = /[A-Za-z0-9][A-Za-z0-9_./:+-]*$/u;
+const ASCII_TECHNICAL_TOKEN_START = /^[A-Za-z0-9][A-Za-z0-9_./:+-]*/u;
+
 /** Fences whose contents are copyable prose rather than source code. */
 const PLAIN_TEXT_FENCE_LANGUAGES = new Set(["text", "plaintext", "txt"]);
 
@@ -143,6 +153,57 @@ export function resolveAggregateDirection(
   if (rtl > 0) return "rtl";
   if (ltr > 0) return "ltr";
   return fallbackDirection;
+}
+
+/**
+ * Normalizes only obvious right-flow arrows in a message whose base direction
+ * is RTL. The renderer additionally excludes technical and non-prose nodes.
+ *
+ * Arrow glyphs are not Unicode-mirrored by `dir="rtl"`, but arrows also carry
+ * scientific meaning. Requiring whitespace boundaries and nearby RTL text
+ * keeps this presentation fallback conservative; callers must still exclude
+ * code, links, and other technical content before invoking it.
+ */
+export function normalizeRtlFlowArrows(text: string): string {
+  STANDALONE_RTL_FLOW_ARROW.lastIndex = 0;
+  if (!containsStrongRtl(text) || !STANDALONE_RTL_FLOW_ARROW.test(text)) {
+    STANDALONE_RTL_FLOW_ARROW.lastIndex = 0;
+    return text;
+  }
+
+  STANDALONE_RTL_FLOW_ARROW.lastIndex = 0;
+  return text.replace(
+    STANDALONE_RTL_FLOW_ARROW,
+    (match: string, prefix: string, arrow: string, offset: number, source: string) => {
+      const arrowOffset = offset + match.length - arrow.length;
+      const beforeArrow = source.slice(0, arrowOffset);
+      const afterArrow = source.slice(arrowOffset + arrow.length);
+      const leftToken = ASCII_TECHNICAL_TOKEN.exec(beforeArrow.trimEnd())?.[0];
+      const rightToken = ASCII_TECHNICAL_TOKEN_START.exec(afterArrow.trimStart())?.[0];
+
+      // A Latin/number token on both sides is much more likely to be a
+      // formula, reaction, or identifier relationship than a prose flow.
+      if (leftToken && rightToken) return match;
+
+      // Do not reinterpret an arrow inside simple inline math delimiters.
+      const before = source.slice(0, arrowOffset);
+      let dollarOpen = false;
+      for (let index = 0; index < before.length; index += 1) {
+        if (before[index] === "$" && before[index - 1] !== "\\") {
+          dollarOpen = !dollarOpen;
+        }
+      }
+      if (
+        dollarOpen ||
+        before.lastIndexOf("\\(") > before.lastIndexOf("\\)") ||
+        before.lastIndexOf("\\[") > before.lastIndexOf("\\]")
+      ) {
+        return match;
+      }
+
+      return `${prefix}${RTL_FLOW_ARROW_REPLACEMENTS[arrow] ?? arrow}`;
+    },
+  );
 }
 
 /**

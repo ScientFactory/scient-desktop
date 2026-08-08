@@ -28,6 +28,10 @@ explicit user mode remains authoritative. Headings use the resolved message
 direction rather than their own text, except when they are inside a table and
 therefore inherit that table's direction. The transform does not duplicate or
 replace the T3 Markdown renderer and intentionally leaves code elements alone.
+Standalone right-flow arrows in clearly RTL prose within an RTL-base message
+are normalized to their left-flow counterparts. Technical content, links, and
+ambiguous arrow usage are left unchanged. An explicitly LTR-base message never
+rewrites arrows, even when a local block contains Hebrew.
 
 The stylesheet is scoped to `.chat-markdown[data-scient-content-direction]` and
 uses logical properties for list padding, blockquote borders, task-list
