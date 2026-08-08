@@ -56,6 +56,11 @@ import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
 } from "../threadDetailCursor.ts";
+import {
+  makeForkBoundaryQueries,
+  mapForkBoundaries,
+  type ProjectionForkBoundaryRow,
+} from "../scient-fork/ForkBoundaryReadModel.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -347,6 +352,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const sql = yield* SqlClient.SqlClient;
+  const { listForkBoundaryRows, listForkBoundaryRowsByThread } = makeForkBoundaryQueries(sql);
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const repositoryIdentityResolutionConcurrency = 4;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
@@ -951,6 +957,44 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const getThreadRowById = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          latest_turn_id AS "latestTurnId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          settled_override AS "settledOverride",
+          settled_at AS "settledAt",
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
+          pinned_at AS "pinnedAt",
+          pin_order_key AS "pinOrderKey",
+          title_regeneration_request_id AS "titleRegenerationRequestId",
+          title_regeneration_started_at AS "titleRegenerationStartedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
   const listThreadMessageRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -1366,6 +1410,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listForkBoundaryRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listForkBoundaries:query",
+                "ProjectionSnapshotQuery.getSnapshot:listForkBoundaries:decodeRows",
+              ),
+            ),
+          ),
           listLatestTurnRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1394,6 +1446,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             activityRows,
             sessionRows,
             checkpointRows,
+            forkBoundaryRows,
             latestTurnRows,
             stateRows,
           ]) =>
@@ -1402,6 +1455,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
+              const forkBoundariesByThread = new Map<string, Array<ProjectionForkBoundaryRow>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
 
@@ -1477,6 +1531,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   completedAt: row.completedAt,
                 });
                 checkpointsByThread.set(row.threadId, threadCheckpoints);
+              }
+
+              for (const row of forkBoundaryRows) {
+                const threadBoundaries = forkBoundariesByThread.get(row.threadId) ?? [];
+                threadBoundaries.push(row);
+                forkBoundariesByThread.set(row.threadId, threadBoundaries);
               }
 
               for (const row of latestTurnRows) {
@@ -1573,6 +1633,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
+                conversationForkBoundaries: mapForkBoundaries(
+                  forkBoundariesByThread.get(row.threadId) ?? [],
+                  row.createdAt,
+                ),
                 session: sessionsByThread.get(row.threadId) ?? null,
               }));
 
@@ -2361,10 +2425,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         proposedPlanRows,
         activityRows,
         checkpointRows,
+        forkBoundaryRows,
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
-        getActiveThreadRowById({ threadId }).pipe(
+        getThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:getThread:query",
@@ -2407,6 +2472,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listCheckpoints:query",
               "ProjectionSnapshotQuery.getThreadDetailById:listCheckpoints:decodeRows",
+            ),
+          ),
+        ),
+        listForkBoundaryRowsByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listForkBoundaries:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listForkBoundaries:decodeRows",
             ),
           ),
         ),
@@ -2493,6 +2566,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           assistantMessageId: row.assistantMessageId,
           completedAt: row.completedAt,
         })),
+        conversationForkBoundaries: mapForkBoundaries(forkBoundaryRows, threadRow.value.createdAt),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
       };
 

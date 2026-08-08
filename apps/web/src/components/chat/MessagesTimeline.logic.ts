@@ -195,6 +195,11 @@ export type MessagesTimelineRow =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
+      canForkConversation?: boolean | undefined;
+    }
+  | {
+      kind: "fork-marker";
+      id: string;
     }
   | {
       kind: "proposed-plan";
@@ -308,6 +313,29 @@ function deriveUnsettledTurnId(
   }
   const isSettled = latestTurn.completedAt !== null && latestTurn.state !== "running";
   return isSettled ? null : latestTurn.turnId;
+}
+
+export function findLatestCompletedAssistantMessageId(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  latestTurn: TimelineLatestTurn | null;
+  runningTurnId: TurnId | null;
+}): MessageId | null {
+  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  const unsettledTurnId = deriveUnsettledTurnId(input.latestTurn, input.runningTurnId);
+
+  for (let index = input.timelineEntries.length - 1; index >= 0; index -= 1) {
+    const entry = input.timelineEntries[index];
+    if (
+      entry?.kind === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.streaming &&
+      entry.message.turnId !== unsettledTurnId &&
+      terminalAssistantMessageIds.has(entry.message.id)
+    ) {
+      return entry.message.id;
+    }
+  }
+  return null;
 }
 
 /**
@@ -452,6 +480,8 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  hasForkBaseline?: boolean | undefined;
+  forkBaselineAssistantMessageId?: MessageId | null | undefined;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -626,7 +656,23 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
+      canForkConversation:
+        timelineEntry.message.role === "assistant" && showAssistantMeta
+          ? !timelineEntry.message.streaming
+          : undefined,
     });
+
+    if (
+      input.hasForkBaseline === true &&
+      input.forkBaselineAssistantMessageId !== undefined &&
+      input.forkBaselineAssistantMessageId !== null &&
+      timelineEntry.message.id === input.forkBaselineAssistantMessageId
+    ) {
+      nextRows.push({
+        kind: "fork-marker",
+        id: "conversation-fork-marker",
+      });
+    }
   }
 
   if (input.isWorking) {
@@ -697,6 +743,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
 
+    case "fork-marker":
+      return true;
+
     case "message": {
       const bm = b as typeof a;
       return (
@@ -706,7 +755,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount
+        a.revertTurnCount === bm.revertTurnCount &&
+        a.canForkConversation === bm.canForkConversation
       );
     }
   }

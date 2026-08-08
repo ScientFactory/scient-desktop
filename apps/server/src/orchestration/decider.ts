@@ -21,6 +21,9 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+// SCIENT-FORK:START — delegate the Scient-owned thread.fork command out of T3.
+import { forkThread } from "./scient-fork/forkDecider.ts";
+// SCIENT-FORK:END
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -1363,6 +1366,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       return [unsettledEvent, activityAppendedEvent];
     }
+
+    // SCIENT-FORK:START — all fork logic lives in scient-fork/forkDecider.ts.
+    case "thread.fork":
+      return yield* forkThread({ command, readModel });
+
+    case "thread.fork.complete": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.fork-completed",
+        payload: {
+          threadId: command.threadId,
+          checkpointStatus: command.checkpointStatus,
+          workspaceStatus: command.workspaceStatus,
+        },
+      };
+    }
+    // SCIENT-FORK:END
 
     default: {
       command satisfies never;

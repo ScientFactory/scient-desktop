@@ -54,6 +54,12 @@ import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
+// SCIENT-FORK:START
+import { ScientForkReactorLive } from "./orchestration/Layers/ScientForkReactor.ts";
+import { ScientForkContextBootstrapLive } from "./orchestration/scient-fork/ForkContextBootstrap.ts";
+import { ScientForkCheckpointBaselineLive } from "./orchestration/scient-fork/ForkCheckpointBaseline.ts";
+import { ScientForkAttachmentCopierLive } from "./orchestration/scient-fork/ForkAttachmentCopier.ts";
+// SCIENT-FORK:END
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -234,8 +240,21 @@ const PlatformServicesLive = Layer.unwrap(
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
+  // SCIENT-FORK:START — one narrow provider-neutral context seam.
+  Layer.provideMerge(
+    ProviderCommandReactorLive.pipe(Layer.provide(ScientForkContextBootstrapLive)),
+  ),
+  // SCIENT-FORK:END
   Layer.provideMerge(CheckpointReactorLive),
+  // SCIENT-FORK:START
+  Layer.provideMerge(
+    ScientForkReactorLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(ScientForkCheckpointBaselineLive, ScientForkAttachmentCopierLive),
+      ),
+    ),
+  ),
+  // SCIENT-FORK:END
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),

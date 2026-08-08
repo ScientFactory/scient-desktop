@@ -38,6 +38,7 @@ import {
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
+import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -68,6 +69,14 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateKind: "project",
         aggregateId: command.projectId,
       };
+    // SCIENT-FORK:START — thread.fork carries newThreadId, not threadId; route it
+    // to the new aggregate so span/receipt bookkeeping resolves an id.
+    case "thread.fork":
+      return {
+        aggregateKind: "thread",
+        aggregateId: command.newThreadId,
+      };
+    // SCIENT-FORK:END
     default:
       return {
         aggregateKind: "thread",
@@ -150,9 +159,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        // SCIENT-FORK:START — the normal command model intentionally omits
+        // heavy message/checkpoint bodies. Hydrate only the requested origin
+        // for a fork, inside the serialized command worker, so forks remain
+        // correct after a server restart without bloating every command.
+        const decisionReadModel =
+          envelope.command.type === "thread.fork"
+            ? yield* projectionSnapshotQuery
+                .getThreadDetailById(envelope.command.originThreadId)
+                .pipe(
+                  Effect.map((originOption) =>
+                    Option.isNone(originOption)
+                      ? commandReadModel
+                      : withForkOriginDetail(commandReadModel, originOption.value),
+                  ),
+                )
+            : commandReadModel;
+        // SCIENT-FORK:END
+
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
-          readModel: commandReadModel,
+          readModel: decisionReadModel,
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>

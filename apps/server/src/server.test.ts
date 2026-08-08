@@ -124,6 +124,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ScientForkReactor from "./orchestration/Services/ScientForkReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
@@ -415,6 +416,7 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    scientForkReactor?: Partial<ScientForkReactor.ScientForkReactor["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -838,6 +840,14 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      Layer.provide(
+        Layer.mock(ScientForkReactor.ScientForkReactor)({
+          start: () => Effect.void,
+          drain: Effect.void,
+          awaitCompletion: () => Effect.void,
+          ...options?.layers?.scientForkReactor,
+        }),
+      ),
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
@@ -5061,6 +5071,109 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("acknowledges websocket thread.fork only after provisioning completes", () =>
+    Effect.gen(function* () {
+      const provisioningStarted = yield* Deferred.make<void>();
+      const allowProvisioningToComplete = yield* Deferred.make<void>();
+      const rpcCompleted = yield* Deferred.make<void>();
+      const effects: string[] = [];
+      const forkThreadId = ThreadId.make("thread-fork-ready-gate");
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                effects.push(`dispatch:${command.type}`);
+                return { sequence: 41 };
+              }),
+          },
+          scientForkReactor: {
+            awaitCompletion: (threadId) =>
+              Effect.gen(function* () {
+                effects.push(`await:${threadId}`);
+                yield* Deferred.succeed(provisioningStarted, undefined);
+                yield* Deferred.await(allowProvisioningToComplete);
+                effects.push(`ready:${threadId}`);
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const rpcFiber = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.fork",
+              commandId: CommandId.make("cmd-thread-fork-ready-gate"),
+              originThreadId: ThreadId.make("thread-fork-ready-gate-origin"),
+              newThreadId: forkThreadId,
+              sourceAssistantMessageId: MessageId.make("assistant-fork-ready-gate"),
+              workspaceMode: "local",
+            }).pipe(
+              Effect.tap(() => Deferred.succeed(rpcCompleted, undefined)),
+              Effect.forkChild,
+            );
+
+            yield* Deferred.await(provisioningStarted);
+            assert.isTrue(Option.isNone(yield* Deferred.poll(rpcCompleted)));
+            yield* Deferred.succeed(allowProvisioningToComplete, undefined);
+            return yield* Fiber.join(rpcFiber);
+          }),
+        ),
+      );
+
+      assert.equal(response.sequence, 41);
+      assert.deepEqual(effects, [
+        "dispatch:thread.fork",
+        `await:${forkThreadId}`,
+        `ready:${forkThreadId}`,
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns websocket thread.fork provisioning failures to the caller", () =>
+    Effect.gen(function* () {
+      const forkThreadId = ThreadId.make("thread-fork-failed-gate");
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () => Effect.succeed({ sequence: 42 }),
+          },
+          scientForkReactor: {
+            awaitCompletion: () =>
+              Effect.fail(
+                new ScientForkReactor.ScientForkCompletionError({
+                  threadId: forkThreadId,
+                  detail: "Fork workspace provisioning failed.",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-thread-fork-failed-gate"),
+            originThreadId: ThreadId.make("thread-fork-failed-gate-origin"),
+            newThreadId: forkThreadId,
+            sourceAssistantMessageId: MessageId.make("assistant-fork-failed-gate"),
+            workspaceMode: "new-worktree",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "Fork workspace provisioning failed.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

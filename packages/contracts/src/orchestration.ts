@@ -305,6 +305,23 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
 });
 export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
 
+// SCIENT-FORK:START — conversation completion is independent from Git state.
+export const OrchestrationForkBoundary = Schema.Struct({
+  // Turn zero has no provider turn identity yet. Later boundaries carry the
+  // completed turn id so clients can reject a stale count after a rewrite.
+  turnId: Schema.NullOr(TurnId),
+  conversationTurnCount: NonNegativeInt,
+  userMessageId: Schema.NullOr(MessageId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  completedAt: IsoDateTime,
+  checkpointTurnCount: Schema.NullOr(NonNegativeInt),
+  checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
+});
+export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
+export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
+  boundary.conversationTurnCount === 0 && boundary.turnId !== null;
+// SCIENT-FORK:END
+
 export const OrchestrationThreadActivityTone = Schema.Literals([
   "info",
   "tool",
@@ -393,6 +410,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  // Optional on the wire so older servers and cached snapshots remain readable.
+  // Unlike checkpoints, these boundaries also exist for completed non-Git turns.
+  conversationForkBoundaries: Schema.optional(Schema.Array(OrchestrationForkBoundary)),
   session: Schema.NullOr(OrchestrationSession),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
@@ -872,6 +892,59 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// SCIENT-FORK:START — Scient-owned conversation-fork command (additive union member).
+// Forks the origin thread at a completed turn boundary into a NEW independent
+// thread. The origin is never mutated. `createdAt` is intentionally absent: the
+// decider stamps fork/lineage events with server time (like thread.delete),
+// while re-emitted prefix events preserve their original message timestamps.
+// Workspace substrate choice, made explicitly at fork time (the product "always
+// asks"): "new-worktree" provisions a fresh worktree branched from the fork
+// point; "local" reuses the origin thread's workspace.
+export const OrchestrationForkWorkspaceMode = Schema.Literals(["new-worktree", "local"]);
+export type OrchestrationForkWorkspaceMode = typeof OrchestrationForkWorkspaceMode.Type;
+
+// Provider continuity is explicit instead of being folded into a vague overall
+// "fidelity" label. Exact-boundary forks start a fresh provider session and
+// inject the retained transcript once with the first post-fork turn. This avoids
+// leaking messages after the selected boundary from provider-native tip forks.
+const OrchestrationForkProviderModeWire = Schema.Literals(["transcript-bootstrap", "cold-start"]);
+export const OrchestrationForkProviderMode = OrchestrationForkProviderModeWire.pipe(
+  Schema.decodeTo(
+    Schema.Literal("transcript-bootstrap"),
+    SchemaTransformation.transform<
+      "transcript-bootstrap",
+      typeof OrchestrationForkProviderModeWire.Type
+    >({
+      decode: () => "transcript-bootstrap",
+      encode: () => "transcript-bootstrap",
+    }),
+  ),
+);
+export type OrchestrationForkProviderMode = typeof OrchestrationForkProviderMode.Type;
+
+export const OrchestrationForkCheckpointStatus = Schema.Literals(["ready", "unavailable"]);
+export type OrchestrationForkCheckpointStatus = typeof OrchestrationForkCheckpointStatus.Type;
+
+export const OrchestrationForkWorkspaceStatus = Schema.Literals([
+  "project-root",
+  "shared",
+  "worktree",
+]);
+export type OrchestrationForkWorkspaceStatus = typeof OrchestrationForkWorkspaceStatus.Type;
+
+export const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  originThreadId: ThreadId,
+  newThreadId: ThreadId,
+  // The clicked completed assistant response is the public boundary. The
+  // server resolves its internal turn/count/checkpoint authoritatively.
+  sourceAssistantMessageId: MessageId,
+  workspaceMode: OrchestrationForkWorkspaceMode,
+});
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
+// SCIENT-FORK:END
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -896,6 +969,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  // SCIENT-FORK:START
+  ThreadForkCommand,
+  // SCIENT-FORK:END
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -924,6 +1000,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  // SCIENT-FORK:START
+  ThreadForkCommand,
+  // SCIENT-FORK:END
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -992,6 +1071,18 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// SCIENT-FORK:START — internal command: the durable fork worker reports exactly
+// which code-state substrates it established. `threadId` is the NEW thread.
+const ThreadForkCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  checkpointStatus: OrchestrationForkCheckpointStatus,
+  workspaceStatus: OrchestrationForkWorkspaceStatus,
+  createdAt: IsoDateTime,
+});
+// SCIENT-FORK:END
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1008,6 +1099,9 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  // SCIENT-FORK:START
+  ThreadForkCompleteCommand,
+  // SCIENT-FORK:END
   ThreadTitleRegenerationCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
@@ -1048,6 +1142,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  // SCIENT-FORK:START
+  "thread.forked",
+  "thread.fork-completed",
+  // SCIENT-FORK:END
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1247,6 +1345,55 @@ export const ThreadRevertedPayload = Schema.Struct({
   turnCount: NonNegativeInt,
 });
 
+// SCIENT-FORK:START — immutable fork lineage plus explicit provider behavior.
+export const ThreadForkAttachmentCopy = Schema.Struct({
+  source: ChatAttachment,
+  target: ChatAttachment,
+});
+export type ThreadForkAttachmentCopy = typeof ThreadForkAttachmentCopy.Type;
+
+export const ThreadForkedPayload = Schema.Struct({
+  originThreadId: ThreadId,
+  newThreadId: ThreadId,
+  forkAtTurnId: Schema.NullOr(TurnId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(TurnId.make("legacy-fork-boundary"))),
+  ),
+  forkAtTurnCount: NonNegativeInt,
+  sourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  baselineTurnId: TurnId.pipe(
+    Schema.withDecodingDefault(Effect.succeed(TurnId.make("legacy-fork-baseline"))),
+  ),
+  baselineUserMessageId: Schema.NullOr(MessageId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  baselineAssistantMessageId: Schema.NullOr(MessageId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  workspaceMode: OrchestrationForkWorkspaceMode,
+  providerMode: OrchestrationForkProviderMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("transcript-bootstrap" as const)),
+  ),
+  attachmentCopies: Schema.Array(ThreadForkAttachmentCopy).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  createdAt: IsoDateTime,
+});
+export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
+
+export const ThreadForkCompletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  checkpointStatus: OrchestrationForkCheckpointStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unavailable" as const)),
+  ),
+  workspaceStatus: OrchestrationForkWorkspaceStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed("project-root" as const)),
+  ),
+});
+export type ThreadForkCompletedPayload = typeof ThreadForkCompletedPayload.Type;
+// SCIENT-FORK:END
+
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
@@ -1445,6 +1592,18 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  // SCIENT-FORK:START
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.forked"),
+    payload: ThreadForkedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.fork-completed"),
+    payload: ThreadForkCompletedPayload,
+  }),
+  // SCIENT-FORK:END
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 

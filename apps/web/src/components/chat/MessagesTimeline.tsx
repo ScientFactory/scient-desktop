@@ -90,6 +90,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -138,6 +139,11 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  // SCIENT-FORK:START — optional so non-fork callers/tests are unaffected.
+  // `| undefined` is explicit for exactOptionalPropertyTypes: the shared-state
+  // object always carries the key (possibly undefined) so rows can gate on it.
+  onForkAssistantMessage?: ((messageId: MessageId) => void) | undefined;
+  // SCIENT-FORK:END
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -217,6 +223,11 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  hasForkBaseline?: boolean;
+  forkBaselineAssistantMessageId?: MessageId | null;
+  // SCIENT-FORK:START
+  onForkAssistantMessage?: (messageId: MessageId) => void;
+  // SCIENT-FORK:END
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -263,6 +274,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  hasForkBaseline,
+  forkBaselineAssistantMessageId,
+  // SCIENT-FORK:START
+  onForkAssistantMessage,
+  // SCIENT-FORK:END
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -405,6 +421,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        hasForkBaseline,
+        forkBaselineAssistantMessageId,
       }),
     [
       timelineEntries,
@@ -416,6 +434,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
+      hasForkBaseline,
+      forkBaselineAssistantMessageId,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -511,6 +531,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      // SCIENT-FORK:START — expose the fork trigger to rows via context.
+      onForkAssistantMessage,
+      // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -527,6 +550,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      // SCIENT-FORK:START
+      onForkAssistantMessage,
+      // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -947,6 +973,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "fork-marker" ? <ForkMarkerTimelineRow /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -957,6 +984,18 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+function ForkMarkerTimelineRow() {
+  return (
+    <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
+      <div className="h-px flex-1 bg-border/60" />
+      <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
+        Conversation forked here
+      </span>
+      <div className="h-px flex-1 bg-border/60" />
+    </div>
+  );
+}
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -1130,6 +1169,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
+            {row.canForkConversation === true && ctx.onForkAssistantMessage ? (
+              <ScientForkMessageButton
+                onFork={() => ctx.onForkAssistantMessage?.(row.message.id)}
+              />
+            ) : null}
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger

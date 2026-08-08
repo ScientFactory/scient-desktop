@@ -2,6 +2,7 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
+  isForkBaselineBoundary,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -76,6 +77,7 @@ import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
+  isStandaloneForkSlashCommand,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
@@ -93,6 +95,12 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
+import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
+import {
+  ScientForkWorkspaceModeDialog,
+  type ForkWorktreeAvailability,
+  type ScientForkSource,
+} from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -244,7 +252,10 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
-import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import {
+  findLatestCompletedAssistantMessageId,
+  resolveTimelineIsAtEnd,
+} from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -1486,6 +1497,16 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const {
+    errorUpdate: forkErrorUpdate,
+    isForking: isForkingThread,
+    forkFromAssistantMessage,
+  } = useScientThreadFork({ origin: activeThread ?? null, navigate });
+  const [forkCommandTarget, setForkCommandTarget] = useState<{
+    readonly threadId: ThreadId;
+    readonly sourceAssistantMessageId: MessageId;
+    readonly source: ScientForkSource;
+  } | null>(null);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -1500,6 +1521,11 @@ function ChatViewContent(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
+  useEffect(() => {
+    setForkCommandTarget((current) =>
+      current && current.threadId !== activeThreadId ? null : current,
+    );
+  }, [activeThreadId]);
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
@@ -2238,7 +2264,8 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking =
+    phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint || isForkingThread;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2546,6 +2573,35 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const runningTurnId =
+    activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null;
+  const latestCompletedAssistantMessageId = useMemo(
+    () =>
+      findLatestCompletedAssistantMessageId({
+        timelineEntries,
+        latestTurn: activeLatestTurn,
+        runningTurnId,
+      }),
+    [activeLatestTurn, runningTurnId, timelineEntries],
+  );
+  const onForkConversation = useCallback(() => {
+    if (latestCompletedAssistantMessageId === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Fork unavailable",
+          description: "This conversation does not expose a completed fork boundary yet.",
+        }),
+      );
+      return;
+    }
+    if (!activeThreadId) return;
+    setForkCommandTarget({
+      threadId: activeThreadId,
+      sourceAssistantMessageId: latestCompletedAssistantMessageId,
+      source: "latest-response",
+    });
+  }, [activeThreadId, latestCompletedAssistantMessageId]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -2609,6 +2665,20 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const forkWorktreeAvailability: ForkWorktreeAvailability = useMemo(() => {
+    if (!isGitRepo) {
+      return { available: false, reason: "no-git-repository" };
+    }
+
+    const target = forkCommandTarget?.threadId === activeThreadId ? forkCommandTarget : null;
+    const checkpoint = target
+      ? turnDiffSummaryByAssistantMessageId.get(target.sourceAssistantMessageId)
+      : null;
+    if (checkpoint?.status === "ready" && checkpoint.checkpointRef !== null) {
+      return { available: true };
+    }
+    return { available: false, reason: "no-checkpoint" };
+  }, [activeThreadId, forkCommandTarget, isGitRepo, turnDiffSummaryByAssistantMessageId]);
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -2724,6 +2794,11 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
+  useEffect(() => {
+    if (forkErrorUpdate) {
+      setThreadError(forkErrorUpdate.threadId, forkErrorUpdate.message);
+    }
+  }, [forkErrorUpdate, setThreadError]);
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -4829,7 +4904,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
+    if (!sendCtx) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -4880,6 +4955,25 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
+    const standaloneForkCommand =
+      !directAnnotation &&
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      isStandaloneForkSlashCommand(trimmed);
+    if (standaloneForkCommand) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      onForkConversation();
+      return;
+    }
+    if (!sendCtx.providerAvailable) {
+      notifyDirectAnnotationAttached();
+      return;
+    }
     if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -5899,6 +5993,18 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const onForkAssistantMessage = useCallback(
+    (sourceAssistantMessageId: MessageId) => {
+      if (!activeThreadId) return;
+      setForkCommandTarget({
+        threadId: activeThreadId,
+        sourceAssistantMessageId,
+        source: "this-response",
+      });
+    },
+    [activeThreadId],
+  );
+  // SCIENT-FORK:END
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -6089,17 +6195,23 @@ function ChatViewContent(props: ChatViewProps) {
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}
-                runningTurnId={
-                  activeThread.session?.status === "running"
-                    ? activeThread.session.activeTurnId
-                    : null
-                }
+                runningTurnId={runningTurnId}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                hasForkBaseline={Boolean(
+                  activeThread?.conversationForkBoundaries?.some(isForkBaselineBoundary),
+                )}
+                forkBaselineAssistantMessageId={
+                  activeThread?.conversationForkBoundaries?.find(isForkBaselineBoundary)
+                    ?.assistantMessageId ?? null
+                }
                 onRevertUserMessage={onRevertUserMessage}
+                // SCIENT-FORK:START
+                onForkAssistantMessage={onForkAssistantMessage}
+                // SCIENT-FORK:END
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
@@ -6246,6 +6358,7 @@ function ChatViewContent(props: ChatViewProps) {
                             onSend={onSend}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
+                            onForkConversation={onForkConversation}
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={
                               onSelectActivePendingUserInputOption
@@ -6460,6 +6573,23 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+      <ScientForkWorkspaceModeDialog
+        open={forkCommandTarget?.threadId === activeThreadId}
+        disabled={isForkingThread}
+        source={forkCommandTarget?.source ?? "latest-response"}
+        worktreeAvailability={forkWorktreeAvailability}
+        onOpenChange={(open) => {
+          if (!open && !isForkingThread) {
+            setForkCommandTarget(null);
+          }
+        }}
+        onSelect={(workspaceMode) => {
+          const target = forkCommandTarget;
+          if (!target || target.threadId !== activeThreadId) return;
+          setForkCommandTarget(null);
+          void forkFromAssistantMessage(target.sourceAssistantMessageId, workspaceMode);
+        }}
+      />
     </div>
   );
 }

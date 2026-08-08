@@ -134,6 +134,7 @@ already dispatch.
 - [Workspace layout](./workspace-layout.md), [Glossary](./glossary.md)
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
 - [Resource telemetry](./resource-telemetry.md)
+- [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 - [D4 bootstrap record](./scient-next-d4-bootstrap.md)
 

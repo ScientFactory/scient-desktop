@@ -6,6 +6,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  isStandaloneForkSlashCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
   shouldSubmitComposerOnEnter,
@@ -370,5 +371,15 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+});
+
+describe("isStandaloneForkSlashCommand", () => {
+  it("recognizes a standalone /fork command", () => {
+    expect(isStandaloneForkSlashCommand(" /FoRk ")).toBe(true);
+  });
+
+  it("does not consume a message that starts with /fork", () => {
+    expect(isStandaloneForkSlashCommand("/fork explain this")).toBe(false);
   });
 });

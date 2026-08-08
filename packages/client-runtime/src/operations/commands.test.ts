@@ -1,6 +1,7 @@
 import {
   CommandId,
   EnvironmentId,
+  MessageId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ThreadId,
@@ -24,6 +25,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
   createProject,
+  forkThread,
   settleThread,
   stopThreadSession,
   unsettleThread,
@@ -167,6 +169,31 @@ describe("environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("uses the destination thread as the idempotency key for a fork", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* forkThread({
+        originThreadId: ThreadId.make("thread-origin"),
+        newThreadId: ThreadId.make("thread-fork"),
+        sourceAssistantMessageId: MessageId.make("assistant-3"),
+        workspaceMode: "new-worktree",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.fork",
+          commandId: "client:thread-fork:thread-fork",
+          originThreadId: "thread-origin",
+          newThreadId: "thread-fork",
+          sourceAssistantMessageId: "assistant-3",
+          workspaceMode: "new-worktree",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

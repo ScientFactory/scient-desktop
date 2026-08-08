@@ -23,6 +23,10 @@ import {
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
+  // SCIENT-FORK:START
+  type ForkThreadInput,
+  forkThread,
+  // SCIENT-FORK:END
   archiveThread,
   createThread,
   deleteThread,
@@ -67,6 +71,9 @@ export type {
   UnsettleThreadInput,
   UnsnoozeThreadInput,
   UpdateThreadMetadataInput,
+  // SCIENT-FORK:START
+  ForkThreadInput,
+  // SCIENT-FORK:END
 } from "../operations/commands.ts";
 
 export function createThreadEnvironmentAtoms<R, E>(
@@ -199,5 +206,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // SCIENT-FORK:START — fork serializes on the ORIGIN thread (its input has no
+    // `threadId`, so it uses its own concurrency key rather than the shared one).
+    fork: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork",
+      execute: (input: ForkThreadInput) => forkThread(input),
+      scheduler,
+      concurrency: {
+        mode: "serial" as const,
+        key: ({ environmentId, input }: { environmentId: string; input: ForkThreadInput }) =>
+          JSON.stringify([environmentId, input.originThreadId]),
+      },
+    }),
+    // SCIENT-FORK:END
   };
 }

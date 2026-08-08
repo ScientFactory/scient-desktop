@@ -225,6 +225,31 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry({
+  id = "assistant-1",
+  turnId = "turn-1",
+  streaming = false,
+}: {
+  readonly id?: string;
+  readonly turnId?: string;
+  readonly streaming?: boolean;
+} = {}) {
+  return {
+    id: `entry-${id}`,
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: MessageId.make(id),
+      role: "assistant" as const,
+      text: "Completed response",
+      turnId: TurnId.make(turnId),
+      createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      streaming,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
@@ -240,6 +265,41 @@ describe("MessagesTimeline", () => {
     expect(compactMarkup).not.toContain("chat-timeline-scroll-fade");
     expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
+  });
+
+  it("shows Fork beside a completed assistant response, including while a newer turn runs", () => {
+    const userOnly = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Fork from here")]}
+        onForkAssistantMessage={() => {}}
+      />,
+    );
+    const completedAssistant = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry()]}
+        runningTurnId={TurnId.make("turn-2")}
+        onForkAssistantMessage={() => {}}
+        isWorking
+      />,
+    );
+
+    expect(userOnly).not.toContain('aria-label="Fork conversation from this response"');
+    expect(completedAssistant).toContain('aria-label="Fork conversation from this response"');
+  });
+
+  it("does not expose Fork for a streaming assistant response", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry({ streaming: true })]}
+        runningTurnId={TurnId.make("turn-1")}
+        onForkAssistantMessage={() => {}}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Fork conversation from this response"');
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
