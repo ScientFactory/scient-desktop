@@ -26,6 +26,16 @@ export const downloadVoiceModel = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const cancelVoiceModelDownload = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.voice.cancelModelDownload")(function* () {
+    const voice = yield* DesktopVoice.DesktopVoice;
+    yield* voice.cancelModelDownload;
+  }),
+});
+
 export const removeVoiceModel = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_REMOVE_MODEL_CHANNEL,
   payload: Schema.Void,
@@ -59,6 +69,7 @@ export const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
 export const methods = [
   getVoiceModelState,
   downloadVoiceModel,
+  cancelVoiceModelDownload,
   removeVoiceModel,
   transcribeVoice,
   cancelVoiceTranscription,

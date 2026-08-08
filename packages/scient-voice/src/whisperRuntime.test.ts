@@ -141,6 +141,20 @@ class FakeChild extends NodeEvents.EventEmitter {
   }
 }
 
+class ControlledExitChild extends FakeChild {
+  override kill(signal?: NodeJS.Signals | number): boolean {
+    this.killed = true;
+    if (signal === "SIGKILL") this.finishExit();
+    return true;
+  }
+
+  finishExit(): void {
+    if (this.exitCode !== null) return;
+    this.exitCode = 0;
+    this.emit("exit", 0, null);
+  }
+}
+
 interface Harness {
   readonly runtime: LocalWhisperRuntime;
   readonly spawnCalls: Array<{
@@ -153,14 +167,13 @@ interface Harness {
   readonly cleanup: () => Promise<void>;
 }
 
-async function makeHarness(): Promise<Harness> {
+async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness> {
   const runtimeDirectory = await NodeFSP.mkdtemp(
     NodePath.join(NodeOS.tmpdir(), "scient-voice-rt-"),
   );
   await NodeFSP.writeFile(NodePath.join(runtimeDirectory, "whisper-server"), "#!/bin/sh\n");
 
   const spawnCalls: Harness["spawnCalls"] = [];
-  const child = new FakeChild();
   const spawnImpl: WhisperSpawn = (command, args, options) => {
     spawnCalls.push({ command, args, options });
     return child as unknown as NodeChildProcess.ChildProcessWithoutNullStreams;
@@ -214,8 +227,8 @@ afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((h) => h.cleanup()));
 });
 
-async function harness(): Promise<Harness> {
-  const h = await makeHarness();
+async function harness(child?: FakeChild): Promise<Harness> {
+  const h = await makeHarness(child);
   harnesses.push(h);
   return h;
 }
@@ -299,6 +312,26 @@ describe("LocalWhisperRuntime lifecycle", () => {
     await h.runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal });
     await expect(h.runtime.stopIdle()).resolves.toBeUndefined();
     expect(h.spawnCalls).toHaveLength(1);
+  });
+
+  it("waits for the helper process to exit during disposal", async () => {
+    const child = new ControlledExitChild();
+    const h = await harness(child);
+    await h.runtime.transcribe("/model.bin", CLIP, {
+      signal: new AbortController().signal,
+    });
+
+    let disposed = false;
+    const disposal = h.runtime.dispose().then(() => {
+      disposed = true;
+    });
+    await Promise.resolve();
+    expect(child.killed).toBe(true);
+    expect(disposed).toBe(false);
+
+    child.finishExit();
+    await disposal;
+    expect(disposed).toBe(true);
   });
 
   it("fails installation checks when the executable is missing", async () => {

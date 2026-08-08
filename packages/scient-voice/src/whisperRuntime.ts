@@ -276,6 +276,7 @@ export class LocalWhisperRuntime {
   }
 
   async dispose(): Promise<void> {
+    const child = this.child;
     if (!this.disposed) {
       this.disposed = true;
       this.lifecycleController.abort(
@@ -285,21 +286,14 @@ export class LocalWhisperRuntime {
       this.stopProcess();
     }
     await this.queueTail;
+    await stopAndWaitForChild(child);
   }
 
   async stopIdle(): Promise<void> {
     if (this.activeRequests > 0) {
       throw new WhisperRuntimeError("busy", "Offline voice transcription is active.");
     }
-    const child = this.child;
-    this.stopProcess();
-    if (!child || child.exitCode !== null) return;
-
-    if (await waitForChildExit(child, STOP_TIMEOUT_MS)) return;
-    if (child.exitCode === null) child.kill("SIGKILL");
-    if (!(await waitForChildExit(child, FORCE_STOP_TIMEOUT_MS))) {
-      throw new Error("Offline voice helper did not stop before model maintenance.");
-    }
+    await stopAndWaitForChild(this.stopProcess());
   }
 
   private async transcribeNow(
@@ -468,13 +462,26 @@ export class LocalWhisperRuntime {
     this.idleTimer = null;
   }
 
-  private stopProcess(): void {
+  private stopProcess(): NodeChildProcess.ChildProcessWithoutNullStreams | null {
     this.clearIdleTimer();
     const child = this.child;
     this.child = null;
     this.endpoint = null;
     this.activeModelPath = null;
     if (child && child.exitCode === null && !child.killed) child.kill();
+    return child;
+  }
+}
+
+async function stopAndWaitForChild(
+  child: NodeChildProcess.ChildProcessWithoutNullStreams | null,
+): Promise<void> {
+  if (!child || child.exitCode !== null) return;
+  if (!child.killed) child.kill();
+  if (await waitForChildExit(child, STOP_TIMEOUT_MS)) return;
+  if (child.exitCode === null) child.kill("SIGKILL");
+  if (!(await waitForChildExit(child, FORCE_STOP_TIMEOUT_MS))) {
+    throw new Error("Offline voice helper did not stop.");
   }
 }
 

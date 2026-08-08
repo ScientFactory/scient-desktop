@@ -1086,6 +1086,8 @@ export interface DesktopVoiceBridge {
   getModelState: () => Promise<VoiceModelState>;
   /** Download + verify the local model. Resolves with the resulting state. */
   downloadModel: () => Promise<VoiceModelState>;
+  /** Cancel the in-flight model download, preserving resumable partial data. */
+  cancelModelDownload: () => Promise<void>;
   /** Remove the installed local model. Resolves with the resulting state. */
   removeModel: () => Promise<VoiceModelState>;
   /** Transcribe one validated clip. Rejects with a safe, user-facing message. */

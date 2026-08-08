@@ -15,7 +15,14 @@ import {
 
 import { ComposerControl, ComposerControlIcon } from "../../components/chat/ComposerControl.tsx";
 import { Button } from "../../components/ui/button.tsx";
+import {
+  Tooltip,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../../components/ui/tooltip.tsx";
 import { cn } from "../../lib/utils.ts";
+import { VOICE_WAVEFORM_LEVEL_COUNT } from "./useVoiceRecorder.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 
@@ -39,11 +46,11 @@ export const MODEL_DOWNLOAD_LABEL = "Set up voice (~182 MB)";
 export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 
 function barHeight(level: number): number {
-  return Math.max(3, Math.min(20, Math.round(level * 80)));
+  return Math.max(3, Math.min(26, Math.round(level * 110)));
 }
 
 const WAVEFORM_BAR_KEYS = Array.from(
-  { length: 48 },
+  { length: VOICE_WAVEFORM_LEVEL_COUNT },
   (_, index) => `scient-voice-waveform-${index}`,
 );
 
@@ -54,7 +61,7 @@ const VoiceWaveform = memo(function VoiceWaveform({
 }): ReactNode {
   return (
     <div
-      className="flex h-6 min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
+      className="flex h-7 min-w-0 shrink items-center gap-0.5 overflow-hidden"
       aria-hidden="true"
     >
       {levels.map((level, index) => (
@@ -103,35 +110,65 @@ export function ScientVoiceComposerControl({
       <div className="absolute inset-0 z-10 flex items-center gap-2 bg-background px-3 pb-3 sm:px-4 sm:pb-4">
         {controller.phase === "recording" ? (
           <>
-            <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
-            <VoiceWaveform levels={controller.levels} />
-            <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-              {formatVoiceTimer(controller.elapsedMs)}
-            </span>
-            <Button
-              aria-label="Cancel recording (Esc)"
-              onClick={() => void controller.cancel()}
-              size="icon-sm"
-              variant="ghost"
-            >
-              <XIcon />
-            </Button>
-            <Button
-              aria-label="Insert transcription (Enter)"
-              onClick={() => void controller.stop(false)}
-              size="icon-sm"
-              variant="ghost"
-            >
-              <CornerDownLeftIcon />
-            </Button>
-            <Button
-              aria-label="Transcribe and send"
-              onClick={() => void controller.stop(true)}
-              size="icon-sm"
-              className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              <ArrowUpIcon />
-            </Button>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
+              <VoiceWaveform levels={controller.levels} />
+              <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+                {formatVoiceTimer(controller.elapsedMs)}
+              </span>
+              <span className="sr-only" role="status">
+                Recording
+              </span>
+            </div>
+            <TooltipProvider delay={40} closeDelay={0} timeout={300}>
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Cancel recording (Esc)"
+                        onClick={() => void controller.cancel()}
+                        size="icon-sm"
+                        variant="ghost"
+                      />
+                    }
+                  >
+                    <XIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup>Cancel recording (Esc)</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Transcribe and insert (Enter)"
+                        onClick={() => void controller.stop(false)}
+                        size="icon-sm"
+                        variant="ghost"
+                      />
+                    }
+                  >
+                    <CornerDownLeftIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Transcribe and send"
+                        onClick={() => void controller.stop(true)}
+                        size="icon-sm"
+                        className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+                      />
+                    }
+                  >
+                    <ArrowUpIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup>Transcribe and send</TooltipPopup>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
           </>
         ) : (
           <>
@@ -181,11 +218,30 @@ export function ScientVoiceComposerControl({
           </Button>
         </>
       ) : controller.phase === "downloading" ? (
-        <div aria-live="polite" className="flex items-center gap-2" role="status">
-          <Loader2Icon aria-hidden="true" className="size-4 shrink-0 animate-spin" />
-          <span className="text-muted-foreground text-xs">
-            Downloading voice model… {controller.downloadPercent}%
-          </span>
+        <div className="flex items-center gap-2">
+          <div aria-live="polite" className="flex items-center gap-2" role="status">
+            <Loader2Icon aria-hidden="true" className="size-4 shrink-0 animate-spin" />
+            <span className="text-muted-foreground text-xs">
+              Downloading voice model… {controller.downloadPercent}%
+            </span>
+          </div>
+          <TooltipProvider delay={40} closeDelay={0} timeout={300}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Cancel voice setup"
+                    onClick={() => void controller.cancel()}
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <XIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Cancel voice setup</TooltipPopup>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       ) : (
         <>

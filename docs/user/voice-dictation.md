@@ -5,7 +5,8 @@ the local computer.
 
 1. Select the microphone in the chat composer.
 2. On first use, choose **Set up voice**. Scient downloads and verifies the
-   pinned multilingual model (about 182 MB).
+   pinned multilingual model (about 182 MB). You can cancel setup and resume
+   the download later.
 3. Allow microphone access when macOS, Windows, or Linux asks.
 4. While recording, choose cancel, insert the transcript, or transcribe and
    send. `Esc` cancels and `Enter` inserts.

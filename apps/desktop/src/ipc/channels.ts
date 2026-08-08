@@ -83,6 +83,7 @@ export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 // Scient local voice transcription (desktop-only).
 export const VOICE_GET_MODEL_STATE_CHANNEL = "desktop:voice-get-model-state";
 export const VOICE_DOWNLOAD_MODEL_CHANNEL = "desktop:voice-download-model";
+export const VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL = "desktop:voice-cancel-model-download";
 export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";

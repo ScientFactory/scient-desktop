@@ -263,11 +263,15 @@ export function useScientVoiceController({
 
   const cancel = useCallback(async (): Promise<void> => {
     const operation = (operationRef.current += 1);
+    const cancelDownload =
+      phaseRef.current === "downloading"
+        ? client?.cancelModelDownload().catch(() => undefined)
+        : undefined;
     const cancelHost =
       phaseRef.current === "transcribing"
         ? client?.cancelTranscription().catch(() => undefined)
         : undefined;
-    await Promise.all([cancelRecording(), cancelHost]);
+    await Promise.all([cancelRecording(), cancelDownload, cancelHost]);
     if (operation !== operationRef.current) return;
     setElapsedMs(0);
     setErrorMessage(null);

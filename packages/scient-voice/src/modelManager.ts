@@ -297,7 +297,6 @@ export class VoiceModelManager {
     await NodeFSP.writeFile(pendingReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {
       mode: 0o600,
     });
-    await NodeFSP.rm(this.receiptPath, { force: true });
     await NodeFSP.rename(pendingReceiptPath, this.receiptPath);
     return this.modelPath;
   }

@@ -58,11 +58,35 @@ function toVoiceRequestError(cause: unknown): VoiceRequestError {
   });
 }
 
+export function toVoiceModelRequestError(
+  cause: unknown,
+  operation: "download" | "remove",
+): VoiceRequestError {
+  if (isVoiceRequestError(cause)) return cause;
+  if (isVoiceTranscriptionError(cause)) {
+    return new VoiceRequestError({ kind: cause.kind, safeMessage: cause.safeMessage });
+  }
+  if (cause instanceof Error && cause.name === "AbortError") {
+    return new VoiceRequestError({
+      kind: "cancelled",
+      safeMessage: "Offline voice setup was cancelled.",
+    });
+  }
+  return new VoiceRequestError({
+    kind: "provider-error",
+    safeMessage:
+      operation === "download"
+        ? "Offline voice setup failed. Please try again."
+        : "The offline voice model could not be removed. Please try again.",
+  });
+}
+
 export class DesktopVoice extends Context.Service<
   DesktopVoice,
   {
     readonly getModelState: Effect.Effect<VoiceModelState>;
     readonly downloadModel: Effect.Effect<VoiceModelState, VoiceRequestError>;
+    readonly cancelModelDownload: Effect.Effect<void>;
     readonly removeModel: Effect.Effect<VoiceModelState, VoiceRequestError>;
     readonly cancelTranscription: Effect.Effect<void>;
     readonly transcribe: (
@@ -106,6 +130,7 @@ export const make = Effect.gen(function* () {
 
   let maintenanceActive = false;
   let downloadInFlight = false;
+  let downloadController: AbortController | null = null;
   let activeController: AbortController | null = null;
   let activeTranscription: Promise<unknown> | null = null;
 
@@ -121,7 +146,13 @@ export const make = Effect.gen(function* () {
 
   // Tear the whisper child process down with the app. Swallow disposal errors
   // in the promise itself so the finalizer never dies.
-  yield* Effect.addFinalizer(() => Effect.promise(() => engine.dispose().catch(() => undefined)));
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(async () => {
+      downloadController?.abort();
+      activeController?.abort();
+      await engine.dispose().catch(() => undefined);
+    }),
+  );
 
   const getPublicModelState = async (): Promise<VoiceModelState> => {
     if (!(await engine.isRuntimeInstalled())) {
@@ -137,7 +168,9 @@ export const make = Effect.gen(function* () {
       if (downloadInFlight) {
         return yield* Effect.promise(getPublicModelState);
       }
+      const controller = new AbortController();
       downloadInFlight = true;
+      downloadController = controller;
       return yield* Effect.tryPromise({
         try: async () => {
           if (!(await engine.isRuntimeInstalled())) {
@@ -146,11 +179,22 @@ export const make = Effect.gen(function* () {
               safeMessage: RUNTIME_UNAVAILABLE_MESSAGE,
             });
           }
-          await engine.ensureModel(undefined, new AbortController().signal);
+          await engine.ensureModel(undefined, controller.signal);
           return getPublicModelState();
         },
-        catch: toVoiceRequestError,
-      }).pipe(Effect.ensuring(Effect.sync(() => (downloadInFlight = false))));
+        catch: (cause) => toVoiceModelRequestError(cause, "download"),
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            downloadInFlight = false;
+            if (downloadController === controller) downloadController = null;
+          }),
+        ),
+      );
+    }),
+
+    cancelModelDownload: Effect.sync(() => {
+      downloadController?.abort();
     }),
 
     removeModel: Effect.gen(function* () {
@@ -162,7 +206,7 @@ export const make = Effect.gen(function* () {
           await engine.removeModel();
           return getPublicModelState();
         },
-        catch: toVoiceRequestError,
+        catch: (cause) => toVoiceModelRequestError(cause, "remove"),
       }).pipe(Effect.ensuring(Effect.sync(() => (maintenanceActive = false))));
     }),
 

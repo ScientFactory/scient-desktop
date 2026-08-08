@@ -31,6 +31,8 @@ the inherited preload, or the artifact orchestrator.
 - A generation token invalidates permission prompts, model setup, recording,
   and transcription that complete after cancel, dismiss, unmount, or a newer
   operation.
+- Every recorder start owns its microphone stream and audio graph, so cleanup
+  from an older start cannot stop a newer recording.
 - A normal stop flushes the AudioWorklet's final partial frame before the graph
   is closed. Cancel intentionally discards it.
 - The recorder requests a 24 kHz AudioContext. If the platform chooses another
@@ -45,6 +47,8 @@ the inherited preload, or the artifact orchestrator.
 - A model is trusted only after size, GGML header, and SHA-256 verification.
   The first status check in each app process re-hashes the installed model;
   later checks reuse a size/mtime cache for that process.
+- Model downloads are cancellable and resumable. App shutdown aborts an active
+  download and waits for the native helper to exit.
 
 ## Runtime provenance and packaging
 

@@ -13,6 +13,7 @@ export function makeDesktopVoiceBridge(
   return {
     getModelState: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL),
     downloadModel: () => ipcRenderer.invoke(IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL),
+    cancelModelDownload: () => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL),
     removeModel: () => ipcRenderer.invoke(IpcChannels.VOICE_REMOVE_MODEL_CHANNEL),
     transcribe: (request) => ipcRenderer.invoke(IpcChannels.VOICE_TRANSCRIBE_CHANNEL, request),
     cancelTranscription: () => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL),

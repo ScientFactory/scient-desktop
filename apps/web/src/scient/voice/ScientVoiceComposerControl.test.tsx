@@ -21,6 +21,7 @@ function stubVoiceBridge(): void {
   const voice = {
     getModelState: vi.fn().mockResolvedValue({ state: "missing" }),
     downloadModel: vi.fn().mockResolvedValue({ state: "ready", byteSize: 1 }),
+    cancelModelDownload: vi.fn().mockResolvedValue(undefined),
     removeModel: vi.fn().mockResolvedValue({ state: "missing" }),
     transcribe: vi.fn().mockResolvedValue({ text: "hello", engine: "local" }),
     cancelTranscription: vi.fn().mockResolvedValue(undefined),

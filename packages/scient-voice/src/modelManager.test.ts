@@ -121,6 +121,28 @@ describe("VoiceModelManager", () => {
     expect(calls).toBe(0);
   });
 
+  it("atomically replaces an existing receipt after a verified reinstall", async () => {
+    const dir = await makeModelDir();
+    const first = new VoiceModelManager({
+      modelsDirectory: dir,
+      manifest: manifest({ sourceRevision: "old-revision" }),
+      fetchImpl: servingFetch(MODEL_BYTES),
+    });
+    await first.ensureInstalled(new AbortController().signal);
+
+    const replacement = new VoiceModelManager({
+      modelsDirectory: dir,
+      manifest: manifest({ sourceRevision: "new-revision" }),
+      fetchImpl: servingFetch(MODEL_BYTES),
+    });
+    await replacement.ensureInstalled(new AbortController().signal);
+
+    const receipt = JSON.parse(await NodeFSP.readFile(replacement.receiptPath, "utf8")) as {
+      sourceRevision: string;
+    };
+    expect(receipt.sourceRevision).toBe("new-revision");
+  });
+
   it("rejects same-size model tampering even when the receipt still matches", async () => {
     const dir = await makeModelDir();
     const first = new VoiceModelManager({
@@ -180,6 +202,41 @@ describe("VoiceModelManager", () => {
 
     await manager.ensureInstalled(new AbortController().signal);
     expect(await manager.verifyInstalledModel()).toBe(true);
+  });
+
+  it("preserves and resumes partial data after cancellation", async () => {
+    const dir = await makeModelDir();
+    let requestCount = 0;
+    const fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      requestCount += 1;
+      if (requestCount > 1) return servingFetch(MODEL_BYTES)(...args);
+      const split = Math.floor(MODEL_BYTES.byteLength / 2);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(MODEL_BYTES.subarray(0, split)));
+            controller.enqueue(new Uint8Array(MODEL_BYTES.subarray(split)));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const manager = new VoiceModelManager({
+      modelsDirectory: dir,
+      manifest: manifest(),
+      fetchImpl,
+    });
+    const controller = new AbortController();
+
+    await expect(
+      manager.ensureInstalled(controller.signal, () => controller.abort()),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect((await NodeFSP.stat(manager.partialPath)).size).toBeGreaterThan(0);
+
+    await manager.ensureInstalled(new AbortController().signal);
+    expect((await manager.getStatus()).state).toBe("ready");
+    expect(requestCount).toBe(2);
   });
 
   it("removes an installed model and returns to missing", async () => {

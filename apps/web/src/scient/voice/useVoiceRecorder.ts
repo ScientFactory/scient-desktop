@@ -24,7 +24,7 @@ export type VoiceRecorderErrorKind =
   | "unknown";
 
 export const MAX_RECORDING_MS = 120_000;
-const MAX_LEVELS = 48;
+export const VOICE_WAVEFORM_LEVEL_COUNT = 96;
 const WORKLET_FLUSH_TIMEOUT_MS = 500;
 
 export interface UseVoiceRecorderOptions {
@@ -39,6 +39,15 @@ export interface VoiceRecorderControls {
   start: () => Promise<boolean>;
   stop: () => Promise<VoiceWavClip | null>;
   cancel: () => Promise<void>;
+}
+
+interface VoiceAudioSession {
+  readonly stream: MediaStream;
+  context: AudioContext | null;
+  source: MediaStreamAudioSourceNode | null;
+  worklet: AudioWorkletNode | null;
+  gain: GainNode | null;
+  messageHandler: ((event: MessageEvent) => void) | null;
 }
 
 function mapGetUserMediaError(error: unknown): VoiceRecorderErrorKind {
@@ -62,6 +71,14 @@ function stopStream(stream: MediaStream): void {
   for (const track of stream.getTracks()) track.stop();
 }
 
+/** @internal Clears only the session that still owns the recorder slot. */
+export function releaseOwnedVoiceSession<T extends object>(
+  slot: { current: T | null },
+  session: T,
+): void {
+  if (slot.current === session) slot.current = null;
+}
+
 export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecorderControls {
   const [status, setStatusState] = useState<VoiceRecorderStatus>("idle");
   const [levels, setLevels] = useState<readonly number[]>([]);
@@ -70,12 +87,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
   const mountedRef = useRef(true);
   const generationRef = useRef(0);
   const statusRef = useRef<VoiceRecorderStatus>("idle");
-  const streamRef = useRef<MediaStream | null>(null);
-  const contextRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const workletRef = useRef<AudioWorkletNode | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-  const messageHandlerRef = useRef<((event: MessageEvent) => void) | null>(null);
+  const sessionRef = useRef<VoiceAudioSession | null>(null);
   const framesRef = useRef<Float32Array[]>([]);
   const inputRateRef = useRef(VOICE_CLIP_SAMPLE_RATE_HZ);
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -99,7 +111,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     levelsAnimationFrameRef.current = null;
     const additions = pendingLevelsRef.current.splice(0);
     if (additions.length === 0 || !mountedRef.current) return;
-    setLevels((previous) => [...previous, ...additions].slice(-MAX_LEVELS));
+    setLevels((previous) => [...previous, ...additions].slice(-VOICE_WAVEFORM_LEVEL_COUNT));
   }, []);
 
   const clearLevelUpdates = useCallback(() => {
@@ -129,38 +141,45 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     });
   }, []);
 
+  const teardownSession = useCallback(
+    async (session: VoiceAudioSession, flushFinalFrame: boolean): Promise<void> => {
+      const worklet = session.worklet;
+      if (flushFinalFrame && worklet) await requestWorkletFlush(worklet);
+      if (worklet) {
+        if (session.messageHandler) {
+          worklet.port.removeEventListener("message", session.messageHandler);
+          session.messageHandler = null;
+        }
+        worklet.port.close();
+        worklet.disconnect();
+        session.worklet = null;
+      }
+      session.source?.disconnect();
+      session.source = null;
+      session.gain?.disconnect();
+      session.gain = null;
+      stopStream(session.stream);
+      const context = session.context;
+      session.context = null;
+      if (context && context.state !== "closed") await context.close().catch(() => undefined);
+      releaseOwnedVoiceSession(sessionRef, session);
+    },
+    [requestWorkletFlush],
+  );
+
   const teardownAudio = useCallback(
     async (flushFinalFrame: boolean): Promise<void> => {
       if (autoStopTimerRef.current !== null) {
         clearTimeout(autoStopTimerRef.current);
         autoStopTimerRef.current = null;
       }
-      const worklet = workletRef.current;
-      if (flushFinalFrame && worklet) await requestWorkletFlush(worklet);
-
-      if (worklet) {
-        if (messageHandlerRef.current) {
-          worklet.port.removeEventListener("message", messageHandlerRef.current);
-          messageHandlerRef.current = null;
-        }
-        worklet.port.close();
-        worklet.disconnect();
-        workletRef.current = null;
-      }
-      sourceRef.current?.disconnect();
-      sourceRef.current = null;
-      gainRef.current?.disconnect();
-      gainRef.current = null;
-      if (streamRef.current) stopStream(streamRef.current);
-      streamRef.current = null;
-      const context = contextRef.current;
-      contextRef.current = null;
-      if (context && context.state !== "closed") await context.close().catch(() => undefined);
+      const session = sessionRef.current;
+      if (session) await teardownSession(session, flushFinalFrame);
       for (const resolve of flushResolversRef.current.values()) resolve();
       flushResolversRef.current.clear();
       clearLevelUpdates();
     },
-    [clearLevelUpdates, requestWorkletFlush],
+    [clearLevelUpdates, teardownSession],
   );
 
   const finalize = useCallback(
@@ -222,25 +241,37 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
       return false;
     }
     if (!stream) return false;
-    streamRef.current = stream;
+    const session: VoiceAudioSession = {
+      stream,
+      context: null,
+      source: null,
+      worklet: null,
+      gain: null,
+      messageHandler: null,
+    };
+    sessionRef.current = session;
 
     try {
       const context = new AudioContextCtor({ sampleRate: VOICE_CLIP_SAMPLE_RATE_HZ });
-      contextRef.current = context;
+      session.context = context;
       inputRateRef.current = context.sampleRate;
       await context.audioWorklet.addModule(
         new URL("scient-voice-worklet.js", document.baseURI).href,
       );
       if (context.state === "suspended") await context.resume();
-      if (generation !== generationRef.current || !mountedRef.current) {
-        await teardownAudio(false);
+      if (
+        generation !== generationRef.current ||
+        !mountedRef.current ||
+        sessionRef.current !== session
+      ) {
+        await teardownSession(session, false);
         return false;
       }
 
       const source = context.createMediaStreamSource(stream);
-      sourceRef.current = source;
+      session.source = source;
       const worklet = new AudioWorkletNode(context, VOICE_WORKLET_PROCESSOR_NAME);
-      workletRef.current = worklet;
+      session.worklet = worklet;
       const handleMessage = (event: MessageEvent) => {
         const message = event.data as VoiceWorkletMessage | undefined;
         if (!message) return;
@@ -254,13 +285,13 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
           levelsAnimationFrameRef.current = window.requestAnimationFrame(flushLevels);
         }
       };
-      messageHandlerRef.current = handleMessage;
+      session.messageHandler = handleMessage;
       worklet.port.addEventListener("message", handleMessage);
       worklet.port.start();
 
       const gain = context.createGain();
       gain.gain.value = 0;
-      gainRef.current = gain;
+      session.gain = gain;
       source.connect(worklet);
       worklet.connect(gain);
       gain.connect(context.destination);
@@ -271,14 +302,16 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
       setStatus("recording");
       return true;
     } catch {
-      await teardownAudio(false);
-      framesRef.current = [];
+      await teardownSession(session, false);
       if (generation !== generationRef.current || !mountedRef.current) return false;
+      framesRef.current = [];
+      clearLevelUpdates();
+      if (mountedRef.current) setLevels([]);
       setErrorKind("unknown");
       setStatus("error");
       return false;
     }
-  }, [finalize, flushLevels, setStatus, teardownAudio]);
+  }, [clearLevelUpdates, finalize, flushLevels, setStatus, teardownSession]);
 
   const stop = useCallback(() => finalize(true), [finalize]);
   const cancel = useCallback(async (): Promise<void> => {
