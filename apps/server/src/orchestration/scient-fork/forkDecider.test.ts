@@ -379,6 +379,31 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("uses resolved boundaries and the narrow lineage marker for refork titles", () =>
+    Effect.gen(function* () {
+      const forkOrigin = makeOriginThread({
+        title: "Origin conversation (2)",
+        conversationForkBoundaries: undefined,
+        forkLineage: {
+          originThreadId: ORIGIN,
+          baselineAssistantMessageId: MessageId.make("assistant-1"),
+        },
+      });
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel: {
+          ...makeReadModel({ origin: forkOrigin }),
+          threads: [makeOriginThread({ id: ThreadId.make("original-conversation") }), forkOrigin],
+        },
+        resolvedBoundaries: boundaries,
+      });
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Origin conversation (3)",
+      );
+    }),
+  );
+
   it.effect("rekeys retained attachments so the fork owns an independent file", () =>
     Effect.gen(function* () {
       const origin = makeOriginThread();

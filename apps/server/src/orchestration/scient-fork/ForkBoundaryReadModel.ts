@@ -36,7 +36,11 @@ export interface ResolvedForkBoundaries {
   readonly sourceAssistantMessageId: MessageId;
   /** All SQL-backed boundaries for the origin thread, ordered by turn count. */
   readonly boundaries: ReadonlyArray<OrchestrationForkBoundary>;
-  /** The exact boundary whose assistant message matches the public request. */
+  /**
+   * The exact boundary whose assistant message matches the public request.
+   * This is resolver-facing evidence for callers and diagnostics; the pure
+   * decider receives `boundaries` and re-selects by the public assistant ID.
+   */
   readonly selectedBoundary: OrchestrationForkBoundary;
 }
 

@@ -165,8 +165,18 @@ function retainPrefixMessages(
 const invariant = (detail: string): OrchestrationCommandInvariantError =>
   new OrchestrationCommandInvariantError({ commandType: "thread.fork", detail });
 
-function deriveForkTitle(origin: OrchestrationThread, readModel: OrchestrationReadModel): string {
-  const isForkedOrigin = origin.conversationForkBoundaries?.some(isForkBaselineBoundary) === true;
+function deriveForkTitle(
+  origin: OrchestrationThread,
+  readModel: OrchestrationReadModel,
+  resolvedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
+): string {
+  // Client-facing thread state no longer carries complete boundary arrays.
+  // Prefer the server-resolved boundaries, while retaining the narrow marker
+  // as the durable fallback for fork origins.
+  const isForkedOrigin =
+    resolvedBoundaries.some(isForkBaselineBoundary) ||
+    origin.forkLineage != null ||
+    origin.conversationForkBoundaries?.some(isForkBaselineBoundary) === true;
   const sameProjectThreads = readModel.threads.filter(
     (thread) => thread.projectId === origin.projectId,
   );
@@ -283,7 +293,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `Assistant message '${command.sourceAssistantMessageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,
     );
   }
-  const forkTitle = deriveForkTitle(origin, readModel);
+  const forkTitle = deriveForkTitle(origin, readModel, conversationBoundaries);
 
   const retainedBoundaries = conversationBoundaries.filter(
     (boundary) => boundary.conversationTurnCount <= selectedBoundary.conversationTurnCount,
