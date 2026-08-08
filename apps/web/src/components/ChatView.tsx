@@ -2,7 +2,6 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
-  isForkBaselineBoundary,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -6202,12 +6201,9 @@ function ChatViewContent(props: ChatViewProps) {
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                hasForkBaseline={Boolean(
-                  activeThread?.conversationForkBoundaries?.some(isForkBaselineBoundary),
-                )}
+                hasForkBaseline={activeThread?.forkLineage != null}
                 forkBaselineAssistantMessageId={
-                  activeThread?.conversationForkBoundaries?.find(isForkBaselineBoundary)
-                    ?.assistantMessageId ?? null
+                  activeThread?.forkLineage?.baselineAssistantMessageId ?? null
                 }
                 onRevertUserMessage={onRevertUserMessage}
                 // SCIENT-FORK:START

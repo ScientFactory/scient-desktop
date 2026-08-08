@@ -369,26 +369,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               completedAt: "2026-02-24T00:00:08.000Z",
             },
           ],
-          conversationForkBoundaries: [
-            {
-              turnId: null,
-              conversationTurnCount: 0,
-              userMessageId: null,
-              assistantMessageId: null,
-              completedAt: "2026-02-24T00:00:02.000Z",
-              checkpointTurnCount: null,
-              checkpointStatus: null,
-            },
-            {
-              turnId: asTurnId("turn-1"),
-              conversationTurnCount: 1,
-              userMessageId: null,
-              assistantMessageId: asMessageId("message-1"),
-              completedAt: "2026-02-24T00:00:08.000Z",
-              checkpointTurnCount: 1,
-              checkpointStatus: "ready",
-            },
-          ],
+          forkLineage: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -476,6 +457,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasActionableProposedPlan: false,
           backgroundLiveness: null,
           planProgress: null,
+          forkLineage: null,
         },
       ]);
 
@@ -2351,4 +2333,251 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       }
     }),
   );
+
+  // SCIENT-FORK:START — VAL-STATE-001/002/003/013 tests
+
+  it.effect("shell snapshot contains no conversationForkBoundaries (VAL-STATE-001)", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`DELETE FROM scient_thread_lineage`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json,
+          default_model_selection_json, created_at, updated_at, deleted_at
+        )
+        VALUES ('project-s1', 'Shell Test', '/tmp/shell-test',
+          '[]', '{"provider":"codex","model":"gpt-5-codex"}',
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+          latest_user_message_at, created_at, updated_at, deleted_at
+        )
+        VALUES ('thread-s1', 'project-s1', 'Shell Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          0, 0, 0, NULL,
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+      yield* sql`
+        INSERT INTO scient_thread_lineage (
+          thread_id, forked_from_thread_id, fork_point_turn_id, fork_point_turn_count,
+          baseline_turn_id, baseline_user_message_id, baseline_assistant_message_id,
+          workspace_mode, provider_mode, provider_bootstrap_status,
+          attachment_copies_json, fidelity_mode, status, checkpoint_status,
+          workspace_status, attempt_count, last_error, created_at, updated_at
+        )
+        VALUES ('thread-s1', 'origin-s1', NULL, 0,
+          'baseline-s1', NULL, 'baseline-assistant-s1',
+          'local', 'transcript-bootstrap', 'completed',
+          '[]', 'transcript-bootstrap', 'ready', 'ready',
+          'shared', 0, NULL, '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z')
+      `;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 10, '2026-03-02T00:00:01.000Z')
+        `;
+      }
+
+      const shell = yield* snapshotQuery.getShellSnapshot();
+      const thread = shell.threads.find((t) => t.id === ThreadId.make("thread-s1"));
+      assert.notEqual(thread, undefined);
+      // No complete boundary array in the shell.
+      assert.isUndefined((thread as Record<string, unknown>).conversationForkBoundaries);
+      // Narrow lineage marker is present.
+      assert.deepEqual(thread?.forkLineage, {
+        originThreadId: ThreadId.make("origin-s1"),
+        baselineAssistantMessageId: asMessageId("baseline-assistant-s1"),
+      });
+    }),
+  );
+
+  it.effect(
+    "detail snapshot omits conversationForkBoundaries and carries forkLineage (VAL-STATE-002)",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_thread_messages`;
+        yield* sql`DELETE FROM projection_turns`;
+        yield* sql`DELETE FROM projection_state`;
+        yield* sql`DELETE FROM scient_thread_lineage`;
+
+        yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json,
+          default_model_selection_json, created_at, updated_at, deleted_at
+        )
+        VALUES ('project-s2', 'Detail Test', '/tmp/detail-test',
+          '[]', '{"provider":"codex","model":"gpt-5-codex"}',
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+        yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+          latest_user_message_at, created_at, updated_at, deleted_at
+        )
+        VALUES ('thread-s2', 'project-s2', 'Detail Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          0, 0, 0, NULL,
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+        yield* sql`
+        INSERT INTO scient_thread_lineage (
+          thread_id, forked_from_thread_id, fork_point_turn_id, fork_point_turn_count,
+          baseline_turn_id, baseline_user_message_id, baseline_assistant_message_id,
+          workspace_mode, provider_mode, provider_bootstrap_status,
+          attachment_copies_json, fidelity_mode, status, checkpoint_status,
+          workspace_status, attempt_count, last_error, created_at, updated_at
+        )
+        VALUES ('thread-s2', 'origin-s2', 'origin-turn-1', 1,
+          'baseline-s2', 'baseline-user-s2', 'baseline-assistant-s2',
+          'local', 'transcript-bootstrap', 'completed',
+          '[]', 'transcript-bootstrap', 'ready', 'ready',
+          'shared', 0, NULL, '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z')
+      `;
+        for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+          yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 10, '2026-03-02T00:00:01.000Z')
+        `;
+        }
+
+        const detail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-s2"));
+        assert.equal(detail._tag, "Some");
+        if (detail._tag === "Some") {
+          // No complete boundary array in the detail.
+          assert.isUndefined((detail.value as Record<string, unknown>).conversationForkBoundaries);
+          // Narrow lineage marker is present.
+          assert.deepEqual(detail.value.forkLineage, {
+            originThreadId: ThreadId.make("origin-s2"),
+            baselineAssistantMessageId: asMessageId("baseline-assistant-s2"),
+          });
+        }
+      }),
+  );
+
+  it.effect("plain thread has no forkLineage marker (VAL-STATE-003)", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`DELETE FROM scient_thread_lineage`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json,
+          default_model_selection_json, created_at, updated_at, deleted_at
+        )
+        VALUES ('project-s3', 'Plain Test', '/tmp/plain-test',
+          '[]', '{"provider":"codex","model":"gpt-5-codex"}',
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+          latest_user_message_at, created_at, updated_at, deleted_at
+        )
+        VALUES ('thread-plain', 'project-s3', 'Plain Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          0, 0, 0, NULL,
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 10, '2026-03-02T00:00:01.000Z')
+        `;
+      }
+
+      const shell = yield* snapshotQuery.getShellSnapshot();
+      const thread = shell.threads.find((t) => t.id === ThreadId.make("thread-plain"));
+      assert.notEqual(thread, undefined);
+      // Plain thread has no fork lineage marker.
+      assert.isNull(thread?.forkLineage);
+    }),
+  );
+
+  it.effect(
+    "snapshot sequence is bounded by threadTurns and scientThreadLineage (VAL-STATE-013)",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_state`;
+
+        // Set most projectors ahead, but threadTurns and scientThreadLineage behind.
+        const aheadProjectors = [
+          ORCHESTRATION_PROJECTOR_NAMES.projects,
+          ORCHESTRATION_PROJECTOR_NAMES.threads,
+          ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
+          ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
+          ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
+          ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
+        ];
+        for (const projector of aheadProjectors) {
+          yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 100, '2026-03-02T00:00:01.000Z')
+        `;
+        }
+        // threadTurns and scientThreadLineage lag behind.
+        yield* sql`
+        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${ORCHESTRATION_PROJECTOR_NAMES.threadTurns}, 50, '2026-03-02T00:00:01.000Z')
+      `;
+        yield* sql`
+        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${ORCHESTRATION_PROJECTOR_NAMES.scientThreadLineage}, 40, '2026-03-02T00:00:01.000Z')
+      `;
+
+        const { snapshotSequence } = yield* snapshotQuery.getSnapshotSequence();
+        // The snapshot sequence must be the minimum of all required projectors,
+        // which is scientThreadLineage at 40 — not 100 from the ahead projectors.
+        assert.equal(snapshotSequence, 40);
+      }),
+  );
+
+  it.effect(
+    "snapshot sequence returns 0 when a required projector is missing (VAL-STATE-013)",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_state`;
+
+        // Set all projectors except scientThreadLineage.
+        for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+          if (projector === ORCHESTRATION_PROJECTOR_NAMES.scientThreadLineage) continue;
+          yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 100, '2026-03-02T00:00:01.000Z')
+        `;
+        }
+
+        const { snapshotSequence } = yield* snapshotQuery.getSnapshotSequence();
+        // Missing projector means the snapshot cannot be safely served.
+        assert.equal(snapshotSequence, 0);
+      }),
+  );
+
+  // SCIENT-FORK:END
 });

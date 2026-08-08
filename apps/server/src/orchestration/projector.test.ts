@@ -996,9 +996,10 @@ describe("orchestration projector", () => {
         "inherited prompt",
         "inherited answer",
       ]);
-      expect(thread?.conversationForkBoundaries).toEqual([
-        expect.objectContaining({ turnId: "fork-baseline", conversationTurnCount: 0 }),
-      ]);
+      expect(thread?.forkLineage).toEqual({
+        originThreadId: "origin-thread",
+        baselineAssistantMessageId: "baseline-assistant",
+      });
     }),
   );
 
@@ -1102,4 +1103,252 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
   });
+
+  // SCIENT-FORK:START — VAL-STATE-003/004/006: narrow lineage marker and
+  // baseline preservation through revert.
+  effectIt.effect(
+    "forked thread carries narrow forkLineage marker instead of conversationForkBoundaries",
+    () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-03-01T10:00:00.000Z";
+        const model = createEmptyReadModel(createdAt);
+
+        const afterCreate = yield* projectEvent(
+          model,
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "fork-marker",
+            occurredAt: createdAt,
+            commandId: "cmd-create-fork-marker",
+            payload: {
+              threadId: "fork-marker",
+              projectId: "project-1",
+              title: "Fork Marker Test",
+              modelSelection: { provider: "codex", model: "gpt-5-codex" },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+        );
+
+        const afterFork = yield* projectEvent(
+          afterCreate,
+          makeEvent({
+            sequence: 2,
+            type: "thread.forked",
+            aggregateKind: "thread",
+            aggregateId: "fork-marker",
+            occurredAt: createdAt,
+            commandId: "cmd-fork-marker",
+            payload: {
+              originThreadId: "origin-marker",
+              newThreadId: "fork-marker",
+              forkAtTurnId: "origin-turn-1",
+              forkAtTurnCount: 1,
+              sourceCheckpointTurnCount: null,
+              baselineTurnId: "baseline-marker",
+              baselineUserMessageId: "baseline-user-marker",
+              baselineAssistantMessageId: "baseline-assistant-marker",
+              workspaceMode: "local",
+              providerMode: "transcript-bootstrap",
+              attachmentCopies: [],
+              createdAt,
+            },
+          }),
+        );
+
+        const thread = afterFork.threads[0];
+        expect(thread?.forkLineage).toEqual({
+          originThreadId: "origin-marker",
+          baselineAssistantMessageId: "baseline-assistant-marker",
+        });
+        // No complete boundary array in the in-memory read model.
+        expect(thread?.conversationForkBoundaries).toBeUndefined();
+      }),
+  );
+
+  effectIt.effect("plain thread has no forkLineage marker", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-03-01T10:00:00.000Z";
+      const model = createEmptyReadModel(createdAt);
+
+      const afterCreate = yield* projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "plain-marker",
+          occurredAt: createdAt,
+          commandId: "cmd-create-plain",
+          payload: {
+            threadId: "plain-marker",
+            projectId: "project-1",
+            title: "Plain Marker Test",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+
+      const thread = afterCreate.threads[0];
+      expect(thread?.forkLineage).toBeUndefined();
+    }),
+  );
+
+  effectIt.effect("revert preserves fork baseline using forkLineage marker", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-03-01T10:00:00.000Z";
+
+      const events: Array<OrchestrationEvent> = [
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-create-fr",
+          payload: {
+            threadId: "fork-revert",
+            projectId: "project-1",
+            title: "Fork Revert Test",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 2,
+          type: "thread.forked",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-fork-fr",
+          payload: {
+            originThreadId: "origin-fr",
+            newThreadId: "fork-revert",
+            forkAtTurnId: "origin-turn-1",
+            forkAtTurnCount: 1,
+            sourceCheckpointTurnCount: null,
+            baselineTurnId: "baseline-fr",
+            baselineUserMessageId: "baseline-user-fr",
+            baselineAssistantMessageId: "baseline-assistant-fr",
+            workspaceMode: "local",
+            providerMode: "transcript-bootstrap",
+            attachmentCopies: [],
+            createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 3,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-msg-1",
+          payload: {
+            threadId: "fork-revert",
+            messageId: "baseline-user-fr",
+            turnId: "baseline-fr",
+            role: "user",
+            text: "inherited prompt",
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 4,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-msg-2",
+          payload: {
+            threadId: "fork-revert",
+            messageId: "baseline-assistant-fr",
+            turnId: "baseline-fr",
+            role: "assistant",
+            text: "inherited answer",
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 5,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-msg-3",
+          payload: {
+            threadId: "fork-revert",
+            messageId: "post-user-fr",
+            turnId: "post-turn-fr",
+            role: "user",
+            text: "new question",
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 6,
+          type: "thread.turn-diff-completed",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-diff-fr",
+          payload: {
+            threadId: "fork-revert",
+            turnId: "post-turn-fr",
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/checkpoints/fr/turn/1",
+            status: "ready",
+            files: [],
+            assistantMessageId: "post-assistant-fr",
+            completedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 7,
+          type: "thread.reverted",
+          aggregateKind: "thread",
+          aggregateId: "fork-revert",
+          occurredAt: createdAt,
+          commandId: "cmd-revert-fr",
+          payload: { threadId: "fork-revert", turnCount: 0 },
+        }),
+      ];
+
+      const afterRevert = yield* Effect.reduce(
+        events,
+        () => createEmptyReadModel(createdAt),
+        projectEvent,
+      );
+      const thread = afterRevert.threads[0];
+
+      // Baseline messages survive the revert to 0.
+      expect(thread?.messages.map((m) => m.text)).toEqual(["inherited prompt", "inherited answer"]);
+      // forkLineage marker survives the revert.
+      expect(thread?.forkLineage).toEqual({
+        originThreadId: "origin-fr",
+        baselineAssistantMessageId: "baseline-assistant-fr",
+      });
+    }),
+  );
+  // SCIENT-FORK:END
 });

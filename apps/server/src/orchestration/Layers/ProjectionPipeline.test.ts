@@ -36,6 +36,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
+import { ensureScientForkSchema } from "../scient-fork/schema.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
@@ -2860,3 +2861,263 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+// SCIENT-FORK:START — VAL-STATE-014: bootstrap projector ordering
+it.layer(makeProjectionPipelinePrefixedTestLayer("t3-scient-fork-boot-"))(
+  "OrchestrationProjectionPipeline scient fork bootstrap ordering",
+  (it) => {
+    it.effect("bootstrap preserves fork baseline through revert replay (VAL-STATE-014)", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const now = "2026-03-03T00:00:00.000Z";
+
+        yield* ensureScientForkSchema(sql);
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("e1"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c1"),
+          causationEventId: null,
+          correlationId: CommandId.make("c1"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-boot"),
+            title: "Boot Project",
+            workspaceRoot: "/tmp/boot-test",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("e2"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c2"),
+          causationEventId: null,
+          correlationId: CommandId.make("c2"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            projectId: ProjectId.make("project-boot"),
+            title: "Fork Boot",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.forked",
+          eventId: EventId.make("e3"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c3"),
+          causationEventId: null,
+          correlationId: CommandId.make("c3"),
+          metadata: {},
+          payload: {
+            originThreadId: ThreadId.make("origin-boot"),
+            newThreadId: ThreadId.make("fork-boot"),
+            forkAtTurnId: TurnId.make("origin-turn-1"),
+            forkAtTurnCount: 1,
+            sourceCheckpointTurnCount: null,
+            baselineTurnId: TurnId.make("baseline-boot"),
+            baselineUserMessageId: MessageId.make("baseline-user-boot"),
+            baselineAssistantMessageId: MessageId.make("baseline-assistant-boot"),
+            workspaceMode: "local",
+            providerMode: "transcript-bootstrap",
+            attachmentCopies: [],
+            createdAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("e4"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c4"),
+          causationEventId: null,
+          correlationId: CommandId.make("c4"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            messageId: MessageId.make("baseline-user-boot"),
+            turnId: TurnId.make("baseline-boot"),
+            role: "user",
+            text: "inherited prompt",
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("e5"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c5"),
+          causationEventId: null,
+          correlationId: CommandId.make("c5"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            messageId: MessageId.make("baseline-assistant-boot"),
+            turnId: TurnId.make("baseline-boot"),
+            role: "assistant",
+            text: "inherited answer",
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("e6"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c6"),
+          causationEventId: null,
+          correlationId: CommandId.make("c6"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            messageId: MessageId.make("post-user-1"),
+            turnId: TurnId.make("post-turn-1"),
+            role: "user",
+            text: "new question",
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("e7"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c7"),
+          causationEventId: null,
+          correlationId: CommandId.make("c7"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            messageId: MessageId.make("post-assistant-1"),
+            turnId: TurnId.make("post-turn-1"),
+            role: "assistant",
+            text: "new answer",
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("e8"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c8"),
+          causationEventId: null,
+          correlationId: CommandId.make("c8"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            turnId: TurnId.make("post-turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/fork-boot/turn/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("post-assistant-1"),
+            completedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.reverted",
+          eventId: EventId.make("e9"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("fork-boot"),
+          occurredAt: now,
+          commandId: CommandId.make("c9"),
+          causationEventId: null,
+          correlationId: CommandId.make("c9"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("fork-boot"),
+            turnCount: 0,
+          },
+        });
+
+        yield* pipeline.bootstrap;
+
+        const stateRows = yield* sql<{
+          readonly projector: string;
+          readonly last_applied_sequence: number;
+        }>`
+          SELECT projector, last_applied_sequence FROM projection_state ORDER BY projector
+        `;
+        // All projectors should have processed all 9 events.
+        assert.isTrue(stateRows.length > 0);
+        for (const row of stateRows) {
+          assert.equal(row.last_applied_sequence, 9);
+        }
+
+        const lineageCheck = yield* sql<{
+          readonly baseline_turn_id: string | null;
+          readonly thread_id: string;
+        }>`
+          SELECT baseline_turn_id, thread_id FROM scient_thread_lineage
+        `;
+        assert.equal(lineageCheck.length, 1);
+        assert.equal(lineageCheck[0]?.thread_id, "fork-boot");
+        assert.equal(lineageCheck[0]?.baseline_turn_id, "baseline-boot");
+
+        const turns = yield* sql<{ readonly turn_id: string | null }>`
+          SELECT turn_id FROM projection_turns
+          WHERE thread_id = 'fork-boot' ORDER BY requested_at ASC
+        `;
+        assert.deepEqual(
+          turns.map((t) => t.turn_id),
+          ["baseline-boot"],
+        );
+
+        const messages = yield* sql<{ readonly message_id: string; readonly role: string }>`
+          SELECT message_id, role FROM projection_thread_messages
+          WHERE thread_id = 'fork-boot' ORDER BY created_at ASC
+        `;
+        assert.deepEqual(
+          messages.map((m) => [m.role, m.message_id]),
+          [
+            ["assistant", "baseline-assistant-boot"],
+            ["user", "baseline-user-boot"],
+          ],
+        );
+
+        const lineage = yield* sql<{ readonly baseline_turn_id: string | null }>`
+          SELECT baseline_turn_id FROM scient_thread_lineage WHERE thread_id = 'fork-boot'
+        `;
+        assert.equal(lineage[0]?.baseline_turn_id, "baseline-boot");
+      }),
+    );
+  },
+);
+// SCIENT-FORK:END

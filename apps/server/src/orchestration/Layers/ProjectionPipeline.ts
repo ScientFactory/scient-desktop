@@ -1668,10 +1668,34 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    // SCIENT-FORK:START — scientThreadLineage must bootstrap BEFORE
+    // threadMessages and threadTurns because both of those projectors read
+    // baseline_turn_id from scient_thread_lineage during thread.reverted
+    // replay. If lineage has not yet projected thread.forked when revert
+    // events replay, the baseline row is dropped or orphaned.
+    // threadTurns must also bootstrap before threadMessages, threadActivities,
+    // and threadProposedPlans because those projectors list projection_turns
+    // during thread.reverted replay to decide which rows to keep. If turns
+    // have not been projected yet, the revert handler sees an empty set and
+    // removes all messages/activities/plans including the baseline.
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
         apply: applyProjectsProjection,
+      },
+      // SCIENT-FORK:START — delegate thread.forked folding to the Scient module.
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.scientThreadLineage,
+        apply: (event) => applyScientThreadLineageProjection(event, sql),
+      },
+      // SCIENT-FORK:END
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
+        apply: applyThreadSessionsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadTurns,
+        apply: applyThreadTurnsProjection,
       },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
@@ -1686,14 +1710,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyThreadActivitiesProjection,
       },
       {
-        name: ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
-        apply: applyThreadSessionsProjection,
-      },
-      {
-        name: ORCHESTRATION_PROJECTOR_NAMES.threadTurns,
-        apply: applyThreadTurnsProjection,
-      },
-      {
         name: ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
         apply: applyCheckpointsProjection,
       },
@@ -1705,13 +1721,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
       },
-      // SCIENT-FORK:START — delegate thread.forked folding to the Scient module.
-      {
-        name: ORCHESTRATION_PROJECTOR_NAMES.scientThreadLineage,
-        apply: (event) => applyScientThreadLineageProjection(event, sql),
-      },
-      // SCIENT-FORK:END
     ];
+    // SCIENT-FORK:END
 
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,

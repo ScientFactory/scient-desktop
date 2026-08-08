@@ -5,6 +5,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationForkBoundary,
+  type OrchestrationForkLineage,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -135,6 +136,68 @@ export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
       `,
     }),
   } as const;
+}
+
+/**
+ * Row schema for the narrow fork-lineage marker read from
+ * `scient_thread_lineage`.
+ */
+export const ProjectionForkLineageRow = Schema.Struct({
+  threadId: ThreadId,
+  originThreadId: ThreadId,
+  baselineAssistantMessageId: Schema.NullOr(MessageId),
+});
+export type ProjectionForkLineageRow = typeof ProjectionForkLineageRow.Type;
+
+/**
+ * SQL queries for the narrow fork-lineage marker. The marker carries only
+ * the origin thread ID and inherited baseline assistant message ID needed
+ * for client presentation; it replaces the complete boundary array in
+ * shell and detail payloads.
+ */
+export function makeForkLineageQueries(sql: SqlClient.SqlClient) {
+  return {
+    listForkLineageRows: SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: ProjectionForkLineageRow,
+      execute: () => sql`
+        SELECT
+          thread_id AS "threadId",
+          forked_from_thread_id AS "originThreadId",
+          baseline_assistant_message_id AS "baselineAssistantMessageId"
+        FROM scient_thread_lineage
+        ORDER BY thread_id ASC
+      `,
+    }),
+    getForkLineageRowByThread: SqlSchema.findOneOption({
+      Request: Schema.Struct({ threadId: ThreadId }),
+      Result: ProjectionForkLineageRow,
+      execute: ({ threadId }) => sql`
+        SELECT
+          thread_id AS "threadId",
+          forked_from_thread_id AS "originThreadId",
+          baseline_assistant_message_id AS "baselineAssistantMessageId"
+        FROM scient_thread_lineage
+        WHERE thread_id = ${threadId}
+        LIMIT 1
+      `,
+    }),
+  } as const;
+}
+
+/**
+ * Map a lineage row to the narrow contract marker, or null if absent.
+ */
+export function toForkLineageMarker(
+  row: ProjectionForkLineageRow | undefined,
+): OrchestrationForkLineage | null {
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    originThreadId: row.originThreadId,
+    baselineAssistantMessageId: row.baselineAssistantMessageId,
+  };
 }
 
 /**
