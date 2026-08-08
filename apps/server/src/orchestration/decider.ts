@@ -2,6 +2,7 @@ import {
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationForkBoundary,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -218,9 +219,16 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  resolvedForkBoundaries,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  /**
+   * Scient-owned authoritative fork boundaries resolved from SQL. When
+   * provided for a `thread.fork` command, the decider uses these
+   * exclusively instead of trusting client-shaped boundary arrays.
+   */
+  readonly resolvedForkBoundaries?: ReadonlyArray<OrchestrationForkBoundary>;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -1369,7 +1377,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     // SCIENT-FORK:START — all fork logic lives in scient-fork/forkDecider.ts.
     case "thread.fork":
-      return yield* forkThread({ command, readModel });
+      return yield* forkThread({
+        command,
+        readModel,
+        ...(resolvedForkBoundaries !== undefined
+          ? { resolvedBoundaries: resolvedForkBoundaries }
+          : {}),
+      });
 
     case "thread.fork.complete": {
       yield* requireThread({

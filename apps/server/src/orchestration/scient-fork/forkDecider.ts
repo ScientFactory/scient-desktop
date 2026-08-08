@@ -201,9 +201,18 @@ function deriveForkTitle(origin: OrchestrationThread, readModel: OrchestrationRe
 export const forkThread = Effect.fn("scientForkThread")(function* ({
   command,
   readModel,
+  resolvedBoundaries,
 }: {
   readonly command: ThreadForkCommand;
   readonly readModel: OrchestrationReadModel;
+  /**
+   * Scient-owned authoritative boundaries resolved from SQL-backed
+   * `projection_turns` and `scient_thread_lineage`. When provided, the
+   * decider uses these exclusively and does not trust
+   * `origin.conversationForkBoundaries` or synthesize a checkpoint fallback.
+   * When absent (unit tests), the decider falls back to the read model.
+   */
+  readonly resolvedBoundaries?: ReadonlyArray<OrchestrationForkBoundary>;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -227,26 +236,30 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     threadId: command.newThreadId,
   });
 
-  const conversationBoundaries = origin.conversationForkBoundaries ?? [
-    {
-      turnId: null,
-      conversationTurnCount: 0,
-      userMessageId: null,
-      assistantMessageId: null,
-      completedAt: origin.createdAt,
-      checkpointTurnCount: null,
-      checkpointStatus: null,
-    },
-    ...origin.checkpoints.map((checkpoint) => ({
-      turnId: checkpoint.turnId,
-      conversationTurnCount: checkpoint.checkpointTurnCount,
-      userMessageId: null,
-      assistantMessageId: checkpoint.assistantMessageId,
-      completedAt: checkpoint.completedAt,
-      checkpointTurnCount: checkpoint.checkpointTurnCount,
-      checkpointStatus: checkpoint.status,
-    })),
-  ];
+  // When the Scient-owned resolver provides SQL-backed boundaries, use them
+  // exclusively. Do NOT trust origin.conversationForkBoundaries from the read
+  // model or synthesize a checkpoint fallback — the resolver is authoritative.
+  const conversationBoundaries = resolvedBoundaries ??
+    origin.conversationForkBoundaries ?? [
+      {
+        turnId: null,
+        conversationTurnCount: 0,
+        userMessageId: null,
+        assistantMessageId: null,
+        completedAt: origin.createdAt,
+        checkpointTurnCount: null,
+        checkpointStatus: null,
+      },
+      ...origin.checkpoints.map((checkpoint) => ({
+        turnId: checkpoint.turnId,
+        conversationTurnCount: checkpoint.checkpointTurnCount,
+        userMessageId: null,
+        assistantMessageId: checkpoint.assistantMessageId,
+        completedAt: checkpoint.completedAt,
+        checkpointTurnCount: checkpoint.checkpointTurnCount,
+        checkpointStatus: checkpoint.status,
+      })),
+    ];
   const selectedBoundary = conversationBoundaries.find(
     (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
   );

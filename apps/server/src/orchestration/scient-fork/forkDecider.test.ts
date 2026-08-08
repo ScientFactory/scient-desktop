@@ -741,4 +741,319 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       }
     }),
   );
+
+  // SCIENT-OWNED RESOLVER TESTS — these exercise the decider with
+  // `resolvedBoundaries` (SQL-backed), proving it does not trust
+  // client-shaped `conversationForkBoundaries` arrays from the read model.
+
+  it.effect("uses SQL-backed resolved boundaries and ignores stale read model boundaries", () =>
+    Effect.gen(function* () {
+      // The read model carries STALE boundaries that omit turn-2/A2 entirely.
+      // The resolver provides the CORRECT SQL-backed boundaries including A2.
+      const staleOrigin = makeOriginThread({
+        conversationForkBoundaries: [
+          {
+            turnId: null,
+            conversationTurnCount: 0,
+            userMessageId: null,
+            assistantMessageId: null,
+            completedAt: NOW,
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          },
+          {
+            turnId: TurnId.make("turn-1"),
+            conversationTurnCount: 1,
+            userMessageId: MessageId.make("user-1"),
+            assistantMessageId: A1,
+            completedAt: NOW,
+            checkpointTurnCount: 1,
+            checkpointStatus: "ready",
+          },
+          // NOTE: turn-2/A2 is deliberately absent from the stale read model.
+        ],
+      });
+      const resolvedBoundaries = [
+        {
+          turnId: null,
+          conversationTurnCount: 0,
+          userMessageId: null,
+          assistantMessageId: null,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+        {
+          turnId: TurnId.make("turn-1"),
+          conversationTurnCount: 1,
+          userMessageId: MessageId.make("user-1"),
+          assistantMessageId: A1,
+          completedAt: NOW,
+          checkpointTurnCount: 1,
+          checkpointStatus: "ready" as const,
+        },
+        {
+          turnId: T2,
+          conversationTurnCount: 2,
+          userMessageId: MessageId.make("user-2"),
+          assistantMessageId: A2,
+          completedAt: NOW,
+          checkpointTurnCount: 2,
+          checkpointStatus: "ready" as const,
+        },
+      ];
+      const events = yield* forkThread({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin: staleOrigin }),
+        resolvedBoundaries,
+      });
+
+      // The decider used the resolved boundaries (which include A2), not the
+      // stale read model (which omits it). The fork succeeds and retains
+      // the full prefix through turn-2.
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(T2);
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(2);
+      const texts = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload.text] : [],
+      );
+      expect(texts).toEqual(["first prompt", "first answer", "second prompt", "second answer"]);
+    }),
+  );
+
+  it.effect("rejects a resolved boundary absent from SQL-backed boundaries", () =>
+    Effect.gen(function* () {
+      // The resolver provides boundaries that do NOT include the requested
+      // assistant. The decider must reject, even if the stale read model
+      // does include it.
+      const originWithStaleBoundary = makeOriginThread();
+      const resolvedBoundaries = [
+        {
+          turnId: null,
+          conversationTurnCount: 0,
+          userMessageId: null,
+          assistantMessageId: null,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+        {
+          turnId: TurnId.make("turn-1"),
+          conversationTurnCount: 1,
+          userMessageId: MessageId.make("user-1"),
+          assistantMessageId: A1,
+          completedAt: NOW,
+          checkpointTurnCount: 1,
+          checkpointStatus: "ready" as const,
+        },
+        // A2 is absent from resolved boundaries.
+      ];
+      const error = yield* forkThread({
+        command: forkCommand({ sourceAssistantMessageId: A2 }),
+        readModel: makeReadModel({ origin: originWithStaleBoundary }),
+        resolvedBoundaries,
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("ignores extra fields in the command payload (narrow public input)", () =>
+    Effect.gen(function* () {
+      // The command schema is Schema.Struct (not strict), so extra keys
+      // survive decoding but the decider reads only the four public fields
+      // plus type/commandId. Inject extra boundary data that must NOT
+      // influence the fork point.
+      const commandWithExtra = {
+        ...forkCommand({ sourceAssistantMessageId: A2 }),
+        // Client-shaped fields that must be ignored:
+        conversationForkBoundaries: [
+          {
+            turnId: TurnId.make("turn-1"),
+            conversationTurnCount: 1,
+            userMessageId: MessageId.make("user-1"),
+            assistantMessageId: A1,
+            completedAt: NOW,
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          },
+        ],
+        retainedPrefix: [],
+        turnCount: 1,
+        checkpointCount: 0,
+        title: "Caller-provided title",
+      } as ThreadForkCommand;
+
+      const events = yield* forkThread({
+        command: commandWithExtra,
+        readModel: makeReadModel(),
+      });
+
+      // The decider resolved from origin.conversationForkBoundaries (the
+      // read model), NOT from the extra command fields. The fork point is
+      // A2/turn-2, not A1/turn-1 from the injected boundary array.
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(T2);
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(2);
+
+      // The caller-provided title was ignored in favor of the server-owned title.
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Origin conversation (2)",
+      );
+    }),
+  );
+
+  it.effect("selects an older boundary via resolved boundaries while newer turns exist", () =>
+    Effect.gen(function* () {
+      const resolvedBoundaries = [
+        {
+          turnId: null,
+          conversationTurnCount: 0,
+          userMessageId: null,
+          assistantMessageId: null,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+        {
+          turnId: TurnId.make("turn-1"),
+          conversationTurnCount: 1,
+          userMessageId: MessageId.make("user-1"),
+          assistantMessageId: A1,
+          completedAt: NOW,
+          checkpointTurnCount: 1,
+          checkpointStatus: "ready" as const,
+        },
+        {
+          turnId: T2,
+          conversationTurnCount: 2,
+          userMessageId: MessageId.make("user-2"),
+          assistantMessageId: A2,
+          completedAt: NOW,
+          checkpointTurnCount: 2,
+          checkpointStatus: "ready" as const,
+        },
+      ];
+      const events = yield* forkThread({
+        command: forkCommand({ sourceAssistantMessageId: A1 }),
+        readModel: makeReadModel(),
+        resolvedBoundaries,
+      });
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(
+        TurnId.make("turn-1"),
+      );
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(1);
+      // Only the first turn's prefix is retained.
+      const texts = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload.text] : [],
+      );
+      expect(texts).toEqual(["first prompt", "first answer"]);
+    }),
+  );
+
+  it.effect("preserves origin immutability when using resolved boundaries", () =>
+    Effect.gen(function* () {
+      const readModel = makeReadModel();
+      const originBefore = structuredClone(
+        readModel.threads.find((thread) => thread.id === ORIGIN),
+      );
+      const resolvedBoundaries = [
+        {
+          turnId: null,
+          conversationTurnCount: 0,
+          userMessageId: null,
+          assistantMessageId: null,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+        {
+          turnId: TurnId.make("turn-1"),
+          conversationTurnCount: 1,
+          userMessageId: MessageId.make("user-1"),
+          assistantMessageId: A1,
+          completedAt: NOW,
+          checkpointTurnCount: 1,
+          checkpointStatus: "ready" as const,
+        },
+        {
+          turnId: T2,
+          conversationTurnCount: 2,
+          userMessageId: MessageId.make("user-2"),
+          assistantMessageId: A2,
+          completedAt: NOW,
+          checkpointTurnCount: 2,
+          checkpointStatus: "ready" as const,
+        },
+      ];
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel,
+        resolvedBoundaries,
+      });
+
+      const originAfter = readModel.threads.find((thread) => thread.id === ORIGIN);
+      expect(originAfter).toEqual(originBefore);
+      for (const event of events) {
+        expect(event.aggregateId).not.toBe(ORIGIN);
+      }
+    }),
+  );
+
+  it.effect("does not synthesize checkpoint fallback when resolved boundaries are provided", () =>
+    Effect.gen(function* () {
+      // The read model has NO conversationForkBoundaries and NO checkpoints,
+      // which would trigger the legacy fallback. But resolved boundaries are
+      // provided, so the decider must use them exclusively.
+      const originNoBoundaries = makeOriginThread({
+        conversationForkBoundaries: undefined,
+        checkpoints: [],
+      });
+      const resolvedBoundaries = [
+        {
+          turnId: null,
+          conversationTurnCount: 0,
+          userMessageId: null,
+          assistantMessageId: null,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+        {
+          turnId: TurnId.make("turn-1"),
+          conversationTurnCount: 1,
+          userMessageId: MessageId.make("user-1"),
+          assistantMessageId: A1,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+        {
+          turnId: T2,
+          conversationTurnCount: 2,
+          userMessageId: MessageId.make("user-2"),
+          assistantMessageId: A2,
+          completedAt: NOW,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        },
+      ];
+      const events = yield* forkThread({
+        command: forkCommand({ sourceAssistantMessageId: A2, workspaceMode: "local" }),
+        readModel: makeReadModel({ origin: originNoBoundaries }),
+        resolvedBoundaries,
+      });
+
+      // The fork succeeds at A2/turn-2 using the resolved boundaries.
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(T2);
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(2);
+      // No checkpoint since the resolved boundaries have null checkpoint info.
+      expect(
+        forked?.type === "thread.forked" ? forked.payload.sourceCheckpointTurnCount : undefined,
+      ).toBeNull();
+    }),
+  );
 });
