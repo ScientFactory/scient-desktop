@@ -17,6 +17,12 @@ export class ScientForkAttachmentCopyError extends Schema.TaggedErrorClass<Scien
   "ScientForkAttachmentCopyError",
   {
     threadId: ThreadId,
+    reason: Schema.Literals([
+      "unsafe-mapping",
+      "source-unavailable",
+      "target-write-failed",
+      "verification-failed",
+    ]),
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -51,6 +57,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new ScientForkAttachmentCopyError({
             threadId: input.threadId,
+            reason: "target-write-failed",
             detail: "Unable to prepare Scient's attachment directory for the fork.",
             cause,
           }),
@@ -68,6 +75,7 @@ const make = Effect.gen(function* () {
           ) {
             return yield* new ScientForkAttachmentCopyError({
               threadId: input.threadId,
+              reason: "unsafe-mapping",
               detail: `Retained attachment '${copy.source.name}' is not owned by the fork.`,
             });
           }
@@ -82,7 +90,27 @@ const make = Effect.gen(function* () {
           if (sourcePath === null || targetPath === null || sourcePath === targetPath) {
             return yield* new ScientForkAttachmentCopyError({
               threadId: input.threadId,
+              reason: "unsafe-mapping",
               detail: `Unsafe retained attachment mapping for '${copy.source.name}'.`,
+            });
+          }
+
+          const sourceInfo = yield* fileSystem.stat(sourcePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ScientForkAttachmentCopyError({
+                  threadId: input.threadId,
+                  reason: "source-unavailable",
+                  detail: `Retained attachment '${copy.source.name}' is no longer available in the origin conversation.`,
+                  cause,
+                }),
+            ),
+          );
+          if (sourceInfo.type !== "File") {
+            return yield* new ScientForkAttachmentCopyError({
+              threadId: input.threadId,
+              reason: "source-unavailable",
+              detail: `Retained attachment '${copy.source.name}' is no longer available in the origin conversation.`,
             });
           }
 
@@ -91,19 +119,18 @@ const make = Effect.gen(function* () {
               (cause) =>
                 new ScientForkAttachmentCopyError({
                   threadId: input.threadId,
+                  reason: "target-write-failed",
                   detail: `Unable to retain attachment '${copy.source.name}' in the fork.`,
                   cause,
                 }),
             ),
           );
-          const [sourceInfo, targetInfo] = yield* Effect.all([
-            fileSystem.stat(sourcePath),
-            fileSystem.stat(targetPath),
-          ]).pipe(
+          const targetInfo = yield* fileSystem.stat(targetPath).pipe(
             Effect.mapError(
               (cause) =>
                 new ScientForkAttachmentCopyError({
                   threadId: input.threadId,
+                  reason: "target-write-failed",
                   detail: `Unable to verify retained attachment '${copy.source.name}'.`,
                   cause,
                 }),
@@ -116,6 +143,7 @@ const make = Effect.gen(function* () {
           ) {
             return yield* new ScientForkAttachmentCopyError({
               threadId: input.threadId,
+              reason: "verification-failed",
               detail: `Retained attachment '${copy.source.name}' did not copy completely.`,
             });
           }

@@ -4,11 +4,16 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  ThreadForkedPayload,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import {
+  appendConversationForkBoundary,
+  forkBaselineBoundary,
+} from "./scient-fork/forkBoundaryProjection.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -564,6 +569,22 @@ export function projectEvent(
         // Leaving the "running" session status is the turn-end signal: settle
         // a still-running latest turn so its duration reflects the whole turn.
         const settledTurnState = settledTurnStateForSessionStatus(session.status);
+        const settledBoundary =
+          settledTurnState === "completed" && thread.latestTurn?.state === "running"
+            ? appendConversationForkBoundary(thread, {
+                turnId: thread.latestTurn.turnId,
+                assistantMessageId: thread.latestTurn.assistantMessageId,
+                completedAt: session.updatedAt,
+                checkpointTurnCount:
+                  thread.checkpoints.find(
+                    (checkpoint) => checkpoint.turnId === thread.latestTurn?.turnId,
+                  )?.checkpointTurnCount ?? null,
+                checkpointStatus:
+                  thread.checkpoints.find(
+                    (checkpoint) => checkpoint.turnId === thread.latestTurn?.turnId,
+                  )?.status ?? null,
+              })
+            : thread.conversationForkBoundaries;
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -599,6 +620,9 @@ export function projectEvent(
                       completedAt: session.updatedAt,
                     }
                   : thread.latestTurn,
+            ...(settledBoundary !== undefined
+              ? { conversationForkBoundaries: settledBoundary }
+              : {}),
             updatedAt: event.occurredAt,
           }),
         };
@@ -635,6 +659,26 @@ export function projectEvent(
           }),
         };
       });
+
+    // SCIENT-FORK:START — establish the fork-owned immutable turn-zero
+    // boundary in live client/server read models.
+    case "thread.forked":
+      return decodeForEvent(ThreadForkedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.newThreadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.newThreadId, {
+              conversationForkBoundaries: [forkBaselineBoundary(payload)],
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+    // SCIENT-FORK:END
 
     case "thread.turn-diff-completed":
       return Effect.gen(function* () {
@@ -685,11 +729,21 @@ export function projectEvent(
         // checkpoint, but don't settle a turn its session is still running.
         const turnStillRunning =
           thread.session?.status === "running" && thread.session.activeTurnId === payload.turnId;
+        const conversationForkBoundaries = turnStillRunning
+          ? thread.conversationForkBoundaries
+          : appendConversationForkBoundary(thread, {
+              turnId: payload.turnId,
+              assistantMessageId: payload.assistantMessageId,
+              completedAt: payload.completedAt,
+              checkpointTurnCount: payload.checkpointTurnCount,
+              checkpointStatus: payload.status,
+            });
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
+            conversationForkBoundaries,
             latestTurn: turnStillRunning
               ? thread.latestTurn
               : {
@@ -724,6 +778,14 @@ export function projectEvent(
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
             .slice(-MAX_THREAD_CHECKPOINTS);
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
+          const retainedConversationBoundaries = (thread.conversationForkBoundaries ?? []).filter(
+            (boundary) => boundary.conversationTurnCount <= payload.turnCount,
+          );
+          for (const boundary of retainedConversationBoundaries) {
+            if (boundary.turnId !== null && boundary.conversationTurnCount === 0) {
+              retainedTurnIds.add(boundary.turnId);
+            }
+          }
           const messages = retainThreadMessagesAfterRevert(
             thread.messages,
             retainedTurnIds,
@@ -752,6 +814,7 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               checkpoints,
+              conversationForkBoundaries: retainedConversationBoundaries,
               messages,
               proposedPlans,
               activities,

@@ -256,7 +256,7 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={timelineEntries}
-        forkTurnCountByUserMessageId={new Map([[messageId, 0]])}
+        forkBoundaryByUserMessageId={new Map([[messageId, true]])}
         onForkUserMessage={() => {}}
         isWorking
       />,
@@ -274,7 +274,7 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={timelineEntries}
-        forkTurnCountByUserMessageId={new Map([[messageId, 1]])}
+        forkBoundaryByUserMessageId={new Map([[messageId, true]])}
         onForkUserMessage={() => {}}
       />,
     );

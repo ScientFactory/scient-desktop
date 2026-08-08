@@ -23,14 +23,19 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { forkParked } from "../../serverActivation.ts";
 import {
   claimFork,
+  getRecoverableFork,
   getForkStatus,
   listRecoverableForks,
+  markForkAbandoned,
   markForkFailed,
   type ScientForkCheckpointStatus,
   type ScientForkWorkspaceStatus,
 } from "../scient-fork/forkRepository.ts";
 import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBaseline.ts";
-import { ScientForkAttachmentCopier } from "../scient-fork/ForkAttachmentCopier.ts";
+import {
+  ScientForkAttachmentCopier,
+  ScientForkAttachmentCopyError,
+} from "../scient-fork/ForkAttachmentCopier.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -41,12 +46,36 @@ import {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const isScientForkCompletionError = Schema.is(ScientForkCompletionError);
+const isScientForkAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError);
+
+class ScientForkTerminalProvisioningError extends Schema.TaggedErrorClass<ScientForkTerminalProvisioningError>()(
+  "ScientForkTerminalProvisioningError",
+  { detail: Schema.String },
+) {}
+
+const isScientForkTerminalProvisioningError = Schema.is(ScientForkTerminalProvisioningError);
+
+function forkFailure(cause: Cause.Cause<unknown>): unknown {
+  return cause.reasons.find(Cause.isFailReason)?.error;
+}
 
 function forkFailureDetail(cause: Cause.Cause<unknown>): string {
-  const failure = cause.reasons.find(Cause.isFailReason)?.error;
-  return (isScientForkCompletionError(failure) ? failure.detail : Cause.pretty(cause)).slice(
-    0,
-    4_000,
+  const failure = forkFailure(cause);
+  return (
+    isScientForkCompletionError(failure) ||
+    isScientForkTerminalProvisioningError(failure) ||
+    isScientForkAttachmentCopyError(failure)
+      ? failure.detail
+      : Cause.pretty(cause)
+  ).slice(0, 4_000);
+}
+
+function isTerminalForkFailure(cause: Cause.Cause<unknown>): boolean {
+  const failure = forkFailure(cause);
+  return (
+    isScientForkTerminalProvisioningError(failure) ||
+    (isScientForkAttachmentCopyError(failure) &&
+      (failure.reason === "source-unavailable" || failure.reason === "unsafe-mapping"))
   );
 }
 
@@ -135,8 +164,7 @@ const make = Effect.gen(function* () {
       payload.originThreadId,
     );
     if (Option.isNone(context)) {
-      return yield* new ScientForkCompletionError({
-        threadId: payload.newThreadId,
+      return yield* new ScientForkTerminalProvisioningError({
         detail: `Origin workspace context is unavailable for '${payload.originThreadId}'.`,
       });
     }
@@ -147,24 +175,30 @@ const make = Effect.gen(function* () {
       copies: payload.attachmentCopies,
     });
     const originCwd = origin.worktreePath ?? origin.workspaceRoot;
-    const fromRef = checkpointRefForThreadTurn(payload.originThreadId, payload.forkAtTurnCount);
     const toRef = checkpointRefForThreadTurn(payload.newThreadId, 0);
-    const isGitRepository = yield* checkpointBaseline.isGitRepository(originCwd);
-    const baselined = isGitRepository
-      ? yield* checkpointBaseline.copy({
-          cwd: originCwd,
-          fromCheckpointRef: fromRef,
-          toCheckpointRef: toRef,
-        })
-      : false;
+    const sourceCheckpointTurnCount = payload.sourceCheckpointTurnCount;
+    const fromRef =
+      sourceCheckpointTurnCount === null
+        ? null
+        : checkpointRefForThreadTurn(payload.originThreadId, sourceCheckpointTurnCount);
+    const isGitRepository =
+      fromRef === null ? false : yield* checkpointBaseline.isGitRepository(originCwd);
+    const baselined =
+      isGitRepository && fromRef !== null
+        ? yield* checkpointBaseline.copy({
+            cwd: originCwd,
+            fromCheckpointRef: fromRef,
+            toCheckpointRef: toRef,
+          })
+        : false;
     const checkpointStatus: ScientForkCheckpointStatus = baselined ? "ready" : "unavailable";
 
     let workspaceStatus: ScientForkWorkspaceStatus;
     if (payload.workspaceMode === "new-worktree") {
-      if (!baselined) {
-        return yield* new ScientForkCompletionError({
-          threadId: payload.newThreadId,
-          detail: `A new worktree cannot be created because checkpoint '${fromRef}' is unavailable.`,
+      if (!baselined || fromRef === null) {
+        return yield* new ScientForkTerminalProvisioningError({
+          detail:
+            "A new worktree cannot be created because the selected conversation boundary has no ready Git checkpoint.",
         });
       }
       const worktree = yield* ensureWorktree({
@@ -212,14 +246,52 @@ const make = Effect.gen(function* () {
           return Effect.failCause(cause);
         }
         const error = forkFailureDetail(cause);
-        return nowIso.pipe(
-          Effect.flatMap((updatedAt) =>
-            markForkFailed(sql, {
-              threadId: payload.newThreadId,
-              error,
-              updatedAt,
-            }),
-          ),
+        const terminal = isTerminalForkFailure(cause);
+        const persistFailure = terminal
+          ? orchestrationEngine
+              .dispatch({
+                type: "thread.delete",
+                commandId: CommandId.make(`server:scient-fork:abandon:${payload.newThreadId}`),
+                threadId: payload.newThreadId,
+              })
+              .pipe(
+                Effect.andThen(
+                  nowIso.pipe(
+                    Effect.flatMap((updatedAt) =>
+                      markForkAbandoned(sql, {
+                        threadId: payload.newThreadId,
+                        error,
+                        updatedAt,
+                      }),
+                    ),
+                  ),
+                ),
+                Effect.catchCause((compensationCause) =>
+                  nowIso.pipe(
+                    Effect.flatMap((updatedAt) =>
+                      markForkFailed(sql, {
+                        threadId: payload.newThreadId,
+                        error:
+                          `${error}\nCompensation failed: ${Cause.pretty(compensationCause)}`.slice(
+                            0,
+                            4_000,
+                          ),
+                        updatedAt,
+                      }),
+                    ),
+                  ),
+                ),
+              )
+          : nowIso.pipe(
+              Effect.flatMap((updatedAt) =>
+                markForkFailed(sql, {
+                  threadId: payload.newThreadId,
+                  error,
+                  updatedAt,
+                }),
+              ),
+            );
+        return persistFailure.pipe(
           Effect.catchCause((persistCause) =>
             Effect.logError("failed to persist Scient fork failure", {
               newThreadId: payload.newThreadId,
@@ -227,10 +299,15 @@ const make = Effect.gen(function* () {
             }),
           ),
           Effect.andThen(
-            Effect.logWarning("Scient fork provisioning failed and will retry after restart", {
-              newThreadId: payload.newThreadId,
-              cause: error,
-            }),
+            Effect.logWarning(
+              terminal
+                ? "Scient fork provisioning failed terminally; the unusable fork was removed"
+                : "Scient fork provisioning failed and will retry after restart",
+              {
+                newThreadId: payload.newThreadId,
+                cause: error,
+              },
+            ),
           ),
           Effect.andThen(
             completionFor(payload.newThreadId).pipe(
@@ -291,6 +368,12 @@ const make = Effect.gen(function* () {
         detail: status.last_error ?? "Fork provisioning failed.",
       });
     }
+    if (status?.status === "abandoned") {
+      return yield* new ScientForkCompletionError({
+        threadId,
+        detail: status.last_error ?? "Fork provisioning could not be completed.",
+      });
+    }
     return false;
   });
 
@@ -304,6 +387,24 @@ const make = Effect.gen(function* () {
     if (yield* resolveFinishedStatus(threadId)) {
       yield* releaseCompletion(threadId, completion);
       return;
+    }
+    // The durable row is authoritative. Self-enqueueing here closes the live
+    // subscription handoff race for every user-facing fork request; duplicate
+    // delivery is harmless because claimFork is idempotent.
+    const recoverable = yield* getRecoverableFork(sql, threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ScientForkCompletionError({
+            threadId,
+            detail: `Unable to recover fork provisioning: ${Cause.pretty(Cause.fail(cause)).slice(
+              0,
+              4_000,
+            )}`,
+          }),
+      ),
+    );
+    if (recoverable !== null) {
+      yield* worker.enqueue(recoverable);
     }
     return yield* Deferred.await(completion);
   });

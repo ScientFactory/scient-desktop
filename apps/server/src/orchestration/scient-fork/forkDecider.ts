@@ -10,16 +10,15 @@
  * lineage, and leaves the origin thread completely untouched — the decider emits
  * events ONLY against `newThreadId`, never against `originThreadId`.
  *
- * We re-emit the retained transcript (`thread.message-sent`) plus a
- * `thread.created` for the new aggregate and a `thread.forked` lineage event.
- * We deliberately do not re-emit `thread.turn-diff-completed`: those events
- * drive T3's checkpoint reactor. The Scient fork worker instead copies the
- * selected origin checkpoint to the new thread's turn-zero ref exactly once.
+ * We re-emit the retained transcript (`thread.message-sent`) as one immutable
+ * fork-owned conversation baseline. Git eligibility stays separate: when the
+ * selected conversation boundary has a ready checkpoint, its ref is projected
+ * as the new thread's turn-zero checkpoint and copied by the fork worker.
  *
  * Where origin history comes from: the decider is a pure function over the
  * in-memory `OrchestrationReadModel`, which carries per-thread `messages` and
- * `checkpoints`. We read the origin's completed-turn boundaries from its
- * `checkpoints` and the transcript from its `messages`. See
+ * `conversationForkBoundaries`. Checkpoints are only workspace/revert evidence;
+ * they are not conversation-completion authority. See
  * docs/internals/scient-fork-divergence.md for the read-model boot caveat.
  */
 import {
@@ -41,6 +40,7 @@ import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
+import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
 
@@ -99,11 +99,16 @@ const withForkEventBase = (input: {
 function retainPrefixMessages(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
+  retainedBoundaryMessageIds: ReadonlySet<string>,
   turnCount: number,
 ): ReadonlyArray<OrchestrationMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
     if (message.role === "system") {
+      retainedMessageIds.add(message.id);
+      continue;
+    }
+    if (retainedBoundaryMessageIds.has(message.id)) {
       retainedMessageIds.add(message.id);
       continue;
     }
@@ -180,43 +185,72 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     threadId: command.newThreadId,
   });
 
-  // Fail closed: never fork a thread that is mid-turn / streaming. Forking an
-  // in-flight turn would capture a torn, half-written boundary.
-  const sessionBusy =
-    origin.session !== null &&
-    (origin.session.status === "starting" || origin.session.status === "running");
-  const turnRunning = origin.latestTurn !== null && origin.latestTurn.state === "running";
-  const messageStreaming = origin.messages.some((message) => message.streaming);
-  if (sessionBusy || turnRunning || messageStreaming) {
+  const conversationBoundaries = origin.conversationForkBoundaries ?? [
+    {
+      turnId: null,
+      conversationTurnCount: 0,
+      userMessageId: null,
+      assistantMessageId: null,
+      completedAt: origin.createdAt,
+      checkpointTurnCount: null,
+      checkpointStatus: null,
+    },
+    ...origin.checkpoints.map((checkpoint) => ({
+      turnId: checkpoint.turnId,
+      conversationTurnCount: checkpoint.checkpointTurnCount,
+      userMessageId: null,
+      assistantMessageId: checkpoint.assistantMessageId,
+      completedAt: checkpoint.completedAt,
+      checkpointTurnCount: checkpoint.checkpointTurnCount,
+      checkpointStatus: checkpoint.status,
+    })),
+  ];
+  const selectedBoundary = conversationBoundaries.find(
+    (boundary) =>
+      boundary.conversationTurnCount === command.forkAtTurnCount &&
+      (command.forkAtTurnId === undefined || boundary.turnId === command.forkAtTurnId),
+  );
+  const requestedBoundary = command.forkAtTurnId ?? command.forkAtTurnCount;
+  if (!selectedBoundary) {
     return yield* invariant(
-      `Origin thread '${command.originThreadId}' is mid-turn; forking is only allowed at a settled turn boundary.`,
+      `Turn '${requestedBoundary}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`,
     );
   }
 
-  // Turn zero is the initial checkpoint T3 creates before the first provider
-  // turn. It is valid even though projected checkpoint summaries begin at the
-  // first completed turn.
-  const completedBoundaries = new Set([
-    0,
-    ...origin.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
-  ]);
-  if (!completedBoundaries.has(command.forkAtTurnCount)) {
-    return yield* invariant(
-      `forkAtTurnCount ${command.forkAtTurnCount} is not a completed turn boundary of origin thread '${command.originThreadId}'.`,
-    );
-  }
-
-  const retainedCheckpoints = origin.checkpoints.filter(
-    (checkpoint) => checkpoint.checkpointTurnCount <= command.forkAtTurnCount,
+  const retainedBoundaries = conversationBoundaries.filter(
+    (boundary) => boundary.conversationTurnCount <= selectedBoundary.conversationTurnCount,
   );
   const retainedTurnIds = new Set<string>(
-    retainedCheckpoints.map((checkpoint) => checkpoint.turnId),
+    retainedBoundaries.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
+  );
+  const retainedBoundaryMessageIds = new Set<string>(
+    retainedBoundaries.flatMap((boundary) =>
+      [boundary.userMessageId, boundary.assistantMessageId].flatMap((messageId) =>
+        messageId === null ? [] : [messageId],
+      ),
+    ),
   );
   const prefixMessages = retainPrefixMessages(
     origin.messages,
     retainedTurnIds,
-    command.forkAtTurnCount,
+    retainedBoundaryMessageIds,
+    selectedBoundary.conversationTurnCount,
   );
+  if (prefixMessages.some((message) => message.streaming)) {
+    return yield* invariant(`Turn '${requestedBoundary}' is incomplete and cannot be forked.`);
+  }
+
+  const selectedCheckpoint = origin.checkpoints.find(
+    (checkpoint) =>
+      selectedBoundary.turnId !== null &&
+      checkpoint.turnId === selectedBoundary.turnId &&
+      checkpoint.status === "ready",
+  );
+  if (command.workspaceMode === "new-worktree" && !selectedCheckpoint) {
+    return yield* invariant(
+      `Turn '${requestedBoundary}' has no ready Git checkpoint; fork it in the same workspace or choose a checkpoint-backed turn.`,
+    );
+  }
 
   const occurredAt = yield* nowIso;
   const events: PlannedOrchestrationEvent[] = [];
@@ -263,15 +297,15 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     },
   });
 
-  // Re-key every origin turn id to a fresh id scoped to the new thread. Message
-  // ids MUST be re-keyed too (projection_thread_messages.message_id is a global
-  // primary key); turn ids are re-keyed defensively so no identifier is shared
-  // across the two independent threads.
-  const turnIdRemap = new Map<string, TurnId>();
-  for (const turnId of retainedTurnIds) {
-    const fresh = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
-    turnIdRemap.set(turnId, TurnId.make(fresh));
-  }
+  // The imported transcript is one immutable provider-neutral baseline. It is
+  // deliberately not represented as N native provider turns: the new provider
+  // session receives it once as bootstrap context, so rollback counts only
+  // genuinely new post-fork turns.
+  const baselineTurnId = TurnId.make(
+    yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+  );
+  let baselineUserMessageId: MessageId | null = null;
+  let baselineAssistantMessageId: MessageId | null = null;
 
   // 2) Re-emit the prefix transcript into the new thread's stream. Payload
   // timestamps preserve message history, while event occurrence stays at the
@@ -280,8 +314,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     const freshMessageId = yield* Crypto.Crypto.pipe(
       Effect.flatMap((crypto) => crypto.randomUUIDv4),
     );
-    const remappedTurnId =
-      message.turnId === null ? null : (turnIdRemap.get(message.turnId) ?? null);
+    const messageId = MessageId.make(freshMessageId);
+    if (message.role === "user") baselineUserMessageId = messageId;
+    if (message.role === "assistant") baselineAssistantMessageId = messageId;
     events.push({
       ...(yield* withForkEventBase({
         commandId: command.commandId,
@@ -291,7 +326,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       type: "thread.message-sent",
       payload: {
         threadId: command.newThreadId,
-        messageId: MessageId.make(freshMessageId),
+        messageId,
         role: message.role,
         text: message.text,
         ...(message.attachments !== undefined
@@ -301,7 +336,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
               ),
             }
           : {}),
-        turnId: remappedTurnId,
+        turnId: message.role === "system" ? null : baselineTurnId,
         streaming: false,
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
@@ -321,13 +356,39 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     payload: {
       originThreadId: command.originThreadId,
       newThreadId: command.newThreadId,
-      forkAtTurnCount: command.forkAtTurnCount,
+      forkAtTurnId: selectedBoundary.turnId,
+      forkAtTurnCount: selectedBoundary.conversationTurnCount,
+      sourceCheckpointTurnCount: selectedCheckpoint?.checkpointTurnCount ?? null,
+      baselineTurnId,
+      baselineUserMessageId,
+      baselineAssistantMessageId,
       workspaceMode: command.workspaceMode,
       providerMode: "transcript-bootstrap",
       attachmentCopies,
       createdAt: occurredAt,
     },
   });
+
+  if (selectedCheckpoint) {
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.turn-diff-completed",
+      payload: {
+        threadId: command.newThreadId,
+        turnId: baselineTurnId,
+        checkpointTurnCount: 0,
+        checkpointRef: checkpointRefForThreadTurn(command.newThreadId, 0),
+        status: "ready",
+        files: [],
+        assistantMessageId: baselineAssistantMessageId,
+        completedAt: occurredAt,
+      },
+    });
+  }
 
   return events;
 });

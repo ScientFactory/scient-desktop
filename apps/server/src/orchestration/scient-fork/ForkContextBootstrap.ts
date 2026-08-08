@@ -26,7 +26,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 const MIN_BOOTSTRAP_CHARS = 512;
 
 const ForkBootstrapRow = Schema.Struct({
-  status: Schema.Literals(["pending", "provisioning", "failed", "ready"]),
+  status: Schema.Literals(["pending", "provisioning", "failed", "abandoned", "ready"]),
   provider_mode: Schema.Literal("transcript-bootstrap"),
   provider_bootstrap_status: Schema.Literals(["pending", "completed"]),
   fork_point_turn_count: NonNegativeInt,

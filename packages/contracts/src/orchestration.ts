@@ -305,6 +305,21 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
 });
 export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
 
+// SCIENT-FORK:START — conversation completion is independent from Git state.
+export const OrchestrationForkBoundary = Schema.Struct({
+  // Turn zero has no provider turn identity yet. Later boundaries carry the
+  // completed turn id so clients can reject a stale count after a rewrite.
+  turnId: Schema.NullOr(TurnId),
+  conversationTurnCount: NonNegativeInt,
+  userMessageId: Schema.NullOr(MessageId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  completedAt: IsoDateTime,
+  checkpointTurnCount: Schema.NullOr(NonNegativeInt),
+  checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
+});
+export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
+// SCIENT-FORK:END
+
 export const OrchestrationThreadActivityTone = Schema.Literals([
   "info",
   "tool",
@@ -393,6 +408,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  // Optional on the wire so older servers and cached snapshots remain readable.
+  // Unlike checkpoints, these boundaries also exist for completed non-Git turns.
+  conversationForkBoundaries: Schema.optional(Schema.Array(OrchestrationForkBoundary)),
   session: Schema.NullOr(OrchestrationSession),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
@@ -917,6 +935,10 @@ export const ThreadForkCommand = Schema.Struct({
   commandId: CommandId,
   originThreadId: ThreadId,
   newThreadId: ThreadId,
+  // The count represents turn zero as well as completed turns. New clients
+  // also send the stable turn identity when one exists; the server verifies
+  // both so a stale count cannot silently select a replacement turn.
+  forkAtTurnId: Schema.optional(TurnId),
   forkAtTurnCount: NonNegativeInt,
   workspaceMode: OrchestrationForkWorkspaceMode,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -1334,7 +1356,22 @@ export type ThreadForkAttachmentCopy = typeof ThreadForkAttachmentCopy.Type;
 export const ThreadForkedPayload = Schema.Struct({
   originThreadId: ThreadId,
   newThreadId: ThreadId,
+  forkAtTurnId: Schema.NullOr(TurnId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(TurnId.make("legacy-fork-boundary"))),
+  ),
   forkAtTurnCount: NonNegativeInt,
+  sourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  baselineTurnId: TurnId.pipe(
+    Schema.withDecodingDefault(Effect.succeed(TurnId.make("legacy-fork-baseline"))),
+  ),
+  baselineUserMessageId: Schema.NullOr(MessageId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  baselineAssistantMessageId: Schema.NullOr(MessageId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   workspaceMode: OrchestrationForkWorkspaceMode,
   providerMode: OrchestrationForkProviderMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("transcript-bootstrap" as const)),

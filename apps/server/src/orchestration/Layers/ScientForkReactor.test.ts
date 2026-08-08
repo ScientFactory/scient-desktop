@@ -12,6 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
@@ -34,7 +35,11 @@ import {
   testLayer as ScientForkCheckpointBaselineTest,
   type ScientForkCheckpointBaselineShape,
 } from "../scient-fork/ForkCheckpointBaseline.ts";
-import { testLayer as ScientForkAttachmentCopierTest } from "../scient-fork/ForkAttachmentCopier.ts";
+import {
+  ScientForkAttachmentCopyError,
+  testLayer as ScientForkAttachmentCopierTest,
+  type ScientForkAttachmentCopierShape,
+} from "../scient-fork/ForkAttachmentCopier.ts";
 
 const PROJECT_ID = ProjectId.make("project-fork-1");
 const ORIGIN = ThreadId.make("origin-thread-fork");
@@ -125,6 +130,7 @@ function makeHarnessLayer(
   forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]>,
   createWorktreeCalls: Array<VcsCreateWorktreeInput>,
   baselineResult = true,
+  attachmentCopierOverrides?: Partial<ScientForkAttachmentCopierShape>,
 ) {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -147,7 +153,7 @@ function makeHarnessLayer(
     Layer.provideMerge(orchestrationLayer),
     Layer.provideMerge(projectionSnapshotLayer),
     Layer.provideMerge(makeCheckpointBaselineFake(forkBaselineCalls, baselineResult)),
-    Layer.provideMerge(ScientForkAttachmentCopierTest()),
+    Layer.provideMerge(ScientForkAttachmentCopierTest(attachmentCopierOverrides)),
     Layer.provideMerge(makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls)),
     // Expose SqlClient (shared, memoized instance) so the test can read the
     // Scient lineage table directly.
@@ -160,49 +166,50 @@ function makeHarnessLayer(
 }
 
 // Seed a project + origin thread with one completed checkpointed turn.
-const seedOrigin = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
-  yield* engine.dispatch({
-    type: "project.create",
-    commandId: CommandId.make("cmd-fork-project"),
-    projectId: PROJECT_ID,
-    title: "Fork Project",
-    workspaceRoot: WORKSPACE_ROOT,
-    defaultModelSelection: {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5-codex",
-    },
-    createdAt: CREATED_AT,
+const seedOrigin = (checkpointStatus: "ready" | "missing" = "ready") =>
+  Effect.gen(function* () {
+    const engine = yield* OrchestrationEngineService;
+    yield* engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make("cmd-fork-project"),
+      projectId: PROJECT_ID,
+      title: "Fork Project",
+      workspaceRoot: WORKSPACE_ROOT,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      createdAt: CREATED_AT,
+    });
+    yield* engine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("cmd-fork-thread"),
+      threadId: ORIGIN,
+      projectId: PROJECT_ID,
+      title: "Origin",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: ORIGIN_WORKTREE,
+      createdAt: CREATED_AT,
+    });
+    yield* engine.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-fork-diff-1"),
+      threadId: ORIGIN,
+      turnId: TurnId.make("origin-turn-1"),
+      completedAt: CREATED_AT,
+      checkpointRef: checkpointRefForThreadTurn(ORIGIN, FORK_AT_TURN),
+      status: checkpointStatus,
+      files: [],
+      checkpointTurnCount: FORK_AT_TURN,
+      createdAt: CREATED_AT,
+    });
   });
-  yield* engine.dispatch({
-    type: "thread.create",
-    commandId: CommandId.make("cmd-fork-thread"),
-    threadId: ORIGIN,
-    projectId: PROJECT_ID,
-    title: "Origin",
-    modelSelection: {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5-codex",
-    },
-    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-    runtimeMode: "approval-required",
-    branch: null,
-    worktreePath: ORIGIN_WORKTREE,
-    createdAt: CREATED_AT,
-  });
-  yield* engine.dispatch({
-    type: "thread.turn.diff.complete",
-    commandId: CommandId.make("cmd-fork-diff-1"),
-    threadId: ORIGIN,
-    turnId: TurnId.make("origin-turn-1"),
-    completedAt: CREATED_AT,
-    checkpointRef: checkpointRefForThreadTurn(ORIGIN, FORK_AT_TURN),
-    status: "ready",
-    files: [],
-    checkpointTurnCount: FORK_AT_TURN,
-    createdAt: CREATED_AT,
-  });
-});
 
 const dispatchFork = (workspaceMode: "local" | "new-worktree", forkCommandId: string) =>
   Effect.gen(function* () {
@@ -212,6 +219,7 @@ const dispatchFork = (workspaceMode: "local" | "new-worktree", forkCommandId: st
       commandId: CommandId.make(forkCommandId),
       originThreadId: ORIGIN,
       newThreadId: NEW,
+      forkAtTurnId: TurnId.make("origin-turn-1"),
       forkAtTurnCount: FORK_AT_TURN,
       workspaceMode,
     });
@@ -227,7 +235,7 @@ const runForkScenario = (workspaceMode: "local" | "new-worktree", forkCommandId:
     // The reactor consumes a HOT domain-event stream (new events only), so it
     // must be started before the fork command is dispatched.
     yield* reactor.start();
-    yield* seedOrigin;
+    yield* seedOrigin();
 
     const completionFiber = yield* Effect.forkChild(reactor.awaitCompletion(NEW));
 
@@ -278,6 +286,18 @@ describe("ScientForkReactor", () => {
       expect(lineage?.fidelity_mode).toBe("transcript-bootstrap");
       expect(lineage?.forked_from_thread_id).toBe(ORIGIN);
       expect(lineage?.workspace_mode).toBe("local");
+
+      const detail = yield* snapshotQuery.getThreadDetailById(NEW);
+      expect(Option.isSome(detail)).toBe(true);
+      if (Option.isSome(detail)) {
+        expect(detail.value.conversationForkBoundaries).toEqual([
+          expect.objectContaining({
+            conversationTurnCount: 0,
+            checkpointTurnCount: 0,
+            checkpointStatus: "ready",
+          }),
+        ]);
+      }
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 
@@ -321,7 +341,7 @@ describe("ScientForkReactor", () => {
     return Effect.gen(function* () {
       const reactor = yield* ScientForkReactor;
       const sql = yield* SqlClient.SqlClient;
-      yield* seedOrigin;
+      yield* seedOrigin();
       yield* dispatchFork("local", "cmd-fork-before-reactor-start");
 
       const pending = yield* readLineageRow(sql);
@@ -338,25 +358,109 @@ describe("ScientForkReactor", () => {
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 
-  it.live("persists a typed failure when a dedicated worktree has no checkpoint", () => {
+  it.live("self-enqueues the durable fork while awaiting its completion receipt", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
     const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
 
     return Effect.gen(function* () {
       const reactor = yield* ScientForkReactor;
       const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* dispatchFork("local", "cmd-fork-durable-receipt");
+
+      // No reactor.start(): this exercises the durable receipt path without
+      // relying on the live event subscription or startup recovery scan.
+      yield* reactor.awaitCompletion(NEW);
+      yield* reactor.drain;
+
+      expect((yield* readLineageRow(sql))?.status).toBe("ready");
+      expect(forkBaselineCalls).toHaveLength(1);
+    }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
+  });
+
+  it.live("removes an unusable fork when a dedicated worktree has no checkpoint", () => {
+    const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
       yield* reactor.start();
-      yield* seedOrigin;
+      yield* seedOrigin();
       yield* dispatchFork("new-worktree", "cmd-fork-missing-checkpoint");
       yield* reactor.drain;
 
       const failure = yield* Effect.result(reactor.awaitCompletion(NEW));
       expect(failure._tag).toBe("Failure");
       const lineage = yield* readLineageRow(sql);
-      expect(lineage?.status).toBe("failed");
+      expect(lineage?.status).toBe("abandoned");
       expect(lineage?.attempt_count).toBe(1);
       expect(lineage?.last_error).toContain("cannot be created");
       expect(createWorktreeCalls).toHaveLength(0);
+      expect(Option.isNone(yield* snapshotQuery.getThreadDetailById(NEW))).toBe(true);
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls, false)));
+  });
+
+  it.live("forks a completed non-Git conversation in the same workspace", () => {
+    const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+
+    return Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const reactor = yield* ScientForkReactor;
+      yield* reactor.start();
+      yield* seedOrigin("missing");
+
+      const completionFiber = yield* Effect.forkChild(reactor.awaitCompletion(NEW));
+      yield* dispatchFork("local", "cmd-fork-non-git");
+      yield* Fiber.join(completionFiber);
+      yield* reactor.drain;
+
+      expect(forkBaselineCalls).toHaveLength(0);
+      expect(createWorktreeCalls).toHaveLength(0);
+      const detail = yield* snapshotQuery.getThreadDetailById(NEW);
+      expect(Option.isSome(detail)).toBe(true);
+      if (Option.isSome(detail)) {
+        expect(detail.value.conversationForkBoundaries?.[0]).toMatchObject({
+          conversationTurnCount: 0,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        });
+      }
+    }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
+  });
+
+  it.live("removes a fork whose retained origin attachment disappeared", () => {
+    const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* reactor.start();
+      yield* seedOrigin();
+      yield* dispatchFork("local", "cmd-fork-missing-origin-attachment");
+      yield* reactor.drain;
+
+      const result = yield* Effect.result(reactor.awaitCompletion(NEW));
+      expect(result._tag).toBe("Failure");
+      expect((yield* readLineageRow(sql))?.status).toBe("abandoned");
+      expect(Option.isNone(yield* snapshotQuery.getThreadDetailById(NEW))).toBe(true);
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer(forkBaselineCalls, createWorktreeCalls, true, {
+          copyAll: ({ threadId }) =>
+            Effect.fail(
+              new ScientForkAttachmentCopyError({
+                threadId,
+                reason: "source-unavailable",
+                detail: "The retained origin attachment disappeared.",
+              }),
+            ),
+        }),
+      ),
+    );
   });
 });

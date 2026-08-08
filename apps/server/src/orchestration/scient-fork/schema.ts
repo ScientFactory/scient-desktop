@@ -30,7 +30,12 @@ export const ensureScientForkSchema = Effect.fn("ensureScientForkSchema")(functi
     CREATE TABLE IF NOT EXISTS scient_thread_lineage (
       thread_id TEXT PRIMARY KEY,
       forked_from_thread_id TEXT NOT NULL,
+      fork_point_turn_id TEXT,
       fork_point_turn_count INTEGER NOT NULL,
+      source_checkpoint_turn_count INTEGER,
+      baseline_turn_id TEXT,
+      baseline_user_message_id TEXT,
+      baseline_assistant_message_id TEXT,
       workspace_mode TEXT NOT NULL,
       provider_mode TEXT NOT NULL DEFAULT 'transcript-bootstrap',
       provider_bootstrap_status TEXT NOT NULL DEFAULT 'pending',
@@ -56,6 +61,11 @@ export const ensureScientForkSchema = Effect.fn("ensureScientForkSchema")(functi
           .pipe(Effect.asVoid);
 
   yield* addColumn("provider_mode", "TEXT NOT NULL DEFAULT 'transcript-bootstrap'");
+  yield* addColumn("fork_point_turn_id", "TEXT");
+  yield* addColumn("source_checkpoint_turn_count", "INTEGER");
+  yield* addColumn("baseline_turn_id", "TEXT");
+  yield* addColumn("baseline_user_message_id", "TEXT");
+  yield* addColumn("baseline_assistant_message_id", "TEXT");
   yield* addColumn("provider_bootstrap_status", "TEXT NOT NULL DEFAULT 'pending'");
   yield* addColumn("attachment_copies_json", "TEXT NOT NULL DEFAULT '[]'");
   yield* addColumn("status", "TEXT NOT NULL DEFAULT 'pending'");

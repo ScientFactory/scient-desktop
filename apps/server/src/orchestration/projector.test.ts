@@ -856,6 +856,135 @@ describe("orchestration projector", () => {
     ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
   });
 
+  it("preserves a fork-owned inherited transcript when reverting to turn zero", async () => {
+    const createdAt = "2026-02-27T12:00:00.000Z";
+    const events: ReadonlyArray<OrchestrationEvent> = [
+      makeEvent({
+        sequence: 1,
+        type: "thread.created",
+        aggregateKind: "thread",
+        aggregateId: "fork-thread",
+        occurredAt: createdAt,
+        commandId: "cmd-create-fork",
+        payload: {
+          threadId: "fork-thread",
+          projectId: "project-1",
+          title: "fork",
+          modelSelection: { provider: "codex", model: "gpt-5.3-codex" },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
+      ...[
+        ["baseline-user", "user", "inherited prompt"],
+        ["baseline-assistant", "assistant", "inherited answer"],
+      ].map(([messageId, role, text], index) =>
+        makeEvent({
+          sequence: index + 2,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "fork-thread",
+          occurredAt: createdAt,
+          commandId: "cmd-create-fork",
+          payload: {
+            threadId: "fork-thread",
+            messageId,
+            role,
+            text,
+            turnId: "fork-baseline",
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+      makeEvent({
+        sequence: 4,
+        type: "thread.forked",
+        aggregateKind: "thread",
+        aggregateId: "fork-thread",
+        occurredAt: createdAt,
+        commandId: "cmd-create-fork",
+        payload: {
+          originThreadId: "origin-thread",
+          newThreadId: "fork-thread",
+          forkAtTurnId: "origin-turn-2",
+          forkAtTurnCount: 2,
+          sourceCheckpointTurnCount: null,
+          baselineTurnId: "fork-baseline",
+          baselineUserMessageId: "baseline-user",
+          baselineAssistantMessageId: "baseline-assistant",
+          workspaceMode: "local",
+          providerMode: "transcript-bootstrap",
+          attachmentCopies: [],
+          createdAt,
+        },
+      }),
+      makeEvent({
+        sequence: 5,
+        type: "thread.message-sent",
+        aggregateKind: "thread",
+        aggregateId: "fork-thread",
+        occurredAt: createdAt,
+        commandId: "cmd-post-fork",
+        payload: {
+          threadId: "fork-thread",
+          messageId: "post-fork-user",
+          role: "user",
+          text: "new prompt",
+          turnId: "post-fork-turn",
+          streaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
+      makeEvent({
+        sequence: 6,
+        type: "thread.turn-diff-completed",
+        aggregateKind: "thread",
+        aggregateId: "fork-thread",
+        occurredAt: createdAt,
+        commandId: "cmd-post-fork",
+        payload: {
+          threadId: "fork-thread",
+          turnId: "post-fork-turn",
+          checkpointTurnCount: 1,
+          checkpointRef: "refs/t3/checkpoints/fork-thread/turn/1",
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: createdAt,
+        },
+      }),
+      makeEvent({
+        sequence: 7,
+        type: "thread.reverted",
+        aggregateKind: "thread",
+        aggregateId: "fork-thread",
+        occurredAt: createdAt,
+        commandId: "cmd-revert-fork",
+        payload: { threadId: "fork-thread", turnCount: 0 },
+      }),
+    ];
+
+    const afterRevert = await events.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+      (statePromise, event) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+      Promise.resolve(createEmptyReadModel(createdAt)),
+    );
+    const thread = afterRevert.threads[0];
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "inherited prompt",
+      "inherited answer",
+    ]);
+    expect(thread?.conversationForkBoundaries).toEqual([
+      expect.objectContaining({ turnId: "fork-baseline", conversationTurnCount: 0 }),
+    ]);
+  });
+
   it("caps message and checkpoint retention for long-lived threads", async () => {
     const createdAt = "2026-03-01T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);

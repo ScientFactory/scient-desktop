@@ -84,6 +84,7 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
+  type MessageIdMembership,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
@@ -224,7 +225,7 @@ interface MessagesTimelineProps {
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
-  forkTurnCountByUserMessageId?: Map<MessageId, number>;
+  forkBoundaryByUserMessageId?: MessageIdMembership;
   onRevertUserMessage: (messageId: MessageId) => void;
   // SCIENT-FORK:START
   onForkUserMessage?: (messageId: MessageId, workspaceMode: "new-worktree" | "local") => void;
@@ -274,7 +275,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
-  forkTurnCountByUserMessageId,
+  forkBoundaryByUserMessageId,
   onRevertUserMessage,
   // SCIENT-FORK:START
   onForkUserMessage,
@@ -421,7 +422,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
-        forkTurnCountByUserMessageId,
+        forkBoundaryByUserMessageId,
       }),
     [
       timelineEntries,
@@ -433,7 +434,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
-      forkTurnCountByUserMessageId,
+      forkBoundaryByUserMessageId,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -1003,7 +1004,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
-  const canForkConversation = typeof row.forkTurnCount === "number";
+  const canForkConversation = row.canForkConversation === true;
 
   return (
     <div className="group flex flex-col items-end gap-1">

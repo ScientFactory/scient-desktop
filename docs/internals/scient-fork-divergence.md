@@ -26,6 +26,11 @@ The client navigates to the new conversation only after durable provisioning
 has completed. A failed fork is returned as an error instead of exposing a
 half-ready conversation as successful.
 
+Conversation boundaries are server-owned and do not depend on Git. A user can
+fork the latest completed boundary while a newer turn is active. Git checkpoint
+availability only decides whether the independent-worktree choice is eligible;
+same-workspace conversation forks also work in non-Git projects.
+
 ## Preserved Claude provenance
 
 Claude's implementation remains intact in Git; it was not squashed or rewritten.
@@ -38,9 +43,13 @@ Claude's implementation remains intact in Git; it was not squashed or rewritten.
 - Dedicated initial T3 merge commit:
   `b4ccca5038cf400533c5de58dc12cac2d80d98be`
 - Fork hardening commit: `a851a0ae0611f7c9cbf2381d1e6e240d0657b2ae`
-- Latest official T3 head verified and merged after hardening:
+- Prior official T3 head verified and merged after hardening:
   `ed886fe1814890da30ae73c77f9e894ddc9bd481`
-- Latest T3 merge commit: `d2bc490731e778cf6c3a05822452768b8403455a`
+- Prior T3 merge commit: `d2bc490731e778cf6c3a05822452768b8403455a`
+- Explicit workspace-choice UI commit: `29ea5973c1bc0ba348ae67447ba0b6aab85a7290`
+- Current official T3 head merged during reliability integration:
+  `2c7267ad43a05cf3e30343400c76fd9ac47698e7`
+- Current T3 merge commit: `13e33f1ba9614fdc4490de1526d4d16a3f91ad7f`
 
 The hardened implementation descends from the prototype and the dedicated T3
 merge. Future changes must keep the prototype commit and archive branch
@@ -50,21 +59,26 @@ reachable even if publication later uses a different presentation strategy.
 
 Forking is a durable, restart-safe saga:
 
-1. The event-sourced decider validates a settled, completed boundary; allocates
+1. The event-sourced decider validates an authoritative completed conversation boundary; allocates
    fresh thread, turn, message, and attachment identities; emits the new thread
-   plus retained transcript; and records immutable lineage.
+   plus retained transcript as one immutable turn-zero baseline; and records
+   immutable lineage.
 2. The Scient lineage projector inserts a durable `pending` record.
 3. The Scient fork reactor claims the record, copies fork-owned attachment
    files, establishes the selected checkpoint baseline, and creates the
    worktree when requested.
 4. Deterministic branch, ref, worktree, and internal command identifiers make a
    retry idempotent. Startup recovery resumes `pending`, `provisioning`, and
-   `failed` records.
+   retryable `failed` records. The durable completion receipt also self-enqueues
+   its lineage row, so a missed live wake-up cannot strand an accepted fork.
 5. The reactor records `ready` only after every required substrate is verified.
    The WebSocket command waits for this typed completion receipt.
 6. On the first accepted provider turn, the provider-neutral bootstrap injects
    the retained transcript and recent retained images. The durable bootstrap
    marker is completed only after the provider accepts the send.
+7. Terminal failures such as a disappeared origin attachment or an unavailable
+   required worktree checkpoint delete the unusable target thread and record an
+   `abandoned` lineage state. Transient failures remain retryable.
 
 The domain-event stream is only a wake-up signal. The lineage table remains the
 authority, so a restart or missed live event cannot lose the work.
@@ -82,9 +96,13 @@ internals:
 - `apps/server/src/orchestration/scient-fork/ForkCheckpointBaseline.ts`
 - `apps/server/src/orchestration/scient-fork/ForkContextBootstrap.ts`
 - `apps/server/src/orchestration/scient-fork/forkDecisionReadModel.ts`
+- `apps/server/src/orchestration/scient-fork/ForkBoundaryReadModel.ts`
+- `apps/server/src/orchestration/scient-fork/forkBoundaryProjection.ts`
 - `apps/server/src/orchestration/Services/ScientForkReactor.ts`
 - `apps/server/src/orchestration/Layers/ScientForkReactor.ts`
 - `apps/web/src/components/chat/scient-fork/ScientForkUserMessageButton.tsx`
+- `apps/web/src/components/chat/scient-fork/ScientForkWorkspaceModeDialog.tsx`
+- `apps/web/src/components/chat/scient-fork/forkBoundaries.ts`
 - `apps/web/src/components/scient-fork/useScientThreadFork.ts`
 
 Tests live beside these modules. The checkpoint helper uses T3's existing
@@ -102,18 +120,18 @@ explicit authorities.
 All production seams are additive and marked with `SCIENT-FORK:START` and
 `SCIENT-FORK:END` where practical.
 
-| Surface                                                                                                     | Deliberate change                                                                              | Retirement condition                                          |
-| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `packages/contracts/src/orchestration.ts`                                                                   | Add fork command, lifecycle events, lineage, and explicit workspace/provider status contracts. | Map to a compatible T3 contract or retain a thin translation. |
-| `apps/server/src/orchestration/decider.ts`                                                                  | Delegate `thread.fork` and record the internal completion event.                               | T3 owns an equivalent exact-boundary decider.                 |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                               | Route the new aggregate and rehydrate origin detail for this command only.                     | T3 command routing natively supports fork.                    |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`                                                | Register the Scient lineage projector.                                                         | A generic extension registration point replaces the seam.     |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                                                              | Run the independent Scient schema bootstrap.                                                   | A generic product-schema hook replaces the seam.              |
-| `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                 | Start/provide the Scient worker and provider-context service.                                  | Generic reactor and provider-context extension points exist.  |
-| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                            | Prepare the first fork turn and mark its bootstrap accepted after provider send.               | T3 exposes a provider request-decoration hook.                |
-| `apps/server/src/ws.ts`                                                                                     | Wait for durable fork completion before acknowledging the command.                             | T3 supports typed asynchronous command receipts.              |
-| `packages/client-runtime/src/operations/commands.ts`, `packages/client-runtime/src/state/threadCommands.ts` | Dispatch and serialize the fork command.                                                       | T3 client runtime has an equivalent operation.                |
-| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`                 | Resolve the existing completed-turn boundary and mount Scient-owned hook/control components.   | T3 exposes a row action/extension slot or ships native UI.    |
+| Surface                                                                                                                                                                       | Deliberate change                                                                                                                        | Retirement condition                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `packages/contracts/src/orchestration.ts`                                                                                                                                     | Add fork command, lifecycle events, lineage, and explicit workspace/provider status contracts.                                           | Map to a compatible T3 contract or retain a thin translation.             |
+| `apps/server/src/orchestration/decider.ts`                                                                                                                                    | Delegate `thread.fork` and record the internal completion event.                                                                         | T3 owns an equivalent exact-boundary decider.                             |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                                                                                                 | Route the new aggregate and rehydrate origin detail for this command only.                                                               | T3 command routing natively supports fork.                                |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert. | Generic projection extension and derived-field hooks replace these seams. |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient schema bootstrap.                                                                                             | A generic product-schema hook replaces the seam.                          |
+| `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                                                                                   | Start/provide the Scient worker and provider-context service.                                                                            | Generic reactor and provider-context extension points exist.              |
+| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Prepare the first fork turn and mark its bootstrap accepted after provider send.                                                         | T3 exposes a provider request-decoration hook.                            |
+| `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                       | T3 supports typed asynchronous command receipts.                          |
+| `packages/client-runtime/src/operations/commands.ts`, `packages/client-runtime/src/state/threadCommands.ts`                                                                   | Dispatch and serialize the fork command.                                                                                                 | T3 client runtime has an equivalent operation.                            |
+| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`                                                                                   | Consume the authoritative boundary map and mount Scient-owned hook/control components.                                                   | T3 exposes a row action/extension slot or ships native UI.                |
 
 Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
@@ -121,8 +139,9 @@ forking and would have increased every future upstream merge.
 
 ## Safety and bounded compromises
 
-- Forking is disabled while the origin is streaming, running a turn, or
-  starting/running a provider session. This prevents torn history.
+- Only completed conversation boundaries are forkable. A newer streaming turn
+  is excluded from the retained prefix rather than blocking an older completed
+  boundary.
 - A new worktree fails closed if the historical Git checkpoint is unavailable.
 - Same-workspace mode is honest about sharing current files; only its
   conversation and checkpoint lineage are independent.
@@ -135,9 +154,9 @@ forking and would have increased every future upstream merge.
   after a provider accepted the send, restart recovery may inject the context
   again. At-least-once context is safer than silently losing it; true
   exactly-once delivery requires provider-side idempotency.
-- A failed durable fork remains recoverable and is retried after restart. A
-  richer visible failed-state/retry UI can be added later without changing the
-  lineage model.
+- A transiently failed durable fork remains recoverable and is retried after
+  restart. A terminally impossible fork is compensated and never shown as a
+  usable thread.
 - Shared contracts, client runtime, and server behavior are mobile-ready. This
   change intentionally adds no mobile fork UI.
 
@@ -160,8 +179,8 @@ building a parallel generic platform.
 
 ## Verification checklist
 
-- Fork-decider normal, turn-zero, invalid-boundary, busy-session, identity, and
-  attachment cases.
+- Fork-decider normal, turn-zero, non-Git, stale/incomplete boundary, active
+  newer turn, refork, identity, and attachment cases.
 - Durable schema upgrade, lifecycle projection, recovery, idempotency,
   checkpoint, worktree, and failure cases.
 - Provider bootstrap normal, truncation, attachment, restart, send-failure, and

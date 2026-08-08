@@ -216,14 +216,15 @@ function retainProjectionMessagesAfterRevert(
   messages: ReadonlyArray<ProjectionThreadMessage>,
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
+  baselineTurnId: string | null,
 ): ReadonlyArray<ProjectionThreadMessage> {
   const retainedMessageIds = new Set<string>();
   const retainedTurnIds = new Set<string>();
   const keptTurns = turns.filter(
     (turn) =>
       turn.turnId !== null &&
-      turn.checkpointTurnCount !== null &&
-      turn.checkpointTurnCount <= turnCount,
+      ((turn.checkpointTurnCount !== null && turn.checkpointTurnCount <= turnCount) ||
+        turn.turnId === baselineTurnId),
   );
   for (const turn of keptTurns) {
     if (turn.turnId !== null) {
@@ -489,6 +490,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+
+    // SCIENT-FORK:START — the imported transcript is an immutable turn-zero
+    // baseline even when the origin had no Git checkpoint.
+    const getForkBaselineTurnId = Effect.fn("getForkBaselineTurnId")(function* (threadId: string) {
+      const rows = yield* sql<{ readonly baselineTurnId: string | null }>`
+        SELECT baseline_turn_id AS "baselineTurnId"
+        FROM scient_thread_lineage
+        WHERE thread_id = ${threadId}
+        LIMIT 1
+      `.pipe(
+        Effect.mapError(toPersistenceSqlError("ProjectionPipeline.getForkBaselineTurnId:query")),
+      );
+      return rows[0]?.baselineTurnId ?? null;
+    });
+    // SCIENT-FORK:END
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -998,10 +1014,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
+          const baselineTurnId = yield* getForkBaselineTurnId(event.payload.threadId);
           const keptRows = retainProjectionMessagesAfterRevert(
             existingRows,
             existingTurns,
             event.payload.turnCount,
+            baselineTurnId,
           );
           if (keptRows.length === existingRows.length) {
             return;
@@ -1394,6 +1412,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        // SCIENT-FORK:START — imported history is one immutable conversation
+        // baseline, independent from whether a Git checkpoint is available.
+        case "thread.forked": {
+          yield* projectionTurnRepository.upsertByTurnId({
+            turnId: event.payload.baselineTurnId,
+            threadId: event.payload.newThreadId,
+            pendingMessageId: event.payload.baselineUserMessageId,
+            sourceProposedPlanThreadId: null,
+            sourceProposedPlanId: null,
+            assistantMessageId: event.payload.baselineAssistantMessageId,
+            state: "completed",
+            requestedAt: event.payload.createdAt,
+            startedAt: event.payload.createdAt,
+            completedAt: event.payload.createdAt,
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFiles: [],
+          });
+          return;
+        }
+        // SCIENT-FORK:END
+
         case "thread.turn-diff-completed": {
           // Mid-turn diff updates produce placeholder checkpoints; record the
           // checkpoint, but don't settle a turn its session is still running.
@@ -1453,11 +1494,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
+          const baselineTurnId = yield* getForkBaselineTurnId(event.payload.threadId);
           const keptTurns = existingTurns.filter(
             (turn) =>
               turn.turnId !== null &&
-              turn.checkpointTurnCount !== null &&
-              turn.checkpointTurnCount <= event.payload.turnCount,
+              ((turn.checkpointTurnCount !== null &&
+                turn.checkpointTurnCount <= event.payload.turnCount) ||
+                turn.turnId === baselineTurnId),
           );
           yield* projectionTurnRepository.deleteByThreadId({
             threadId: event.payload.threadId,

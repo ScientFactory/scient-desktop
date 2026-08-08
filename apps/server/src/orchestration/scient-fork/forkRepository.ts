@@ -2,7 +2,9 @@ import {
   IsoDateTime,
   NonNegativeInt,
   OrchestrationForkWorkspaceMode,
+  MessageId,
   ThreadId,
+  TurnId,
   ThreadForkAttachmentCopy,
   type ThreadForkedPayload,
 } from "@t3tools/contracts";
@@ -18,14 +20,19 @@ const encodeAttachmentCopiesJson = Schema.encodeEffect(AttachmentCopiesJson);
 const ForkRow = Schema.Struct({
   thread_id: ThreadId,
   forked_from_thread_id: ThreadId,
+  fork_point_turn_id: Schema.NullOr(TurnId),
   fork_point_turn_count: NonNegativeInt,
+  source_checkpoint_turn_count: Schema.NullOr(NonNegativeInt),
+  baseline_turn_id: TurnId,
+  baseline_user_message_id: Schema.NullOr(MessageId),
+  baseline_assistant_message_id: Schema.NullOr(MessageId),
   workspace_mode: OrchestrationForkWorkspaceMode,
   attachment_copies_json: AttachmentCopiesJson,
   created_at: IsoDateTime,
 });
 const decodeForkRow = Schema.decodeUnknownEffect(ForkRow);
 const ForkStatusRow = Schema.Struct({
-  status: Schema.Literals(["pending", "provisioning", "failed", "ready"]),
+  status: Schema.Literals(["pending", "provisioning", "failed", "abandoned", "ready"]),
   last_error: Schema.NullOr(Schema.String),
 });
 const decodeForkStatusRow = Schema.decodeUnknownEffect(ForkStatusRow);
@@ -34,7 +41,12 @@ function forkRowToPayload(row: typeof ForkRow.Type): ThreadForkedPayload {
   return {
     originThreadId: row.forked_from_thread_id,
     newThreadId: row.thread_id,
+    forkAtTurnId: row.fork_point_turn_id,
     forkAtTurnCount: row.fork_point_turn_count,
+    sourceCheckpointTurnCount: row.source_checkpoint_turn_count,
+    baselineTurnId: row.baseline_turn_id,
+    baselineUserMessageId: row.baseline_user_message_id,
+    baselineAssistantMessageId: row.baseline_assistant_message_id,
     workspaceMode: row.workspace_mode,
     providerMode: "transcript-bootstrap",
     attachmentCopies: row.attachment_copies_json,
@@ -53,7 +65,12 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
     INSERT INTO scient_thread_lineage (
       thread_id,
       forked_from_thread_id,
+      fork_point_turn_id,
       fork_point_turn_count,
+      source_checkpoint_turn_count,
+      baseline_turn_id,
+      baseline_user_message_id,
+      baseline_assistant_message_id,
       workspace_mode,
       provider_mode,
       provider_bootstrap_status,
@@ -69,7 +86,12 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
     ) VALUES (
       ${payload.newThreadId},
       ${payload.originThreadId},
+      ${payload.forkAtTurnId},
       ${payload.forkAtTurnCount},
+      ${payload.sourceCheckpointTurnCount},
+      ${payload.baselineTurnId},
+      ${payload.baselineUserMessageId},
+      ${payload.baselineAssistantMessageId},
       ${payload.workspaceMode},
       ${payload.providerMode},
       'pending',
@@ -83,7 +105,12 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       ${payload.createdAt},
       ${payload.createdAt}
     )
-    ON CONFLICT(thread_id) DO NOTHING
+    ON CONFLICT(thread_id) DO UPDATE SET
+      fork_point_turn_id = COALESCE(scient_thread_lineage.fork_point_turn_id, excluded.fork_point_turn_id),
+      source_checkpoint_turn_count = COALESCE(scient_thread_lineage.source_checkpoint_turn_count, excluded.source_checkpoint_turn_count),
+      baseline_turn_id = COALESCE(scient_thread_lineage.baseline_turn_id, excluded.baseline_turn_id),
+      baseline_user_message_id = COALESCE(scient_thread_lineage.baseline_user_message_id, excluded.baseline_user_message_id),
+      baseline_assistant_message_id = COALESCE(scient_thread_lineage.baseline_assistant_message_id, excluded.baseline_assistant_message_id)
   `;
 });
 
@@ -100,7 +127,7 @@ export const claimFork = Effect.fn("claimFork")(function* (
       last_error = NULL,
       updated_at = ${updatedAt}
     WHERE thread_id = ${threadId}
-      AND status <> 'ready'
+      AND status NOT IN ('ready', 'abandoned')
     RETURNING thread_id
   `;
   return claimed.length > 0;
@@ -118,6 +145,25 @@ export const markForkFailed = Effect.fn("markForkFailed")(function* (
     UPDATE scient_thread_lineage
     SET
       status = 'failed',
+      last_error = ${input.error},
+      updated_at = ${input.updatedAt}
+    WHERE thread_id = ${input.threadId}
+      AND status <> 'ready'
+  `;
+});
+
+export const markForkAbandoned = Effect.fn("markForkAbandoned")(function* (
+  sql: SqlClient.SqlClient,
+  input: {
+    readonly threadId: ThreadId;
+    readonly error: string;
+    readonly updatedAt: string;
+  },
+) {
+  yield* sql`
+    UPDATE scient_thread_lineage
+    SET
+      status = 'abandoned',
       last_error = ${input.error},
       updated_at = ${input.updatedAt}
     WHERE thread_id = ${input.threadId}
@@ -154,17 +200,51 @@ export const listRecoverableForks = Effect.fn("listRecoverableForks")(function* 
     SELECT
       thread_id,
       forked_from_thread_id,
+      fork_point_turn_id,
       fork_point_turn_count,
+      source_checkpoint_turn_count,
+      baseline_turn_id,
+      baseline_user_message_id,
+      baseline_assistant_message_id,
       workspace_mode,
       attachment_copies_json,
       created_at
     FROM scient_thread_lineage
     WHERE status IN ('pending', 'provisioning', 'failed')
+      AND baseline_turn_id IS NOT NULL
     ORDER BY created_at ASC, thread_id ASC
   `;
   return yield* Effect.forEach(rows, (row) =>
     decodeForkRow(row).pipe(Effect.map(forkRowToPayload)),
   );
+});
+
+export const getRecoverableFork = Effect.fn("getRecoverableFork")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+) {
+  const rows = yield* sql<Record<string, unknown>>`
+    SELECT
+      thread_id,
+      forked_from_thread_id,
+      fork_point_turn_id,
+      fork_point_turn_count,
+      source_checkpoint_turn_count,
+      baseline_turn_id,
+      baseline_user_message_id,
+      baseline_assistant_message_id,
+      workspace_mode,
+      attachment_copies_json,
+      created_at
+    FROM scient_thread_lineage
+    WHERE thread_id = ${threadId}
+      AND status IN ('pending', 'provisioning', 'failed')
+      AND baseline_turn_id IS NOT NULL
+    LIMIT 1
+  `;
+  return rows[0] === undefined
+    ? null
+    : yield* decodeForkRow(rows[0]).pipe(Effect.map(forkRowToPayload));
 });
 
 export const getForkStatus = Effect.fn("getForkStatus")(function* (

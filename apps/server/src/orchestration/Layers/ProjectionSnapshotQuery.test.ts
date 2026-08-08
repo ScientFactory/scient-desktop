@@ -369,6 +369,26 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               completedAt: "2026-02-24T00:00:08.000Z",
             },
           ],
+          conversationForkBoundaries: [
+            {
+              turnId: null,
+              conversationTurnCount: 0,
+              userMessageId: null,
+              assistantMessageId: null,
+              completedAt: "2026-02-24T00:00:02.000Z",
+              checkpointTurnCount: null,
+              checkpointStatus: null,
+            },
+            {
+              turnId: asTurnId("turn-1"),
+              conversationTurnCount: 1,
+              userMessageId: null,
+              assistantMessageId: asMessageId("message-1"),
+              completedAt: "2026-02-24T00:00:08.000Z",
+              checkpointTurnCount: 1,
+              checkpointStatus: "ready",
+            },
+          ],
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",

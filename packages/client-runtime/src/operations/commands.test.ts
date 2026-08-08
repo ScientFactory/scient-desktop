@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ThreadId,
+  TurnId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -181,6 +182,7 @@ describe("environment commands", () => {
       yield* forkThread({
         originThreadId: ThreadId.make("thread-origin"),
         newThreadId: ThreadId.make("thread-fork"),
+        forkAtTurnId: TurnId.make("turn-3"),
         forkAtTurnCount: 3,
         workspaceMode: "new-worktree",
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
@@ -191,6 +193,7 @@ describe("environment commands", () => {
           commandId: "client:thread-fork:thread-fork",
           originThreadId: "thread-origin",
           newThreadId: "thread-fork",
+          forkAtTurnId: "turn-3",
           forkAtTurnCount: 3,
           workspaceMode: "new-worktree",
         },

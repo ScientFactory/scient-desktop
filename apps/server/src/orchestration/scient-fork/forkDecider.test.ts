@@ -26,6 +26,36 @@ const PROJECT = ProjectId.make("project-1");
 
 const T2 = TurnId.make("turn-2");
 
+const boundaries = [
+  {
+    turnId: null,
+    conversationTurnCount: 0,
+    userMessageId: null,
+    assistantMessageId: null,
+    completedAt: NOW,
+    checkpointTurnCount: null,
+    checkpointStatus: null,
+  },
+  {
+    turnId: TurnId.make("turn-1"),
+    conversationTurnCount: 1,
+    userMessageId: MessageId.make("user-1"),
+    assistantMessageId: MessageId.make("assistant-1"),
+    completedAt: NOW,
+    checkpointTurnCount: 1,
+    checkpointStatus: "ready" as const,
+  },
+  {
+    turnId: T2,
+    conversationTurnCount: 2,
+    userMessageId: MessageId.make("user-2"),
+    assistantMessageId: MessageId.make("assistant-2"),
+    completedAt: NOW,
+    checkpointTurnCount: 2,
+    checkpointStatus: "ready" as const,
+  },
+];
+
 function message(input: {
   readonly id: string;
   readonly role: OrchestrationMessage["role"];
@@ -129,6 +159,7 @@ function makeOriginThread(overrides: Partial<OrchestrationThread> = {}): Orchest
     proposedPlans: [],
     activities: [],
     checkpoints: [checkpoint("turn-1", 1), checkpoint("turn-2", 2)],
+    conversationForkBoundaries: boundaries,
     session: IDLE_SESSION,
     ...overrides,
   };
@@ -157,14 +188,16 @@ function makeReadModel(
 }
 
 function forkCommand(overrides: Partial<ThreadForkCommand> = {}): ThreadForkCommand {
+  const { forkAtTurnCount = 2, ...rest } = overrides;
   return {
     type: "thread.fork",
     commandId: CommandId.make("cmd-fork"),
     originThreadId: ORIGIN,
     newThreadId: NEW,
-    forkAtTurnCount: 2,
+    forkAtTurnId: T2,
+    forkAtTurnCount,
     workspaceMode: "local",
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -180,6 +213,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         "thread.message-sent",
         "thread.message-sent",
         "thread.forked",
+        "thread.turn-diff-completed",
       ]);
 
       // Every emitted event targets the NEW thread — never the origin.
@@ -198,12 +232,14 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         expect(created.payload.title).toBe("Origin conversation");
       }
 
-      const forked = events.at(-1);
+      const forked = events.find((event) => event.type === "thread.forked");
       if (forked?.type === "thread.forked") {
         expect(forked.payload).toMatchObject({
           originThreadId: ORIGIN,
           newThreadId: NEW,
+          forkAtTurnId: T2,
           forkAtTurnCount: 2,
+          sourceCheckpointTurnCount: 2,
           providerMode: "transcript-bootstrap",
           attachmentCopies: [],
         });
@@ -222,7 +258,8 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       }
       expect(texts).toEqual(["first prompt", "first answer", "second prompt", "second answer"]);
 
-      // Assistant turn ids are re-keyed (not the origin turn ids).
+      // The imported transcript is one fresh immutable baseline, not two
+      // native provider turns.
       const emittedTurnIds = events
         .filter((event) => event.type === "thread.message-sent")
         .map((event) => (event.type === "thread.message-sent" ? event.payload.turnId : null))
@@ -231,6 +268,13 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         expect(turnId).not.toBe("turn-1");
         expect(turnId).not.toBe("turn-2");
       }
+      expect(new Set(emittedTurnIds).size).toBe(1);
+      const baseline = events.find((event) => event.type === "thread.turn-diff-completed");
+      expect(
+        baseline?.type === "thread.turn-diff-completed"
+          ? baseline.payload.checkpointTurnCount
+          : null,
+      ).toBe(0);
       // Event ids are unique.
       const eventIds = events.map((event) => event.eventId);
       expect(new Set(eventIds).size).toBe(eventIds.length);
@@ -273,7 +317,10 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
   it.effect("forking at an earlier boundary re-emits only that prefix", () =>
     Effect.gen(function* () {
       const events = yield* forkThread({
-        command: forkCommand({ forkAtTurnCount: 1 }),
+        command: forkCommand({
+          forkAtTurnId: TurnId.make("turn-1"),
+          forkAtTurnCount: 1,
+        }),
         readModel: makeReadModel(),
       });
       const texts = events
@@ -283,15 +330,89 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("accepts the initial turn-zero boundary without copying later messages", () =>
+  it.effect("forks turn zero before the first message without inventing a turn id", () =>
     Effect.gen(function* () {
-      const events = yield* forkThread({
-        command: forkCommand({ forkAtTurnCount: 0 }),
-        readModel: makeReadModel(),
+      const command: ThreadForkCommand = {
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-zero"),
+        originThreadId: ORIGIN,
+        newThreadId: NEW,
+        forkAtTurnCount: 0,
+        workspaceMode: "local",
+      };
+      const events = yield* forkThread({ command, readModel: makeReadModel() });
+      expect(events.some((event) => event.type === "thread.message-sent")).toBe(false);
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : undefined).toBeNull();
+      expect(events.some((event) => event.type === "thread.turn-diff-completed")).toBe(false);
+    }),
+  );
+
+  it.effect("re-forks a fork-owned baseline plus genuine post-fork turns intact", () =>
+    Effect.gen(function* () {
+      const baselineTurnId = TurnId.make("fork-baseline");
+      const postForkTurnId = TurnId.make("fork-turn-1");
+      const reforkOrigin = makeOriginThread({
+        messages: [
+          message({
+            id: "inherited-user-1",
+            role: "user",
+            text: "inherited prompt",
+            turnId: baselineTurnId,
+            createdAt: "2026-01-01T00:00:01.000Z",
+          }),
+          message({
+            id: "inherited-assistant-1",
+            role: "assistant",
+            text: "inherited answer",
+            turnId: baselineTurnId,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          }),
+          message({
+            id: "post-fork-user-1",
+            role: "user",
+            text: "new prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+          message({
+            id: "post-fork-assistant-1",
+            role: "assistant",
+            text: "new answer",
+            turnId: postForkTurnId,
+            createdAt: "2026-01-01T00:00:04.000Z",
+          }),
+        ],
+        checkpoints: [checkpoint(baselineTurnId, 0), checkpoint(postForkTurnId, 1)],
+        conversationForkBoundaries: [
+          {
+            turnId: baselineTurnId,
+            conversationTurnCount: 0,
+            userMessageId: MessageId.make("inherited-user-1"),
+            assistantMessageId: MessageId.make("inherited-assistant-1"),
+            completedAt: NOW,
+            checkpointTurnCount: 0,
+            checkpointStatus: "ready",
+          },
+          {
+            turnId: postForkTurnId,
+            conversationTurnCount: 1,
+            userMessageId: MessageId.make("post-fork-user-1"),
+            assistantMessageId: MessageId.make("post-fork-assistant-1"),
+            completedAt: NOW,
+            checkpointTurnCount: 1,
+            checkpointStatus: "ready",
+          },
+        ],
       });
-      expect(events.map((event) => event.type)).toEqual(["thread.created", "thread.forked"]);
-      const forked = events.at(-1);
-      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(0);
+      const events = yield* forkThread({
+        command: forkCommand({ forkAtTurnId: postForkTurnId, forkAtTurnCount: 1 }),
+        readModel: makeReadModel({ origin: reforkOrigin }),
+      });
+      const texts = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload.text] : [],
+      );
+      expect(texts).toEqual(["inherited prompt", "inherited answer", "new prompt", "new answer"]);
     }),
   );
 
@@ -308,25 +429,35 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("rejects forking a mid-turn (running session) thread", () =>
+  it.effect("forks the latest completed boundary while a newer turn is running", () =>
     Effect.gen(function* () {
-      const error = yield* forkThread({
+      const origin = makeOriginThread({
+        session: {
+          ...IDLE_SESSION,
+          status: "running",
+          activeTurnId: TurnId.make("turn-3"),
+        },
+        latestTurn: {
+          turnId: TurnId.make("turn-3"),
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      });
+      const events = yield* forkThread({
         command: forkCommand(),
-        readModel: makeReadModel({
-          origin: makeOriginThread({ session: { ...IDLE_SESSION, status: "running" } }),
-        }),
-      }).pipe(Effect.flip);
-      expect(error._tag).toBe("OrchestrationCommandInvariantError");
-      if (error._tag === "OrchestrationCommandInvariantError") {
-        expect(error.detail).toContain("mid-turn");
-      }
+        readModel: makeReadModel({ origin }),
+      });
+      expect(events.some((event) => event.type === "thread.forked")).toBe(true);
     }),
   );
 
-  it.effect("rejects forking while a message is still streaming", () =>
+  it.effect("does not include a newer streaming turn in the selected completed prefix", () =>
     Effect.gen(function* () {
       const streamingOrigin = makeOriginThread();
-      const error = yield* forkThread({
+      const events = yield* forkThread({
         command: forkCommand(),
         readModel: makeReadModel({
           origin: {
@@ -344,8 +475,11 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
             ],
           },
         }),
-      }).pipe(Effect.flip);
-      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      });
+      const texts = events.flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload.text] : [],
+      );
+      expect(texts).not.toContain("streaming…");
     }),
   );
 
@@ -359,15 +493,51 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("rejects an out-of-range forkAtTurnCount", () =>
+  it.effect("rejects a nonexistent or stale conversational boundary", () =>
     Effect.gen(function* () {
       const error = yield* forkThread({
-        command: forkCommand({ forkAtTurnCount: 99 }),
+        command: forkCommand({ forkAtTurnId: TurnId.make("missing-turn") }),
         readModel: makeReadModel(),
       }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
       if (error._tag === "OrchestrationCommandInvariantError") {
-        expect(error.detail).toContain("completed turn boundary");
+        expect(error.detail).toContain("completed conversation boundary");
+      }
+    }),
+  );
+
+  it.effect("forks a completed non-Git conversation in the same workspace", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread({
+        checkpoints: [],
+        conversationForkBoundaries: boundaries.map((boundary) => ({
+          ...boundary,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        })),
+      });
+      const events = yield* forkThread({
+        command: forkCommand({ workspaceMode: "local" }),
+        readModel: makeReadModel({ origin }),
+      });
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(
+        forked?.type === "thread.forked" ? forked.payload.sourceCheckpointTurnCount : undefined,
+      ).toBeNull();
+      expect(events.some((event) => event.type === "thread.turn-diff-completed")).toBe(false);
+    }),
+  );
+
+  it.effect("rejects a new worktree when the conversational boundary has no checkpoint", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread({ checkpoints: [] });
+      const error = yield* forkThread({
+        command: forkCommand({ workspaceMode: "new-worktree" }),
+        readModel: makeReadModel({ origin }),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      if (error._tag === "OrchestrationCommandInvariantError") {
+        expect(error.detail).toContain("no ready Git checkpoint");
       }
     }),
   );

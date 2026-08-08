@@ -1,4 +1,4 @@
-import { CommandId, EventId, ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
+import { CommandId, EventId, ThreadId, TurnId, type OrchestrationEvent } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,7 +27,12 @@ function forkedEvent(sequence: number): Extract<OrchestrationEvent, { type: "thr
     payload: {
       originThreadId: ORIGIN,
       newThreadId: NEW,
+      forkAtTurnId: TurnId.make("origin-turn-2"),
       forkAtTurnCount: 2,
+      sourceCheckpointTurnCount: 2,
+      baselineTurnId: TurnId.make("fork-baseline"),
+      baselineUserMessageId: null,
+      baselineAssistantMessageId: null,
       workspaceMode: "local",
       providerMode: "transcript-bootstrap",
       attachmentCopies: [],

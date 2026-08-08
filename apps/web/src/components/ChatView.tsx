@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationForkBoundary,
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
@@ -96,6 +97,7 @@ import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
 import { ScientForkWorkspaceModeDialog } from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
+import { mapForkBoundariesBeforeUserMessages } from "./chat/scient-fork/forkBoundaries";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -1492,11 +1494,11 @@ function ChatViewContent(props: ChatViewProps) {
   const {
     errorUpdate: forkErrorUpdate,
     isForking: isForkingThread,
-    forkToTurnCount,
+    forkToBoundary,
   } = useScientThreadFork({ origin: activeThread ?? null, navigate });
   const [forkCommandTarget, setForkCommandTarget] = useState<{
     readonly threadId: ThreadId;
-    readonly turnCount: number;
+    readonly boundary: OrchestrationForkBoundary;
   } | null>(null);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
@@ -2564,23 +2566,15 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
-  // The UI consumes conversational fork eligibility independently from Git
-  // revert eligibility. The backend boundary contract will replace this
-  // checkpoint-backed compatibility source when its repair lands.
-  const forkTurnCountByUserMessageId = revertTurnCountByUserMessageId;
-  const latestForkTurnCount = useMemo(() => {
-    let latest: number | null = null;
-    for (const summary of turnDiffSummaries) {
-      const turnCount =
-        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (typeof turnCount === "number" && (latest === null || turnCount > latest)) {
-        latest = turnCount;
-      }
-    }
-    return latest;
-  }, [inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
+  // A message action forks at the completed boundary immediately before that
+  // user message. This source is conversation-authoritative and intentionally
+  // independent from the Git-backed revert map above.
+  const forkBoundaryByUserMessageId = useMemo(() => {
+    return mapForkBoundariesBeforeUserMessages(activeThread?.conversationForkBoundaries ?? []);
+  }, [activeThread?.conversationForkBoundaries]);
+  const latestForkBoundary = activeThread?.conversationForkBoundaries?.at(-1) ?? null;
   const onForkConversation = useCallback(() => {
-    if (latestForkTurnCount === null) {
+    if (latestForkBoundary === null) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
@@ -2591,8 +2585,8 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     if (!activeThreadId) return;
-    setForkCommandTarget({ threadId: activeThreadId, turnCount: latestForkTurnCount });
-  }, [activeThreadId, latestForkTurnCount]);
+    setForkCommandTarget({ threadId: activeThreadId, boundary: latestForkBoundary });
+  }, [activeThreadId, latestForkBoundary]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -5973,17 +5967,17 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — fork boundaries are resolved independently from
   // Git-backed revert boundaries. The handler is read from a ref so the
   // callback identity stays stable.
-  const forkTurnCountRef = useRef(forkTurnCountByUserMessageId);
-  forkTurnCountRef.current = forkTurnCountByUserMessageId;
-  const onForkToTurnCountRef = useRef(forkToTurnCount);
-  onForkToTurnCountRef.current = forkToTurnCount;
+  const forkBoundaryRef = useRef(forkBoundaryByUserMessageId);
+  forkBoundaryRef.current = forkBoundaryByUserMessageId;
+  const onForkToBoundaryRef = useRef(forkToBoundary);
+  onForkToBoundaryRef.current = forkToBoundary;
   const onForkUserMessage = useCallback(
     (messageId: MessageId, workspaceMode: "new-worktree" | "local") => {
-      const targetTurnCount = forkTurnCountRef.current.get(messageId);
-      if (typeof targetTurnCount !== "number") {
+      const boundary = forkBoundaryRef.current.get(messageId);
+      if (!boundary) {
         return;
       }
-      void onForkToTurnCountRef.current(targetTurnCount, workspaceMode);
+      void onForkToBoundaryRef.current(boundary, workspaceMode);
     },
     [],
   );
@@ -6188,7 +6182,7 @@ function ChatViewContent(props: ChatViewProps) {
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                forkTurnCountByUserMessageId={forkTurnCountByUserMessageId}
+                forkBoundaryByUserMessageId={forkBoundaryByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 // SCIENT-FORK:START
                 onForkUserMessage={onForkUserMessage}
@@ -6566,7 +6560,7 @@ function ChatViewContent(props: ChatViewProps) {
           const target = forkCommandTarget;
           if (!target || target.threadId !== activeThreadId) return;
           setForkCommandTarget(null);
-          void forkToTurnCount(target.turnCount, workspaceMode);
+          void forkToBoundary(target.boundary, workspaceMode);
         }}
       />
     </div>

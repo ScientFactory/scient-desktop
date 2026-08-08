@@ -10,6 +10,10 @@ import {
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
+export interface MessageIdMembership {
+  readonly has: (messageId: MessageId) => boolean;
+}
+
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
@@ -195,7 +199,7 @@ export type MessagesTimelineRow =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
-      forkTurnCount?: number | undefined;
+      canForkConversation?: boolean | undefined;
     }
   | {
       kind: "proposed-plan";
@@ -453,7 +457,7 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
-  forkTurnCountByUserMessageId?: ReadonlyMap<MessageId, number> | undefined;
+  forkBoundaryByUserMessageId?: MessageIdMembership | undefined;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -628,9 +632,9 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
-      forkTurnCount:
+      canForkConversation:
         timelineEntry.message.role === "user"
-          ? input.forkTurnCountByUserMessageId?.get(timelineEntry.message.id)
+          ? input.forkBoundaryByUserMessageId?.has(timelineEntry.message.id)
           : undefined,
     });
   }
@@ -713,7 +717,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount &&
-        a.forkTurnCount === bm.forkTurnCount
+        a.canForkConversation === bm.canForkConversation
       );
     }
   }
