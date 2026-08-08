@@ -33,3 +33,8 @@ Code remains left-to-right so commands, paths, syntax, and source files keep
 their normal reading and copying order. A plain-text copy box follows its own
 strong script when it is unambiguous; mixed plain text follows the selected
 conversation mode (or remains automatic).
+
+In clearly RTL prose within an RTL-base message, standalone flow arrows are
+displayed in the reading direction. Technical and ambiguous arrow usage is
+preserved. An explicitly LTR-base message never rewrites arrows, even when a
+local block contains Hebrew.
