@@ -730,6 +730,7 @@ function RenderedMarkdownSurface({
         text={contents}
         cwd={cwd}
         threadRef={threadRef}
+        contentDirection="auto"
         className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={({ markerOffset, checked }) => {
           const currentContents =

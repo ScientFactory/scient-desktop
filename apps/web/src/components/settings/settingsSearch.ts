@@ -64,6 +64,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "conversation-text-direction",
+    title: "Conversation text direction",
+    to: "/settings/appearance",
+    targetId: "appearance",
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",

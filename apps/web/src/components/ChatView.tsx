@@ -188,6 +188,7 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
+import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -6595,9 +6596,13 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
+  const contentDirection = useClientSettings((settings) => settings.contentDirection);
+
   return (
-    <DiffWorkerPoolProvider>
-      <ChatViewContent {...props} />
-    </DiffWorkerPoolProvider>
+    <ContentDirectionScope direction={contentDirection}>
+      <DiffWorkerPoolProvider>
+        <ChatViewContent {...props} />
+      </DiffWorkerPoolProvider>
+    </ContentDirectionScope>
   );
 }

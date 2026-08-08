@@ -17,8 +17,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_CONTENT_DIRECTION,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
+  type ContentDirection,
   type EnvironmentIdentificationMode,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
@@ -146,6 +148,12 @@ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, s
   artwork: "Artwork",
   pill: "Version pill",
   none: "None",
+};
+
+const CONTENT_DIRECTION_LABELS: Record<ContentDirection, string> = {
+  auto: "Automatic",
+  rtl: "Right to left",
+  ltr: "Left to right",
 };
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -456,6 +464,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.contentDirection !== DEFAULT_UNIFIED_SETTINGS.contentDirection
+        ? ["Conversation text direction"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -521,6 +532,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
+      settings.contentDirection,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -608,6 +620,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      contentDirection: DEFAULT_UNIFIED_SETTINGS.contentDirection,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
@@ -1045,6 +1058,40 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("conversation-text-direction")}
+          description="Control chat prose, lists, and tables without mirroring the application shell."
+          resetAction={
+            settings.contentDirection !== DEFAULT_CONTENT_DIRECTION ? (
+              <SettingResetButton
+                label="conversation text direction"
+                onClick={() => updateSettings({ contentDirection: DEFAULT_CONTENT_DIRECTION })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.contentDirection}
+              onValueChange={(value) => {
+                if (value === "auto" || value === "rtl" || value === "ltr") {
+                  updateSettings({ contentDirection: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Conversation text direction">
+                <SelectValue>{CONTENT_DIRECTION_LABELS[settings.contentDirection]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(CONTENT_DIRECTION_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
       </SettingsSection>
 
       <TypographySection />
