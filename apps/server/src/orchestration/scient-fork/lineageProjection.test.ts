@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { applyScientThreadLineageProjection } from "./lineageProjection.ts";
-import { ensureScientForkSchema } from "./schema.ts";
+import { runScientMigrations } from "./schema.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const ORIGIN = ThreadId.make("origin-thread");
@@ -60,7 +60,7 @@ const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 layer("scient thread lineage projection", (it) => {
   const prepare = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* ensureScientForkSchema(sql);
+    yield* runScientMigrations(sql);
     yield* sql`DELETE FROM scient_thread_lineage`;
     return sql;
   });

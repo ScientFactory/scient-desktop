@@ -113,6 +113,8 @@ internals:
 - `apps/server/src/orchestration/scient-fork/forkRepository.ts`
 - `apps/server/src/orchestration/scient-fork/lineageProjection.ts`
 - `apps/server/src/orchestration/scient-fork/schema.ts`
+- `apps/server/src/orchestration/scient-fork/scientMigrator.ts`
+- `apps/server/src/orchestration/scient-fork/migrations/`
 - `apps/server/src/orchestration/scient-fork/ForkAttachmentCopier.ts`
 - `apps/server/src/orchestration/scient-fork/ForkCheckpointBaseline.ts`
 - `apps/server/src/orchestration/scient-fork/ForkContextBootstrap.ts`
@@ -203,10 +205,19 @@ orphaned.
 
 T3 owns `effect_sql_migrations`; Scient owns `scient_schema_migrations`. Both
 ledgers use integer IDs starting from 1, but they are separate tables in the
-same SQLite database. The Scient schema bootstrap (`ensureScientForkSchema`)
+same SQLite database. The Scient migration runner (`runScientMigrations`)
 never inserts into, deletes from, or modifies T3's migration ledger or
-numbering. Cross-area integration tests verify this separation on fresh
-startup.
+numbering. It follows the repository's Effect SQL Migrator pattern with its
+own table name and transactional, ordered, ledger-driven execution.
+Cross-area integration tests verify this separation on fresh startup.
+
+The runner explicitly reconciles the legacy `applied_at` timestamp column
+with the canonical `created_at` column. Existing databases that have
+`applied_at` get `created_at` added via `ALTER TABLE` (nullable, since SQLite
+does not allow expression defaults on ALTER), and all existing timestamp
+values are copied. New INSERTs set `created_at` explicitly. Fresh databases
+get `created_at` directly. Legacy migration IDs 1 (`durable-thread-forks`)
+and 2 (`durable-provider-bootstrap`) are preserved and never re-run.
 
 ### Cross-area integration tests
 
@@ -234,7 +245,7 @@ All production seams are additive and marked with `SCIENT-FORK:START` and
 | `apps/server/src/orchestration/decider.ts`                                                                                                                                    | Delegate `thread.fork` and record the internal completion event.                                                                         | T3 owns an equivalent exact-boundary decider.                             |
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                                                                                                 | Route the new aggregate and rehydrate origin detail for this command only.                                                               | T3 command routing natively supports fork.                                |
 | `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert. | Generic projection extension and derived-field hooks replace these seams. |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient schema bootstrap.                                                                                             | A generic product-schema hook replaces the seam.                          |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient migration runner.                                                                                             | A generic product-schema hook replaces the seam.                          |
 | `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                                                                                   | Start/provide the Scient worker and provider-context service.                                                                            | Generic reactor and provider-context extension points exist.              |
 | `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Prepare the first fork turn and mark its bootstrap accepted after provider send.                                                         | T3 exposes a provider request-decoration hook.                            |
 | `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                       | T3 supports typed asynchronous command receipts.                          |

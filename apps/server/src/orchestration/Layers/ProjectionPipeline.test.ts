@@ -36,7 +36,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
-import { ensureScientForkSchema } from "../scient-fork/schema.ts";
+import { runScientMigrations } from "../scient-fork/schema.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
@@ -2873,7 +2873,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-scient-fork-boot-"))(
         const eventStore = yield* OrchestrationEventStore;
         const now = "2026-03-03T00:00:00.000Z";
 
-        yield* ensureScientForkSchema(sql);
+        yield* runScientMigrations(sql);
 
         yield* eventStore.append({
           type: "project.created",
