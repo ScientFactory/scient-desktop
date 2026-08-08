@@ -36,6 +36,12 @@ export interface TranscriptionEngine {
     onProgress?: VoiceModelDownloadProgressCallback,
     signal?: AbortSignal,
   ): Promise<string>;
+  /** Remove the model after stopping the runtime that may hold it open. */
+  removeModel(): Promise<void>;
+  /** Stop the idle helper before model maintenance. */
+  stopRuntime(): Promise<void>;
+  /** Whether the platform helper exists at the configured runtime path. */
+  isRuntimeInstalled(): Promise<boolean>;
   /** Transcribe a validated clip. Rejects with a {@link VoiceTranscriptionError}. */
   transcribe(clip: NormalizedVoiceClip, options: TranscribeOptions): Promise<VoiceTranscript>;
   /** Tear down the backing runtime process. */
@@ -88,6 +94,19 @@ export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): Tr
       signal?: AbortSignal,
     ): Promise<string> {
       return manager.ensureInstalled(signal ?? new AbortController().signal, onProgress);
+    },
+
+    async removeModel(): Promise<void> {
+      await runtime.stopIdle();
+      await manager.remove();
+    },
+
+    stopRuntime(): Promise<void> {
+      return runtime.stopIdle();
+    },
+
+    isRuntimeInstalled(): Promise<boolean> {
+      return runtime.isInstalled();
     },
 
     async transcribe(

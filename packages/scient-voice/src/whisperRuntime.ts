@@ -28,6 +28,7 @@ const MAX_INFERENCE_TIMEOUT_MS = 6 * 60_000;
 const STOP_TIMEOUT_MS = 5_000;
 const FORCE_STOP_TIMEOUT_MS = 2_000;
 const MAX_THREADS = 4;
+const MINIMUM_VOICE_DARWIN_MAJOR = 21; // macOS 12 Monterey
 
 /** Low-level result of a single inference (no engine tag; the engine adds that). */
 export interface WhisperInferenceResult {
@@ -60,6 +61,7 @@ export interface LocalWhisperRuntimeOptions {
   readonly threads?: number;
   readonly inferenceTimeoutMs?: number;
   readonly platform?: NodeJS.Platform;
+  readonly osRelease?: () => string;
 }
 
 export interface WhisperRuntimePaths {
@@ -145,7 +147,26 @@ export function buildRuntimeEnvironment(
   platform: NodeJS.Platform,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { ...baseEnv };
+  // Do not forward provider tokens, cloud credentials, or unrelated app
+  // configuration into a third-party native helper. Keep only OS process
+  // essentials; whisper.cpp needs no application secrets.
+  const allowedKeys = [
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USER",
+    "USERNAME",
+  ] as const;
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of allowedKeys) {
+    const value = baseEnv[key];
+    if (value !== undefined) environment[key] = value;
+  }
   if (platform === "linux") {
     environment.LD_LIBRARY_PATH = [runtimeDirectory, baseEnv.LD_LIBRARY_PATH]
       .filter(Boolean)
@@ -167,6 +188,15 @@ export function lowerWhisperProcessPriority(
   }
 }
 
+export function isWhisperRuntimePlatformSupported(
+  platform: NodeJS.Platform,
+  osRelease: string,
+): boolean {
+  if (platform !== "darwin") return true;
+  const darwinMajor = Number.parseInt(osRelease.split(".", 1)[0] ?? "", 10);
+  return Number.isFinite(darwinMajor) && darwinMajor >= MINIMUM_VOICE_DARWIN_MAJOR;
+}
+
 export class LocalWhisperRuntime {
   private readonly runtimeDirectory: string;
   private readonly fetchImpl: typeof fetch;
@@ -175,6 +205,7 @@ export class LocalWhisperRuntime {
   private readonly idleTimeoutMs: number;
   private readonly threads: number;
   private readonly inferenceTimeoutMs: number;
+  private readonly osRelease: () => string;
   private child: NodeChildProcess.ChildProcessWithoutNullStreams | null = null;
   private endpoint: string | null = null;
   private activeModelPath: string | null = null;
@@ -191,6 +222,7 @@ export class LocalWhisperRuntime {
     this.spawnImpl = options.spawnImpl ?? defaultWhisperSpawn;
     // oxlint-disable-next-line t3code/no-global-process-runtime -- non-Effect runtime owner; platform is injectable.
     this.platform = options.platform ?? NodeOS.platform();
+    this.osRelease = options.osRelease ?? NodeOS.release;
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.threads = Math.max(1, Math.min(MAX_THREADS, options.threads ?? MAX_THREADS));
     this.inferenceTimeoutMs = Math.max(
@@ -204,6 +236,7 @@ export class LocalWhisperRuntime {
   }
 
   async isInstalled(): Promise<boolean> {
+    if (!isWhisperRuntimePlatformSupported(this.platform, this.osRelease())) return false;
     const { executablePath } = this.paths();
     try {
       const stats = await NodeFSP.stat(executablePath);
@@ -314,10 +347,10 @@ export class LocalWhisperRuntime {
         throw new Error(`Offline transcription failed with status ${response.status}.`);
       }
       const payload = (await response.json().catch(() => null)) as { text?: unknown } | null;
-      const text = typeof payload?.text === "string" ? payload.text.trim() : "";
-      if (!text) {
-        throw new Error("Offline transcription returned no text.");
+      if (typeof payload?.text !== "string") {
+        throw new Error("Offline transcription returned an invalid response.");
       }
+      const text = payload.text.trim();
       return { text };
     } catch (error) {
       if (inferenceController.signal.reason instanceof WhisperRuntimeError) {

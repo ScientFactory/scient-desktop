@@ -42,7 +42,7 @@ export function computeRms(frame: Float32Array): number {
  * Encode accumulated mono frames into a 24 kHz 16-bit PCM WAV clip.
  *
  * Frames are already mono (the recorder requests a single channel), so the only
- * transforms are: concatenate → linear-resample to 24 kHz → quantise to 16-bit
+ * transforms are: concatenate → band-limit/downsample to 24 kHz → quantise to 16-bit
  * PCM → wrap in a WAV header → base64.
  */
 export function encodeWavClip(
@@ -50,7 +50,7 @@ export function encodeWavClip(
   inputSampleRate: number,
 ): VoiceWavClip {
   const mono = concatFrames(frames);
-  const resampled = resampleLinear(mono, inputSampleRate, VOICE_CLIP_SAMPLE_RATE_HZ);
+  const resampled = resampleAudio(mono, inputSampleRate, VOICE_CLIP_SAMPLE_RATE_HZ);
   const wavBytes = encodeWav(resampled);
   const base64 = Encoding.encodeBase64(wavBytes);
   const durationMs = Math.round((resampled.length / VOICE_CLIP_SAMPLE_RATE_HZ) * 1000);
@@ -70,18 +70,39 @@ function concatFrames(frames: readonly Float32Array[]): Float32Array {
 }
 
 /**
- * Linear-interpolating resampler. Adequate for speech dictation — the input is
- * already band-limited by the capture pipeline and the target rate is a clean
- * fraction of the common 48 kHz capture rate. The output length is
- * `round(inputLength * outputRate / inputRate)`.
+ * Area resampling for downsampling, linear interpolation for the uncommon
+ * upsampling case. Area averaging acts as a low-pass filter and avoids folding
+ * ultrasonic/high-frequency capture noise into the speech band. The normal
+ * Electron path asks AudioContext for 24 kHz directly, so this is a bounded
+ * fallback for platforms that choose a different hardware rate.
  */
-function resampleLinear(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
+function resampleAudio(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
   if (input.length === 0) return new Float32Array(0);
   const safeInputRate = inputRate > 0 ? inputRate : outputRate;
   if (safeInputRate === outputRate) return input.slice();
 
   const outputLength = Math.max(1, Math.round((input.length * outputRate) / safeInputRate));
   const output = new Float32Array(outputLength);
+
+  if (safeInputRate > outputRate) {
+    const ratio = safeInputRate / outputRate;
+    for (let outputIndex = 0; outputIndex < outputLength; outputIndex += 1) {
+      const start = outputIndex * ratio;
+      const end = Math.min(input.length, (outputIndex + 1) * ratio);
+      const firstInput = Math.floor(start);
+      const lastInput = Math.min(input.length - 1, Math.ceil(end) - 1);
+      let weightedSum = 0;
+      let totalWeight = 0;
+      for (let inputIndex = firstInput; inputIndex <= lastInput; inputIndex += 1) {
+        const overlap = Math.max(0, Math.min(end, inputIndex + 1) - Math.max(start, inputIndex));
+        weightedSum += input[inputIndex]! * overlap;
+        totalWeight += overlap;
+      }
+      output[outputIndex] = totalWeight > 0 ? weightedSum / totalWeight : 0;
+    }
+    return output;
+  }
+
   // Map output index → fractional input index across the full span so the
   // first and last samples are preserved exactly.
   const step = outputLength > 1 ? (input.length - 1) / (outputLength - 1) : 0;

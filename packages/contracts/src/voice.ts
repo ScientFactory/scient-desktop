@@ -3,16 +3,14 @@
 // This is the serializable boundary between the renderer/host IPC layer and the
 // host-independent transcription core (`@scientfactory/scient-voice`). It is
 // LOCAL-ONLY today — only the `local` engine ships — but every shape is kept
-// engine-neutral (results carry `engine`, the failure taxonomy is complete) so a
-// remote engine could be added later without a wire break.
-//
-// Schema-only: no runtime logic lives here. The `@scientfactory/scient-voice`
-// package keeps a structurally identical plain-TypeScript mirror of the
-// `VoiceEngineId`, `VoiceTranscriptionErrorKind`, capability, and benchmark
-// shapes; the two MUST be kept in sync.
+// engine-neutral (results carry `engine`) so another implementation can be
+// added later without coupling the composer to Electron or whisper.cpp.
 
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+
+/** The decoded request is limited to 10 MiB by the voice core. */
+export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3);
 
 /** Transcription engine identifier. Engine-neutral; only `local` ships now. */
 export const VoiceEngineId = Schema.Literals(["local"]);
@@ -47,7 +45,9 @@ export type VoiceAudioMimeType = typeof VoiceAudioMimeType.Type;
  * validates it (24 kHz mono 16-bit PCM WAV) before inference.
  */
 export const VoiceTranscribeRequest = Schema.Struct({
-  audioBase64: TrimmedNonEmptyString,
+  // Bound the string at the main-process IPC decoder before the core allocates
+  // a decode buffer. The core independently validates the exact decoded size.
+  audioBase64: TrimmedNonEmptyString.check(Schema.isMaxLength(VOICE_AUDIO_BASE64_MAX_CHARS)),
   mimeType: VoiceAudioMimeType,
   sampleRateHz: NonNegativeInt,
   durationMs: NonNegativeInt,
@@ -77,69 +77,12 @@ export const VoiceModelState = Schema.Union([
     state: Schema.Literal("downloading"),
     downloadedBytes: NonNegativeInt,
     totalBytes: NonNegativeInt,
-    // Present only when a verified copy is still usable while a repair downloads.
-    readyModelPath: Schema.optionalKey(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     state: Schema.Literal("ready"),
-    modelPath: TrimmedNonEmptyString,
     byteSize: NonNegativeInt,
   }),
+  Schema.Struct({ state: Schema.Literal("unavailable"), message: TrimmedNonEmptyString }),
   Schema.Struct({ state: Schema.Literal("error"), message: TrimmedNonEmptyString }),
 ]);
 export type VoiceModelState = typeof VoiceModelState.Type;
-
-/** Public description of a pinned model (no download URL over the wire). */
-export const VoiceModelDescriptor = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  fileName: TrimmedNonEmptyString,
-  displayName: TrimmedNonEmptyString,
-  byteSize: NonNegativeInt,
-  sha256: TrimmedNonEmptyString,
-  sourceRevision: TrimmedNonEmptyString,
-  license: TrimmedNonEmptyString,
-});
-export type VoiceModelDescriptor = typeof VoiceModelDescriptor.Type;
-
-/** Coarse capability tier hint used to steer model/thread choices. */
-export const VoiceCapabilityTier = Schema.Literals(["fast", "ok", "slow"]);
-export type VoiceCapabilityTier = typeof VoiceCapabilityTier.Type;
-
-/** Static machine capabilities gathered without running inference. */
-export const VoiceCapabilityProbe = Schema.Struct({
-  arch: TrimmedNonEmptyString,
-  cpuCount: NonNegativeInt,
-  totalMemBytes: NonNegativeInt,
-  hasAvx2: Schema.Boolean,
-});
-export type VoiceCapabilityProbe = typeof VoiceCapabilityProbe.Type;
-
-/** Static machine probe paired with its coarse tier score. */
-export const VoiceCapabilitySnapshot = Schema.Struct({
-  probe: VoiceCapabilityProbe,
-  tier: VoiceCapabilityTier,
-});
-export type VoiceCapabilitySnapshot = typeof VoiceCapabilitySnapshot.Type;
-
-/**
- * Result of a runtime micro-benchmark. `rtf` is the whisper.cpp "real time
- * factor": processing time divided by audio duration — lower is faster, and a
- * value below 1 means the machine transcribes faster than real time. The
- * benchmark itself is run in the host layer; only its shape lives on the wire.
- */
-export const VoiceBenchmarkResult = Schema.Struct({
-  modelId: TrimmedNonEmptyString,
-  rtf: Schema.Number,
-  loadMs: Schema.Number,
-  sampleDurationMs: Schema.Number,
-});
-export type VoiceBenchmarkResult = typeof VoiceBenchmarkResult.Type;
-
-/** Serializable projection of a transcription failure. */
-export const VoiceTranscriptionErrorPayload = Schema.Struct({
-  kind: VoiceTranscriptionErrorKind,
-  safeMessage: TrimmedNonEmptyString,
-  fallbackAllowed: Schema.Boolean,
-  retryAfterMs: Schema.optionalKey(NonNegativeInt),
-});
-export type VoiceTranscriptionErrorPayload = typeof VoiceTranscriptionErrorPayload.Type;

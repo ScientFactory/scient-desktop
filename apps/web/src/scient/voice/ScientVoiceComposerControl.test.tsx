@@ -19,12 +19,8 @@ import {
 
 function stubVoiceBridge(): void {
   const voice = {
-    getCapability: vi.fn().mockResolvedValue({
-      probe: { arch: "arm64", cpuCount: 8, totalMemBytes: 0, hasAvx2: false },
-      tier: "fast",
-    }),
     getModelState: vi.fn().mockResolvedValue({ state: "missing" }),
-    downloadModel: vi.fn().mockResolvedValue({ state: "ready", modelPath: "/m", byteSize: 1 }),
+    downloadModel: vi.fn().mockResolvedValue({ state: "ready", byteSize: 1 }),
     removeModel: vi.fn().mockResolvedValue({ state: "missing" }),
     transcribe: vi.fn().mockResolvedValue({ text: "hello", engine: "local" }),
     cancelTranscription: vi.fn().mockResolvedValue(undefined),
@@ -68,8 +64,8 @@ describe("formatVoiceTimer", () => {
 });
 
 describe("describeVoiceRecorderError", () => {
-  it("gives macOS-specific guidance for denied permission", () => {
-    expect(describeVoiceRecorderError("permission-denied")).toContain("System Settings");
+  it("gives cross-platform guidance for denied permission", () => {
+    expect(describeVoiceRecorderError("permission-denied")).toContain("system privacy settings");
   });
 
   it("maps every recorder error kind to non-empty copy", () => {

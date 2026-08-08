@@ -86,6 +86,16 @@ describe("normalizeVoiceClip", () => {
     );
   });
 
+  it("rejects a claimed duration that does not match the WAV payload", () => {
+    expect(() =>
+      normalizeVoiceClip({
+        ...validRequest(),
+        durationMs: 1,
+        audioBase64: wavBase64({ dataBytes: TARGET_SAMPLE_RATE_HZ * 2 }),
+      }),
+    ).toThrow("The recorded audio duration does not match its WAV data.");
+  });
+
   it("rejects payloads that are not valid base64", () => {
     expect(() => normalizeVoiceClip({ ...validRequest(), audioBase64: "not base64 !!!" })).toThrow(
       "The recorded audio could not be decoded.",

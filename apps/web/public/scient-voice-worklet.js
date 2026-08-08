@@ -16,6 +16,14 @@ class ScientVoiceRecorderProcessor extends AudioWorkletProcessor {
     super();
     this._buffer = new Float32Array(CHUNK_SAMPLES);
     this._offset = 0;
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- AudioWorklet MessagePort starts automatically through onmessage; addEventListener would also require an explicit start().
+    this.port.onmessage = (event) => {
+      const message = event.data;
+      if (!message || message.type !== "flush") return;
+      this._flush();
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- MessagePort.postMessage has no targetOrigin parameter.
+      this.port.postMessage({ type: "flushed", requestId: message.requestId });
+    };
   }
 
   process(inputs) {
@@ -32,11 +40,12 @@ class ScientVoiceRecorderProcessor extends AudioWorkletProcessor {
   }
 
   _flush() {
+    if (this._offset === 0) return;
     const chunk = this._buffer.slice(0, this._offset);
     let sumOfSquares = 0;
     for (let i = 0; i < chunk.length; i += 1) sumOfSquares += chunk[i] * chunk[i];
     const rms = chunk.length > 0 ? Math.sqrt(sumOfSquares / chunk.length) : 0;
-    this.port.postMessage({ samples: chunk, rms: rms }, [chunk.buffer]);
+    this.port.postMessage({ type: "samples", samples: chunk, rms: rms }, [chunk.buffer]);
     this._offset = 0;
   }
 }

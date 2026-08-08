@@ -12,6 +12,7 @@ import {
   buildRuntimeEnvironment,
   buildWhisperServerArguments,
   LocalWhisperRuntime,
+  isWhisperRuntimePlatformSupported,
   lowerWhisperProcessPriority,
   resolveWhisperInferenceTimeoutMs,
   resolveWhisperRuntimePaths,
@@ -90,6 +91,19 @@ describe("pure runtime helpers", () => {
     expect(buildRuntimeEnvironment("/rt", "darwin", {}).LD_LIBRARY_PATH).toBeUndefined();
   });
 
+  it("does not forward application credentials to the native helper", () => {
+    const environment = buildRuntimeEnvironment("/rt", "linux", {
+      PATH: "/bin",
+      HOME: "/home/test",
+      OPENAI_API_KEY: "secret",
+      AWS_SECRET_ACCESS_KEY: "secret",
+    });
+    expect(environment.PATH).toBe("/bin");
+    expect(environment.HOME).toBe("/home/test");
+    expect(environment.OPENAI_API_KEY).toBeUndefined();
+    expect(environment.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+  });
+
   it("lowers process priority defensively", () => {
     const calls: Array<[number, number]> = [];
     expect(lowerWhisperProcessPriority(123, (pid, prio) => calls.push([pid, prio]))).toBe(true);
@@ -100,6 +114,13 @@ describe("pure runtime helpers", () => {
         throw new Error("EPERM");
       }),
     ).toBe(false);
+  });
+
+  it("fails closed below the native helper's macOS deployment target", () => {
+    expect(isWhisperRuntimePlatformSupported("darwin", "20.6.0")).toBe(false);
+    expect(isWhisperRuntimePlatformSupported("darwin", "21.0.0")).toBe(true);
+    expect(isWhisperRuntimePlatformSupported("darwin", "not-a-version")).toBe(false);
+    expect(isWhisperRuntimePlatformSupported("linux", "not-a-version")).toBe(true);
   });
 });
 
@@ -218,6 +239,29 @@ describe("LocalWhisperRuntime lifecycle", () => {
 
     const endpoint = h.posts[0]?.url ?? "";
     expect(endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/scient-[0-9a-f]{48}\/inference$/u);
+  });
+
+  it("accepts an empty transcript as valid no-speech output", async () => {
+    const runtimeDirectory = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "scient-voice-empty-"),
+    );
+    await NodeFSP.writeFile(NodePath.join(runtimeDirectory, "whisper-server"), "#!/bin/sh\n");
+    const child = new FakeChild();
+    const runtime = new LocalWhisperRuntime({
+      runtimeDirectory,
+      platform: "linux",
+      spawnImpl: (() =>
+        child as unknown as NodeChildProcess.ChildProcessWithoutNullStreams) as WhisperSpawn,
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) =>
+        (init?.method ?? "GET") === "OPTIONS"
+          ? new Response(null, { status: 200 })
+          : new Response(JSON.stringify({ text: "" }), { status: 200 })) as typeof fetch,
+    });
+    await expect(
+      runtime.transcribe("/model.bin", CLIP, { signal: new AbortController().signal }),
+    ).resolves.toEqual({ text: "" });
+    await runtime.dispose();
+    await NodeFSP.rm(runtimeDirectory, { recursive: true, force: true });
   });
 
   it("reuses one process and serializes concurrent requests (single-flight)", async () => {

@@ -20,6 +20,7 @@ import {
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -654,6 +655,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  {
+    from: "apps/desktop/prod-resources/whisper-runtime",
+    to: "whisper-runtime",
   },
 ] as const;
 
@@ -1846,6 +1851,22 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     platform: options.platform,
     arch: options.arch,
     verbose: options.verbose,
+  });
+  yield* Effect.tryPromise({
+    try: () =>
+      stageScientVoiceRuntimeForDesktopBuild({
+        repoRoot,
+        stageResourcesDir,
+        platform: options.platform,
+        arch: options.arch,
+        verbose: options.verbose,
+      }),
+    catch: (cause) =>
+      new BuildCommandFailedError({
+        command: `stage whisper.cpp (${options.platform}/${options.arch})`,
+        exitCode: 1,
+        stderrTail: cause instanceof Error ? cause.message : String(cause),
+      }),
   });
 
   yield* assertPlatformBuildResources(

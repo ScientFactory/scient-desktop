@@ -1,25 +1,10 @@
-import {
-  VoiceCapabilitySnapshot,
-  VoiceModelState,
-  VoiceTranscribeRequest,
-  VoiceTranscript,
-} from "@t3tools/contracts";
+import { VoiceModelState, VoiceTranscribeRequest, VoiceTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as DesktopVoice from "../../app/DesktopVoice.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
-
-export const getVoiceCapability = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_GET_CAPABILITY_CHANNEL,
-  payload: Schema.Void,
-  result: VoiceCapabilitySnapshot,
-  handler: Effect.fn("desktop.ipc.voice.getCapability")(function* () {
-    const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.getCapability;
-  }),
-});
 
 export const getVoiceModelState = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL,
@@ -70,3 +55,11 @@ export const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
     yield* voice.cancelTranscription;
   }),
 });
+
+export const methods = [
+  getVoiceModelState,
+  downloadVoiceModel,
+  removeVoiceModel,
+  transcribeVoice,
+  cancelVoiceTranscription,
+] as const;

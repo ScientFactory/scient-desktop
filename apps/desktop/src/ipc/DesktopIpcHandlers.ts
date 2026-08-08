@@ -43,14 +43,7 @@ import {
   showContextMenu,
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
-import {
-  cancelVoiceTranscription,
-  downloadVoiceModel,
-  getVoiceCapability,
-  getVoiceModelState,
-  removeVoiceModel,
-  transcribeVoice,
-} from "./methods/voice.ts";
+import * as VoiceIpc from "./methods/voice.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
@@ -99,12 +92,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
 
-  yield* ipc.handle(getVoiceCapability);
-  yield* ipc.handle(getVoiceModelState);
-  yield* ipc.handle(downloadVoiceModel);
-  yield* ipc.handle(removeVoiceModel);
-  yield* ipc.handle(transcribeVoice);
-  yield* ipc.handle(cancelVoiceTranscription);
+  for (const voiceMethod of VoiceIpc.methods) {
+    yield* ipc.handle(voiceMethod);
+  }
 
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);

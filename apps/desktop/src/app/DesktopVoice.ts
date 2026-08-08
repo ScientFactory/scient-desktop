@@ -15,18 +15,11 @@ import {
   DEFAULT_VOICE_MODEL_ID,
   isVoiceTranscriptionError,
   normalizeVoiceClip,
-  probeStaticCapabilities,
   requireVoiceModelDefinition,
-  scoreCapability,
   type TranscriptionEngine,
-  VoiceModelManager,
+  type VoiceModelState as CoreVoiceModelState,
 } from "@scientfactory/scient-voice";
-import type {
-  VoiceCapabilitySnapshot,
-  VoiceModelState,
-  VoiceTranscribeRequest,
-  VoiceTranscript,
-} from "@t3tools/contracts";
+import type { VoiceModelState, VoiceTranscribeRequest, VoiceTranscript } from "@t3tools/contracts";
 import { VoiceTranscriptionErrorKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -52,7 +45,10 @@ export class VoiceRequestError extends Schema.TaggedErrorClass<VoiceRequestError
   }
 }
 
+const isVoiceRequestError = Schema.is(VoiceRequestError);
+
 function toVoiceRequestError(cause: unknown): VoiceRequestError {
+  if (isVoiceRequestError(cause)) return cause;
   if (isVoiceTranscriptionError(cause)) {
     return new VoiceRequestError({ kind: cause.kind, safeMessage: cause.safeMessage });
   }
@@ -65,7 +61,6 @@ function toVoiceRequestError(cause: unknown): VoiceRequestError {
 export class DesktopVoice extends Context.Service<
   DesktopVoice,
   {
-    readonly getCapability: Effect.Effect<VoiceCapabilitySnapshot>;
     readonly getModelState: Effect.Effect<VoiceModelState>;
     readonly downloadModel: Effect.Effect<VoiceModelState, VoiceRequestError>;
     readonly removeModel: Effect.Effect<VoiceModelState, VoiceRequestError>;
@@ -75,6 +70,26 @@ export class DesktopVoice extends Context.Service<
     ) => Effect.Effect<VoiceTranscript, VoiceRequestError>;
   }
 >()("@t3tools/desktop/app/DesktopVoice") {}
+
+const RUNTIME_UNAVAILABLE_MESSAGE =
+  "Offline voice transcription is not available in this desktop build.";
+
+export function projectVoiceModelState(state: CoreVoiceModelState): VoiceModelState {
+  switch (state.state) {
+    case "missing":
+      return { state: "missing" };
+    case "downloading":
+      return {
+        state: "downloading",
+        downloadedBytes: state.downloadedBytes,
+        totalBytes: state.totalBytes,
+      };
+    case "ready":
+      return { state: "ready", byteSize: state.byteSize };
+    case "error":
+      return { state: "error", message: state.message };
+  }
+}
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -92,8 +107,11 @@ export const make = Effect.gen(function* () {
   let maintenanceActive = false;
   let downloadInFlight = false;
   let activeController: AbortController | null = null;
+  let activeTranscription: Promise<unknown> | null = null;
 
-  const manager = new VoiceModelManager({ modelsDirectory: modelDir, manifest });
+  // The engine is the single owner of both the model manager and native
+  // runtime. Keeping one owner prevents removal/repair from racing a helper
+  // process that has the same model file open.
   const engine: TranscriptionEngine = createLocalWhisperEngine({
     runtimeDir,
     modelDir,
@@ -105,23 +123,31 @@ export const make = Effect.gen(function* () {
   // in the promise itself so the finalizer never dies.
   yield* Effect.addFinalizer(() => Effect.promise(() => engine.dispose().catch(() => undefined)));
 
-  return DesktopVoice.of({
-    getCapability: Effect.sync(() => {
-      const probe = probeStaticCapabilities();
-      return { probe, tier: scoreCapability(probe) };
-    }),
+  const getPublicModelState = async (): Promise<VoiceModelState> => {
+    if (!(await engine.isRuntimeInstalled())) {
+      return { state: "unavailable", message: RUNTIME_UNAVAILABLE_MESSAGE };
+    }
+    return projectVoiceModelState(await engine.getModelState());
+  };
 
-    getModelState: Effect.promise(() => manager.getStatus()),
+  return DesktopVoice.of({
+    getModelState: Effect.promise(getPublicModelState),
 
     downloadModel: Effect.gen(function* () {
       if (downloadInFlight) {
-        return yield* Effect.promise(() => manager.getStatus());
+        return yield* Effect.promise(getPublicModelState);
       }
       downloadInFlight = true;
       return yield* Effect.tryPromise({
         try: async () => {
-          await manager.ensureInstalled(new AbortController().signal);
-          return manager.getStatus();
+          if (!(await engine.isRuntimeInstalled())) {
+            throw new VoiceRequestError({
+              kind: "backend-unavailable",
+              safeMessage: RUNTIME_UNAVAILABLE_MESSAGE,
+            });
+          }
+          await engine.ensureModel(undefined, new AbortController().signal);
+          return getPublicModelState();
         },
         catch: toVoiceRequestError,
       }).pipe(Effect.ensuring(Effect.sync(() => (downloadInFlight = false))));
@@ -131,8 +157,10 @@ export const make = Effect.gen(function* () {
       maintenanceActive = true;
       return yield* Effect.tryPromise({
         try: async () => {
-          await manager.remove();
-          return manager.getStatus();
+          activeController?.abort();
+          await activeTranscription?.catch(() => undefined);
+          await engine.removeModel();
+          return getPublicModelState();
         },
         catch: toVoiceRequestError,
       }).pipe(Effect.ensuring(Effect.sync(() => (maintenanceActive = false))));
@@ -156,18 +184,23 @@ export const make = Effect.gen(function* () {
         const controller = new AbortController();
         activeController = controller;
 
+        const transcription = engine.transcribe(clip, {
+          signal: controller.signal,
+          ...(request.language !== undefined ? { language: request.language } : {}),
+        });
+        activeTranscription = transcription;
+
         return yield* Effect.tryPromise({
-          try: () =>
-            engine.transcribe(clip, {
-              signal: controller.signal,
-              ...(request.language !== undefined ? { language: request.language } : {}),
-            }),
+          try: () => transcription,
           catch: toVoiceRequestError,
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               if (activeController === controller) {
                 activeController = null;
+              }
+              if (activeTranscription === transcription) {
+                activeTranscription = null;
               }
             }),
           ),

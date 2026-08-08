@@ -75,6 +75,17 @@ describe("encodeWavClip resampling", () => {
     expect(clip.durationMs).toBe(1000);
   });
 
+  it("low-pass filters alternating high-frequency samples while downsampling", () => {
+    const input = Float32Array.from({ length: 48_000 }, (_, index) => (index % 2 === 0 ? 1 : -1));
+    const clip = encodeWavClip([input], 48_000);
+    const view = viewOf(clip.wavBytes);
+    let peak = 0;
+    for (let offset = 44; offset < clip.wavBytes.length; offset += 2) {
+      peak = Math.max(peak, Math.abs(view.getInt16(offset, true)));
+    }
+    expect(peak).toBeLessThanOrEqual(1);
+  });
+
   it("concatenates multiple frames before resampling", () => {
     const clip = encodeWavClip(
       [new Float32Array(12_000), new Float32Array(12_000)],

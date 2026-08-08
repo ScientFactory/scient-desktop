@@ -14,8 +14,23 @@
  */
 export const VOICE_WORKLET_PROCESSOR_NAME = "scient-voice-recorder";
 
-/** Shape of each message the worklet posts to the main thread. */
-export interface VoiceWorkletMessage {
+/** Audio frame posted by the worklet. */
+export interface VoiceWorkletSamplesMessage {
+  readonly type: "samples";
   readonly samples: Float32Array;
   readonly rms: number;
+}
+
+/** Acknowledges that the worklet emitted its final partial frame. */
+export interface VoiceWorkletFlushedMessage {
+  readonly type: "flushed";
+  readonly requestId: number;
+}
+
+export type VoiceWorkletMessage = VoiceWorkletSamplesMessage | VoiceWorkletFlushedMessage;
+
+/** Main-thread command sent before a normal stop. */
+export interface VoiceWorkletFlushCommand {
+  readonly type: "flush";
+  readonly requestId: number;
 }

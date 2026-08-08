@@ -63,6 +63,7 @@ export class VoiceModelManager {
   private activeDownload: Promise<string> | null = null;
   private activeTransferPath: string | null = null;
   private activeOperation: "install" | "repair" | null = null;
+  private verifiedFileCache: { readonly size: number; readonly mtimeMs: number } | null = null;
 
   constructor(options: VoiceModelManagerOptions) {
     this.modelsDirectory = options.modelsDirectory;
@@ -156,10 +157,11 @@ export class VoiceModelManager {
     if (!stats?.isFile() || stats.size !== this.manifest.byteSize) {
       return false;
     }
-    return (
+    const valid =
       (await sha256File(this.modelPath)) === this.manifest.sha256 &&
-      (await fileStartsWithHex(this.modelPath, this.manifest.headerHex))
-    );
+      (await fileStartsWithHex(this.modelPath, this.manifest.headerHex));
+    this.verifiedFileCache = valid ? { size: stats.size, mtimeMs: stats.mtimeMs } : null;
+    return valid;
   }
 
   async remove(): Promise<void> {
@@ -172,6 +174,7 @@ export class VoiceModelManager {
       NodeFSP.rm(this.repairPartialPath, { force: true }),
       NodeFSP.rm(this.receiptPath, { force: true }),
     ]);
+    this.verifiedFileCache = null;
   }
 
   private async hasVerifiedReceipt(): Promise<boolean> {
@@ -180,7 +183,7 @@ export class VoiceModelManager {
       readReceipt(this.receiptPath),
     ]);
     const manifest = this.manifest;
-    return Boolean(
+    const receiptMatches = Boolean(
       modelStats?.isFile() &&
       modelStats.size === manifest.byteSize &&
       receipt?.id === manifest.id &&
@@ -189,6 +192,17 @@ export class VoiceModelManager {
       receipt.sha256 === manifest.sha256 &&
       receipt.sourceRevision === manifest.sourceRevision,
     );
+    if (!receiptMatches || !modelStats) {
+      this.verifiedFileCache = null;
+      return false;
+    }
+    if (
+      this.verifiedFileCache?.size === modelStats.size &&
+      this.verifiedFileCache.mtimeMs === modelStats.mtimeMs
+    ) {
+      return true;
+    }
+    return this.verifyInstalledModel();
   }
 
   private async downloadAndVerify(
@@ -269,6 +283,8 @@ export class VoiceModelManager {
     // Rename only after every verification passes. Node uses replacement rename
     // semantics for files, so a repair never exposes an unverified model path.
     await NodeFSP.rename(partialPath, this.modelPath);
+    const installedStats = await NodeFSP.stat(this.modelPath);
+    this.verifiedFileCache = { size: installedStats.size, mtimeMs: installedStats.mtimeMs };
     const receipt: VoiceModelReceipt = {
       id: manifest.id,
       fileName: manifest.fileName,

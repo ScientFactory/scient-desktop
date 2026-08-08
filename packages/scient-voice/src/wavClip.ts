@@ -20,7 +20,7 @@ export const MAX_DURATION_MS = 120_000;
 /** Canonical WAV header length for the fixed 16-byte PCM `fmt ` layout. */
 export const WAV_HEADER_BYTES = 44;
 
-const MAX_AUDIO_BASE64_CHARS = Math.ceil((MAX_AUDIO_BYTES * 4) / 3) + 4;
+const MAX_AUDIO_BASE64_CHARS = 4 * Math.ceil(MAX_AUDIO_BYTES / 3);
 const BITS_PER_SAMPLE = 16;
 const MONO_CHANNEL_COUNT = 1;
 const PCM_FORMAT_TAG = 1;
@@ -73,6 +73,13 @@ export function normalizeVoiceClip(input: unknown): NormalizedVoiceClip {
   }
 
   assertValidWav(bytes);
+  const encodedDurationMs = Math.round(
+    ((bytes.byteLength - WAV_HEADER_BYTES) / (TARGET_SAMPLE_RATE_HZ * (BITS_PER_SAMPLE / 8))) *
+      1000,
+  );
+  if (Math.abs(encodedDurationMs - (durationMs as number)) > 1) {
+    throw invalidAudio("The recorded audio duration does not match its WAV data.");
+  }
 
   return {
     audioBytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),

@@ -1,5 +1,4 @@
 import type {
-  VoiceCapabilitySnapshot,
   VoiceModelDownloadProgress,
   VoiceModelState,
   VoiceTranscribeRequest,
@@ -1083,8 +1082,6 @@ export interface DesktopBridge {
  * model download performed by the main process.
  */
 export interface DesktopVoiceBridge {
-  /** Static machine capabilities plus a coarse tier score. */
-  getCapability: () => Promise<VoiceCapabilitySnapshot>;
   /** Current install/download state of the local model. */
   getModelState: () => Promise<VoiceModelState>;
   /** Download + verify the local model. Resolves with the resulting state. */

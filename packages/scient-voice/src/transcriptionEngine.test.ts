@@ -217,4 +217,25 @@ describe("createLocalWhisperEngine", () => {
     expect((await engine.getModelState()).state).toBe("ready");
     await engine.dispose();
   });
+
+  it("stops the helper before removing a ready model", async () => {
+    const modelDir = await tmp("scient-voice-eng-model-");
+    const runtimeDir = await makeRuntimeDir();
+    const definition = manifest();
+    await installReadyModel(modelDir, definition);
+    const engine = createLocalWhisperEngine({
+      runtimeDir,
+      modelDir,
+      manifest: definition,
+      platform: "linux",
+      spawnImpl: fakeSpawn(),
+      fetchImpl: inferenceFetch(
+        () => new Response(JSON.stringify({ text: "hello" }), { status: 200 }),
+      ),
+    });
+    await engine.transcribe(CLIP, { signal: new AbortController().signal });
+    await engine.removeModel();
+    expect((await engine.getModelState()).state).toBe("missing");
+    await engine.dispose();
+  });
 });

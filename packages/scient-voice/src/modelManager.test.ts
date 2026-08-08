@@ -121,6 +121,26 @@ describe("VoiceModelManager", () => {
     expect(calls).toBe(0);
   });
 
+  it("rejects same-size model tampering even when the receipt still matches", async () => {
+    const dir = await makeModelDir();
+    const first = new VoiceModelManager({
+      modelsDirectory: dir,
+      manifest: manifest(),
+      fetchImpl: servingFetch(MODEL_BYTES),
+    });
+    await first.ensureInstalled(new AbortController().signal);
+    const tampered = Buffer.from(MODEL_BYTES);
+    tampered[tampered.length - 1] = tampered[tampered.length - 1]! ^ 0xff;
+    await NodeFSP.writeFile(first.modelPath, tampered);
+
+    const restarted = new VoiceModelManager({
+      modelsDirectory: dir,
+      manifest: manifest(),
+      fetchImpl: servingFetch(MODEL_BYTES),
+    });
+    expect((await restarted.getStatus()).state).toBe("missing");
+  });
+
   it("rejects and cleans up on a checksum mismatch", async () => {
     const dir = await makeModelDir();
     const manager = new VoiceModelManager({
