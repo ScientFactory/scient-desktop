@@ -427,7 +427,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
 function setupMalformedDatabase(
   sql: SqlClient.SqlClient,
   threadId: string,
-  workspaceMode: string,
+  workspaceMode: string | null,
   status: string,
   forkedFrom: string | null,
 ) {
@@ -1125,6 +1125,278 @@ it.effect("fresh database uses created_at without applied_at column", () =>
         ["durable-thread-forks", "durable-provider-bootstrap", "normalize-active-lineage"],
       );
       assert.isTrue(ledger.every((row) => row.created_at.length > 0));
+    }),
+  ),
+);
+
+// ---------------------------------------------------------------------------
+// Regression: Concurrent startup against an applied_at ledger
+// ---------------------------------------------------------------------------
+
+it.effect(
+  "concurrent runners against an applied_at ledger do not fail on duplicate created_at",
+  () => {
+    const tempFile = NodePath.join(
+      NodeOS.tmpdir(),
+      `scient-test-concurrent-applied-at-${NodeCrypto.randomUUID()}.sqlite`,
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.acquireUseRelease(
+        Effect.succeed(tempFile),
+        (filename) =>
+          Effect.gen(function* () {
+            // Set up a legacy applied_at ledger with entries 1 and 2, plus a
+            // prototype lineage table, on a fresh file connection.
+            const setup = Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql`
+              CREATE TABLE scient_schema_migrations (
+                migration_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+              )
+            `;
+              yield* sql`INSERT INTO scient_schema_migrations (migration_id, name, applied_at) VALUES (1, 'durable-thread-forks', '2026-07-01T10:00:00.000Z')`;
+              yield* sql`INSERT INTO scient_schema_migrations (migration_id, name, applied_at) VALUES (2, 'durable-provider-bootstrap', '2026-07-02T12:00:00.000Z')`;
+
+              yield* sql`
+              CREATE TABLE scient_thread_lineage (
+                thread_id TEXT PRIMARY KEY,
+                forked_from_thread_id TEXT,
+                fork_point_turn_count INTEGER,
+                workspace_mode TEXT,
+                fidelity_mode TEXT,
+                created_at TEXT
+              )
+            `;
+              yield* sql`INSERT INTO scient_thread_lineage (thread_id, forked_from_thread_id, fork_point_turn_count, workspace_mode, fidelity_mode, created_at) VALUES ('proto-fork', 'origin', 1, 'local', 'chat-only', '2026-07-15T00:00:00.000Z')`;
+            }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+            yield* setup;
+
+            // Race two concurrent runners on the same file.
+            const runOnFile = Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              return yield* runScientMigrations(sql);
+            }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+            const [result1, result2] = yield* Effect.all([runOnFile, runOnFile], {
+              concurrency: 2,
+            });
+
+            // One runner applied migration 3, the other got empty (locked).
+            const totalApplied = result1.length + result2.length;
+            assert.isTrue(totalApplied <= 1, `Total applied ${totalApplied} exceeds 1`);
+            const winner = result1.length >= result2.length ? result1 : result2;
+            const loser = result1.length >= result2.length ? result2 : result1;
+            assert.strictEqual(winner.length, 1);
+            assert.strictEqual(winner[0]![0], 3);
+            assert.strictEqual(loser.length, 0);
+
+            // Verify the final ledger with a fresh connection.
+            const verify = Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+
+              // Legacy timestamps preserved after concurrent reconciliation.
+              const ledger = yield* sql<{
+                readonly migration_id: number;
+                readonly name: string;
+                readonly created_at: string;
+                readonly applied_at: string;
+              }>`SELECT migration_id, name, created_at, applied_at FROM scient_schema_migrations ORDER BY migration_id`;
+
+              assert.strictEqual(ledger.length, 3);
+              assert.strictEqual(ledger[0]!.migration_id, 1);
+              assert.strictEqual(ledger[0]!.name, "durable-thread-forks");
+              assert.strictEqual(ledger[0]!.applied_at, "2026-07-01T10:00:00.000Z");
+              assert.strictEqual(ledger[0]!.created_at, "2026-07-01T10:00:00.000Z");
+
+              assert.strictEqual(ledger[1]!.migration_id, 2);
+              assert.strictEqual(ledger[1]!.name, "durable-provider-bootstrap");
+              assert.strictEqual(ledger[1]!.applied_at, "2026-07-02T12:00:00.000Z");
+              assert.strictEqual(ledger[1]!.created_at, "2026-07-02T12:00:00.000Z");
+
+              assert.strictEqual(ledger[2]!.migration_id, 3);
+              assert.strictEqual(ledger[2]!.name, "normalize-active-lineage");
+              assert.isTrue(ledger[2]!.created_at.length > 0);
+            }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+            yield* verify;
+          }),
+        (filename) =>
+          Effect.sync(() => {
+            for (const suffix of ["", "-wal", "-shm"]) {
+              try {
+                NodeFS.unlinkSync(filename + suffix);
+              } catch {
+                // ignore
+              }
+            }
+          }),
+      );
+    });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Regression: Crash/retry-safe timestamp preservation
+// ---------------------------------------------------------------------------
+
+it.effect("partial reconciliation is recovered on retry without timestamp loss", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      // Create a legacy applied_at ledger with known timestamps.
+      yield* sql`
+        CREATE TABLE scient_schema_migrations (
+          migration_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL
+        )
+      `;
+      const legacyData: Array<{ id: number; name: string; ts: string }> = [
+        { id: 1, name: "durable-thread-forks", ts: "2026-07-01T10:00:00.000Z" },
+        { id: 2, name: "durable-provider-bootstrap", ts: "2026-07-02T12:00:00.000Z" },
+      ];
+      for (const entry of legacyData) {
+        yield* sql`
+          INSERT INTO scient_schema_migrations (migration_id, name, applied_at)
+          VALUES (${entry.id}, ${entry.name}, ${entry.ts})
+        `;
+      }
+
+      // Simulate a partial reconciliation: the ALTER succeeded (created_at
+      // column was added) but the UPDATE did not (created_at values remain
+      // NULL). This is the crash window between ALTER and UPDATE.
+      yield* sql.unsafe("ALTER TABLE scient_schema_migrations ADD COLUMN created_at TEXT");
+
+      // Verify the partial state: created_at exists but is NULL for all rows.
+      const partial = yield* sql<{
+        readonly migration_id: number;
+        readonly created_at: string | null;
+      }>`SELECT migration_id, created_at FROM scient_schema_migrations ORDER BY migration_id`;
+      assert.strictEqual(partial[0]!.created_at, null);
+      assert.strictEqual(partial[1]!.created_at, null);
+
+      // Also create the lineage table so migration 3 doesn't fail on missing table.
+      yield* sql`
+        CREATE TABLE scient_thread_lineage (
+          thread_id TEXT PRIMARY KEY,
+          forked_from_thread_id TEXT,
+          fork_point_turn_count INTEGER,
+          workspace_mode TEXT,
+          fidelity_mode TEXT,
+          created_at TEXT
+        )
+      `;
+      yield* sql`INSERT INTO scient_thread_lineage (thread_id, forked_from_thread_id, fork_point_turn_count, workspace_mode, fidelity_mode, created_at) VALUES ('proto-fork', 'origin', 1, 'local', 'chat-only', '2026-07-15T00:00:00.000Z')`;
+
+      // Retry: the runner should detect both columns exist, skip the ALTER,
+      // and still backfill the missing created_at values from applied_at.
+      const executed = yield* runScientMigrations(sql);
+      assert.strictEqual(executed.length, 1); // Only migration 3 ran.
+      assert.strictEqual(executed[0]![0], 3);
+
+      // All legacy timestamps are preserved in both columns.
+      const ledger = yield* sql<{
+        readonly migration_id: number;
+        readonly name: string;
+        readonly created_at: string;
+        readonly applied_at: string;
+      }>`SELECT migration_id, name, created_at, applied_at FROM scient_schema_migrations ORDER BY migration_id`;
+
+      assert.strictEqual(ledger.length, 3);
+      for (let i = 0; i < legacyData.length; i++) {
+        const expected = legacyData[i]!;
+        const row = ledger[i]!;
+        assert.strictEqual(row.migration_id, expected.id);
+        assert.strictEqual(row.name, expected.name);
+        assert.strictEqual(row.created_at, expected.ts);
+        assert.strictEqual(row.applied_at, expected.ts);
+      }
+      assert.strictEqual(ledger[2]!.migration_id, 3);
+      assert.isTrue(ledger[2]!.created_at.length > 0);
+    }),
+  ),
+);
+
+it.effect("reconciled ledger with all created_at populated is idempotent on retry", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      // Create a fully reconciled ledger (applied_at + created_at both populated).
+      yield* sql`
+        CREATE TABLE scient_schema_migrations (
+          migration_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL,
+          created_at TEXT
+        )
+      `;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name, applied_at, created_at) VALUES (1, 'durable-thread-forks', '2026-07-01T10:00:00.000Z', '2026-07-01T10:00:00.000Z')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name, applied_at, created_at) VALUES (2, 'durable-provider-bootstrap', '2026-07-02T12:00:00.000Z', '2026-07-02T12:00:00.000Z')`;
+
+      yield* sql`
+        CREATE TABLE scient_thread_lineage (
+          thread_id TEXT PRIMARY KEY,
+          forked_from_thread_id TEXT,
+          fork_point_turn_count INTEGER,
+          workspace_mode TEXT,
+          fidelity_mode TEXT,
+          created_at TEXT
+        )
+      `;
+      yield* sql`INSERT INTO scient_thread_lineage (thread_id, forked_from_thread_id, fork_point_turn_count, workspace_mode, fidelity_mode, created_at) VALUES ('proto-fork', 'origin', 1, 'local', 'chat-only', '2026-07-15T00:00:00.000Z')`;
+
+      // Retry: reconciliation should be a no-op (backfill finds nothing to do).
+      const executed = yield* runScientMigrations(sql);
+      assert.strictEqual(executed.length, 1);
+      assert.strictEqual(executed[0]![0], 3);
+
+      // Timestamps unchanged.
+      const ledger = yield* sql<{
+        readonly migration_id: number;
+        readonly created_at: string;
+        readonly applied_at: string;
+      }>`SELECT migration_id, created_at, applied_at FROM scient_schema_migrations ORDER BY migration_id`;
+      assert.strictEqual(ledger[0]!.created_at, "2026-07-01T10:00:00.000Z");
+      assert.strictEqual(ledger[0]!.applied_at, "2026-07-01T10:00:00.000Z");
+      assert.strictEqual(ledger[1]!.created_at, "2026-07-02T12:00:00.000Z");
+      assert.strictEqual(ledger[1]!.applied_at, "2026-07-02T12:00:00.000Z");
+    }),
+  ),
+);
+
+// ---------------------------------------------------------------------------
+// Regression: NULL workspace_mode fails closed
+// ---------------------------------------------------------------------------
+
+it.effect("NULL workspace_mode fails closed during normalization", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* setupMalformedDatabase(sql, "null-mode-fork", null, "pending", "origin");
+
+      const result = yield* Effect.exit(runScientMigrations(sql));
+      assert.isTrue(Exit.isFailure(result));
+
+      // Migration 3 was not recorded.
+      const ledger = yield* sql<{ readonly migration_id: number }>`
+        SELECT migration_id FROM scient_schema_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        ledger.map((row) => row.migration_id),
+        [1, 2],
+      );
+
+      // Row preserved, not deleted or fabricated.
+      const rows = yield* sql<{
+        readonly thread_id: string;
+        readonly workspace_mode: string | null;
+      }>`SELECT thread_id, workspace_mode FROM scient_thread_lineage WHERE thread_id = 'null-mode-fork'`;
+      assert.strictEqual(rows.length, 1);
+      assert.strictEqual(rows[0]!.workspace_mode, null);
     }),
   ),
 );

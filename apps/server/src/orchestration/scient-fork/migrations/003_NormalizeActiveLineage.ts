@@ -68,6 +68,10 @@ export default Effect.gen(function* () {
 
   // --- Validate row integrity (fail-closed on malformed data) ---
 
+  // NULL workspace_mode fails closed: the canonical schema requires an
+  // explicit workspace mode ('local' or 'new-worktree'). We cannot fabricate
+  // a value the original data did not carry, so the migration stops rather
+  // than silently normalizing NULL to a guessed default.
   const malformedRows = yield* sql<{
     readonly thread_id: string;
     readonly workspace_mode: string | null;
@@ -77,7 +81,8 @@ export default Effect.gen(function* () {
     SELECT thread_id, workspace_mode, status, forked_from_thread_id
     FROM scient_thread_lineage
     WHERE forked_from_thread_id IS NULL
-       OR (workspace_mode IS NOT NULL AND workspace_mode NOT IN ('local', 'new-worktree'))
+       OR workspace_mode IS NULL
+       OR workspace_mode NOT IN ('local', 'new-worktree')
        OR (status IS NOT NULL AND status NOT IN ('pending', 'provisioning', 'failed', 'abandoned', 'ready'))
   `;
 
@@ -87,7 +92,9 @@ export default Effect.gen(function* () {
     if (row.forked_from_thread_id === null) {
       problems.push("forked_from_thread_id is null");
     }
-    if (row.workspace_mode !== null && !VALID_WORKSPACE_MODES.has(row.workspace_mode)) {
+    if (row.workspace_mode === null) {
+      problems.push("workspace_mode is null");
+    } else if (!VALID_WORKSPACE_MODES.has(row.workspace_mode)) {
       problems.push(`workspace_mode '${row.workspace_mode}' is not valid`);
     }
     if (row.status !== null && !VALID_STATUSES.has(row.status)) {

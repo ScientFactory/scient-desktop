@@ -72,51 +72,73 @@ interface TableColumn {
 }
 
 /**
- * Detect whether the `scient_schema_migrations` ledger table exists and, if so,
- * whether it uses the legacy `applied_at` column or the canonical `created_at`
- * column.
+ * Reconcile the `scient_schema_migrations` ledger from the legacy `applied_at`
+ * column to the canonical `created_at` column expected by the Effect SQL
+ * Migrator pattern.
  *
- * This must not assume `CREATE TABLE IF NOT EXISTS` can alter an existing
- * table's column schema. SQLite silently ignores the statement when the table
+ * The runner must not assume `CREATE TABLE IF NOT EXISTS` can alter an existing
+ * table's column schema — SQLite silently ignores the statement when the table
  * already exists, so the original `applied_at` column would remain.
- */
-const detectLedgerTimestampColumn = Effect.fn("detectScientLedgerTimestampColumn")(function* (
-  sql: SqlClient.SqlClient,
-) {
-  const tables = yield* sql<{ readonly name: string }>`
-      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_schema_migrations'
-    `;
-  if (tables.length === 0) return null as Readonly<{ column: "applied_at" | "created_at" } | null>;
-
-  const columns = yield* sql<TableColumn>`PRAGMA table_info(scient_schema_migrations)`;
-  const columnNames = new Set(columns.map((column) => column.name));
-
-  if (columnNames.has("created_at")) return { column: "created_at" as const };
-  if (columnNames.has("applied_at")) return { column: "applied_at" as const };
-  return null;
-});
-
-/**
- * Reconcile the ledger: if the table exists with `applied_at` but without
- * `created_at`, add `created_at` (nullable — SQLite ALTER TABLE does not allow
- * expression defaults like `datetime('now')`) and copy all existing `applied_at`
- * values into it. New rows always receive an explicit `created_at` value from
- * the runner's INSERT, so the lack of a column DEFAULT is not a problem.
+ *
+ * Concurrency safety: under concurrent startup, two runners may both detect
+ * `applied_at` without `created_at` and race to add the column. The ALTER is
+ * guarded so a "duplicate column name" error from a winning runner is treated
+ * as success.
+ *
+ * Crash/retry safety: the backfill UPDATE is idempotent
+ * (`WHERE created_at IS NULL`), so a partial reconciliation (ALTER committed,
+ * UPDATE did not) is safely recovered on retry. Even after `created_at` exists
+ * alongside `applied_at`, any rows that still have NULL `created_at` are
+ * populated from `applied_at`.
  *
  * No timestamp value, ledger ID, or migration name is lost or altered.
  */
 const reconcileLedger = Effect.fn("reconcileScientLedger")(function* (sql: SqlClient.SqlClient) {
-  const detected = yield* detectLedgerTimestampColumn(sql);
-  if (detected === null || detected.column !== "applied_at") return;
+  // Check if the ledger table exists at all.
+  const tables = yield* sql<{ readonly name: string }>`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scient_schema_migrations'
+    `;
+  if (tables.length === 0) return; // Fresh database — ensureLedgerTable will create it.
 
-  // Add created_at as a nullable column. SQLite ALTER TABLE only allows
-  // constant defaults, not expressions like datetime('now') or CURRENT_TIMESTAMP.
-  // The runner always sets created_at explicitly in the INSERT, so no DEFAULT
-  // is needed.
-  yield* sql.unsafe("ALTER TABLE scient_schema_migrations ADD COLUMN created_at TEXT");
+  // Check existing columns directly to handle all reconciliation states:
+  // - applied_at only (legacy, needs created_at added + backfill)
+  // - applied_at + created_at (partially or fully reconciled, may need backfill)
+  // - created_at only (fresh or fully reconciled, nothing to do)
+  const columns = yield* sql<TableColumn>`PRAGMA table_info(scient_schema_migrations)`;
+  const columnNames = new Set(columns.map((column) => column.name));
 
-  // Copy existing applied_at values so no timestamp is lost.
-  yield* sql`UPDATE scient_schema_migrations SET created_at = applied_at`;
+  const hasAppliedAt = columnNames.has("applied_at");
+  const hasCreatedAt = columnNames.has("created_at");
+
+  // No legacy column to reconcile — fresh or already fully canonical.
+  if (!hasAppliedAt) return;
+
+  if (!hasCreatedAt) {
+    // Add created_at as a nullable column. SQLite ALTER TABLE only allows
+    // constant defaults, not expressions like datetime('now') or
+    // CURRENT_TIMESTAMP. The runner always sets created_at explicitly in the
+    // INSERT, so no DEFAULT is needed.
+    //
+    // Under concurrent startup, another runner may have already added the
+    // column between our PRAGMA check and this ALTER. Catch the "duplicate
+    // column name" error and treat it as success.
+    yield* sql.unsafe("ALTER TABLE scient_schema_migrations ADD COLUMN created_at TEXT").pipe(
+      Effect.catchTag("SqlError", (error: SqlError) => {
+        const msg = String(error.message ?? error);
+        if (msg.includes("duplicate column name")) {
+          return Effect.void;
+        }
+        return Effect.fail(error);
+      }),
+    );
+  }
+
+  // Always backfill any missing created_at values from applied_at. This is
+  // idempotent (only touches rows where created_at IS NULL) and handles
+  // partial reconciliation recovery: if the ALTER committed but the UPDATE
+  // did not (crash), the retry detects both columns exist, skips the ALTER,
+  // and still populates uncopied timestamps.
+  yield* sql`UPDATE scient_schema_migrations SET created_at = applied_at WHERE created_at IS NULL`;
 });
 
 // ---------------------------------------------------------------------------
