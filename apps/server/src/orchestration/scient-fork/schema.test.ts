@@ -1205,7 +1205,7 @@ it.effect("physical compatibility columns provider_mode and fidelity_mode remain
 );
 
 // ---------------------------------------------------------------------------
-// VAL-MIGRATE-14: No valid lineage is discarded
+// VAL-MIGRATE-14: Canonically valid active lineage is preserved
 // ---------------------------------------------------------------------------
 
 it.effect("provider-bootstrap lineage is preserved across normalization", () =>

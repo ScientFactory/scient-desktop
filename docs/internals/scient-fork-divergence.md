@@ -340,6 +340,9 @@ validates baseline identity, counts, attachment JSON, lifecycle values, and
 required IDs, then removes only invalid active rows by `rowid`. Tests cover the
 already-recorded migration-3 state, legacy evidence upgrade, null/blank IDs,
 malformed recovery data, valid-sibling preservation, and idempotent reruns.
+Pre-bootstrap prototype rows without a baseline turn are therefore removed from
+active lineage, status, and fork-marker reads; their original payload and the
+reason for quarantine remain preserved in the evidence table.
 
 Terminal lifecycle guards are enforced in repository SQL predicates:
 
