@@ -242,7 +242,7 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
   });
 
-  it("shows a disabled fork control only at a resolved turn boundary", () => {
+  it("shows a disabled fork control only at a resolved fork boundary", () => {
     const messageId = MessageId.make("message-1");
     const timelineEntries = [buildUserTimelineEntry("Fork from here")];
     const withoutBoundary = renderToStaticMarkup(
@@ -256,7 +256,7 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={timelineEntries}
-        revertTurnCountByUserMessageId={new Map([[messageId, 0]])}
+        forkTurnCountByUserMessageId={new Map([[messageId, 0]])}
         onForkUserMessage={() => {}}
         isWorking
       />,
@@ -265,6 +265,32 @@ describe("MessagesTimeline", () => {
     expect(withoutBoundary).not.toContain('aria-label="Fork conversation before this message"');
     expect(withBoundary).toContain('aria-label="Fork conversation before this message"');
     expect(withBoundary).toContain("disabled");
+  });
+
+  it("does not couple fork visibility to Git-backed revert eligibility", () => {
+    const messageId = MessageId.make("message-1");
+    const timelineEntries = [buildUserTimelineEntry("Fork without reverting")];
+    const forkOnlyMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={timelineEntries}
+        forkTurnCountByUserMessageId={new Map([[messageId, 1]])}
+        onForkUserMessage={() => {}}
+      />,
+    );
+    const revertOnlyMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={timelineEntries}
+        revertTurnCountByUserMessageId={new Map([[messageId, 1]])}
+        onForkUserMessage={() => {}}
+      />,
+    );
+
+    expect(forkOnlyMarkup).toContain('aria-label="Fork conversation before this message"');
+    expect(forkOnlyMarkup).not.toContain('aria-label="Revert to this message"');
+    expect(revertOnlyMarkup).toContain('aria-label="Revert to this message"');
+    expect(revertOnlyMarkup).not.toContain('aria-label="Fork conversation before this message"');
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {

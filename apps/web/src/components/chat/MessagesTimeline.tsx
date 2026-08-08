@@ -224,6 +224,7 @@ interface MessagesTimelineProps {
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
+  forkTurnCountByUserMessageId?: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   // SCIENT-FORK:START
   onForkUserMessage?: (messageId: MessageId, workspaceMode: "new-worktree" | "local") => void;
@@ -273,6 +274,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
+  forkTurnCountByUserMessageId,
   onRevertUserMessage,
   // SCIENT-FORK:START
   onForkUserMessage,
@@ -419,6 +421,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        forkTurnCountByUserMessageId,
       }),
     [
       timelineEntries,
@@ -430,6 +433,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
+      forkTurnCountByUserMessageId,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -999,6 +1003,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const canForkConversation = typeof row.forkTurnCount === "number";
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -1072,10 +1077,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {/* SCIENT-FORK:START — fork sits beside revert; only shown when a
-                fork handler is wired and this message has a resolvable turn
-                boundary (same condition that enables revert). */}
-            {canRevertAgentWork && <ForkUserMessageButton messageId={row.message.id} />}
+            {/* SCIENT-FORK:START — conversational fork eligibility is distinct
+                from Git-backed revert eligibility. */}
+            {canForkConversation && <ForkUserMessageButton messageId={row.message.id} />}
             {/* SCIENT-FORK:END */}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />

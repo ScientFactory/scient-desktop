@@ -76,6 +76,7 @@ import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
+  isStandaloneForkSlashCommand,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
@@ -94,6 +95,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
+import { ScientForkWorkspaceModeDialog } from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -1492,6 +1494,10 @@ function ChatViewContent(props: ChatViewProps) {
     isForking: isForkingThread,
     forkToTurnCount,
   } = useScientThreadFork({ origin: activeThread ?? null, navigate });
+  const [forkCommandTarget, setForkCommandTarget] = useState<{
+    readonly threadId: ThreadId;
+    readonly turnCount: number;
+  } | null>(null);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -1506,6 +1512,11 @@ function ChatViewContent(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
+  useEffect(() => {
+    setForkCommandTarget((current) =>
+      current && current.threadId !== activeThreadId ? null : current,
+    );
+  }, [activeThreadId]);
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
@@ -2553,6 +2564,35 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  // The UI consumes conversational fork eligibility independently from Git
+  // revert eligibility. The backend boundary contract will replace this
+  // checkpoint-backed compatibility source when its repair lands.
+  const forkTurnCountByUserMessageId = revertTurnCountByUserMessageId;
+  const latestForkTurnCount = useMemo(() => {
+    let latest: number | null = null;
+    for (const summary of turnDiffSummaries) {
+      const turnCount =
+        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount === "number" && (latest === null || turnCount > latest)) {
+        latest = turnCount;
+      }
+    }
+    return latest;
+  }, [inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
+  const onForkConversation = useCallback(() => {
+    if (latestForkTurnCount === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Fork unavailable",
+          description: "This conversation does not expose a completed fork boundary yet.",
+        }),
+      );
+      return;
+    }
+    if (!activeThreadId) return;
+    setForkCommandTarget({ threadId: activeThreadId, turnCount: latestForkTurnCount });
+  }, [activeThreadId, latestForkTurnCount]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -4841,7 +4881,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
+    if (!sendCtx) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -4892,6 +4932,25 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
+    const standaloneForkCommand =
+      !directAnnotation &&
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      isStandaloneForkSlashCommand(trimmed);
+    if (standaloneForkCommand) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      onForkConversation();
+      return;
+    }
+    if (!sendCtx.providerAvailable) {
+      notifyDirectAnnotationAttached();
+      return;
+    }
     if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -5911,14 +5970,16 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
-  // SCIENT-FORK:START — fork reuses the SAME resolved turn boundary as revert
-  // (revertTurnCountRef); a fork at turn N seeds exactly what revert-to-N keeps.
-  // The handler is read from a ref so the callback identity stays stable.
+  // SCIENT-FORK:START — fork boundaries are resolved independently from
+  // Git-backed revert boundaries. The handler is read from a ref so the
+  // callback identity stays stable.
+  const forkTurnCountRef = useRef(forkTurnCountByUserMessageId);
+  forkTurnCountRef.current = forkTurnCountByUserMessageId;
   const onForkToTurnCountRef = useRef(forkToTurnCount);
   onForkToTurnCountRef.current = forkToTurnCount;
   const onForkUserMessage = useCallback(
     (messageId: MessageId, workspaceMode: "new-worktree" | "local") => {
-      const targetTurnCount = revertTurnCountRef.current.get(messageId);
+      const targetTurnCount = forkTurnCountRef.current.get(messageId);
       if (typeof targetTurnCount !== "number") {
         return;
       }
@@ -6127,6 +6188,7 @@ function ChatViewContent(props: ChatViewProps) {
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                forkTurnCountByUserMessageId={forkTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 // SCIENT-FORK:START
                 onForkUserMessage={onForkUserMessage}
@@ -6277,6 +6339,7 @@ function ChatViewContent(props: ChatViewProps) {
                             onSend={onSend}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
+                            onForkConversation={onForkConversation}
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={
                               onSelectActivePendingUserInputOption
@@ -6491,6 +6554,21 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+      <ScientForkWorkspaceModeDialog
+        open={forkCommandTarget?.threadId === activeThreadId}
+        disabled={isForkingThread}
+        onOpenChange={(open) => {
+          if (!open && !isForkingThread) {
+            setForkCommandTarget(null);
+          }
+        }}
+        onSelect={(workspaceMode) => {
+          const target = forkCommandTarget;
+          if (!target || target.threadId !== activeThreadId) return;
+          setForkCommandTarget(null);
+          void forkToTurnCount(target.turnCount, workspaceMode);
+        }}
+      />
     </div>
   );
 }
