@@ -532,6 +532,12 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       const service = yield* ScientForkContextBootstrap;
       const result = yield* Effect.result(service.markAccepted(THREAD));
       assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.detail,
+          "The fork workspace is not ready to accept context.",
+        );
+      }
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
@@ -546,6 +552,12 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       const service = yield* ScientForkContextBootstrap;
       const result = yield* Effect.result(service.markAccepted(THREAD));
       assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.detail,
+          "The fork workspace is not ready to accept context.",
+        );
+      }
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
@@ -560,6 +572,12 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       const service = yield* ScientForkContextBootstrap;
       const result = yield* Effect.result(service.markAccepted(THREAD));
       assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.detail,
+          "The fork workspace is not ready to accept context.",
+        );
+      }
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
