@@ -1,6 +1,5 @@
 import type {
   OrchestrationEvent,
-  OrchestrationForkBoundary,
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
@@ -41,6 +40,7 @@ import {
 import { decideOrchestrationCommand } from "../decider.ts";
 import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
+import type { ResolvedForkBoundaries } from "../scient-fork/forkBoundaryTypes.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -174,33 +174,38 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // correct after a server restart without bloating every command.
         // The Scient-owned resolver independently queries SQL for authoritative
         // boundaries so the pure decider never trusts client-shaped arrays.
+        // Missing origin detail or SQL resolution fails closed; there is no
+        // production fallback to snapshot boundary arrays or checkpoints.
         let decisionReadModel = commandReadModel;
-        let resolvedForkBoundaries: ReadonlyArray<OrchestrationForkBoundary> | undefined;
+        let resolvedForkBoundaries: ResolvedForkBoundaries | undefined;
         if (envelope.command.type === "thread.fork") {
           const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
             envelope.command.originThreadId,
           );
-          if (Option.isSome(originOption)) {
-            const origin = originOption.value;
-            decisionReadModel = withForkOriginDetail(commandReadModel, origin);
-            const resolved = yield* forkBoundaryResolver
-              .resolve({
-                originThreadId: envelope.command.originThreadId,
-                sourceAssistantMessageId: envelope.command.sourceAssistantMessageId,
-                threadCreatedAt: origin.createdAt,
-              })
-              .pipe(
-                Effect.mapError((cause) =>
-                  isOrchestrationCommandInvariantError(cause)
-                    ? cause
-                    : new OrchestrationCommandInvariantError({
-                        commandType: envelope.command.type,
-                        detail: cause instanceof Error ? cause.message : String(cause),
-                      }),
-                ),
-              );
-            resolvedForkBoundaries = resolved.boundaries;
+          if (Option.isNone(originOption)) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: `Origin thread '${envelope.command.originThreadId}' is not available for authoritative fork resolution.`,
+            });
           }
+          const origin = originOption.value;
+          decisionReadModel = withForkOriginDetail(commandReadModel, origin);
+          resolvedForkBoundaries = yield* forkBoundaryResolver
+            .resolve({
+              originThreadId: envelope.command.originThreadId,
+              sourceAssistantMessageId: envelope.command.sourceAssistantMessageId,
+              threadCreatedAt: origin.createdAt,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                isOrchestrationCommandInvariantError(cause)
+                  ? cause
+                  : new OrchestrationCommandInvariantError({
+                      commandType: envelope.command.type,
+                      detail: cause instanceof Error ? cause.message : String(cause),
+                    }),
+              ),
+            );
         }
         // SCIENT-FORK:END
 

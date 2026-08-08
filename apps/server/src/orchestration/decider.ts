@@ -2,7 +2,6 @@ import {
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type OrchestrationForkBoundary,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -23,6 +22,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 // SCIENT-FORK:START — delegate the Scient-owned thread.fork command out of T3.
+import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
 import { forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
 
@@ -224,11 +224,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   /**
-   * Scient-owned authoritative fork boundaries resolved from SQL. When
-   * provided for a `thread.fork` command, the decider uses these
-   * exclusively instead of trusting client-shaped boundary arrays.
+   * Scient-owned authoritative fork boundaries resolved from SQL. Required
+   * for every `thread.fork` command. The production engine fail-closes when
+   * this is missing; there is no snapshot/checkpoint fallback.
    */
-  readonly resolvedForkBoundaries?: ReadonlyArray<OrchestrationForkBoundary>;
+  readonly resolvedForkBoundaries?: ResolvedForkBoundaries;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -1376,14 +1376,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     // SCIENT-FORK:START — all fork logic lives in scient-fork/forkDecider.ts.
-    case "thread.fork":
+    case "thread.fork": {
+      if (resolvedForkBoundaries === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: "thread.fork",
+          detail:
+            "Authoritative fork boundaries are required. The server must resolve the clicked assistant response from SQL before deciding a fork.",
+        });
+      }
       return yield* forkThread({
         command,
         readModel,
-        ...(resolvedForkBoundaries !== undefined
-          ? { resolvedBoundaries: resolvedForkBoundaries }
-          : {}),
+        resolvedBoundaries: resolvedForkBoundaries,
       });
+    }
 
     case "thread.fork.complete": {
       yield* requireThread({

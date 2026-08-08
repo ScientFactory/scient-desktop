@@ -709,6 +709,27 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("fails closed when a fork origin is unavailable for authoritative resolution", async () => {
+    const system = await createOrchestrationSystem();
+
+    await expect(
+      system.run(
+        system.engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-fork-missing-origin"),
+          originThreadId: ThreadId.make("missing-origin"),
+          newThreadId: ThreadId.make("missing-origin-fork"),
+          sourceAssistantMessageId: MessageId.make("missing-assistant"),
+          workspaceMode: "local",
+        }),
+      ),
+    ).rejects.toThrow("not available for authoritative fork resolution");
+
+    const snapshot = await system.readModel();
+    expect(snapshot.threads).toEqual([]);
+    await system.dispose();
+  });
+
   it("stores completed checkpoint summaries even when no files changed", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

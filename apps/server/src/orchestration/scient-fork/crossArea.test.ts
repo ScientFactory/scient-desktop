@@ -381,7 +381,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-005-")))(
         const plannedEvents = yield* forkThread({
           command: forkCmd,
           readModel: decisionReadModel,
-          resolvedBoundaries: resolved.boundaries,
+          resolvedBoundaries: resolved,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         // 4. Assert the fork event payload carries the exact boundary.
@@ -583,7 +583,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-010-")))(
         const plannedForkEvents = yield* forkThread({
           command: forkCmd,
           readModel: decisionReadModel,
-          resolvedBoundaries: resolved.boundaries,
+          resolvedBoundaries: resolved,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         const forkedEvent = plannedForkEvents.find((e) => e.type === "thread.forked");
@@ -711,7 +711,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-010-")))(
         const reforkEvents = yield* forkThread({
           command: reforkCmd,
           readModel: readModelForRefork,
-          resolvedBoundaries: baselineResolve.boundaries,
+          resolvedBoundaries: baselineResolve,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         // Assert the re-fork produced a valid forked event at count 0.
@@ -1224,7 +1224,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-004-")))(
           const error = yield* forkThread({
             command: forkCmd,
             readModel: decisionReadModel,
-            resolvedBoundaries: resolved.boundaries,
+            resolvedBoundaries: resolved,
           }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto), Effect.flip);
           assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
 
@@ -1451,7 +1451,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-005-")))(
           const events = yield* forkThread({
             command: forkCmd,
             readModel: decisionReadModel,
-            resolvedBoundaries: validResolved.boundaries,
+            resolvedBoundaries: validResolved,
           }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
           // Exactly one thread.forked event.
@@ -1651,7 +1651,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-008-")))(
         const events = yield* forkThread({
           command: forkCmd,
           readModel: decisionReadModel,
-          resolvedBoundaries: resolved.boundaries,
+          resolvedBoundaries: resolved,
         }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
 
         // 5. Assert the fork event carries exactly checkpoint count 1.

@@ -422,10 +422,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
-  // Optional on the wire so older servers and cached snapshots remain readable.
-  // PR 14 stops populating this in client-facing snapshots; the narrow
-  // `forkLineage` marker replaces it for presentation. The field remains
-  // optional so old clients and cached snapshots still decode.
+  // Legacy decode-only residue for older cached snapshots. Current servers no
+  // longer populate this array; fork authority comes from SQL resolution and
+  // the narrow `forkLineage` marker. Removable after older cache epochs age out.
   conversationForkBoundaries: Schema.optional(Schema.Array(OrchestrationForkBoundary)),
   // Narrow lineage marker for forked threads. Absent on plain threads and
   // old servers; survives shell/detail reloads, windowing, and sequence gaps.

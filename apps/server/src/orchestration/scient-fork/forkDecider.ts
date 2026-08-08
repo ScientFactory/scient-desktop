@@ -46,6 +46,7 @@ import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
+import type { ResolvedForkBoundaries } from "./forkBoundaryTypes.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -170,13 +171,11 @@ function deriveForkTitle(
   readModel: OrchestrationReadModel,
   resolvedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
 ): string {
-  // Client-facing thread state no longer carries complete boundary arrays.
-  // Prefer the server-resolved boundaries, while retaining the narrow marker
-  // as the durable fallback for fork origins.
+  // Title numbering may consult server-resolved boundaries plus the durable
+  // narrow lineage marker. Client-shaped conversationForkBoundaries are never
+  // authority for production naming.
   const isForkedOrigin =
-    resolvedBoundaries.some(isForkBaselineBoundary) ||
-    origin.forkLineage != null ||
-    origin.conversationForkBoundaries?.some(isForkBaselineBoundary) === true;
+    resolvedBoundaries.some(isForkBaselineBoundary) || origin.forkLineage != null;
   const sameProjectThreads = readModel.threads.filter(
     (thread) => thread.projectId === origin.projectId,
   );
@@ -207,6 +206,10 @@ function deriveForkTitle(
  * Emits, in order: `thread.created` (new aggregate) → re-emitted prefix
  * `thread.message-sent` events → `thread.forked` (lineage). Never emits against
  * the origin thread.
+ *
+ * Production callers must supply {@link ResolvedForkBoundaries} from the
+ * Scient-owned SQL resolver. There is intentionally no production fallback to
+ * snapshot boundary arrays or checkpoint synthesis.
  */
 export const forkThread = Effect.fn("scientForkThread")(function* ({
   command,
@@ -216,13 +219,11 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   readonly command: ThreadForkCommand;
   readonly readModel: OrchestrationReadModel;
   /**
-   * Scient-owned authoritative boundaries resolved from SQL-backed
-   * `projection_turns` and `scient_thread_lineage`. When provided, the
-   * decider uses these exclusively and does not trust
-   * `origin.conversationForkBoundaries` or synthesize a checkpoint fallback.
-   * When absent (unit tests), the decider falls back to the read model.
+   * Authoritative server-owned boundaries for this fork request. Required on
+   * every production and test path so checkpoints and cached snapshot arrays
+   * cannot silently become conversation-completion authority.
    */
-  readonly resolvedBoundaries?: ReadonlyArray<OrchestrationForkBoundary>;
+  readonly resolvedBoundaries: ResolvedForkBoundaries;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -246,34 +247,29 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     threadId: command.newThreadId,
   });
 
-  // When the Scient-owned resolver provides SQL-backed boundaries, use them
-  // exclusively. Do NOT trust origin.conversationForkBoundaries from the read
-  // model or synthesize a checkpoint fallback — the resolver is authoritative.
-  const conversationBoundaries = resolvedBoundaries ??
-    origin.conversationForkBoundaries ?? [
-      {
-        turnId: null,
-        conversationTurnCount: 0,
-        userMessageId: null,
-        assistantMessageId: null,
-        completedAt: origin.createdAt,
-        checkpointTurnCount: null,
-        checkpointStatus: null,
-      },
-      ...origin.checkpoints.map((checkpoint) => ({
-        turnId: checkpoint.turnId,
-        conversationTurnCount: checkpoint.checkpointTurnCount,
-        userMessageId: null,
-        assistantMessageId: checkpoint.assistantMessageId,
-        completedAt: checkpoint.completedAt,
-        checkpointTurnCount: checkpoint.checkpointTurnCount,
-        checkpointStatus: checkpoint.status,
-      })),
-    ];
-  const selectedBoundary = conversationBoundaries.find(
-    (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
-  );
-  if (!selectedBoundary) {
+  if (
+    resolvedBoundaries.originThreadId !== command.originThreadId ||
+    resolvedBoundaries.sourceAssistantMessageId !== command.sourceAssistantMessageId
+  ) {
+    return yield* invariant(
+      `Authoritative fork boundaries do not match the public fork request for origin thread '${command.originThreadId}'.`,
+    );
+  }
+
+  const conversationBoundaries = resolvedBoundaries.boundaries;
+  // Re-select from the authoritative list so a malformed resolver result
+  // cannot smuggle selected-boundary metadata that is absent from that list.
+  const selectedBoundary =
+    conversationBoundaries.find(
+      (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
+    ) ?? null;
+  if (
+    selectedBoundary === null ||
+    selectedBoundary.turnId !== resolvedBoundaries.selectedBoundary.turnId ||
+    selectedBoundary.conversationTurnCount !==
+      resolvedBoundaries.selectedBoundary.conversationTurnCount ||
+    selectedBoundary.assistantMessageId !== resolvedBoundaries.selectedBoundary.assistantMessageId
+  ) {
     return yield* invariant(
       `Assistant message '${command.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`,
     );

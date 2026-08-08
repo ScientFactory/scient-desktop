@@ -117,8 +117,8 @@ internals:
 - `apps/server/src/orchestration/scient-fork/ForkCheckpointBaseline.ts`
 - `apps/server/src/orchestration/scient-fork/ForkContextBootstrap.ts`
 - `apps/server/src/orchestration/scient-fork/forkDecisionReadModel.ts`
+- `apps/server/src/orchestration/scient-fork/forkBoundaryTypes.ts`
 - `apps/server/src/orchestration/scient-fork/ForkBoundaryReadModel.ts`
-- `apps/server/src/orchestration/scient-fork/forkBoundaryProjection.ts`
 - `apps/server/src/orchestration/Services/ScientForkReactor.ts`
 - `apps/server/src/orchestration/Layers/ScientForkReactor.ts`
 - `apps/web/src/components/chat/scient-fork/ScientForkMessageButton.tsx`
@@ -166,7 +166,9 @@ consumes the resolved boundaries exclusively and does not read
 `origin.conversationForkBoundaries` from the read model. The
 `OrchestrationEngine` hydrates only the requested origin detail inside the
 serialized command worker, then delegates to the resolver before calling the
-decider.
+decider. Missing origin detail or boundary resolution fails closed; production
+code never synthesizes conversation authority from Git checkpoints or cached
+snapshot arrays.
 
 ### Projection state narrowing
 

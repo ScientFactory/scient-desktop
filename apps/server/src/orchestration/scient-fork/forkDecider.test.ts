@@ -7,6 +7,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
+  type OrchestrationForkBoundary,
   type OrchestrationMessage,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -17,7 +18,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { forkThread } from "./forkDecider.ts";
+import { decideOrchestrationCommand } from "../decider.ts";
+import { resolveForkBoundariesFromList } from "./forkBoundaryTypes.ts";
+import { forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const ORIGIN = ThreadId.make("origin-thread");
@@ -201,10 +204,69 @@ function forkCommand(overrides: Partial<ThreadForkCommand> = {}): ThreadForkComm
   };
 }
 
+/** Test-only adapter for explicit boundary fixtures. Production uses the SQL resolver. */
+function forkThreadForTest(input: {
+  readonly command: ThreadForkCommand;
+  readonly readModel: OrchestrationReadModel;
+  readonly resolvedBoundaries?: ReadonlyArray<OrchestrationForkBoundary>;
+}) {
+  const boundaryList = input.resolvedBoundaries ?? boundaries;
+  const resolved = resolveForkBoundariesFromList({
+    originThreadId: input.command.originThreadId,
+    sourceAssistantMessageId: input.command.sourceAssistantMessageId,
+    boundaries: boundaryList,
+  });
+  if (resolved === null) {
+    throw new Error(
+      `No explicit boundary fixture matches '${input.command.sourceAssistantMessageId}'.`,
+    );
+  }
+  return forkThreadAuthoritative({ ...input, resolvedBoundaries: resolved });
+}
+
+/** Constructs deliberately inconsistent resolver evidence for rejection tests. */
+function forkThreadWithUnmatchedResolution(input: {
+  readonly command: ThreadForkCommand;
+  readonly readModel: OrchestrationReadModel;
+  readonly resolvedBoundaries: ReadonlyArray<OrchestrationForkBoundary>;
+}) {
+  const selectedBoundary = input.resolvedBoundaries[0];
+  if (!selectedBoundary) {
+    throw new Error("An unmatched-resolution test requires at least one boundary.");
+  }
+  return forkThreadAuthoritative({
+    command: input.command,
+    readModel: input.readModel,
+    resolvedBoundaries: {
+      originThreadId: input.command.originThreadId,
+      sourceAssistantMessageId: input.command.sourceAssistantMessageId,
+      boundaries: input.resolvedBoundaries,
+      selectedBoundary,
+    },
+  });
+}
+
 it.layer(NodeServices.layer)("scient fork decider", (it) => {
+  it.effect("requires authoritative boundaries at the generic decider seam", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: forkCommand(),
+        readModel: makeReadModel(),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      if (error._tag === "OrchestrationCommandInvariantError") {
+        expect(error.detail).toContain("Authoritative fork boundaries are required");
+      }
+    }),
+  );
+
   it.effect("emits thread.created + re-emitted prefix + thread.forked for the new thread", () =>
     Effect.gen(function* () {
-      const events = yield* forkThread({ command: forkCommand(), readModel: makeReadModel() });
+      const events = yield* forkThreadForTest({
+        command: forkCommand(),
+        readModel: makeReadModel(),
+      });
 
       expect(events.map((event) => event.type)).toEqual([
         "thread.created",
@@ -292,7 +354,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         id: ThreadId.make("existing-fork"),
         title: "Origin conversation (2)",
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: {
           ...makeReadModel(),
@@ -308,7 +370,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
 
   it.effect("preserves meaningful numeric parentheticals in source titles", () =>
     Effect.gen(function* () {
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({
           origin: makeOriginThread({ title: "Study (2024)" }),
@@ -323,22 +385,15 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
 
   it.effect("preserves a meaningful suffix on a renamed fork", () =>
     Effect.gen(function* () {
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({
           origin: makeOriginThread({
             title: "Experiment (2024)",
-            conversationForkBoundaries: [
-              {
-                turnId: T2,
-                conversationTurnCount: 0,
-                userMessageId: MessageId.make("user-2"),
-                assistantMessageId: MessageId.make("assistant-2"),
-                completedAt: NOW,
-                checkpointTurnCount: null,
-                checkpointStatus: null,
-              },
-            ],
+            forkLineage: {
+              originThreadId: ORIGIN,
+              baselineAssistantMessageId: A2,
+            },
           }),
         }),
       });
@@ -353,19 +408,12 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     Effect.gen(function* () {
       const forkOrigin = makeOriginThread({
         title: "Origin conversation (2)",
-        conversationForkBoundaries: [
-          {
-            turnId: T2,
-            conversationTurnCount: 0,
-            userMessageId: MessageId.make("user-2"),
-            assistantMessageId: MessageId.make("assistant-2"),
-            completedAt: NOW,
-            checkpointTurnCount: null,
-            checkpointStatus: null,
-          },
-        ],
+        forkLineage: {
+          originThreadId: ORIGIN,
+          baselineAssistantMessageId: A2,
+        },
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: {
           ...makeReadModel({ origin: forkOrigin }),
@@ -389,7 +437,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           baselineAssistantMessageId: MessageId.make("assistant-1"),
         },
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: {
           ...makeReadModel({ origin: forkOrigin }),
@@ -417,7 +465,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       const messages = origin.messages.map((entry, index) =>
         index === 1 ? { ...entry, attachments: [sourceAttachment] } : entry,
       );
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({ origin: { ...origin, messages } }),
       });
@@ -439,7 +487,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
 
   it.effect("forking at an earlier boundary re-emits only that prefix", () =>
     Effect.gen(function* () {
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({
           sourceAssistantMessageId: A1,
         }),
@@ -477,7 +525,11 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         sourceAssistantMessageId: MessageId.make("missing-assistant"),
         workspaceMode: "local",
       };
-      const error = yield* forkThread({ command, readModel: makeReadModel() }).pipe(Effect.flip);
+      const error = yield* forkThreadWithUnmatchedResolution({
+        command,
+        readModel: makeReadModel(),
+        resolvedBoundaries: boundaries,
+      }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
@@ -515,11 +567,12 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           },
         ],
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({
           sourceAssistantMessageId: MessageId.make("inherited-assistant-only"),
         }),
         readModel: makeReadModel({ origin: reforkOrigin }),
+        resolvedBoundaries: reforkOrigin.conversationForkBoundaries ?? [],
       });
       const forked = events.find((event) => event.type === "thread.forked");
       expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : undefined).toBe(0);
@@ -588,11 +641,12 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           },
         ],
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({
           sourceAssistantMessageId: MessageId.make("post-fork-assistant-1"),
         }),
         readModel: makeReadModel({ origin: reforkOrigin }),
+        resolvedBoundaries: reforkOrigin.conversationForkBoundaries ?? [],
       });
       const texts = events.flatMap((event) =>
         event.type === "thread.message-sent" ? [event.payload.text] : [],
@@ -618,7 +672,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           assistantMessageId: null,
         },
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({ origin }),
       });
@@ -629,7 +683,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
   it.effect("does not include a newer streaming turn in the selected completed prefix", () =>
     Effect.gen(function* () {
       const streamingOrigin = makeOriginThread();
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({
           origin: {
@@ -662,7 +716,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           entry.id === A2 ? { ...entry, streaming: true } : entry,
         ),
       });
-      const error = yield* forkThread({
+      const error = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({ origin }),
       }).pipe(Effect.flip);
@@ -675,7 +729,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
 
   it.effect("rejects a non-existent origin thread", () =>
     Effect.gen(function* () {
-      const error = yield* forkThread({
+      const error = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({ origin: null }),
       }).pipe(Effect.flip);
@@ -685,11 +739,12 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
 
   it.effect("rejects a nonexistent or stale conversational boundary", () =>
     Effect.gen(function* () {
-      const error = yield* forkThread({
+      const error = yield* forkThreadWithUnmatchedResolution({
         command: forkCommand({
           sourceAssistantMessageId: MessageId.make("missing-assistant"),
         }),
         readModel: makeReadModel(),
+        resolvedBoundaries: boundaries,
       }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
       if (error._tag === "OrchestrationCommandInvariantError") {
@@ -708,7 +763,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           checkpointStatus: null,
         })),
       });
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({ workspaceMode: "local" }),
         readModel: makeReadModel({ origin }),
       });
@@ -723,7 +778,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
   it.effect("rejects a new worktree when the conversational boundary has no checkpoint", () =>
     Effect.gen(function* () {
       const origin = makeOriginThread({ checkpoints: [] });
-      const error = yield* forkThread({
+      const error = yield* forkThreadForTest({
         command: forkCommand({ workspaceMode: "new-worktree" }),
         readModel: makeReadModel({ origin }),
       }).pipe(Effect.flip);
@@ -736,7 +791,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
 
   it.effect("rejects when the new thread id already exists", () =>
     Effect.gen(function* () {
-      const error = yield* forkThread({
+      const error = yield* forkThreadForTest({
         command: forkCommand(),
         readModel: makeReadModel({ includeNewThread: true }),
       }).pipe(Effect.flip);
@@ -752,7 +807,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       );
       const snapshotBefore = readModel.snapshotSequence;
 
-      const events = yield* forkThread({ command: forkCommand(), readModel });
+      const events = yield* forkThreadForTest({ command: forkCommand(), readModel });
 
       // The decider is pure: it must not mutate the read model's origin thread.
       const originAfter = readModel.threads.find((thread) => thread.id === ORIGIN);
@@ -827,7 +882,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           checkpointStatus: "ready" as const,
         },
       ];
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({ sourceAssistantMessageId: A2 }),
         readModel: makeReadModel({ origin: staleOrigin }),
         resolvedBoundaries,
@@ -873,7 +928,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         },
         // A2 is absent from resolved boundaries.
       ];
-      const error = yield* forkThread({
+      const error = yield* forkThreadWithUnmatchedResolution({
         command: forkCommand({ sourceAssistantMessageId: A2 }),
         readModel: makeReadModel({ origin: originWithStaleBoundary }),
         resolvedBoundaries,
@@ -908,14 +963,13 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         title: "Caller-provided title",
       } as ThreadForkCommand;
 
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: commandWithExtra,
         readModel: makeReadModel(),
       });
 
-      // The decider resolved from origin.conversationForkBoundaries (the
-      // read model), NOT from the extra command fields. The fork point is
-      // A2/turn-2, not A1/turn-1 from the injected boundary array.
+      // The explicit authoritative fixture selects A2/turn-2. Extra
+      // client-shaped command fields cannot override that selection.
       const forked = events.find((event) => event.type === "thread.forked");
       expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(T2);
       expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(2);
@@ -959,7 +1013,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           checkpointStatus: "ready" as const,
         },
       ];
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({ sourceAssistantMessageId: A1 }),
         readModel: makeReadModel(),
         resolvedBoundaries,
@@ -1013,7 +1067,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           checkpointStatus: "ready" as const,
         },
       ];
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand(),
         readModel,
         resolvedBoundaries,
@@ -1065,7 +1119,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           checkpointStatus: null,
         },
       ];
-      const events = yield* forkThread({
+      const events = yield* forkThreadForTest({
         command: forkCommand({ sourceAssistantMessageId: A2, workspaceMode: "local" }),
         readModel: makeReadModel({ origin: originNoBoundaries }),
         resolvedBoundaries,

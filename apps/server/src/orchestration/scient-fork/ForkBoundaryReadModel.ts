@@ -13,6 +13,7 @@ import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { resolveForkBoundariesFromList } from "./forkBoundaryTypes.ts";
 
 /**
  * Error raised when the Scient-owned resolver cannot find or validate a fork
@@ -25,23 +26,6 @@ export class ForkBoundaryResolutionError extends Schema.TaggedErrorClass<ForkBou
   override get message(): string {
     return `Fork boundary resolution failed: ${this.detail}`;
   }
-}
-
-/**
- * The server-owned decision produced by the authoritative resolver. The pure
- * decider consumes this without trusting client-shaped boundary arrays.
- */
-export interface ResolvedForkBoundaries {
-  readonly originThreadId: ThreadId;
-  readonly sourceAssistantMessageId: MessageId;
-  /** All SQL-backed boundaries for the origin thread, ordered by turn count. */
-  readonly boundaries: ReadonlyArray<OrchestrationForkBoundary>;
-  /**
-   * The exact boundary whose assistant message matches the public request.
-   * This is resolver-facing evidence for callers and diagnostics; the pure
-   * decider receives `boundaries` and re-selects by the public assistant ID.
-   */
-  readonly selectedBoundary: OrchestrationForkBoundary;
 }
 
 export const ProjectionForkBoundaryRow = Schema.Struct({
@@ -94,28 +78,6 @@ export function mapForkBoundaries(
 
 export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
   return {
-    listForkBoundaryRows: SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: ProjectionForkBoundaryRow,
-      execute: () => sql`
-        SELECT
-          turns.thread_id AS "threadId",
-          turns.turn_id AS "turnId",
-          turns.pending_message_id AS "userMessageId",
-          turns.assistant_message_id AS "assistantMessageId",
-          turns.completed_at AS "completedAt",
-          turns.checkpoint_turn_count AS "checkpointTurnCount",
-          turns.checkpoint_status AS "checkpointStatus",
-          CASE WHEN lineage.baseline_turn_id = turns.turn_id THEN 1 ELSE 0 END AS "isForkBaseline"
-        FROM projection_turns AS turns
-        LEFT JOIN scient_thread_lineage AS lineage
-          ON lineage.thread_id = turns.thread_id
-        WHERE turns.turn_id IS NOT NULL
-          AND turns.state = 'completed'
-          AND turns.completed_at IS NOT NULL
-        ORDER BY turns.thread_id ASC, turns.requested_at ASC, turns.turn_id ASC
-      `,
-    }),
     listForkBoundaryRowsByThread: SqlSchema.findAll({
       Request: Schema.Struct({ threadId: ThreadId }),
       Result: ProjectionForkBoundaryRow,
@@ -232,22 +194,18 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
 
     const boundaries = mapForkBoundaries(rows, input.threadCreatedAt);
 
-    const selectedBoundary = boundaries.find(
-      (boundary) => boundary.assistantMessageId === input.sourceAssistantMessageId,
-    );
-
-    if (!selectedBoundary) {
+    const resolved = resolveForkBoundariesFromList({
+      originThreadId: input.originThreadId,
+      sourceAssistantMessageId: input.sourceAssistantMessageId,
+      boundaries,
+    });
+    if (resolved === null) {
       return yield* new ForkBoundaryResolutionError({
         detail: `Assistant message '${input.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${input.originThreadId}' in SQL projection.`,
       });
     }
 
-    return {
-      originThreadId: input.originThreadId,
-      sourceAssistantMessageId: input.sourceAssistantMessageId,
-      boundaries,
-      selectedBoundary,
-    } satisfies ResolvedForkBoundaries;
+    return resolved;
   });
 
   return { resolve } as const;
