@@ -35,7 +35,12 @@ Claude's implementation remains intact in Git; it was not squashed or rewritten.
 - Scient base used by the prototype: `4138d41362cce474ef08f3fefc6e1ec1e41a847d`
 - Official T3 head merged before hardening:
   `4eaf5ef8bb47b870397d5c61cd216b1a6bdd1510`
-- Dedicated T3 merge commit: `b4ccca5038cf400533c5de58dc12cac2d80d98be`
+- Dedicated initial T3 merge commit:
+  `b4ccca5038cf400533c5de58dc12cac2d80d98be`
+- Fork hardening commit: `a851a0ae0611f7c9cbf2381d1e6e240d0657b2ae`
+- Latest official T3 head verified and merged after hardening:
+  `ed886fe1814890da30ae73c77f9e894ddc9bd481`
+- Latest T3 merge commit: `d2bc490731e778cf6c3a05822452768b8403455a`
 
 The hardened implementation descends from the prototype and the dedicated T3
 merge. Future changes must keep the prototype commit and archive branch
