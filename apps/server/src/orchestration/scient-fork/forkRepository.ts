@@ -141,6 +141,8 @@ export const markForkFailed = Effect.fn("markForkFailed")(function* (
     readonly updatedAt: string;
   },
 ) {
+  // Abandoned is terminal: it cannot regress to failed. Only non-terminal,
+  // non-ready states (pending, provisioning, failed) can be marked failed.
   yield* sql`
     UPDATE scient_thread_lineage
     SET
@@ -148,7 +150,7 @@ export const markForkFailed = Effect.fn("markForkFailed")(function* (
       last_error = ${input.error},
       updated_at = ${input.updatedAt}
     WHERE thread_id = ${input.threadId}
-      AND status <> 'ready'
+      AND status NOT IN ('ready', 'abandoned')
   `;
 });
 
@@ -160,6 +162,8 @@ export const markForkAbandoned = Effect.fn("markForkAbandoned")(function* (
     readonly updatedAt: string;
   },
 ) {
+  // Abandoned is terminal. Only non-terminal, non-ready states can be
+  // abandoned; an already-abandoned row is unchanged.
   yield* sql`
     UPDATE scient_thread_lineage
     SET
@@ -167,7 +171,7 @@ export const markForkAbandoned = Effect.fn("markForkAbandoned")(function* (
       last_error = ${input.error},
       updated_at = ${input.updatedAt}
     WHERE thread_id = ${input.threadId}
-      AND status <> 'ready'
+      AND status NOT IN ('ready', 'abandoned')
   `;
 });
 
@@ -180,16 +184,20 @@ export const markForkReady = Effect.fn("markForkReady")(function* (
     readonly updatedAt: string;
   },
 ) {
+  // Only non-terminal, non-ready states can transition to ready. Abandoned
+  // is terminal and cannot regress. The fidelity_mode compatibility column
+  // is not written here; it was set by insertPendingFork and normalized by
+  // migration 3.
   yield* sql`
     UPDATE scient_thread_lineage
     SET
       status = 'ready',
-      fidelity_mode = 'transcript-bootstrap',
       checkpoint_status = ${input.checkpointStatus},
       workspace_status = ${input.workspaceStatus},
       last_error = NULL,
       updated_at = ${input.updatedAt}
     WHERE thread_id = ${input.threadId}
+      AND status IN ('pending', 'provisioning', 'failed')
   `;
 });
 

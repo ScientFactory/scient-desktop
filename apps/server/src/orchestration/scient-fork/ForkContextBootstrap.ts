@@ -27,7 +27,6 @@ const MIN_BOOTSTRAP_CHARS = 512;
 
 const ForkBootstrapRow = Schema.Struct({
   status: Schema.Literals(["pending", "provisioning", "failed", "abandoned", "ready"]),
-  provider_mode: Schema.Literal("transcript-bootstrap"),
   provider_bootstrap_status: Schema.Literals(["pending", "completed"]),
   fork_point_turn_count: NonNegativeInt,
 });
@@ -224,7 +223,7 @@ const make = Effect.gen(function* () {
     "prepareScientForkTurn",
   )(function* (input) {
     const rows = yield* sql<Record<string, unknown>>`
-      SELECT status, provider_mode, provider_bootstrap_status, fork_point_turn_count
+      SELECT status, provider_bootstrap_status, fork_point_turn_count
       FROM scient_thread_lineage
       WHERE thread_id = ${input.thread.id}
       LIMIT 1
@@ -343,12 +342,19 @@ const make = Effect.gen(function* () {
     "markScientForkContextAccepted",
   )(function* (threadId) {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* sql`
+    // markAccepted can only complete bootstrap for a ready fork with pending
+    // bootstrap status. Non-ready forks (pending, provisioning, failed,
+    // abandoned) must never reach a completed acceptance marker. The
+    // provider_mode compatibility column is not checked here; the canonical
+    // model guarantees transcript-bootstrap through insertPendingFork and
+    // migration 3 normalization.
+    const updated = yield* sql<{ readonly thread_id: string }>`
       UPDATE scient_thread_lineage
       SET provider_bootstrap_status = 'completed', updated_at = ${updatedAt}
       WHERE thread_id = ${threadId}
-        AND provider_mode = 'transcript-bootstrap'
+        AND status = 'ready'
         AND provider_bootstrap_status = 'pending'
+      RETURNING thread_id
     `.pipe(
       Effect.mapError(
         (cause) =>
@@ -359,6 +365,41 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    if (updated.length > 0) return;
+
+    // A guarded UPDATE can legitimately affect zero rows for an already
+    // accepted ready fork. All other zero-row cases must be surfaced instead
+    // of silently reporting success.
+    const rows = yield* sql<{
+      readonly status: string;
+      readonly provider_bootstrap_status: string;
+    }>`
+      SELECT status, provider_bootstrap_status
+      FROM scient_thread_lineage
+      WHERE thread_id = ${threadId}
+      LIMIT 1
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ScientForkContextBootstrapError({
+            threadId,
+            detail: "Unable to read the fork context state.",
+            cause,
+          }),
+      ),
+    );
+    const row = rows[0];
+    if (row === undefined) {
+      return yield* new ScientForkContextBootstrapError({
+        threadId,
+        detail: "The fork context state was not found.",
+      });
+    }
+    if (row.status === "ready" && row.provider_bootstrap_status === "completed") return;
+    return yield* new ScientForkContextBootstrapError({
+      threadId,
+      detail: "The fork workspace is not ready to accept context.",
+    });
   });
 
   return { prepareTurn, markAccepted } satisfies ScientForkContextBootstrapShape;

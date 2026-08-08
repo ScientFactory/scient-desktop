@@ -113,6 +113,8 @@ internals:
 - `apps/server/src/orchestration/scient-fork/forkRepository.ts`
 - `apps/server/src/orchestration/scient-fork/lineageProjection.ts`
 - `apps/server/src/orchestration/scient-fork/schema.ts`
+- `apps/server/src/orchestration/scient-fork/scientMigrator.ts`
+- `apps/server/src/orchestration/scient-fork/migrations/`
 - `apps/server/src/orchestration/scient-fork/ForkAttachmentCopier.ts`
 - `apps/server/src/orchestration/scient-fork/ForkCheckpointBaseline.ts`
 - `apps/server/src/orchestration/scient-fork/ForkContextBootstrap.ts`
@@ -131,13 +133,14 @@ interfaces. Provider adapters are also unchanged.
 
 Scient database state uses `scient_schema_migrations`, a separate migration
 ledger. It never consumes or predicts a T3 numbered migration. The
-`fidelity_mode` column is retained solely to upgrade Claude prototype databases;
-`provider_mode`, `checkpoint_status`, and `workspace_status` are the current
-explicit authorities.
+`fidelity_mode` and `provider_mode` compatibility columns are retained
+physically for prototype upgrades but are no longer active runtime authorities;
+`transcript-bootstrap` is the only active provider bootstrap mode, enforced by
+migration normalization and active repository/bootstrap code paths.
 
-## PR 14: server-owned boundary resolution
+## Stack phase A: server-owned boundary resolution
 
-PR 14 moves fork boundary authority from client-shaped thread snapshots to a
+Stack phase A moves fork boundary authority from client-shaped thread snapshots to a
 Scient-owned server resolver. The public fork command carries only four
 fields: `originThreadId`, `newThreadId`, `sourceAssistantMessageId`, and
 `workspaceMode`. The server independently queries SQL-backed
@@ -186,7 +189,7 @@ resolution, but that representation is not a client-wide contract.
 so the reported `snapshotSequence` cannot advance ahead of the projectors
 whose tables the snapshot queries for fork-boundary, checkpoint, or
 latest-turn data. The prior PR 13 baseline omitted both while including the
-no-op `checkpoints` projector; PR 14 closes this gap.
+no-op `checkpoints` projector; stack phase A closes this gap.
 
 ### Bootstrap projector ordering
 
@@ -203,10 +206,20 @@ orphaned.
 
 T3 owns `effect_sql_migrations`; Scient owns `scient_schema_migrations`. Both
 ledgers use integer IDs starting from 1, but they are separate tables in the
-same SQLite database. The Scient schema bootstrap (`ensureScientForkSchema`)
+same SQLite database. The Scient migration runner (`runScientMigrations`)
 never inserts into, deletes from, or modifies T3's migration ledger or
-numbering. Cross-area integration tests verify this separation on fresh
-startup.
+numbering. It runs the standard Effect SQL Migrator with its own table name,
+giving transactional, ordered, ledger-driven execution. Cross-area
+integration tests verify this separation on fresh startup.
+
+The runner reconciles the legacy `applied_at` timestamp column with the
+canonical `created_at` column by rebuilding a legacy ledger table in a single
+transaction: `created_at` is copied from `applied_at`, and `applied_at`
+remains as a nullable historical-residue column. Fresh databases get the
+canonical `created_at` table directly from the standard Migrator. No
+timestamp value, ledger ID, or migration name is lost or altered. Legacy
+migration IDs 1 (`durable-thread-forks`) and 2 (`durable-provider-bootstrap`)
+are preserved and never re-run.
 
 ### Cross-area integration tests
 
@@ -223,6 +236,141 @@ full resolver-to-projection-to-lineage flow:
   ledgers, the Scient schema, and resolves a valid fork boundary. The T3
   ledger remains unchanged after Scient schema operations.
 
+`apps/server/src/orchestration/scient-fork/crossAreaPR15.test.ts` exercises
+cross-layer flows spanning phase A boundary resolution and phase B migration,
+lifecycle, recovery, and normalization:
+
+- **VAL-MIGRATE-13:** Prototype rows migrated through the normalization
+  migration support full lifecycle operations: recovery selects only
+  pending/provisioning/failed with baseline, claims increment attempts,
+  ready/abandoned cannot regress, and ready clears errors.
+- **VAL-CROSS-001:** Fresh startup creates isolated ledgers, resolves a SQL
+  boundary, projects ordered destination events, persists pending lineage via
+  the lineage projector, and the reactor claims and marks ready without origin
+  mutation.
+- **VAL-CROSS-002:** A prototype database with `applied_at` ledger and
+  `chat-only`/`replay` fidelity modes is normalized in place: identity is
+  preserved, modes become `transcript-bootstrap`, and repository decoders
+  (`listRecoverableForks`, `getForkStatus`) read the normalized rows.
+- **VAL-CROSS-003:** Restart during pending fork is safe: migration rerun is
+  idempotent, pending fields are unchanged, recovery finds the pending row,
+  duplicate claims increment attempts, and provisioning completes to ready.
+- **VAL-CROSS-004:** Interrupted provisioning retries deterministically:
+  recovery reclaims a provisioning row with incremented attempt, terminal
+  failure becomes abandoned, and abandoned is excluded from recovery and not
+  retried across restarts.
+- **VAL-CROSS-006:** Re-fork after normalization uses only canonical values:
+  the fork-of-fork payload, lineage row, and repository decode all show
+  `transcript-bootstrap` with no prototype mode leaks.
+- **VAL-CROSS-008:** Scient and T3 migrations remain disjoint in both orders:
+  neither ledger contains the other's migration names, reruns are idempotent,
+  and hypothetical T3 ID 39 and Scient ID 3 cannot collide (separate tables).
+
+## Stack phase B: normalized Scient persistence
+
+Stack phase B replaces the monolithic startup schema inspection with a real
+Scient-owned versioned migration runner and normalizes the active lineage
+model. The migration runner, lifecycle guards, and provider bootstrap
+normalization are all Scient-owned and isolated from T3's migration ledger.
+
+### Versioned migration runner
+
+The Scient migration runner (`scientMigrator.ts`) delegates to the standard
+Effect SQL Migrator (`Migrator.make`) with its own `scient_schema_migrations`
+ledger table. It runs as a side effect of `SqlitePersistenceMemory` layer
+construction, before `pipeline.bootstrap` runs T3 migrations. Four migrations
+are defined:
+
+1. `durable-thread-forks` — creates the initial `scient_thread_lineage` table.
+2. `durable-provider-bootstrap` — adds provider bootstrap columns.
+3. `normalize-active-lineage` — adds lifecycle columns, quarantines malformed
+   rows into `scient_thread_lineage_quarantine` (payload snapshot, reason,
+   timestamp) instead of failing startup, normalizes prototype modes to
+   `transcript-bootstrap`, and creates supporting indexes.
+4. `quarantine-invalid-lineage` — preserves migration 3 as immutable history,
+   upgrades legacy quarantine evidence without loss, and quarantines every row
+   the active repository/recovery model cannot safely decode. It keys evidence
+   and deletion by SQLite row ID so null or blank thread IDs are handled
+   without collision or undeletable rows.
+
+Before the Migrator runs, two Scient-owned preflight passes execute: a
+transactional rebuild of legacy `applied_at` ledgers into the canonical
+`created_at` shape, and a strict integrity validation requiring the recorded
+ledger to be a contiguous prefix of the manifest with exact name matches.
+Gaps, renamed entries, and unknown future IDs fail closed with a `BadState`
+error before any migration runs — the standard Migrator's high-water mark
+alone would silently accept the manifest.
+
+Each unapplied migration runs once, transactionally, in ascending ID order.
+Migration failure rolls back the entire transaction: no partial records, no
+partial schema changes. Concurrent startup uses PRIMARY KEY constraint
+conflicts as a lock: the loser gets an empty result.
+
+### Ledger reconciliation
+
+Existing development databases created by the legacy `ensureScientForkSchema`
+have an `applied_at TEXT NOT NULL` timestamp column in the ledger and no
+`created_at`. The standard Effect Migrator expects the canonical
+`(migration_id, created_at, name)` shape and inserts only `(migration_id,
+name)`, relying on `DEFAULT current_timestamp`. The runner detects a legacy
+ledger (`applied_at` still `NOT NULL`) and rebuilds it in one transaction: a
+canonical replacement table is created, `created_at` is copied from
+`applied_at`, `applied_at` is retained as a nullable historical-residue
+column, and the old table is dropped and the replacement renamed over it. A
+nullable `applied_at` residue marks a completed rebuild, so the pass is
+idempotent, and a crash mid-rebuild rolls back cleanly. Fresh databases
+receive `created_at` directly. No timestamp value, ledger ID, or migration
+name is lost or altered.
+
+### Normalization and lifecycle guards
+
+Migration 3 normalizes prototype mode values (`cold-start`, `chat-only`,
+`replay`) to the canonical `transcript-bootstrap` active model. It adds
+lifecycle columns (`status`, `checkpoint_status`, `workspace_status`,
+`attempt_count`, `last_error`, `updated_at`) with safe defaults. Physical
+compatibility columns (`provider_mode`, `fidelity_mode`) remain queryable with
+data; only active runtime reads/writes use the canonical model. No columns are
+dropped in the first normalization pass.
+
+Migration 4 is deliberately additive because development databases had already
+recorded migration 3 before its validation rules were finalized. Rewriting
+migration 3 would make the repair invisible to those databases. Migration 4
+therefore creates or upgrades the quarantine table, preserves existing evidence,
+validates baseline identity, counts, attachment JSON, lifecycle values, and
+required IDs, then removes only invalid active rows by `rowid`. Tests cover the
+already-recorded migration-3 state, legacy evidence upgrade, null/blank IDs,
+malformed recovery data, valid-sibling preservation, and idempotent reruns.
+Pre-bootstrap prototype rows without a baseline turn are therefore removed from
+active lineage, status, and fork-marker reads; their original payload and the
+reason for quarantine remain preserved in the evidence table.
+
+Terminal lifecycle guards are enforced in repository SQL predicates:
+
+- `markForkFailed`: WHERE `status NOT IN ('ready', 'abandoned')` — abandoned
+  cannot regress to failed.
+- `markForkAbandoned`: WHERE `status NOT IN ('ready', 'abandoned')` —
+  already-abandoned rows are unchanged.
+- `markForkReady`: WHERE `status IN ('pending', 'provisioning', 'failed')` —
+  only non-terminal, non-ready states can transition to ready.
+- `claimFork`: WHERE `status NOT IN ('ready', 'abandoned')` — terminal and
+  ready states cannot be claimed.
+- `markAccepted`: requires `status = 'ready'` plus
+  `provider_bootstrap_status = 'pending'`. Non-ready forks cannot reach a
+  completed acceptance marker.
+
+### Provider bootstrap normalization
+
+`transcript-bootstrap` is the only active provider bootstrap mode.
+`prepareTurn` no longer reads the `provider_mode` compatibility column; it
+checks only `status`, `provider_bootstrap_status`, and
+`fork_point_turn_count`. The normal successful path injects the retained
+transcript exactly once (when `provider_bootstrap_status = 'pending'` and
+`status = 'ready'`), `markAccepted` completes the durable marker, and
+subsequent `prepareTurn` calls return `bootstrapPending = false`. Crash
+recovery: if the process crashes after `prepareTurn` but before `markAccepted`,
+the marker remains `pending` and `prepareTurn` re-injects on restart
+(at-least-once). Once `markAccepted` persists, restart injects nothing again.
+
 ## Narrow T3-owned seams
 
 All production seams are additive and marked with `SCIENT-FORK:START` and
@@ -234,7 +382,7 @@ All production seams are additive and marked with `SCIENT-FORK:START` and
 | `apps/server/src/orchestration/decider.ts`                                                                                                                                    | Delegate `thread.fork` and record the internal completion event.                                                                         | T3 owns an equivalent exact-boundary decider.                             |
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                                                                                                 | Route the new aggregate and rehydrate origin detail for this command only.                                                               | T3 command routing natively supports fork.                                |
 | `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert. | Generic projection extension and derived-field hooks replace these seams. |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient schema bootstrap.                                                                                             | A generic product-schema hook replaces the seam.                          |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient migration runner.                                                                                             | A generic product-schema hook replaces the seam.                          |
 | `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                                                                                   | Start/provide the Scient worker and provider-context service.                                                                            | Generic reactor and provider-context extension points exist.              |
 | `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Prepare the first fork turn and mark its bootstrap accepted after provider send.                                                         | T3 exposes a provider request-decoration hook.                            |
 | `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                       | T3 supports typed asynchronous command receipts.                          |
@@ -292,6 +440,21 @@ building a parallel generic platform.
   stale/incomplete response, active newer turn, identity, and attachment cases.
 - Durable schema upgrade, lifecycle projection, recovery, idempotency,
   checkpoint, worktree, and failure cases.
+- Migration runner: fresh install, prototype upgrade, current schema upgrade,
+  legacy ledger immutability, ordering, malformed-row quarantine, restart
+  idempotence, concurrent startup, T3 ledger isolation, ledger integrity
+  preflight (gaps, name mismatches, unknown future IDs), canonical defaults,
+  physical compatibility columns, and `applied_at` / `created_at`
+  reconciliation.
+- Lifecycle guards: pending durability, bounded claims, failed retry, abandoned
+  terminal truthfulness, restart recovery, attachment replay, workspace/
+  checkpoint truthfulness, provider bootstrap normal and crash recovery,
+  bootstrap readiness gating, re-fork persistence, abandoned non-regression,
+  and `markAccepted` non-ready rejection.
+- Cross-area: fresh startup to ready fork, prototype upgrade compatibility,
+  restart during pending fork, interrupted provisioning retry, exact boundary
+  through projection/persistence, revert-then-fork, re-fork after
+  normalization, T3/Scient ledger isolation, and stacked phase A+B validation.
 - Provider bootstrap normal, truncation, attachment, restart, send-failure, and
   completion-marker cases.
 - Web assistant-response action, streaming exclusion, slash-command selection,

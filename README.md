@@ -20,6 +20,40 @@ is not a public build or release candidate. Its visible Scient identity is
 separate from the still-isolated candidate runtime IDs, state, protocols, and
 disabled release authorities.
 
+## Scient persistence
+
+Scient owns a versioned SQLite migration runner
+(`apps/server/src/orchestration/scient-fork/scientMigrator.ts`). It runs four
+ordered, transactional migrations for Scient's active fork lineage and
+normalizes legacy provider modes to `transcript-bootstrap`. Its ledger is the
+separate `scient_schema_migrations` table; the inherited T3
+`effect_sql_migrations` ledger and numbering are never modified.
+
+Existing databases remain compatible: legacy `applied_at` ledger timestamps are
+reconciled into `created_at` without losing IDs, names, or timestamps, and
+physical compatibility columns remain queryable with their data. Legacy
+lineage rows are normalized in place with safe defaults and fail-closed
+validation. Migration 4 is an additive compatibility repair for development
+databases that already recorded migration 3: it upgrades the quarantine
+evidence schema and removes decoder-invalid recovery rows by SQLite row ID,
+including rows with null or blank thread IDs. Valid lineage remains active,
+and pending, recovery, terminal state, restart, and retry behavior is
+preserved. The finalized persistence design and evidence are documented in
+[the Scient fork divergence record](docs/internals/scient-fork-divergence.md).
+
+Focused validation for this persistence work:
+
+```bash
+pnpm exec vp test run \
+  apps/server/src/orchestration/scient-fork/schema.test.ts \
+  apps/server/src/orchestration/scient-fork/crossArea.test.ts \
+  apps/server/src/orchestration/scient-fork/crossAreaPR15.test.ts
+pnpm exec vp fmt --check
+pnpm exec vp lint --report-unused-disable-directives
+pnpm run typecheck
+git diff --check
+```
+
 The remainder of this README is inherited T3 product documentation. It remains
 useful for understanding the host platform but does not describe the
 candidate's current public product or release status.

@@ -52,7 +52,7 @@ import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { ensureScientForkSchema } from "./schema.ts";
+import { runScientMigrations } from "./schema.ts";
 import { makeForkBoundaryResolver } from "./ForkBoundaryReadModel.ts";
 import { forkThread } from "./forkDecider.ts";
 import { withForkOriginDetail } from "./forkDecisionReadModel.ts";
@@ -239,7 +239,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-005-")))(
         const pipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
         const snapshotQuery = yield* ProjectionSnapshotQuery;
-        yield* ensureScientForkSchema(sql);
+        yield* runScientMigrations(sql);
 
         const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
           eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
@@ -473,7 +473,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-010-")))(
         const pipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
         const snapshotQuery = yield* ProjectionSnapshotQuery;
-        yield* ensureScientForkSchema(sql);
+        yield* runScientMigrations(sql);
 
         const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
           eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
@@ -884,7 +884,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-003-")))(
           const sql = yield* SqlClient.SqlClient;
           const pipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
-          yield* ensureScientForkSchema(sql);
+          yield* runScientMigrations(sql);
 
           const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
             eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
@@ -1081,7 +1081,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-004-")))(
           const pipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
           const snapshotQuery = yield* ProjectionSnapshotQuery;
-          yield* ensureScientForkSchema(sql);
+          yield* runScientMigrations(sql);
 
           const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
             eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
@@ -1283,7 +1283,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-005-")))(
           const pipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
           const snapshotQuery = yield* ProjectionSnapshotQuery;
-          yield* ensureScientForkSchema(sql);
+          yield* runScientMigrations(sql);
 
           const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
             eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
@@ -1475,7 +1475,7 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-008-")))(
         const pipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
         const snapshotQuery = yield* ProjectionSnapshotQuery;
-        yield* ensureScientForkSchema(sql);
+        yield* runScientMigrations(sql);
 
         const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
           eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
