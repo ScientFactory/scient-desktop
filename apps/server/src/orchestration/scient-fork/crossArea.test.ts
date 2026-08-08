@@ -838,3 +838,845 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-startup-")))(
     );
   },
 );
+
+// ---------------------------------------------------------------------------
+// Direct SQL insert helper for boundary resolver evidence tests
+// ---------------------------------------------------------------------------
+
+function insertProjectionTurn(
+  sql: SqlClient.SqlClient,
+  input: {
+    readonly threadId: string;
+    readonly turnId: string;
+    readonly pendingMessageId: string | null;
+    readonly assistantMessageId: string | null;
+    readonly state: string;
+    readonly requestedAt: string;
+    readonly completedAt: string | null;
+    readonly checkpointTurnCount: number | null;
+    readonly checkpointStatus: string | null;
+  },
+) {
+  return sql`
+    INSERT INTO projection_turns (
+      thread_id, turn_id, pending_message_id, assistant_message_id,
+      state, requested_at, started_at, completed_at,
+      checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json
+    ) VALUES (
+      ${input.threadId}, ${input.turnId}, ${input.pendingMessageId}, ${input.assistantMessageId},
+      ${input.state}, ${input.requestedAt}, ${input.requestedAt}, ${input.completedAt},
+      ${input.checkpointTurnCount}, NULL, ${input.checkpointStatus}, '[]'
+    )
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// VAL-BOUNDARY-003: Cross-origin rejection is side-effect free
+// ---------------------------------------------------------------------------
+
+it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-003-")))(
+  "VAL-BOUNDARY-003: cross-origin rejection leaves all state unchanged",
+  (it) => {
+    it.effect(
+      "rejecting a cross-origin assistant produces no events, lineage, or origin changes",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          yield* ensureScientForkSchema(sql);
+
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+
+          // 1. Seed origin-one with one completed turn.
+          const ORIGIN_ONE = ThreadId.make("origin-003-one");
+          const OTHER_ORIGIN = ThreadId.make("origin-003-other");
+
+          yield* appendAndProject(projectCreatedEvent());
+          yield* appendAndProject(
+            threadCreatedEvent(ORIGIN_ONE, "Origin One", "evt-003-origin-one"),
+          );
+
+          const U_ONE = MessageId.make("user-003-one");
+          const A_ONE = MessageId.make("assistant-003-one");
+          yield* appendAndProject(
+            messageSentEvent(
+              ORIGIN_ONE,
+              U_ONE,
+              "user",
+              "hello one",
+              T1,
+              "2026-04-01T00:00:01.000Z",
+              "evt-003-u1",
+            ),
+          );
+          yield* appendAndProject(
+            messageSentEvent(
+              ORIGIN_ONE,
+              A_ONE,
+              "assistant",
+              "answer one",
+              T1,
+              "2026-04-01T00:00:02.000Z",
+              "evt-003-a1",
+            ),
+          );
+          yield* appendAndProject(
+            turnDiffCompletedEvent(
+              ORIGIN_ONE,
+              T1,
+              1,
+              A_ONE,
+              "2026-04-01T00:00:02.500Z",
+              "evt-003-tdc-1",
+            ),
+          );
+
+          // 2. Seed origin-other with a completed turn and its own assistant.
+          yield* appendAndProject(
+            threadCreatedEvent(OTHER_ORIGIN, "Origin Other", "evt-003-origin-other"),
+          );
+          const U_OTHER = MessageId.make("user-003-other");
+          const A_OTHER = MessageId.make("assistant-003-other");
+          const T_OTHER = TurnId.make("turn-003-other");
+          yield* appendAndProject(
+            messageSentEvent(
+              OTHER_ORIGIN,
+              U_OTHER,
+              "user",
+              "hello other",
+              T_OTHER,
+              "2026-04-01T00:00:03.000Z",
+              "evt-003-u-other",
+            ),
+          );
+          yield* appendAndProject(
+            messageSentEvent(
+              OTHER_ORIGIN,
+              A_OTHER,
+              "assistant",
+              "answer other",
+              T_OTHER,
+              "2026-04-01T00:00:04.000Z",
+              "evt-003-a-other",
+            ),
+          );
+          yield* appendAndProject(
+            turnDiffCompletedEvent(
+              OTHER_ORIGIN,
+              T_OTHER,
+              1,
+              A_OTHER,
+              "2026-04-01T00:00:04.500Z",
+              "evt-003-tdc-other",
+            ),
+          );
+
+          // 3. Snapshot state before the rejected fork attempt.
+          const eventCountBefore = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_events
+        `;
+          const lineageCountBefore = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM scient_thread_lineage
+        `;
+          const originOneTurnsBefore = yield* sql<{ readonly turn_id: string | null }>`
+          SELECT turn_id FROM projection_turns
+          WHERE thread_id = 'origin-003-one' ORDER BY requested_at ASC
+        `;
+          const originOneMessagesBefore = yield* sql<{ readonly message_id: string }>`
+          SELECT message_id FROM projection_thread_messages
+          WHERE thread_id = 'origin-003-one' ORDER BY created_at ASC
+        `;
+          const otherOriginTurnsBefore = yield* sql<{ readonly turn_id: string | null }>`
+          SELECT turn_id FROM projection_turns
+          WHERE thread_id = 'origin-003-other' ORDER BY requested_at ASC
+        `;
+
+          // 4. Attempt to fork from origin-one but name the OTHER origin's assistant.
+          //    The resolver only queries projection_turns for the named origin
+          //    thread, so it cannot find A_OTHER under ORIGIN_ONE.
+          const resolver = makeForkBoundaryResolver(sql);
+          const resolveError = yield* resolver
+            .resolve({
+              originThreadId: ORIGIN_ONE,
+              sourceAssistantMessageId: A_OTHER,
+              threadCreatedAt: NOW,
+            })
+            .pipe(Effect.flip);
+
+          assert.instanceOf(resolveError, Error);
+
+          // 5. Assert no events were appended for the rejected fork.
+          const newThreadEvents = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_events
+          WHERE stream_id = 'evidence-003-dest'
+        `;
+          assert.strictEqual(newThreadEvents[0]?.count, 0);
+
+          // 6. Assert no lineage row was created for the rejected fork.
+          const newLineageRows = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM scient_thread_lineage
+          WHERE thread_id = 'evidence-003-dest'
+        `;
+          assert.strictEqual(newLineageRows[0]?.count, 0);
+
+          // 7. Assert total event count is unchanged.
+          const eventCountAfter = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_events
+        `;
+          assert.strictEqual(eventCountAfter[0]?.count, eventCountBefore[0]?.count);
+
+          // 8. Assert total lineage count is unchanged.
+          const lineageCountAfter = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM scient_thread_lineage
+        `;
+          assert.strictEqual(lineageCountAfter[0]?.count, lineageCountBefore[0]?.count);
+
+          // 9. Assert origin-one turns and messages are byte-for-byte unchanged.
+          const originOneTurnsAfter = yield* sql<{ readonly turn_id: string | null }>`
+          SELECT turn_id FROM projection_turns
+          WHERE thread_id = 'origin-003-one' ORDER BY requested_at ASC
+        `;
+          assert.deepEqual(
+            originOneTurnsAfter.map((t) => t.turn_id),
+            originOneTurnsBefore.map((t) => t.turn_id),
+          );
+
+          const originOneMessagesAfter = yield* sql<{ readonly message_id: string }>`
+          SELECT message_id FROM projection_thread_messages
+          WHERE thread_id = 'origin-003-one' ORDER BY created_at ASC
+        `;
+          assert.deepEqual(
+            originOneMessagesAfter.map((m) => m.message_id),
+            originOneMessagesBefore.map((m) => m.message_id),
+          );
+
+          // 10. Assert origin-other turns are also unchanged.
+          const otherOriginTurnsAfter = yield* sql<{ readonly turn_id: string | null }>`
+          SELECT turn_id FROM projection_turns
+          WHERE thread_id = 'origin-003-other' ORDER BY requested_at ASC
+        `;
+          assert.deepEqual(
+            otherOriginTurnsAfter.map((t) => t.turn_id),
+            otherOriginTurnsBefore.map((t) => t.turn_id),
+          );
+        }),
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// VAL-BOUNDARY-004: Destination collision against authoritative detail only
+// ---------------------------------------------------------------------------
+
+it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-004-")))(
+  "VAL-BOUNDARY-004: destination collision against authoritative detail is rejected and unchanged",
+  (it) => {
+    it.effect(
+      "forking to an existing destination (SQL-only) is rejected with no side effects",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const snapshotQuery = yield* ProjectionSnapshotQuery;
+          yield* ensureScientForkSchema(sql);
+
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+
+          // 1. Seed origin with one completed turn.
+          const ORIGIN_004 = ThreadId.make("origin-004");
+          yield* appendAndProject(projectCreatedEvent());
+          yield* appendAndProject(threadCreatedEvent(ORIGIN_004, "Origin 004", "evt-004-origin"));
+
+          const U_004 = MessageId.make("user-004");
+          const A_004 = MessageId.make("assistant-004");
+          yield* appendAndProject(
+            messageSentEvent(
+              ORIGIN_004,
+              U_004,
+              "user",
+              "prompt 004",
+              T1,
+              "2026-04-01T00:00:01.000Z",
+              "evt-004-u1",
+            ),
+          );
+          yield* appendAndProject(
+            messageSentEvent(
+              ORIGIN_004,
+              A_004,
+              "assistant",
+              "answer 004",
+              T1,
+              "2026-04-01T00:00:02.000Z",
+              "evt-004-a1",
+            ),
+          );
+          yield* appendAndProject(
+            turnDiffCompletedEvent(
+              ORIGIN_004,
+              T1,
+              1,
+              A_004,
+              "2026-04-01T00:00:02.500Z",
+              "evt-004-tdc-1",
+            ),
+          );
+
+          // 2. Seed a pre-existing destination thread with its own turns,
+          //    messages, and lineage — this is the "authoritative detail" that
+          //    exists in SQL projection but was not created by this fork.
+          const DEST = ThreadId.make("dest-004-existing");
+          yield* appendAndProject(threadCreatedEvent(DEST, "Existing Destination", "evt-004-dest"));
+          const DEST_U = MessageId.make("dest-user-004");
+          const DEST_A = MessageId.make("dest-assistant-004");
+          const DEST_T = TurnId.make("dest-turn-004");
+          yield* appendAndProject(
+            messageSentEvent(
+              DEST,
+              DEST_U,
+              "user",
+              "dest prompt",
+              DEST_T,
+              "2026-04-01T00:00:10.000Z",
+              "evt-004-dest-u",
+            ),
+          );
+          yield* appendAndProject(
+            messageSentEvent(
+              DEST,
+              DEST_A,
+              "assistant",
+              "dest answer",
+              DEST_T,
+              "2026-04-01T00:00:11.000Z",
+              "evt-004-dest-a",
+            ),
+          );
+          yield* appendAndProject(
+            turnDiffCompletedEvent(
+              DEST,
+              DEST_T,
+              1,
+              DEST_A,
+              "2026-04-01T00:00:11.500Z",
+              "evt-004-dest-tdc",
+            ),
+          );
+
+          // 3. Snapshot destination state before the rejected fork attempt.
+          const destTurnsBefore = yield* sql<{
+            readonly turn_id: string | null;
+            readonly state: string;
+          }>`
+          SELECT turn_id, state FROM projection_turns
+          WHERE thread_id = 'dest-004-existing' ORDER BY requested_at ASC
+        `;
+          const destMessagesBefore = yield* sql<{ readonly message_id: string }>`
+          SELECT message_id FROM projection_thread_messages
+          WHERE thread_id = 'dest-004-existing' ORDER BY created_at ASC
+        `;
+          const destTitleBefore = yield* sql<{ readonly title: string }>`
+          SELECT title FROM projection_threads WHERE thread_id = 'dest-004-existing'
+        `;
+          const destEventCountBefore = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_events
+          WHERE stream_id = 'dest-004-existing'
+        `;
+          const destLineageBefore = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM scient_thread_lineage
+          WHERE thread_id = 'dest-004-existing'
+        `;
+
+          // 4. Build the decision read model from the full snapshot, which
+          //    includes the destination thread shell (authoritative detail).
+          //    In the real dispatch path, getSnapshot() returns all threads,
+          //    so requireThreadAbsent catches the collision.
+          const fullSnapshot = yield* snapshotQuery.getSnapshot();
+          const originOption = yield* snapshotQuery.getThreadDetailById(ORIGIN_004);
+          if (!Option.isSome(originOption)) {
+            return assert.fail("Origin thread detail not found");
+          }
+          const decisionReadModel = withForkOriginDetail(fullSnapshot, originOption.value);
+
+          // 5. Resolve boundaries for the origin.
+          const resolver = makeForkBoundaryResolver(sql);
+          const resolved = yield* resolver.resolve({
+            originThreadId: ORIGIN_004,
+            sourceAssistantMessageId: A_004,
+            threadCreatedAt: NOW,
+          });
+
+          // 6. Attempt to fork to the existing destination thread ID.
+          //    The decider must reject via requireThreadAbsent.
+          const forkCmd: ThreadForkCommand = {
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-004-collision"),
+            originThreadId: ORIGIN_004,
+            newThreadId: DEST,
+            sourceAssistantMessageId: A_004,
+            workspaceMode: "local",
+          };
+
+          const error = yield* forkThread({
+            command: forkCmd,
+            readModel: decisionReadModel,
+            resolvedBoundaries: resolved.boundaries,
+          }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto), Effect.flip);
+          assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
+
+          // 7. Assert the destination's SQL state is unchanged.
+          const destTurnsAfter = yield* sql<{
+            readonly turn_id: string | null;
+            readonly state: string;
+          }>`
+          SELECT turn_id, state FROM projection_turns
+          WHERE thread_id = 'dest-004-existing' ORDER BY requested_at ASC
+        `;
+          assert.deepEqual(destTurnsAfter, destTurnsBefore);
+
+          const destMessagesAfter = yield* sql<{ readonly message_id: string }>`
+          SELECT message_id FROM projection_thread_messages
+          WHERE thread_id = 'dest-004-existing' ORDER BY created_at ASC
+        `;
+          assert.deepEqual(
+            destMessagesAfter.map((m) => m.message_id),
+            destMessagesBefore.map((m) => m.message_id),
+          );
+
+          const destTitleAfter = yield* sql<{ readonly title: string }>`
+          SELECT title FROM projection_threads WHERE thread_id = 'dest-004-existing'
+        `;
+          assert.deepEqual(destTitleAfter, destTitleBefore);
+
+          const destEventCountAfter = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_events
+          WHERE stream_id = 'dest-004-existing'
+        `;
+          assert.strictEqual(destEventCountAfter[0]?.count, destEventCountBefore[0]?.count);
+
+          const destLineageAfter = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM scient_thread_lineage
+          WHERE thread_id = 'dest-004-existing'
+        `;
+          assert.strictEqual(destLineageAfter[0]?.count, destLineageBefore[0]?.count);
+        }),
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// VAL-BOUNDARY-005: Parameterized invalid role/state matrix + valid control
+// ---------------------------------------------------------------------------
+
+it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-005-")))(
+  "VAL-BOUNDARY-005: invalid role/state matrix fails closed and valid control succeeds",
+  (it) => {
+    it.effect(
+      "parameterized invalid roles and states all fail, valid completed assistant forks",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const snapshotQuery = yield* ProjectionSnapshotQuery;
+          yield* ensureScientForkSchema(sql);
+
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+
+          // 1. Seed an origin thread with one completed turn via the projection
+          //    pipeline so messages and turns are present for the valid control.
+          const ORIGIN_005 = ThreadId.make("origin-005");
+          yield* appendAndProject(projectCreatedEvent());
+          yield* appendAndProject(threadCreatedEvent(ORIGIN_005, "Origin 005", "evt-005-origin"));
+
+          const U_005 = MessageId.make("user-005");
+          const A_005 = MessageId.make("assistant-005");
+          yield* appendAndProject(
+            messageSentEvent(
+              ORIGIN_005,
+              U_005,
+              "user",
+              "prompt 005",
+              T1,
+              "2026-04-01T00:00:01.000Z",
+              "evt-005-u1",
+            ),
+          );
+          yield* appendAndProject(
+            messageSentEvent(
+              ORIGIN_005,
+              A_005,
+              "assistant",
+              "answer 005",
+              T1,
+              "2026-04-01T00:00:02.000Z",
+              "evt-005-a1",
+            ),
+          );
+          yield* appendAndProject(
+            turnDiffCompletedEvent(
+              ORIGIN_005,
+              T1,
+              1,
+              A_005,
+              "2026-04-01T00:00:02.500Z",
+              "evt-005-tdc-1",
+            ),
+          );
+
+          // 2. Seed invalid-state turns directly in SQL for the matrix cases.
+          //    These turns are under the same origin thread so the resolver
+          //    queries them — but they are filtered out by state/completed_at
+          //    conditions.
+          const A_RUNNING = MessageId.make("assistant-005-running");
+          const A_ERROR = MessageId.make("assistant-005-error");
+          const A_NULL_COMP = MessageId.make("assistant-005-nullcomp");
+
+          yield* insertProjectionTurn(sql, {
+            threadId: ORIGIN_005,
+            turnId: TurnId.make("turn-005-running"),
+            pendingMessageId: MessageId.make("user-005-running"),
+            assistantMessageId: A_RUNNING,
+            state: "running",
+            requestedAt: "2026-04-01T00:00:03.000Z",
+            completedAt: null,
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          });
+
+          yield* insertProjectionTurn(sql, {
+            threadId: ORIGIN_005,
+            turnId: TurnId.make("turn-005-error"),
+            pendingMessageId: MessageId.make("user-005-error"),
+            assistantMessageId: A_ERROR,
+            state: "error",
+            requestedAt: "2026-04-01T00:00:04.000Z",
+            completedAt: "2026-04-01T00:00:05.000Z",
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          });
+
+          yield* insertProjectionTurn(sql, {
+            threadId: ORIGIN_005,
+            turnId: TurnId.make("turn-005-nullcomp"),
+            pendingMessageId: MessageId.make("user-005-nullcomp"),
+            assistantMessageId: A_NULL_COMP,
+            state: "completed",
+            requestedAt: "2026-04-01T00:00:06.000Z",
+            completedAt: null, // state is 'completed' but completed_at is NULL
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          });
+
+          const resolver = makeForkBoundaryResolver(sql);
+
+          // 3. Parameterized invalid matrix — each must fail closed.
+          const invalidCases: ReadonlyArray<{
+            readonly label: string;
+            readonly sourceAssistantMessageId: MessageId;
+          }> = [
+            { label: "user role", sourceAssistantMessageId: U_005 },
+            { label: "system role", sourceAssistantMessageId: MessageId.make("system-005") },
+            {
+              label: "missing assistant",
+              sourceAssistantMessageId: MessageId.make("nonexistent-005"),
+            },
+            { label: "incomplete (error state)", sourceAssistantMessageId: A_ERROR },
+            { label: "non-terminal (running state)", sourceAssistantMessageId: A_RUNNING },
+            {
+              label: "null completion (completed_at IS NULL)",
+              sourceAssistantMessageId: A_NULL_COMP,
+            },
+          ];
+
+          for (const { label, sourceAssistantMessageId } of invalidCases) {
+            const error = yield* resolver
+              .resolve({
+                originThreadId: ORIGIN_005,
+                sourceAssistantMessageId,
+                threadCreatedAt: NOW,
+              })
+              .pipe(Effect.flip);
+            assert.instanceOf(error, Error, `case '${label}' must fail closed`);
+          }
+
+          // 4. Valid control: completed assistant resolves and the decider
+          //    emits exactly one thread.forked event.
+          const validResolved = yield* resolver.resolve({
+            originThreadId: ORIGIN_005,
+            sourceAssistantMessageId: A_005,
+            threadCreatedAt: NOW,
+          });
+          assert.strictEqual(validResolved.selectedBoundary.assistantMessageId, A_005);
+
+          const originOption = yield* snapshotQuery.getThreadDetailById(ORIGIN_005);
+          if (!Option.isSome(originOption)) {
+            return assert.fail("Origin thread detail not found");
+          }
+
+          const baseReadModel: OrchestrationReadModel = {
+            ...createEmptyReadModel(NOW),
+            projects: [
+              {
+                id: PROJECT,
+                title: "Cross Area Project",
+                workspaceRoot: "/tmp/cross-area",
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: NOW,
+                updatedAt: NOW,
+                deletedAt: null,
+              },
+            ],
+            threads: [],
+            updatedAt: NOW,
+          };
+          const decisionReadModel = withForkOriginDetail(baseReadModel, originOption.value);
+
+          const VALID_NEW = ThreadId.make("evidence-005-valid-dest");
+          const forkCmd: ThreadForkCommand = {
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-005-valid"),
+            originThreadId: ORIGIN_005,
+            newThreadId: VALID_NEW,
+            sourceAssistantMessageId: A_005,
+            workspaceMode: "local",
+          };
+
+          const events = yield* forkThread({
+            command: forkCmd,
+            readModel: decisionReadModel,
+            resolvedBoundaries: validResolved.boundaries,
+          }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
+
+          // Exactly one thread.forked event.
+          const forkedEvents = events.filter((e) => e.type === "thread.forked");
+          assert.strictEqual(forkedEvents.length, 1);
+        }),
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// VAL-BOUNDARY-008: Exact older-boundary checkpoint count through full pipeline
+// ---------------------------------------------------------------------------
+
+it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-boundary-008-")))(
+  "VAL-BOUNDARY-008: older boundary records exactly the selected checkpoint count",
+  (it) => {
+    it.effect("selecting a1 in a three-turn origin yields checkpoint count 1, not 2 or 3", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        yield* ensureScientForkSchema(sql);
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+
+        // 1. Seed origin with three completed turns, each with its own
+        //    checkpoint (count 1, 2, 3).
+        const ORIGIN_008 = ThreadId.make("origin-008");
+        yield* appendAndProject(projectCreatedEvent());
+        yield* appendAndProject(threadCreatedEvent(ORIGIN_008, "Origin 008", "evt-008-origin"));
+
+        const U1_008 = MessageId.make("user-008-1");
+        const U2_008 = MessageId.make("user-008-2");
+        const U3_008 = MessageId.make("user-008-3");
+        const A1_008 = MessageId.make("assistant-008-1");
+        const A2_008 = MessageId.make("assistant-008-2");
+        const A3_008 = MessageId.make("assistant-008-3");
+        const T1_008 = TurnId.make("turn-008-1");
+        const T2_008 = TurnId.make("turn-008-2");
+        const T3_008 = TurnId.make("turn-008-3");
+
+        // Turn 1
+        yield* appendAndProject(
+          messageSentEvent(
+            ORIGIN_008,
+            U1_008,
+            "user",
+            "first 008",
+            T1_008,
+            "2026-04-01T00:00:01.000Z",
+            "evt-008-u1",
+          ),
+        );
+        yield* appendAndProject(
+          messageSentEvent(
+            ORIGIN_008,
+            A1_008,
+            "assistant",
+            "answer 008-1",
+            T1_008,
+            "2026-04-01T00:00:02.000Z",
+            "evt-008-a1",
+          ),
+        );
+        yield* appendAndProject(
+          turnDiffCompletedEvent(
+            ORIGIN_008,
+            T1_008,
+            1,
+            A1_008,
+            "2026-04-01T00:00:02.500Z",
+            "evt-008-tdc-1",
+          ),
+        );
+
+        // Turn 2
+        yield* appendAndProject(
+          messageSentEvent(
+            ORIGIN_008,
+            U2_008,
+            "user",
+            "second 008",
+            T2_008,
+            "2026-04-01T00:00:03.000Z",
+            "evt-008-u2",
+          ),
+        );
+        yield* appendAndProject(
+          messageSentEvent(
+            ORIGIN_008,
+            A2_008,
+            "assistant",
+            "answer 008-2",
+            T2_008,
+            "2026-04-01T00:00:04.000Z",
+            "evt-008-a2",
+          ),
+        );
+        yield* appendAndProject(
+          turnDiffCompletedEvent(
+            ORIGIN_008,
+            T2_008,
+            2,
+            A2_008,
+            "2026-04-01T00:00:04.500Z",
+            "evt-008-tdc-2",
+          ),
+        );
+
+        // Turn 3
+        yield* appendAndProject(
+          messageSentEvent(
+            ORIGIN_008,
+            U3_008,
+            "user",
+            "third 008",
+            T3_008,
+            "2026-04-01T00:00:05.000Z",
+            "evt-008-u3",
+          ),
+        );
+        yield* appendAndProject(
+          messageSentEvent(
+            ORIGIN_008,
+            A3_008,
+            "assistant",
+            "answer 008-3",
+            T3_008,
+            "2026-04-01T00:00:06.000Z",
+            "evt-008-a3",
+          ),
+        );
+        yield* appendAndProject(
+          turnDiffCompletedEvent(
+            ORIGIN_008,
+            T3_008,
+            3,
+            A3_008,
+            "2026-04-01T00:00:06.500Z",
+            "evt-008-tdc-3",
+          ),
+        );
+
+        // 2. Resolve the OLDER boundary (a1, turn 1) — not the latest.
+        const resolver = makeForkBoundaryResolver(sql);
+        const resolved = yield* resolver.resolve({
+          originThreadId: ORIGIN_008,
+          sourceAssistantMessageId: A1_008,
+          threadCreatedAt: NOW,
+        });
+
+        // 3. Assert the resolver returns exactly the T1 checkpoint count.
+        assert.strictEqual(resolved.selectedBoundary.assistantMessageId, A1_008);
+        assert.strictEqual(resolved.selectedBoundary.turnId, T1_008);
+        assert.strictEqual(resolved.selectedBoundary.conversationTurnCount, 1);
+        assert.strictEqual(resolved.selectedBoundary.checkpointTurnCount, 1);
+        assert.strictEqual(resolved.selectedBoundary.checkpointStatus, "ready");
+
+        // 4. Run the decider with the resolved boundaries.
+        const originOption = yield* snapshotQuery.getThreadDetailById(ORIGIN_008);
+        if (!Option.isSome(originOption)) {
+          return assert.fail("Origin thread detail not found");
+        }
+
+        const baseReadModel: OrchestrationReadModel = {
+          ...createEmptyReadModel(NOW),
+          projects: [
+            {
+              id: PROJECT,
+              title: "Cross Area Project",
+              workspaceRoot: "/tmp/cross-area",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: NOW,
+              updatedAt: NOW,
+              deletedAt: null,
+            },
+          ],
+          threads: [],
+          updatedAt: NOW,
+        };
+        const decisionReadModel = withForkOriginDetail(baseReadModel, originOption.value);
+
+        const NEW_008 = ThreadId.make("evidence-008-dest");
+        const forkCmd: ThreadForkCommand = {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-008-fork"),
+          originThreadId: ORIGIN_008,
+          newThreadId: NEW_008,
+          sourceAssistantMessageId: A1_008,
+          workspaceMode: "local",
+        };
+
+        const events = yield* forkThread({
+          command: forkCmd,
+          readModel: decisionReadModel,
+          resolvedBoundaries: resolved.boundaries,
+        }).pipe(Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto));
+
+        // 5. Assert the fork event carries exactly checkpoint count 1.
+        const forkedEvent = events.find((e) => e.type === "thread.forked");
+        if (!forkedEvent || forkedEvent.type !== "thread.forked") {
+          return assert.fail("thread.forked event not found");
+        }
+        assert.strictEqual(forkedEvent.payload.forkAtTurnCount, 1);
+        assert.strictEqual(forkedEvent.payload.sourceCheckpointTurnCount, 1);
+
+        // 6. Assert the baseline turn-diff-completed has checkpoint count 0
+        //    (the fork's own baseline checkpoint, not the origin's).
+        const tdcEvent = events.find((e) => e.type === "thread.turn-diff-completed");
+        if (!tdcEvent || tdcEvent.type !== "thread.turn-diff-completed") {
+          return assert.fail("thread.turn-diff-completed event not found");
+        }
+        assert.strictEqual(tdcEvent.payload.checkpointTurnCount, 0);
+
+        // 7. Assert only the first turn's prefix is retained (u1, a1).
+        const messageEvents = events.filter((e) => e.type === "thread.message-sent");
+        const prefixTexts = messageEvents.map((e) =>
+          e.type === "thread.message-sent" ? `${e.payload.role}:${e.payload.text}` : "",
+        );
+        assert.deepEqual(prefixTexts, ["user:first 008", "assistant:answer 008-1"]);
+      }),
+    );
+  },
+);

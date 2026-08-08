@@ -228,6 +228,10 @@ layer("ForkBoundaryReadModel resolver", (it) => {
       assert.strictEqual(result.selectedBoundary.assistantMessageId, A1);
       assert.strictEqual(result.selectedBoundary.turnId, T1);
       assert.strictEqual(result.selectedBoundary.conversationTurnCount, 1);
+      // VAL-BOUNDARY-008: the checkpoint count is exactly the selected
+      // boundary's own checkpoint (T1 → count 1), not a later turn's.
+      assert.strictEqual(result.selectedBoundary.checkpointTurnCount, 1);
+      assert.strictEqual(result.selectedBoundary.checkpointStatus, "ready");
     }),
   );
 
