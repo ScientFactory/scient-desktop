@@ -21,13 +21,13 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-foundation-refresh-20260807-b.md`](docs/internals/t3-foundation-refresh-20260807-b.md)
+[`docs/internals/t3-foundation-refresh-20260809.md`](docs/internals/t3-foundation-refresh-20260809.md)
 and in `upstream-state.json`. The latest refresh merged the exact fetched
-`upstream/main` tip `b98a0f0d2292d180db0ac7c6ae8ccdbc9f6478f7` into owned head
-`456bc41bf1e1441fac889e8eb2f88e92445081f9`, preserving the full T3 range from
-the previous owned T3 tip `a8cd2ad2ebb32ad789e8e0ecd2fc713c2edc38f4`. Later
-observed T3 tips never move `integrationBase` by themselves; it advances only
-after the exact ancestry and verification gate are complete.
+`upstream/main` tip `89ee692bf0436505d008c1d70215e70836eba4e2` into the
+refresh branch, preserving the full T3 range from the previous integrated tip
+`2c7267ad43a05cf3e30343400c76fd9ac47698e7`. Later observed T3 tips never move
+`integrationBase` by themselves; it advances only after the exact ancestry and
+verification gate are complete.
 
 ## Receiving T3 updates
 
@@ -57,6 +57,14 @@ The second 2026-08-07 refresh was conflict-free and required no Scient-owned
 code adaptation. It received T3's plan-mode simplification, per-device provider
 settings, and mobile connection visibility fix while preserving the candidate
 safety envelope and visible Scient identity.
+
+The 2026-08-09 refresh was also conflict-free and required no Scient-owned code
+adaptation. It received the desktop preview-focus zoom fix, the mobile model
+and thread settings sheet, the local provider-transcript usage page and its
+pricing/chart correction, and persisted diff-panel display mode. The usage
+surface reads local provider transcripts through the authenticated server
+environment and sends only aggregated buckets and source diagnostics; it does
+not authorize cloud publication or make scientific state canonical.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
