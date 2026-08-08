@@ -1,0 +1,82 @@
+/* Scoped to conversational content; the application shell remains LTR. */
+.chat-markdown[data-scient-content-direction="rtl"],
+.chat-markdown[data-scient-content-direction="ltr"],
+.composer-editor-surface[data-scient-content-direction="rtl"],
+.composer-editor-surface[data-scient-content-direction="ltr"] {
+  text-align: start;
+}
+
+.chat-markdown[data-scient-content-direction="rtl"] ul,
+.chat-markdown[data-scient-content-direction="ltr"] ul,
+.chat-markdown[data-scient-content-direction="rtl"] ol,
+.chat-markdown[data-scient-content-direction="ltr"] ol {
+  padding: 0;
+  padding-inline-start: 1.25rem;
+}
+
+.chat-markdown[data-scient-content-direction="rtl"] blockquote,
+.chat-markdown[data-scient-content-direction="ltr"] blockquote {
+  border: 0;
+  border-inline-start: 2px solid var(--border);
+  padding: 0;
+  padding-inline-start: 0.8rem;
+}
+
+.chat-markdown[data-scient-content-direction="rtl"] .chat-markdown-table-container,
+.chat-markdown[data-scient-content-direction="ltr"] .chat-markdown-table-container {
+  text-align: start;
+}
+
+.chat-markdown[data-scient-content-direction="rtl"] th,
+.chat-markdown[data-scient-content-direction="rtl"] td,
+.chat-markdown[data-scient-content-direction="ltr"] th,
+.chat-markdown[data-scient-content-direction="ltr"] td {
+  text-align: start;
+}
+
+.chat-markdown[data-scient-content-direction="rtl"] li.task-list-item input[type="checkbox"],
+.chat-markdown[data-scient-content-direction="ltr"] li.task-list-item input[type="checkbox"] {
+  margin: 0 0 0.15em;
+  margin-inline-start: -1.25rem;
+  margin-inline-end: 0.35em;
+}
+
+.chat-markdown [dir="ltr"] {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
+.chat-markdown [dir="rtl"] {
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+
+.chat-markdown .chat-markdown-codeblock-header {
+  direction: ltr;
+  text-align: start;
+}
+
+.chat-markdown .chat-markdown-codeblock[data-copy-text-direction="auto"] pre {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+.chat-markdown[data-scient-content-direction="rtl"]
+  .chat-markdown-details
+  [data-markdown-details-summary],
+.chat-markdown[data-scient-content-direction="ltr"]
+  .chat-markdown-details
+  [data-markdown-details-summary] {
+  text-align: start;
+}
+
+.composer-editor-surface [dir="ltr"] {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.composer-editor-surface [dir="rtl"] {
+  direction: rtl;
+  unicode-bidi: isolate;
+}

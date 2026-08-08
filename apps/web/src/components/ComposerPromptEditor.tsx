@@ -81,6 +81,8 @@ import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTermin
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import { ComposerContentDirectionPlugin } from "../scient/bidi/ComposerContentDirectionPlugin";
+import "../scient/bidi/scient-bidi.css";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -1773,6 +1775,7 @@ function ComposerPromptEditorInner({
           ErrorBoundary={LexicalErrorBoundary}
         />
         <OnChangePlugin onChange={handleEditorChange} />
+        <ComposerContentDirectionPlugin />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />

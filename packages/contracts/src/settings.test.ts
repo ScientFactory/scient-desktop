@@ -67,6 +67,22 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings content direction", () => {
+  it("defaults conversational prose to automatic direction", () => {
+    expect(decodeClientSettings({}).contentDirection).toBe("auto");
+  });
+
+  it.each(["auto", "rtl", "ltr"] as const)("accepts %s", (contentDirection) => {
+    expect(decodeClientSettings({ contentDirection }).contentDirection).toBe(contentDirection);
+    expect(decodeClientSettingsPatch({ contentDirection }).contentDirection).toBe(contentDirection);
+  });
+
+  it("rejects unsupported content directions", () => {
+    expect(() => decodeClientSettings({ contentDirection: "vertical" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ contentDirection: "vertical" })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});

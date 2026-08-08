@@ -8,7 +8,7 @@ import {
   Minimize2Icon,
   WrapTextIcon,
 } from "lucide-react";
-import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
+import type { MessageId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -92,6 +92,16 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import {
+  resolveStreamingMarkdownDirection,
+  resolvePlainTextBoxDirection,
+  resolveFenceDirection,
+  type ContentDirection,
+  type FixedContentDirection,
+} from "../scient/bidi/contentDirection";
+import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
+import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
+import "../scient/bidi/scient-bidi.css";
 
 interface ChatMarkdownProps {
   text: string;
@@ -103,6 +113,12 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Overrides the conversation scope for document/file previews. */
+  contentDirection?: ContentDirection;
+  /** Stable identity used to scope automatic streaming direction. */
+  messageId?: MessageId | undefined;
+  /** Direction hint from the preceding user message during streaming. */
+  directionHint?: FixedContentDirection | null | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -317,12 +333,13 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
+function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tableDirection = dir === "rtl" ? "rtl" : "ltr";
   const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
@@ -391,14 +408,16 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       ref={containerRef}
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
+      dir={tableDirection}
     >
       <ScrollArea
         chainVerticalScroll
         scrollFade
         hideScrollbars
         className="w-full max-w-full rounded-none"
+        dir={tableDirection}
       >
-        <table ref={tableRef} {...props}>
+        <table ref={tableRef} {...props} dir={tableDirection}>
           {children}
         </table>
       </ScrollArea>
@@ -541,12 +560,14 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  copyTextDirection,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  copyTextDirection: "auto" | "rtl" | "ltr";
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -596,7 +617,9 @@ function MarkdownCodeBlock({
   return (
     <div
       className="chat-markdown-codeblock border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      dir={copyTextDirection}
       data-language={language}
+      data-copy-text-direction={copyTextDirection}
       data-wrap={wrapped ? "true" : "false"}
     >
       <div className="chat-markdown-codeblock-header select-none">
@@ -1261,7 +1284,40 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  contentDirection,
+  messageId,
+  directionHint,
 }: ChatMarkdownProps) {
+  const scopedContentDirection = useContentDirection();
+  const effectiveContentDirection = contentDirection ?? scopedContentDirection;
+  const streamingDirectionRef = useRef<{
+    messageId: MessageId | null;
+    direction: FixedContentDirection;
+  } | null>(null);
+  if (!isStreaming) {
+    streamingDirectionRef.current = null;
+  } else if (
+    effectiveContentDirection === "auto" &&
+    streamingDirectionRef.current?.messageId !== (messageId ?? null)
+  ) {
+    streamingDirectionRef.current = {
+      messageId: messageId ?? null,
+      direction: resolveStreamingMarkdownDirection({
+        markdown: text,
+        requestedDirection: effectiveContentDirection,
+        messageDirectionHint: directionHint,
+        isStreaming: true,
+      }),
+    };
+  }
+  const resolvedContentDirection = resolveStreamingMarkdownDirection({
+    markdown: text,
+    requestedDirection: effectiveContentDirection,
+    messageDirectionHint: directionHint,
+    frozenDirection:
+      effectiveContentDirection === "auto" ? streamingDirectionRef.current?.direction : null,
+    isStreaming,
+  });
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1544,13 +1600,15 @@ function ChatMarkdown({
           }
         }
         return (
-          <code {...props} className={className}>
+          <code {...props} className={className} dir="ltr">
             {children}
           </code>
         );
       },
       table({ node: _node, ...props }) {
-        return <MarkdownTable {...props} />;
+        const tableDirection =
+          props.dir === "rtl" || props.dir === "ltr" ? props.dir : resolvedContentDirection;
+        return <MarkdownTable {...props} dir={tableDirection} />;
       },
       details({ node: _node, children, open: detailsOpen }) {
         return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
@@ -1562,13 +1620,23 @@ function ChatMarkdown({
         }
 
         const language = extractFenceLanguage(codeBlock.className);
-        const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+        const fenceMeta = extractPreCodeMeta(node);
+        const fenceTitle = extractFenceTitle(fenceMeta);
+        const copyTextDirection = resolvePlainTextBoxDirection({
+          code: codeBlock.code,
+          language,
+          fenceTitle,
+          fenceDirection: resolveFenceDirection(fenceMeta),
+          conversationDirection: resolvedContentDirection,
+          isStreaming,
+        });
         return (
           <MarkdownCodeBlock
             code={codeBlock.code}
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
+            copyTextDirection={copyTextDirection}
           >
             <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
@@ -1599,6 +1667,7 @@ function ChatMarkdown({
     skills,
     text,
     threadRef,
+    resolvedContentDirection,
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
@@ -1608,13 +1677,24 @@ function ChatMarkdown({
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80",
         className,
       )}
+      dir={resolvedContentDirection}
+      data-scient-content-direction={resolvedContentDirection}
       onCopy={handleCopy}
     >
       <ReactMarkdown
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+        rehypePlugins={[
+          ...CHAT_MARKDOWN_REHYPE_PLUGINS,
+          [
+            rehypeScientBidi,
+            {
+              direction: resolvedContentDirection,
+              requestedDirection: effectiveContentDirection,
+            },
+          ],
+        ]}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

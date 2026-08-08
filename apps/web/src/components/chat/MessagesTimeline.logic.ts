@@ -9,6 +9,10 @@ import {
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  resolveMarkdownDirectionHint,
+  type FixedContentDirection,
+} from "../../scient/bidi/contentDirection";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -196,6 +200,7 @@ export type MessagesTimelineRow =
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
       canForkConversation?: boolean | undefined;
+      assistantDirectionHint?: FixedContentDirection | null | undefined;
     }
   | {
       kind: "fork-marker";
@@ -507,6 +512,7 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  let latestUserDirectionHint: FixedContentDirection | null = null;
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
     if (!timelineEntry) {
@@ -623,6 +629,10 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.message.role === "user") {
+      latestUserDirectionHint = resolveMarkdownDirectionHint(timelineEntry.message.text);
+    }
+
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       unsettledTurnId !== null &&
@@ -660,6 +670,8 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "assistant" && showAssistantMeta
           ? !timelineEntry.message.streaming
           : undefined,
+      assistantDirectionHint:
+        timelineEntry.message.role === "assistant" ? latestUserDirectionHint : undefined,
     });
 
     if (
@@ -756,7 +768,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount &&
-        a.canForkConversation === bm.canForkConversation
+        a.canForkConversation === bm.canForkConversation &&
+        a.assistantDirectionHint === bm.assistantDirectionHint
       );
     }
   }

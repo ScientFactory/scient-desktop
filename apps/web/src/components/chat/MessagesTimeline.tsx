@@ -1158,6 +1158,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           isStreaming={Boolean(row.message.streaming)}
+          messageId={row.message.id}
+          directionHint={row.assistantDirectionHint}
           skills={ctx.skills}
         />
         <AssistantChangedFilesSection
