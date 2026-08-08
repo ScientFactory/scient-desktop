@@ -222,4 +222,58 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
   });
+
+  // SCIENT-FORK:START — fork baseline (copy origin fork-point ref → new thread turn-0 ref).
+  describe("forkBaseline", () => {
+    it.effect("copies the origin fork-point commit onto the new thread's turn-0 ref", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const origin = ThreadId.make("origin-thread-fork");
+        const forked = ThreadId.make("forked-thread-fork");
+        const originForkPointRef = checkpointRefForThreadTurn(origin, 2);
+        const forkedBaselineRef = checkpointRefForThreadTurn(forked, 0);
+
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# forked at turn 2\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: originForkPointRef });
+
+        const copied = yield* checkpointStore.forkBaseline({
+          cwd: tmp,
+          fromCheckpointRef: originForkPointRef,
+          toCheckpointRef: forkedBaselineRef,
+        });
+        expect(copied).toBe(true);
+
+        // The new baseline ref exists and resolves to the SAME commit as the origin.
+        expect(
+          yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef: forkedBaselineRef }),
+        ).toBe(true);
+        const originCommit = yield* git(tmp, ["rev-parse", `${originForkPointRef}^{commit}`]);
+        const forkedCommit = yield* git(tmp, ["rev-parse", `${forkedBaselineRef}^{commit}`]);
+        expect(forkedCommit).toBe(originCommit);
+      }),
+    );
+
+    it.effect("returns false and writes nothing when the source ref is missing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const missing = checkpointRefForThreadTurn(ThreadId.make("no-such-origin"), 5);
+        const target = checkpointRefForThreadTurn(ThreadId.make("target-thread"), 0);
+
+        const copied = yield* checkpointStore.forkBaseline({
+          cwd: tmp,
+          fromCheckpointRef: missing,
+          toCheckpointRef: target,
+        });
+        expect(copied).toBe(false);
+        expect(yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef: target })).toBe(
+          false,
+        );
+      }),
+    );
+  });
+  // SCIENT-FORK:END
 });

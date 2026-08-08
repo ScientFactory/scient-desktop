@@ -474,6 +474,19 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       });
     };
 
+    // SCIENT-FORK:START
+    const forkThread: ProviderAdapterShape<ProviderAdapterError>["forkThread"] = (
+      threadId,
+      _input,
+    ) => {
+      const state = sessions.get(threadId);
+      if (!state) {
+        return missingSessionEffect(provider, threadId);
+      }
+      return Effect.succeed({ forkedProviderThreadId: `${state.snapshot.threadId}-fork` });
+    };
+    // SCIENT-FORK:END
+
     const stopAll: ProviderAdapterShape<ProviderAdapterError>["stopAll"] = () =>
       Effect.sync(() => {
         sessions.clear();
@@ -494,6 +507,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       hasSession,
       readThread,
       rollbackThread,
+      // SCIENT-FORK:START
+      forkThread,
+      // SCIENT-FORK:END
       stopAll,
       streamEvents: Stream.fromQueue(runtimeEvents),
     };

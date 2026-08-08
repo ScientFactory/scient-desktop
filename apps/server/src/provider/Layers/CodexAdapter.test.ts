@@ -103,6 +103,16 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       }),
   );
 
+  // SCIENT-FORK:START
+  public readonly forkThreadImpl = vi.fn(
+    (_input: {
+      readonly lastTurnId?: string | undefined;
+      readonly cwd?: string | undefined;
+    }): Promise<{ forkedProviderThreadId: string }> =>
+      Promise.resolve({ forkedProviderThreadId: "provider-thread-forked-1" }),
+  );
+  // SCIENT-FORK:END
+
   public readonly respondToRequestImpl = vi.fn(
     (_requestId: ApprovalRequestId, _decision: ProviderApprovalDecision): Promise<void> =>
       Promise.resolve(undefined),
@@ -140,6 +150,15 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   rollbackThread(numTurns: number) {
     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
   }
+
+  // SCIENT-FORK:START
+  forkThread(input: {
+    readonly lastTurnId?: string | undefined;
+    readonly cwd?: string | undefined;
+  }) {
+    return Effect.promise(() => this.forkThreadImpl(input));
+  }
+  // SCIENT-FORK:END
 
   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
     return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
@@ -359,6 +378,57 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       });
     }),
   );
+
+  // SCIENT-FORK:START
+  it.effect(
+    "forkThread forks the origin runtime session and returns the forked provider thread id",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("sess-fork"),
+          runtimeMode: "full-access",
+        });
+        const runtime = sessionRuntimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        runtime.forkThreadImpl.mockClear();
+        runtime.forkThreadImpl.mockResolvedValueOnce({
+          forkedProviderThreadId: "provider-thread-forked-99",
+        });
+
+        const result = yield* adapter.forkThread(asThreadId("sess-fork"), {
+          cwd: "/tmp/fork-cwd",
+          lastTurnId: "turn-7",
+        });
+
+        NodeAssert.deepStrictEqual(result, {
+          forkedProviderThreadId: "provider-thread-forked-99",
+        });
+        NodeAssert.equal(runtime.forkThreadImpl.mock.calls.length, 1);
+        NodeAssert.deepStrictEqual(runtime.forkThreadImpl.mock.calls[0]?.[0], {
+          cwd: "/tmp/fork-cwd",
+          lastTurnId: "turn-7",
+        });
+      }),
+  );
+
+  it.effect(
+    "forkThread maps a missing adapter session to ProviderAdapterSessionNotFoundError",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const result = yield* adapter
+          .forkThread(asThreadId("sess-fork-missing"), {})
+          .pipe(Effect.result);
+
+        NodeAssert.equal(result._tag, "Failure");
+        NodeAssert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
+        NodeAssert.equal(result.failure.provider, "codex");
+        NodeAssert.equal(result.failure.threadId, "sess-fork-missing");
+      }),
+  );
+  // SCIENT-FORK:END
 
   it.effect("passes configured launch args into the session runtime", () => {
     const runtimeFactory = makeRuntimeFactory();

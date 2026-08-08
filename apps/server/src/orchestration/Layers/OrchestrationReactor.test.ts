@@ -6,6 +6,9 @@ import * as Scope from "effect/Scope";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
+// SCIENT-FORK:START
+import { ScientForkReactor } from "../Services/ScientForkReactor.ts";
+// SCIENT-FORK:END
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
@@ -55,6 +58,17 @@ describe("OrchestrationReactor", () => {
             drain: Effect.void,
           }),
         ),
+        // SCIENT-FORK:START
+        Layer.provideMerge(
+          Layer.succeed(ScientForkReactor, {
+            start: () => {
+              started.push("scient-fork-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        // SCIENT-FORK:END
         Layer.provideMerge(
           Layer.succeed(ThreadDeletionReactor, {
             start: () => {
@@ -84,6 +98,9 @@ describe("OrchestrationReactor", () => {
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",
+      // SCIENT-FORK:START
+      "scient-fork-reactor",
+      // SCIENT-FORK:END
       "thread-deletion-reactor",
       "agent-awareness-relay",
     ]);

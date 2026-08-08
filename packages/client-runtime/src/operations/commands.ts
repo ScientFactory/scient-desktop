@@ -50,6 +50,9 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+// SCIENT-FORK:START — Scient conversation-fork command input.
+export type ForkThreadInput = CommandInput<"thread.fork">;
+// SCIENT-FORK:END
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -320,3 +323,17 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     createdAt: metadata.createdAt,
   });
 });
+
+// SCIENT-FORK:START — dispatch the Scient conversation-fork command. thread.fork
+// carries no createdAt (the server stamps fork/lineage events with its own time),
+// so only a commandId is generated here.
+export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.forkThread",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.fork",
+    commandId: yield* commandId(input),
+  });
+});
+// SCIENT-FORK:END

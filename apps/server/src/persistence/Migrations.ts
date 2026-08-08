@@ -50,6 +50,9 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
 import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
 import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
+// SCIENT-FORK:START — Scient-owned lineage table (new migration, no renumbering)
+import Migration0038 from "./Migrations/038_ScientThreadLineage.ts";
+// SCIENT-FORK:END
 
 /**
  * Migration loader with all migrations defined inline.
@@ -99,6 +102,9 @@ export const migrationEntries = [
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
   [36, "ProjectionThreadsPinned", Migration0036],
   [37, "ProjectionTurnsKeysetIndex", Migration0037],
+  // SCIENT-FORK:START
+  [38, "ScientThreadLineage", Migration0038],
+  // SCIENT-FORK:END
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -46,6 +46,14 @@ export interface DeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+// SCIENT-FORK:START — fork baseline: copy a checkpoint ref's commit to a new ref.
+export interface ForkBaselineInput {
+  readonly cwd: string;
+  readonly fromCheckpointRef: CheckpointRef;
+  readonly toCheckpointRef: CheckpointRef;
+}
+// SCIENT-FORK:END
+
 /** Service tag for checkpoint persistence and restore operations. */
 export class CheckpointStore extends Context.Service<
   CheckpointStore,
@@ -93,6 +101,13 @@ export class CheckpointStore extends Context.Service<
     readonly deleteCheckpointRefs: (
       input: DeleteCheckpointRefsInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
+
+    // SCIENT-FORK:START — copy the origin fork-point checkpoint ref onto the new
+    // thread's turn-0 ref. Returns false when the source ref is missing.
+    readonly forkBaseline: (
+      input: ForkBaselineInput,
+    ) => Effect.Effect<boolean, CheckpointStoreError>;
+    // SCIENT-FORK:END
   }
 >()("t3/checkpointing/CheckpointStore") {}
 
@@ -157,6 +172,15 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.deleteCheckpointRefs(input);
   });
 
+  // SCIENT-FORK:START — fork baseline facade (delegates to the active VCS driver).
+  const forkBaseline: CheckpointStore["Service"]["forkBaseline"] = Effect.fn("forkBaseline")(
+    function* (input) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.forkBaseline", input.cwd);
+      return yield* checkpoints.forkBaseline(input);
+    },
+  );
+  // SCIENT-FORK:END
+
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
@@ -164,6 +188,9 @@ export const make = Effect.gen(function* () {
     restoreCheckpoint,
     diffCheckpoints,
     deleteCheckpointRefs,
+    // SCIENT-FORK:START
+    forkBaseline,
+    // SCIENT-FORK:END
   });
 });
 

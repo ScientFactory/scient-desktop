@@ -56,6 +56,8 @@ describe("CheckpointDiffQuery.layer", () => {
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
+        // SCIENT-FORK: stub for the added forkBaseline method (unused by diff-query tests).
+        forkBaseline: () => Effect.succeed(false),
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd, ignoreWhitespace }) =>
@@ -165,6 +167,8 @@ describe("CheckpointDiffQuery.layer", () => {
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
+        // SCIENT-FORK: stub for the added forkBaseline method (unused by diff-query tests).
+        forkBaseline: () => Effect.succeed(false),
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd, ignoreWhitespace }) =>
@@ -254,6 +258,8 @@ describe("CheckpointDiffQuery.layer", () => {
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
+        // SCIENT-FORK: stub for the added forkBaseline method (unused by diff-query tests).
+        forkBaseline: () => Effect.succeed(false),
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: ({ ignoreWhitespace }) =>
@@ -323,6 +329,8 @@ describe("CheckpointDiffQuery.layer", () => {
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
+        // SCIENT-FORK: stub for the added forkBaseline method (unused by diff-query tests).
+        forkBaseline: () => Effect.succeed(false),
         hasCheckpointRef: () =>
           Effect.sync(() => {
             hasCheckpointRefCallCount += 1;
@@ -381,6 +389,8 @@ describe("CheckpointDiffQuery.layer", () => {
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
+        // SCIENT-FORK: stub for the added forkBaseline method (unused by diff-query tests).
+        forkBaseline: () => Effect.succeed(false),
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: () => Effect.succeed(""),

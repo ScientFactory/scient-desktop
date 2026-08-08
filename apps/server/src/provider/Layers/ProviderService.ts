@@ -74,6 +74,14 @@ const ProviderRollbackConversationInput = Schema.Struct({
   numTurns: NonNegativeInt,
 });
 
+// SCIENT-FORK:START
+const ProviderForkConversationInput = Schema.Struct({
+  originThreadId: ThreadId,
+  cwd: Schema.optional(Schema.String),
+  lastTurnId: Schema.optional(Schema.String),
+});
+// SCIENT-FORK:END
+
 function toValidationError(
   operation: string,
   issue: string,
@@ -1014,6 +1022,48 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  // SCIENT-FORK:START
+  const forkConversation: ProviderServiceMethod<"forkConversation"> = Effect.fn("forkConversation")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.forkConversation",
+        schema: ProviderForkConversationInput,
+        payload: rawInput,
+      });
+      let metricProvider = "unknown";
+      return yield* Effect.gen(function* () {
+        const routed = yield* resolveRoutableSession({
+          threadId: input.originThreadId,
+          operation: "ProviderService.forkConversation",
+          allowRecovery: true,
+        });
+        metricProvider = routed.adapter.provider;
+        yield* Effect.annotateCurrentSpan({
+          "provider.operation": "fork-conversation",
+          "provider.kind": routed.adapter.provider,
+          "provider.thread_id": input.originThreadId,
+        });
+        const { forkedProviderThreadId } = yield* routed.adapter.forkThread(routed.threadId, {
+          cwd: input.cwd,
+          lastTurnId: input.lastTurnId,
+        });
+        yield* analytics.record("provider.conversation.forked", {
+          provider: routed.adapter.provider,
+        });
+        return { forkedProviderThreadId };
+      }).pipe(
+        withMetrics({
+          counter: providerTurnsTotal,
+          outcomeAttributes: () =>
+            providerMetricAttributes(metricProvider, {
+              operation: "fork",
+            }),
+        }),
+      );
+    },
+  );
+  // SCIENT-FORK:END
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
@@ -1085,6 +1135,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
+    // SCIENT-FORK:START
+    forkConversation,
+    // SCIENT-FORK:END
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

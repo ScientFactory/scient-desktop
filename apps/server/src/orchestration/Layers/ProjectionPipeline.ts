@@ -54,6 +54,12 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+// SCIENT-FORK:START — Scient-owned lineage projector (folds thread.forked).
+import {
+  SCIENT_FORK_LINEAGE_PROJECTOR_NAME,
+  applyScientThreadLineageProjection,
+} from "../scient-fork/lineageProjection.ts";
+// SCIENT-FORK:END
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -65,6 +71,9 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  // SCIENT-FORK:START
+  scientThreadLineage: SCIENT_FORK_LINEAGE_PROJECTOR_NAME,
+  // SCIENT-FORK:END
 } as const;
 
 type ProjectorName =
@@ -1615,6 +1624,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
       },
+      // SCIENT-FORK:START — delegate thread.forked folding to the Scient module.
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.scientThreadLineage,
+        apply: (event) => applyScientThreadLineageProjection(event, sql),
+      },
+      // SCIENT-FORK:END
     ];
 
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (

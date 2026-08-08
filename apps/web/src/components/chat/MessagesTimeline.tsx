@@ -53,6 +53,9 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  // SCIENT-FORK:START
+  GitFork as GitForkIcon,
+  // SCIENT-FORK:END
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -91,6 +94,10 @@ import {
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+// SCIENT-FORK:START — reuse the shared dropdown-menu primitive so the fork
+// control can always ask the workspace substrate (new worktree vs local).
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+// SCIENT-FORK:END
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -139,6 +146,13 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  // SCIENT-FORK:START — optional so non-fork callers/tests are unaffected.
+  // `| undefined` is explicit for exactOptionalPropertyTypes: the shared-state
+  // object always carries the key (possibly undefined) so rows can gate on it.
+  onForkUserMessage?:
+    | ((messageId: MessageId, workspaceMode: "new-worktree" | "local") => void)
+    | undefined;
+  // SCIENT-FORK:END
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -210,6 +224,9 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  // SCIENT-FORK:START
+  onForkUserMessage?: (messageId: MessageId, workspaceMode: "new-worktree" | "local") => void;
+  // SCIENT-FORK:END
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -257,6 +274,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  // SCIENT-FORK:START
+  onForkUserMessage,
+  // SCIENT-FORK:END
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -482,6 +502,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      // SCIENT-FORK:START — expose the fork trigger to rows via context.
+      onForkUserMessage,
+      // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -498,6 +521,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      // SCIENT-FORK:START
+      onForkUserMessage,
+      // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -1035,6 +1061,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+            {/* SCIENT-FORK:START — fork sits beside revert; only shown when a
+                fork handler is wired and this message has a resolvable turn
+                boundary (same condition that enables revert). */}
+            {canRevertAgentWork && ctx.onForkUserMessage && (
+              <ForkUserMessageButton messageId={row.message.id} />
+            )}
+            {/* SCIENT-FORK:END */}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -1069,6 +1102,50 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
     </Tooltip>
   );
 }
+
+// SCIENT-FORK:START — mirrors RevertUserMessageButton's ghost/icon style and
+// disabled guard, but the product "always asks" the workspace substrate, so the
+// control is a dropdown menu offering new-worktree vs local instead of a single
+// action. Each item forwards the chosen mode to the wired handler.
+function ForkUserMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+  const disabled = activity.isRevertingCheckpoint || activity.isWorking;
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={disabled}
+            aria-label="Fork conversation from this message"
+            title="Fork conversation from this message"
+          />
+        }
+      >
+        <GitForkIcon className="size-3" />
+      </MenuTrigger>
+      <MenuPopup align="end">
+        <MenuItem
+          onClick={() => ctx.onForkUserMessage?.(messageId, "new-worktree")}
+          aria-label="Fork into a new worktree"
+        >
+          Fork · new worktree
+        </MenuItem>
+        <MenuItem
+          onClick={() => ctx.onForkUserMessage?.(messageId, "local")}
+          aria-label="Fork in the current workspace"
+        >
+          Fork · here
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
+// SCIENT-FORK:END
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);

@@ -68,6 +68,14 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateKind: "project",
         aggregateId: command.projectId,
       };
+    // SCIENT-FORK:START — thread.fork carries newThreadId, not threadId; route it
+    // to the new aggregate so span/receipt bookkeeping resolves an id.
+    case "thread.fork":
+      return {
+        aggregateKind: "thread",
+        aggregateId: command.newThreadId,
+      };
+    // SCIENT-FORK:END
     default:
       return {
         aggregateKind: "thread",

@@ -174,6 +174,9 @@ describe("ProviderSessionReaper", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      // SCIENT-FORK:START
+      forkConversation: () => unsupported(),
+      // SCIENT-FORK:END
       streamEvents: Stream.empty,
     };
 

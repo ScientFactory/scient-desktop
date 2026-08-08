@@ -1682,6 +1682,22 @@ export function makeOpenCodeAdapter(
       },
     );
 
+    // SCIENT-FORK:START
+    // Native `thread/fork` is Codex-only. Mirror the typed unsupported-op
+    // pattern (ProviderAdapterRequestError) used for provider ops OpenCode
+    // cannot serve.
+    const forkThread: OpenCodeAdapterShape["forkThread"] = Effect.fn("forkThread")(
+      function* (threadId, _input) {
+        yield* ensureSessionContext(sessions, threadId);
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/fork",
+          detail: "OpenCode sessions do not support provider-side fork yet.",
+        });
+      },
+    );
+    // SCIENT-FORK:END
+
     const stopAll: OpenCodeAdapterShape["stopAll"] = () =>
       Effect.gen(function* () {
         const contexts = [...sessions.values()];
@@ -1712,6 +1728,9 @@ export function makeOpenCodeAdapter(
       hasSession,
       readThread,
       rollbackThread,
+      // SCIENT-FORK:START
+      forkThread,
+      // SCIENT-FORK:END
       stopAll,
       get streamEvents() {
         return Stream.fromQueue(runtimeEvents);

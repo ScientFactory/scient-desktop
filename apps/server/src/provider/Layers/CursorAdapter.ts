@@ -1129,6 +1129,21 @@ export function makeCursorAdapter(
         return { threadId, turns: ctx.turns };
       });
 
+    // SCIENT-FORK:START
+    // Native `thread/fork` is Codex-only. Mirror the typed unsupported-op
+    // pattern (ProviderAdapterRequestError) used for provider ops Cursor
+    // cannot serve.
+    const forkThread: CursorAdapterShape["forkThread"] = (threadId, _input) =>
+      Effect.gen(function* () {
+        yield* requireSession(threadId);
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/fork",
+          detail: "Cursor sessions do not support provider-side fork yet.",
+        });
+      });
+    // SCIENT-FORK:END
+
     const stopSession: CursorAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -1170,6 +1185,9 @@ export function makeCursorAdapter(
       interruptTurn,
       readThread,
       rollbackThread,
+      // SCIENT-FORK:START
+      forkThread,
+      // SCIENT-FORK:END
       respondToRequest,
       respondToUserInput,
       stopSession,

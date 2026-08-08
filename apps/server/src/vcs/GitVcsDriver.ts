@@ -859,6 +859,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         );
       },
     ),
+    // SCIENT-FORK:START — fork baseline: point a new thread's turn-0 checkpoint ref
+    // at the origin fork-point commit. Reuses resolveCheckpointCommit + update-ref.
+    forkBaseline: Effect.fn("GitVcsDriver.checkpoints.forkBaseline")(function* (input) {
+      const commitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+      if (commitOid === null) {
+        return false;
+      }
+      yield* execute({
+        operation: "GitVcsDriver.checkpoints.forkBaseline",
+        cwd: input.cwd,
+        args: ["update-ref", input.toCheckpointRef, commitOid],
+      });
+      return true;
+    }),
+    // SCIENT-FORK:END
   };
 
   return {

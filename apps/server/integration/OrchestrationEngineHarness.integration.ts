@@ -57,6 +57,9 @@ import { OrchestrationReactorLive } from "../src/orchestration/Layers/Orchestrat
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
+// SCIENT-FORK:START
+import { ScientForkReactor } from "../src/orchestration/Services/ScientForkReactor.ts";
+// SCIENT-FORK:END
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -369,6 +372,14 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
+      // SCIENT-FORK:START
+      Layer.provideMerge(
+        Layer.succeed(ScientForkReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+        }),
+      ),
+      // SCIENT-FORK:END
       Layer.provideMerge(
         Layer.succeed(ThreadDeletionReactor, {
           start: () => Effect.void,

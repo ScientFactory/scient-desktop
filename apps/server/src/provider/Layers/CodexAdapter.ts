@@ -1890,6 +1890,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   };
 
+  // SCIENT-FORK:START
+  const forkThread: CodexAdapterShape["forkThread"] = (threadId, input) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.forkThread(input)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/fork", cause),
+      ),
+    );
+  // SCIENT-FORK:END
+
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -1977,6 +1989,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    // SCIENT-FORK:START
+    forkThread,
+    // SCIENT-FORK:END
     respondToRequest,
     respondToUserInput,
     stopSession,

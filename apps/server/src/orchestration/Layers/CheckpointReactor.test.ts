@@ -87,6 +87,15 @@ function createProviderServiceHarness(
   const rollbackConversation = vi.fn(
     (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );
+  // SCIENT-FORK:START
+  const forkConversation = vi.fn(
+    (_input: {
+      readonly originThreadId: ThreadId;
+      readonly cwd?: string;
+      readonly lastTurnId?: string;
+    }) => Effect.succeed({ forkedProviderThreadId: "provider-thread-forked-1" }),
+  );
+  // SCIENT-FORK:END
 
   const unsupported = <A>() =>
     Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
@@ -125,6 +134,9 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
+    // SCIENT-FORK:START
+    forkConversation,
+    // SCIENT-FORK:END
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
@@ -137,6 +149,9 @@ function createProviderServiceHarness(
   return {
     service,
     rollbackConversation,
+    // SCIENT-FORK:START
+    forkConversation,
+    // SCIENT-FORK:END
     emit,
   };
 }

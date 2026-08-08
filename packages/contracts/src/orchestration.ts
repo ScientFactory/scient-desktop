@@ -851,6 +851,41 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// SCIENT-FORK:START — Scient-owned conversation-fork command (additive union member).
+// Forks the origin thread at a completed turn boundary into a NEW independent
+// thread. The origin is never mutated. `createdAt` is intentionally absent: the
+// decider stamps fork/lineage events with server time (like thread.delete),
+// while re-emitted prefix events preserve their original message timestamps.
+// Workspace substrate choice, made explicitly at fork time (the product "always
+// asks"): "new-worktree" provisions a fresh worktree branched from the fork
+// point; "local" reuses the origin thread's workspace.
+export const OrchestrationForkWorkspaceMode = Schema.Literals(["new-worktree", "local"]);
+export type OrchestrationForkWorkspaceMode = typeof OrchestrationForkWorkspaceMode.Type;
+
+// The fidelity a fork actually achieved. "chat-only": event-spine only (no provider
+// session carried). "native-session": the provider natively forked its session
+// (Codex thread/fork). "replay": the session was re-seeded from the transcript.
+// The decider records the initial "chat-only" intent; the fork reactor resolves the
+// final mode after it performs the provider/checkpoint side effects.
+export const OrchestrationForkFidelityMode = Schema.Literals([
+  "chat-only",
+  "native-session",
+  "replay",
+]);
+export type OrchestrationForkFidelityMode = typeof OrchestrationForkFidelityMode.Type;
+
+export const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  originThreadId: ThreadId,
+  newThreadId: ThreadId,
+  forkAtTurnCount: NonNegativeInt,
+  workspaceMode: OrchestrationForkWorkspaceMode,
+  title: Schema.optional(TrimmedNonEmptyString),
+});
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
+// SCIENT-FORK:END
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -874,6 +909,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  // SCIENT-FORK:START
+  ThreadForkCommand,
+  // SCIENT-FORK:END
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -901,6 +939,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  // SCIENT-FORK:START
+  ThreadForkCommand,
+  // SCIENT-FORK:END
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -969,6 +1010,18 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// SCIENT-FORK:START — internal command: the fork reactor reports the fidelity it
+// actually achieved after establishing the fork's substrates. `threadId` is the
+// NEW (forked) thread. Mirrors thread.revert.complete.
+const ThreadForkCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  fidelityMode: OrchestrationForkFidelityMode,
+  createdAt: IsoDateTime,
+});
+// SCIENT-FORK:END
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -985,6 +1038,9 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  // SCIENT-FORK:START
+  ThreadForkCompleteCommand,
+  // SCIENT-FORK:END
   ThreadTitleRegenerationCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
@@ -1024,6 +1080,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  // SCIENT-FORK:START
+  "thread.forked",
+  "thread.fork-completed",
+  // SCIENT-FORK:END
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1213,6 +1273,25 @@ export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
 });
+
+// SCIENT-FORK:START — fork lineage payloads (OrchestrationForkFidelityMode is
+// defined earlier, next to OrchestrationForkWorkspaceMode).
+export const ThreadForkedPayload = Schema.Struct({
+  originThreadId: ThreadId,
+  newThreadId: ThreadId,
+  forkAtTurnCount: NonNegativeInt,
+  workspaceMode: OrchestrationForkWorkspaceMode,
+  fidelityMode: OrchestrationForkFidelityMode,
+  createdAt: IsoDateTime,
+});
+export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
+
+export const ThreadForkCompletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  fidelityMode: OrchestrationForkFidelityMode,
+});
+export type ThreadForkCompletedPayload = typeof ThreadForkCompletedPayload.Type;
+// SCIENT-FORK:END
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1407,6 +1486,18 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  // SCIENT-FORK:START
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.forked"),
+    payload: ThreadForkedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.fork-completed"),
+    payload: ThreadForkCompletedPayload,
+  }),
+  // SCIENT-FORK:END
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 

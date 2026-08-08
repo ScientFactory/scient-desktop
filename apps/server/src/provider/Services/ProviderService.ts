@@ -105,6 +105,19 @@ export interface ProviderServiceShape {
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
 
+  // SCIENT-FORK:START
+  /**
+   * Natively fork a provider conversation, continuing the origin thread's
+   * provider session in a new provider thread. Resolves to the forked
+   * provider thread id for a downstream reactor to persist/route.
+   */
+  readonly forkConversation: (input: {
+    readonly originThreadId: ThreadId;
+    readonly cwd?: string;
+    readonly lastTurnId?: string;
+  }) => Effect.Effect<{ readonly forkedProviderThreadId: string }, ProviderServiceError>;
+  // SCIENT-FORK:END
+
   /**
    * Canonical provider runtime event stream.
    *

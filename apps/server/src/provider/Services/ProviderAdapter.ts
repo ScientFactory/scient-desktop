@@ -114,6 +114,21 @@ export interface ProviderAdapterShape<TError> {
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
+  // SCIENT-FORK:START
+  /**
+   * Natively fork a provider thread, continuing the origin thread's provider
+   * session in a NEW provider thread. Resolves to the forked provider thread
+   * id. Non-native providers reject with a typed "unsupported" adapter error.
+   */
+  readonly forkThread: (
+    threadId: ThreadId,
+    input: {
+      readonly lastTurnId?: string | undefined;
+      readonly cwd?: string | undefined;
+    },
+  ) => Effect.Effect<{ readonly forkedProviderThreadId: string }, TError>;
+  // SCIENT-FORK:END
+
   /**
    * Stop all sessions owned by this adapter.
    */
