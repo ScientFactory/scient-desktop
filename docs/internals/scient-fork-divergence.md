@@ -117,8 +117,8 @@ internals:
 - `apps/server/src/orchestration/scient-fork/ForkCheckpointBaseline.ts`
 - `apps/server/src/orchestration/scient-fork/ForkContextBootstrap.ts`
 - `apps/server/src/orchestration/scient-fork/forkDecisionReadModel.ts`
+- `apps/server/src/orchestration/scient-fork/forkBoundaryTypes.ts`
 - `apps/server/src/orchestration/scient-fork/ForkBoundaryReadModel.ts`
-- `apps/server/src/orchestration/scient-fork/forkBoundaryProjection.ts`
 - `apps/server/src/orchestration/Services/ScientForkReactor.ts`
 - `apps/server/src/orchestration/Layers/ScientForkReactor.ts`
 - `apps/web/src/components/chat/scient-fork/ScientForkMessageButton.tsx`
@@ -134,6 +134,94 @@ ledger. It never consumes or predicts a T3 numbered migration. The
 `fidelity_mode` column is retained solely to upgrade Claude prototype databases;
 `provider_mode`, `checkpoint_status`, and `workspace_status` are the current
 explicit authorities.
+
+## PR 14: server-owned boundary resolution
+
+PR 14 moves fork boundary authority from client-shaped thread snapshots to a
+Scient-owned server resolver. The public fork command carries only four
+fields: `originThreadId`, `newThreadId`, `sourceAssistantMessageId`, and
+`workspaceMode`. The server independently queries SQL-backed
+`projection_turns` joined with `scient_thread_lineage` to resolve the exact
+completed assistant boundary, its turn ID, conversation count, and checkpoint
+eligibility. The client never supplies boundary arrays, turn counts, checkpoint
+relationships, or caller titles.
+
+### Boundary ownership
+
+```text
+client assistant-message ID
+        |
+        v
+Scient server boundary resolver (ForkBoundaryReadModel)
+        |
+        +--> authoritative turn/count/checkpoint decision
+        +--> retained transcript prefix selection
+        +--> durable lineage and provisioning
+        +--> narrow baseline marker metadata for client presentation
+```
+
+The resolver (`makeForkBoundaryResolver`) queries SQL at resolution time,
+independent of any cached snapshot. The pure fork decider (`forkThread`)
+consumes the resolved boundaries exclusively and does not read
+`origin.conversationForkBoundaries` from the read model. The
+`OrchestrationEngine` hydrates only the requested origin detail inside the
+serialized command worker, then delegates to the resolver before calling the
+decider. Missing origin detail or boundary resolution fails closed; production
+code never synthesizes conversation authority from Git checkpoints or cached
+snapshot arrays.
+
+### Projection state narrowing
+
+Complete boundary arrays have been removed from global shell snapshots and
+ordinary client thread detail. The client receives only a narrow lineage
+marker (`originThreadId` and `baselineAssistantMessageId`) from
+`scient_thread_lineage`, sufficient for presentation and navigation. Server
+detail queries may retain an internal boundary representation for authoritative
+resolution, but that representation is not a client-wide contract.
+
+### Snapshot watermark coverage
+
+`REQUIRED_SNAPSHOT_PROJECTORS` includes `threadTurns` (writes
+`projection_turns`) and `scientThreadLineage` (writes `scient_thread_lineage`)
+so the reported `snapshotSequence` cannot advance ahead of the projectors
+whose tables the snapshot queries for fork-boundary, checkpoint, or
+latest-turn data. The prior PR 13 baseline omitted both while including the
+no-op `checkpoints` projector; PR 14 closes this gap.
+
+### Bootstrap projector ordering
+
+During bootstrap and restart replay, `scientThreadLineage` completes its pass
+before `threadMessages` and `threadTurns`, because revert projection reads
+`baseline_turn_id` from `scient_thread_lineage` to decide which baseline row
+to preserve while trimming later turns. `threadTurns` also bootstraps before
+`threadMessages`, `threadActivities`, and `threadProposedPlans` because those
+projectors list `projection_turns` during revert replay. If lineage or turns
+have not yet projected when revert events replay, baselines can be dropped or
+orphaned.
+
+### T3 migration isolation
+
+T3 owns `effect_sql_migrations`; Scient owns `scient_schema_migrations`. Both
+ledgers use integer IDs starting from 1, but they are separate tables in the
+same SQLite database. The Scient schema bootstrap (`ensureScientForkSchema`)
+never inserts into, deletes from, or modifies T3's migration ledger or
+numbering. Cross-area integration tests verify this separation on fresh
+startup.
+
+### Cross-area integration tests
+
+`apps/server/src/orchestration/scient-fork/crossArea.test.ts` exercises the
+full resolver-to-projection-to-lineage flow:
+
+- **VAL-CROSS-005:** A non-final selected assistant remains the exact endpoint
+  across the SQL read model, decider prefix, fork event payload, destination
+  projection, and Scient lineage row.
+- **VAL-CROSS-010:** Revert preserves the immutable baseline, removes later
+  projection boundaries, permits a fork at or before the revert point, and
+  rejects a reverted-away assistant with no side effects.
+- **Fresh startup:** A fresh in-memory SQLite startup creates both migration
+  ledgers, the Scient schema, and resolves a valid fork boundary. The T3
+  ledger remains unchanged after Scient schema operations.
 
 ## Narrow T3-owned seams
 

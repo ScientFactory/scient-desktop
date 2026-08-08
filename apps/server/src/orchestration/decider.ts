@@ -22,6 +22,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 // SCIENT-FORK:START — delegate the Scient-owned thread.fork command out of T3.
+import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
 import { forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
 
@@ -218,9 +219,16 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  resolvedForkBoundaries,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  /**
+   * Scient-owned authoritative fork boundaries resolved from SQL. Required
+   * for every `thread.fork` command. The production engine fail-closes when
+   * this is missing; there is no snapshot/checkpoint fallback.
+   */
+  readonly resolvedForkBoundaries?: ResolvedForkBoundaries;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -1368,8 +1376,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     // SCIENT-FORK:START — all fork logic lives in scient-fork/forkDecider.ts.
-    case "thread.fork":
-      return yield* forkThread({ command, readModel });
+    case "thread.fork": {
+      if (resolvedForkBoundaries === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: "thread.fork",
+          detail:
+            "Authoritative fork boundaries are required. The server must resolve the clicked assistant response from SQL before deciding a fork.",
+        });
+      }
+      return yield* forkThread({
+        command,
+        readModel,
+        resolvedBoundaries: resolvedForkBoundaries,
+      });
+    }
 
     case "thread.fork.complete": {
       yield* requireThread({

@@ -320,6 +320,18 @@ export const OrchestrationForkBoundary = Schema.Struct({
 export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
 export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
   boundary.conversationTurnCount === 0 && boundary.turnId !== null;
+
+/**
+ * Narrow fork-lineage marker carried by shell and detail payloads. Replaces
+ * the complete `conversationForkBoundaries` array in client-facing state with
+ * just the presentation metadata the UI needs: the origin thread and the
+ * inherited baseline assistant message. Plain threads expose no marker.
+ */
+export const OrchestrationForkLineage = Schema.Struct({
+  originThreadId: ThreadId,
+  baselineAssistantMessageId: Schema.NullOr(MessageId),
+});
+export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
 // SCIENT-FORK:END
 
 export const OrchestrationThreadActivityTone = Schema.Literals([
@@ -410,9 +422,13 @@ export const OrchestrationThread = Schema.Struct({
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
-  // Optional on the wire so older servers and cached snapshots remain readable.
-  // Unlike checkpoints, these boundaries also exist for completed non-Git turns.
+  // Legacy decode-only residue for older cached snapshots. Current servers no
+  // longer populate this array; fork authority comes from SQL resolution and
+  // the narrow `forkLineage` marker. Removable after older cache epochs age out.
   conversationForkBoundaries: Schema.optional(Schema.Array(OrchestrationForkBoundary)),
+  // Narrow lineage marker for forked threads. Absent on plain threads and
+  // old servers; survives shell/detail reloads, windowing, and sequence gaps.
+  forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
   session: Schema.NullOr(OrchestrationSession),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
@@ -486,6 +502,9 @@ export const OrchestrationThreadShell = Schema.Struct({
       }),
     ),
   ),
+  // Narrow fork-lineage marker for shell rows. Absent on plain threads and
+  // old servers; the shell snapshot populates it from scient_thread_lineage.
+  forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

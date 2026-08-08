@@ -46,6 +46,7 @@ import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
+import type { ResolvedForkBoundaries } from "./forkBoundaryTypes.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -165,8 +166,16 @@ function retainPrefixMessages(
 const invariant = (detail: string): OrchestrationCommandInvariantError =>
   new OrchestrationCommandInvariantError({ commandType: "thread.fork", detail });
 
-function deriveForkTitle(origin: OrchestrationThread, readModel: OrchestrationReadModel): string {
-  const isForkedOrigin = origin.conversationForkBoundaries?.some(isForkBaselineBoundary) === true;
+function deriveForkTitle(
+  origin: OrchestrationThread,
+  readModel: OrchestrationReadModel,
+  resolvedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
+): string {
+  // Title numbering may consult server-resolved boundaries plus the durable
+  // narrow lineage marker. Client-shaped conversationForkBoundaries are never
+  // authority for production naming.
+  const isForkedOrigin =
+    resolvedBoundaries.some(isForkBaselineBoundary) || origin.forkLineage != null;
   const sameProjectThreads = readModel.threads.filter(
     (thread) => thread.projectId === origin.projectId,
   );
@@ -197,13 +206,24 @@ function deriveForkTitle(origin: OrchestrationThread, readModel: OrchestrationRe
  * Emits, in order: `thread.created` (new aggregate) → re-emitted prefix
  * `thread.message-sent` events → `thread.forked` (lineage). Never emits against
  * the origin thread.
+ *
+ * Production callers must supply {@link ResolvedForkBoundaries} from the
+ * Scient-owned SQL resolver. There is intentionally no production fallback to
+ * snapshot boundary arrays or checkpoint synthesis.
  */
 export const forkThread = Effect.fn("scientForkThread")(function* ({
   command,
   readModel,
+  resolvedBoundaries,
 }: {
   readonly command: ThreadForkCommand;
   readonly readModel: OrchestrationReadModel;
+  /**
+   * Authoritative server-owned boundaries for this fork request. Required on
+   * every production and test path so checkpoints and cached snapshot arrays
+   * cannot silently become conversation-completion authority.
+   */
+  readonly resolvedBoundaries: ResolvedForkBoundaries;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -227,30 +247,29 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     threadId: command.newThreadId,
   });
 
-  const conversationBoundaries = origin.conversationForkBoundaries ?? [
-    {
-      turnId: null,
-      conversationTurnCount: 0,
-      userMessageId: null,
-      assistantMessageId: null,
-      completedAt: origin.createdAt,
-      checkpointTurnCount: null,
-      checkpointStatus: null,
-    },
-    ...origin.checkpoints.map((checkpoint) => ({
-      turnId: checkpoint.turnId,
-      conversationTurnCount: checkpoint.checkpointTurnCount,
-      userMessageId: null,
-      assistantMessageId: checkpoint.assistantMessageId,
-      completedAt: checkpoint.completedAt,
-      checkpointTurnCount: checkpoint.checkpointTurnCount,
-      checkpointStatus: checkpoint.status,
-    })),
-  ];
-  const selectedBoundary = conversationBoundaries.find(
-    (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
-  );
-  if (!selectedBoundary) {
+  if (
+    resolvedBoundaries.originThreadId !== command.originThreadId ||
+    resolvedBoundaries.sourceAssistantMessageId !== command.sourceAssistantMessageId
+  ) {
+    return yield* invariant(
+      `Authoritative fork boundaries do not match the public fork request for origin thread '${command.originThreadId}'.`,
+    );
+  }
+
+  const conversationBoundaries = resolvedBoundaries.boundaries;
+  // Re-select from the authoritative list so a malformed resolver result
+  // cannot smuggle selected-boundary metadata that is absent from that list.
+  const selectedBoundary =
+    conversationBoundaries.find(
+      (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
+    ) ?? null;
+  if (
+    selectedBoundary === null ||
+    selectedBoundary.turnId !== resolvedBoundaries.selectedBoundary.turnId ||
+    selectedBoundary.conversationTurnCount !==
+      resolvedBoundaries.selectedBoundary.conversationTurnCount ||
+    selectedBoundary.assistantMessageId !== resolvedBoundaries.selectedBoundary.assistantMessageId
+  ) {
     return yield* invariant(
       `Assistant message '${command.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`,
     );
@@ -270,7 +289,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `Assistant message '${command.sourceAssistantMessageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,
     );
   }
-  const forkTitle = deriveForkTitle(origin, readModel);
+  const forkTitle = deriveForkTitle(origin, readModel, conversationBoundaries);
 
   const retainedBoundaries = conversationBoundaries.filter(
     (boundary) => boundary.conversationTurnCount <= selectedBoundary.conversationTurnCount,

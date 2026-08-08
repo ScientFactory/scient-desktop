@@ -5,10 +5,28 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationForkBoundary,
+  type OrchestrationForkLineage,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+
+import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { resolveForkBoundariesFromList } from "./forkBoundaryTypes.ts";
+
+/**
+ * Error raised when the Scient-owned resolver cannot find or validate a fork
+ * boundary from SQL-backed projection and lineage data.
+ */
+export class ForkBoundaryResolutionError extends Schema.TaggedErrorClass<ForkBoundaryResolutionError>()(
+  "ForkBoundaryResolutionError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return `Fork boundary resolution failed: ${this.detail}`;
+  }
+}
 
 export const ProjectionForkBoundaryRow = Schema.Struct({
   threadId: ThreadId,
@@ -60,28 +78,6 @@ export function mapForkBoundaries(
 
 export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
   return {
-    listForkBoundaryRows: SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: ProjectionForkBoundaryRow,
-      execute: () => sql`
-        SELECT
-          turns.thread_id AS "threadId",
-          turns.turn_id AS "turnId",
-          turns.pending_message_id AS "userMessageId",
-          turns.assistant_message_id AS "assistantMessageId",
-          turns.completed_at AS "completedAt",
-          turns.checkpoint_turn_count AS "checkpointTurnCount",
-          turns.checkpoint_status AS "checkpointStatus",
-          CASE WHEN lineage.baseline_turn_id = turns.turn_id THEN 1 ELSE 0 END AS "isForkBaseline"
-        FROM projection_turns AS turns
-        LEFT JOIN scient_thread_lineage AS lineage
-          ON lineage.thread_id = turns.thread_id
-        WHERE turns.turn_id IS NOT NULL
-          AND turns.state = 'completed'
-          AND turns.completed_at IS NOT NULL
-        ORDER BY turns.thread_id ASC, turns.requested_at ASC, turns.turn_id ASC
-      `,
-    }),
     listForkBoundaryRowsByThread: SqlSchema.findAll({
       Request: Schema.Struct({ threadId: ThreadId }),
       Result: ProjectionForkBoundaryRow,
@@ -106,4 +102,111 @@ export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
       `,
     }),
   } as const;
+}
+
+/**
+ * Row schema for the narrow fork-lineage marker read from
+ * `scient_thread_lineage`.
+ */
+export const ProjectionForkLineageRow = Schema.Struct({
+  threadId: ThreadId,
+  originThreadId: ThreadId,
+  baselineAssistantMessageId: Schema.NullOr(MessageId),
+});
+export type ProjectionForkLineageRow = typeof ProjectionForkLineageRow.Type;
+
+/**
+ * SQL queries for the narrow fork-lineage marker. The marker carries only
+ * the origin thread ID and inherited baseline assistant message ID needed
+ * for client presentation; it replaces the complete boundary array in
+ * shell and detail payloads.
+ */
+export function makeForkLineageQueries(sql: SqlClient.SqlClient) {
+  return {
+    listForkLineageRows: SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: ProjectionForkLineageRow,
+      execute: () => sql`
+        SELECT
+          thread_id AS "threadId",
+          forked_from_thread_id AS "originThreadId",
+          baseline_assistant_message_id AS "baselineAssistantMessageId"
+        FROM scient_thread_lineage
+        ORDER BY thread_id ASC
+      `,
+    }),
+    getForkLineageRowByThread: SqlSchema.findOneOption({
+      Request: Schema.Struct({ threadId: ThreadId }),
+      Result: ProjectionForkLineageRow,
+      execute: ({ threadId }) => sql`
+        SELECT
+          thread_id AS "threadId",
+          forked_from_thread_id AS "originThreadId",
+          baseline_assistant_message_id AS "baselineAssistantMessageId"
+        FROM scient_thread_lineage
+        WHERE thread_id = ${threadId}
+        LIMIT 1
+      `,
+    }),
+  } as const;
+}
+
+/**
+ * Map a lineage row to the narrow contract marker, or null if absent.
+ */
+export function toForkLineageMarker(
+  row: ProjectionForkLineageRow | undefined,
+): OrchestrationForkLineage | null {
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    originThreadId: row.originThreadId,
+    baselineAssistantMessageId: row.baselineAssistantMessageId,
+  };
+}
+
+/**
+ * Create a Scient-owned authoritative fork boundary resolver.
+ *
+ * The resolver queries SQL-backed `projection_turns` joined with
+ * `scient_thread_lineage` at resolution time, independent of any cached
+ * snapshot or client-shaped boundary array. It finds the exact completed
+ * assistant boundary matching the public request and returns it together
+ * with all resolved boundaries for retained-prefix derivation.
+ *
+ * The pure decider consumes the returned {@link ResolvedForkBoundaries}
+ * without reading `origin.conversationForkBoundaries` from the read model.
+ */
+export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
+  const { listForkBoundaryRowsByThread } = makeForkBoundaryQueries(sql);
+
+  const resolve = Effect.fn("resolveForkBoundaries")(function* (input: {
+    readonly originThreadId: ThreadId;
+    readonly sourceAssistantMessageId: MessageId;
+    readonly threadCreatedAt: string;
+  }) {
+    const rows = yield* listForkBoundaryRowsByThread({ threadId: input.originThreadId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ForkBoundaryResolver.resolve:listForkBoundaryRowsByThread"),
+      ),
+    );
+
+    const boundaries = mapForkBoundaries(rows, input.threadCreatedAt);
+
+    const resolved = resolveForkBoundariesFromList({
+      originThreadId: input.originThreadId,
+      sourceAssistantMessageId: input.sourceAssistantMessageId,
+      boundaries,
+    });
+    if (resolved === null) {
+      return yield* new ForkBoundaryResolutionError({
+        detail: `Assistant message '${input.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${input.originThreadId}' in SQL projection.`,
+      });
+    }
+
+    return resolved;
+  });
+
+  return { resolve } as const;
 }

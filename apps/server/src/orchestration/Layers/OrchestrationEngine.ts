@@ -39,6 +39,8 @@ import {
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
+import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
+import type { ResolvedForkBoundaries } from "../scient-fork/forkBoundaryTypes.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -95,6 +97,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
+
+  // SCIENT-FORK:START — Scient-owned authoritative boundary resolver. Queries
+  // SQL projection_turns and scient_thread_lineage at fork resolution time,
+  // independent of any cached snapshot, so stale client-shaped boundary
+  // arrays can never override SQL authority.
+  const forkBoundaryResolver = makeForkBoundaryResolver(sql);
+  // SCIENT-FORK:END
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -163,23 +172,47 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // heavy message/checkpoint bodies. Hydrate only the requested origin
         // for a fork, inside the serialized command worker, so forks remain
         // correct after a server restart without bloating every command.
-        const decisionReadModel =
-          envelope.command.type === "thread.fork"
-            ? yield* projectionSnapshotQuery
-                .getThreadDetailById(envelope.command.originThreadId)
-                .pipe(
-                  Effect.map((originOption) =>
-                    Option.isNone(originOption)
-                      ? commandReadModel
-                      : withForkOriginDetail(commandReadModel, originOption.value),
-                  ),
-                )
-            : commandReadModel;
+        // The Scient-owned resolver independently queries SQL for authoritative
+        // boundaries so the pure decider never trusts client-shaped arrays.
+        // Missing origin detail or SQL resolution fails closed; there is no
+        // production fallback to snapshot boundary arrays or checkpoints.
+        let decisionReadModel = commandReadModel;
+        let resolvedForkBoundaries: ResolvedForkBoundaries | undefined;
+        if (envelope.command.type === "thread.fork") {
+          const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
+            envelope.command.originThreadId,
+          );
+          if (Option.isNone(originOption)) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: `Origin thread '${envelope.command.originThreadId}' is not available for authoritative fork resolution.`,
+            });
+          }
+          const origin = originOption.value;
+          decisionReadModel = withForkOriginDetail(commandReadModel, origin);
+          resolvedForkBoundaries = yield* forkBoundaryResolver
+            .resolve({
+              originThreadId: envelope.command.originThreadId,
+              sourceAssistantMessageId: envelope.command.sourceAssistantMessageId,
+              threadCreatedAt: origin.createdAt,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                isOrchestrationCommandInvariantError(cause)
+                  ? cause
+                  : new OrchestrationCommandInvariantError({
+                      commandType: envelope.command.type,
+                      detail: cause instanceof Error ? cause.message : String(cause),
+                    }),
+              ),
+            );
+        }
         // SCIENT-FORK:END
 
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: decisionReadModel,
+          ...(resolvedForkBoundaries !== undefined ? { resolvedForkBoundaries } : {}),
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>

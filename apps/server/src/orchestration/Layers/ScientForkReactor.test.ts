@@ -326,13 +326,10 @@ describe("ScientForkReactor", () => {
       const detail = yield* snapshotQuery.getThreadDetailById(NEW);
       expect(Option.isSome(detail)).toBe(true);
       if (Option.isSome(detail)) {
-        expect(detail.value.conversationForkBoundaries).toEqual([
-          expect.objectContaining({
-            conversationTurnCount: 0,
-            checkpointTurnCount: 0,
-            checkpointStatus: "ready",
-          }),
-        ]);
+        expect(detail.value.forkLineage).toMatchObject({
+          originThreadId: ORIGIN,
+        });
+        expect(detail.value.forkLineage?.baselineAssistantMessageId).not.toBeNull();
       }
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
@@ -471,11 +468,10 @@ describe("ScientForkReactor", () => {
       const detail = yield* snapshotQuery.getThreadDetailById(NEW);
       expect(Option.isSome(detail)).toBe(true);
       if (Option.isSome(detail)) {
-        expect(detail.value.conversationForkBoundaries?.[0]).toMatchObject({
-          conversationTurnCount: 0,
-          checkpointTurnCount: null,
-          checkpointStatus: null,
+        expect(detail.value.forkLineage).toMatchObject({
+          originThreadId: ORIGIN,
         });
+        expect(detail.value.forkLineage?.baselineAssistantMessageId).not.toBeNull();
       }
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
