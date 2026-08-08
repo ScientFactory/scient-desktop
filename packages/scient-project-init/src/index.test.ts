@@ -39,10 +39,13 @@ describe("Scient project initialization", () => {
     const project = renderProjectTemplate("My project");
     const agents = renderAgentsTemplate();
 
-    expect(project).toContain("## Goals and current focus");
-    expect(project).toContain("## Open questions and continuation");
-    expect(agents).toContain("different kinds of projects");
-    expect(agents).toContain("uncertainty, provenance");
+    expect(project).toContain("# My project");
+    expect(project).toContain("## Current focus");
+    expect(project).toContain("## Continuation notes");
+    expect(project).toContain("Remove guidance comments");
+    expect(agents).toContain("Follow explicit user instructions");
+    expect(agents).toContain("first-principles reasoning");
+    expect(agents).toContain("do not update them automatically after every task");
     expect(`${project}\n${agents}`).not.toMatch(/scientific domain|scientific project/iu);
   });
 
@@ -66,7 +69,7 @@ describe("Scient project initialization", () => {
       "# My study",
     );
     expect(await NodeFSP.readFile(NodePath.join(root, SCIENT_AGENTS_FILE), "utf8")).toContain(
-      "Preserve user-authored files",
+      "Preserve user-authored context and instructions",
     );
     expect(
       JSON.parse(await NodeFSP.readFile(NodePath.join(root, SCIENT_IDENTITY_FILE), "utf8")),
