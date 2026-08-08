@@ -5,7 +5,6 @@ import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
   StageBackdropArt,
-  StageBackdropButtonArt,
 } from "./SidebarStageBackdrop";
 
 describe("SidebarStageBackdrop", () => {
@@ -29,7 +28,7 @@ describe("SidebarStageBackdrop", () => {
       const markup = renderToStaticMarkup(
         <>
           <StageBackdropArt variant={variant} />
-          <StageBackdropButtonArt variant={variant} />
+          <StageBackdropArt variant={variant} />
         </>,
       );
 
