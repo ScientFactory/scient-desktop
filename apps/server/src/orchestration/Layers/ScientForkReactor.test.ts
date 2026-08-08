@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -49,6 +50,7 @@ const ORIGIN_WORKTREE = "/tmp/scient-fork-origin-worktree";
 const NEW_WORKTREE_FIXTURE = "/tmp/scient-fork-new-worktree";
 const CREATED_AT = "2026-01-01T00:00:00.000Z";
 const FORK_AT_TURN = 1;
+const SOURCE_ASSISTANT_MESSAGE_ID = MessageId.make("origin-assistant-1");
 
 interface LineageRow {
   readonly thread_id: string;
@@ -198,6 +200,28 @@ const seedOrigin = (checkpointStatus: "ready" | "missing" = "ready") =>
       createdAt: CREATED_AT,
     });
     yield* engine.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-fork-turn-start-1"),
+      threadId: ORIGIN,
+      message: {
+        messageId: MessageId.make("origin-user-1"),
+        role: "user",
+        text: "Investigate the result",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: CREATED_AT,
+    });
+    yield* engine.dispatch({
+      type: "thread.message.assistant.complete",
+      commandId: CommandId.make("cmd-fork-assistant-complete-1"),
+      threadId: ORIGIN,
+      messageId: SOURCE_ASSISTANT_MESSAGE_ID,
+      turnId: TurnId.make("origin-turn-1"),
+      createdAt: CREATED_AT,
+    });
+    yield* engine.dispatch({
       type: "thread.turn.diff.complete",
       commandId: CommandId.make("cmd-fork-diff-1"),
       threadId: ORIGIN,
@@ -206,6 +230,7 @@ const seedOrigin = (checkpointStatus: "ready" | "missing" = "ready") =>
       checkpointRef: checkpointRefForThreadTurn(ORIGIN, FORK_AT_TURN),
       status: checkpointStatus,
       files: [],
+      assistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
       checkpointTurnCount: FORK_AT_TURN,
       createdAt: CREATED_AT,
     });
@@ -219,14 +244,17 @@ const dispatchFork = (workspaceMode: "local" | "new-worktree", forkCommandId: st
       commandId: CommandId.make(forkCommandId),
       originThreadId: ORIGIN,
       newThreadId: NEW,
-      forkAtTurnId: TurnId.make("origin-turn-1"),
-      forkAtTurnCount: FORK_AT_TURN,
+      sourceAssistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
       workspaceMode,
     });
   });
 
 // Start the worker, dispatch the fork, and await its typed completion receipt.
-const runForkScenario = (workspaceMode: "local" | "new-worktree", forkCommandId: string) =>
+const runForkScenario = (
+  workspaceMode: "local" | "new-worktree",
+  forkCommandId: string,
+  archiveOrigin = false,
+) =>
   Effect.gen(function* () {
     const snapshotQuery = yield* ProjectionSnapshotQuery;
     const reactor = yield* ScientForkReactor;
@@ -236,6 +264,14 @@ const runForkScenario = (workspaceMode: "local" | "new-worktree", forkCommandId:
     // must be started before the fork command is dispatched.
     yield* reactor.start();
     yield* seedOrigin();
+    if (archiveOrigin) {
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`${forkCommandId}-archive-origin`),
+        threadId: ORIGIN,
+      });
+    }
 
     const completionFiber = yield* Effect.forkChild(reactor.awaitCompletion(NEW));
 
@@ -331,6 +367,19 @@ describe("ScientForkReactor", () => {
       const lineage = yield* readLineageRow(sql);
       expect(lineage?.fidelity_mode).toBe("transcript-bootstrap");
       expect(lineage?.workspace_mode).toBe("new-worktree");
+    }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
+  });
+
+  it.live("hydrates and forks an archived origin by its authoritative id", () => {
+    const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+
+    return Effect.gen(function* () {
+      const { snapshotQuery } = yield* runForkScenario("local", "cmd-fork-archived-origin", true);
+      const origin = yield* snapshotQuery.getThreadDetailById(ORIGIN);
+      const fork = yield* snapshotQuery.getThreadDetailById(NEW);
+      expect(Option.isSome(origin) && origin.value.archivedAt !== null).toBe(true);
+      expect(Option.isSome(fork)).toBe(true);
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 

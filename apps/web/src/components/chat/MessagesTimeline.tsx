@@ -84,14 +84,13 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
-  type MessageIdMembership,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { ScientForkUserMessageButton } from "./scient-fork/ScientForkUserMessageButton";
+import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -143,9 +142,7 @@ interface TimelineRowSharedState {
   // SCIENT-FORK:START — optional so non-fork callers/tests are unaffected.
   // `| undefined` is explicit for exactOptionalPropertyTypes: the shared-state
   // object always carries the key (possibly undefined) so rows can gate on it.
-  onForkUserMessage?:
-    | ((messageId: MessageId, workspaceMode: "new-worktree" | "local") => void)
-    | undefined;
+  onForkAssistantMessage?: ((messageId: MessageId) => void) | undefined;
   // SCIENT-FORK:END
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -225,10 +222,9 @@ interface MessagesTimelineProps {
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
-  forkBoundaryByUserMessageId?: MessageIdMembership;
   onRevertUserMessage: (messageId: MessageId) => void;
   // SCIENT-FORK:START
-  onForkUserMessage?: (messageId: MessageId, workspaceMode: "new-worktree" | "local") => void;
+  onForkAssistantMessage?: (messageId: MessageId) => void;
   // SCIENT-FORK:END
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -275,10 +271,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
-  forkBoundaryByUserMessageId,
   onRevertUserMessage,
   // SCIENT-FORK:START
-  onForkUserMessage,
+  onForkAssistantMessage,
   // SCIENT-FORK:END
   isRevertingCheckpoint,
   onImageExpand,
@@ -422,7 +417,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
-        forkBoundaryByUserMessageId,
       }),
     [
       timelineEntries,
@@ -434,7 +428,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
-      forkBoundaryByUserMessageId,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -531,7 +524,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       // SCIENT-FORK:START — expose the fork trigger to rows via context.
-      onForkUserMessage,
+      onForkAssistantMessage,
       // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
@@ -550,7 +543,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       // SCIENT-FORK:START
-      onForkUserMessage,
+      onForkAssistantMessage,
       // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
@@ -1004,7 +997,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
-  const canForkConversation = row.canForkConversation === true;
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -1078,10 +1070,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {/* SCIENT-FORK:START — conversational fork eligibility is distinct
-                from Git-backed revert eligibility. */}
-            {canForkConversation && <ForkUserMessageButton messageId={row.message.id} />}
-            {/* SCIENT-FORK:END */}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
             )}
@@ -1114,19 +1102,6 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
       </TooltipTrigger>
       <TooltipPopup side="top">Revert to this message</TooltipPopup>
     </Tooltip>
-  );
-}
-
-function ForkUserMessageButton({ messageId }: { messageId: MessageId }) {
-  const ctx = use(TimelineRowCtx);
-  const activity = use(TimelineRowActivityCtx);
-  if (!ctx.onForkUserMessage) return null;
-  return (
-    <ScientForkUserMessageButton
-      messageId={messageId}
-      disabled={activity.isRevertingCheckpoint || activity.isWorking}
-      onFork={ctx.onForkUserMessage}
-    />
   );
 }
 
@@ -1173,6 +1148,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
+            {row.canForkConversation === true && ctx.onForkAssistantMessage ? (
+              <ScientForkMessageButton
+                onFork={() => ctx.onForkAssistantMessage?.(row.message.id)}
+              />
+            ) : null}
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger

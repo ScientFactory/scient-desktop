@@ -1,4 +1,4 @@
-import type { EnvironmentId, OrchestrationForkBoundary, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -37,11 +37,8 @@ export function useScientThreadFork({
   } | null>(null);
   const inFlightRef = useRef(false);
 
-  const forkToBoundary = useCallback(
-    async (
-      boundary: Pick<OrchestrationForkBoundary, "turnId" | "conversationTurnCount">,
-      workspaceMode: "new-worktree" | "local",
-    ) => {
+  const forkFromAssistantMessage = useCallback(
+    async (sourceAssistantMessageId: MessageId, workspaceMode: "new-worktree" | "local") => {
       if (!origin || inFlightRef.current) return;
       const forkThreadId = newThreadId();
       inFlightRef.current = true;
@@ -53,8 +50,7 @@ export function useScientThreadFork({
           input: {
             originThreadId: origin.id,
             newThreadId: forkThreadId,
-            forkAtTurnCount: boundary.conversationTurnCount,
-            ...(boundary.turnId === null ? {} : { forkAtTurnId: boundary.turnId }),
+            sourceAssistantMessageId,
             workspaceMode,
           },
         });
@@ -85,5 +81,5 @@ export function useScientThreadFork({
     [forkThread, navigate, origin],
   );
 
-  return { errorUpdate, isForking, forkToBoundary } as const;
+  return { errorUpdate, isForking, forkFromAssistantMessage } as const;
 }

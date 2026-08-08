@@ -935,11 +935,9 @@ export const ThreadForkCommand = Schema.Struct({
   commandId: CommandId,
   originThreadId: ThreadId,
   newThreadId: ThreadId,
-  // The count represents turn zero as well as completed turns. New clients
-  // also send the stable turn identity when one exists; the server verifies
-  // both so a stale count cannot silently select a replacement turn.
-  forkAtTurnId: Schema.optional(TurnId),
-  forkAtTurnCount: NonNegativeInt,
+  // The clicked completed assistant response is the public boundary. The
+  // server resolves its internal turn/count/checkpoint authoritatively.
+  sourceAssistantMessageId: MessageId,
   workspaceMode: OrchestrationForkWorkspaceMode,
   title: Schema.optional(TrimmedNonEmptyString),
 });

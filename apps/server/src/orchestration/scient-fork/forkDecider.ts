@@ -6,7 +6,7 @@
  * thread fork.
  *
  * A fork creates a NEW, independent thread whose event stream is seeded from a
- * PREFIX of the origin thread (up to a completed turn boundary), records fork
+ * PREFIX of the origin thread (up to a completed assistant response), records fork
  * lineage, and leaves the origin thread completely untouched — the decider emits
  * events ONLY against `newThreadId`, never against `originThreadId`.
  *
@@ -15,10 +15,11 @@
  * selected conversation boundary has a ready checkpoint, its ref is projected
  * as the new thread's turn-zero checkpoint and copied by the fork worker.
  *
- * Where origin history comes from: the decider is a pure function over the
- * in-memory `OrchestrationReadModel`, which carries per-thread `messages` and
- * `conversationForkBoundaries`. Checkpoints are only workspace/revert evidence;
- * they are not conversation-completion authority. See
+ * Where origin history comes from: the decider is a pure function over an
+ * authoritatively hydrated origin in `OrchestrationReadModel`. The public
+ * command identifies the clicked assistant response; server-owned conversation
+ * boundaries resolve its turn/count. Checkpoints are only workspace/revert
+ * evidence; they are not conversation-completion authority. See
  * docs/internals/scient-fork-divergence.md for the read-model boot caveat.
  */
 import {
@@ -89,7 +90,7 @@ const withForkEventBase = (input: {
   );
 
 /**
- * Which messages belong to the prefix kept up to `forkAtTurnCount`. Mirrors the
+ * Which messages belong to the prefix kept up to the resolved turn count. Mirrors the
  * projector's `retainThreadMessagesAfterRevert` so a fork at turn N contains
  * exactly what a revert-to-N would retain: system messages, messages linked to a
  * retained turn, plus the earliest turnless user/assistant messages needed to
@@ -206,14 +207,26 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     })),
   ];
   const selectedBoundary = conversationBoundaries.find(
-    (boundary) =>
-      boundary.conversationTurnCount === command.forkAtTurnCount &&
-      (command.forkAtTurnId === undefined || boundary.turnId === command.forkAtTurnId),
+    (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
   );
-  const requestedBoundary = command.forkAtTurnId ?? command.forkAtTurnCount;
   if (!selectedBoundary) {
     return yield* invariant(
-      `Turn '${requestedBoundary}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`,
+      `Assistant message '${command.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`,
+    );
+  }
+
+  const sourceAssistantMessage = origin.messages.find(
+    (message) => message.id === command.sourceAssistantMessageId,
+  );
+  if (
+    !sourceAssistantMessage ||
+    sourceAssistantMessage.role !== "assistant" ||
+    sourceAssistantMessage.streaming ||
+    selectedBoundary.turnId === null ||
+    sourceAssistantMessage.turnId !== selectedBoundary.turnId
+  ) {
+    return yield* invariant(
+      `Assistant message '${command.sourceAssistantMessageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,
     );
   }
 
@@ -237,7 +250,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     selectedBoundary.conversationTurnCount,
   );
   if (prefixMessages.some((message) => message.streaming)) {
-    return yield* invariant(`Turn '${requestedBoundary}' is incomplete and cannot be forked.`);
+    return yield* invariant(
+      `Assistant message '${command.sourceAssistantMessageId}' belongs to an incomplete conversation prefix and cannot be forked.`,
+    );
   }
 
   const selectedCheckpoint = origin.checkpoints.find(
@@ -248,7 +263,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   );
   if (command.workspaceMode === "new-worktree" && !selectedCheckpoint) {
     return yield* invariant(
-      `Turn '${requestedBoundary}' has no ready Git checkpoint; fork it in the same workspace or choose a checkpoint-backed turn.`,
+      `Assistant message '${command.sourceAssistantMessageId}' has no ready Git checkpoint; fork it in the same workspace or choose a checkpoint-backed response.`,
     );
   }
 

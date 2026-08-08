@@ -10,10 +10,6 @@ import {
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
-export interface MessageIdMembership {
-  readonly has: (messageId: MessageId) => boolean;
-}
-
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
@@ -315,6 +311,29 @@ function deriveUnsettledTurnId(
   return isSettled ? null : latestTurn.turnId;
 }
 
+export function findLatestCompletedAssistantMessageId(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  latestTurn: TimelineLatestTurn | null;
+  runningTurnId: TurnId | null;
+}): MessageId | null {
+  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  const unsettledTurnId = deriveUnsettledTurnId(input.latestTurn, input.runningTurnId);
+
+  for (let index = input.timelineEntries.length - 1; index >= 0; index -= 1) {
+    const entry = input.timelineEntries[index];
+    if (
+      entry?.kind === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.streaming &&
+      entry.message.turnId !== unsettledTurnId &&
+      terminalAssistantMessageIds.has(entry.message.id)
+    ) {
+      return entry.message.id;
+    }
+  }
+  return null;
+}
+
 /**
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
@@ -457,7 +476,6 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
-  forkBoundaryByUserMessageId?: MessageIdMembership | undefined;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -633,8 +651,8 @@ export function deriveMessagesTimelineRows(input: {
           ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
       canForkConversation:
-        timelineEntry.message.role === "user"
-          ? input.forkBoundaryByUserMessageId?.has(timelineEntry.message.id)
+        timelineEntry.message.role === "assistant" && showAssistantMeta
+          ? !timelineEntry.message.streaming
           : undefined,
     });
   }

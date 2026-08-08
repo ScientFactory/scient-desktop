@@ -5,7 +5,6 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
-  type OrchestrationForkBoundary,
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
@@ -97,7 +96,6 @@ import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
 import { ScientForkWorkspaceModeDialog } from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
-import { mapForkBoundariesBeforeUserMessages } from "./chat/scient-fork/forkBoundaries";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -249,7 +247,10 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
-import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import {
+  findLatestCompletedAssistantMessageId,
+  resolveTimelineIsAtEnd,
+} from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -1494,11 +1495,11 @@ function ChatViewContent(props: ChatViewProps) {
   const {
     errorUpdate: forkErrorUpdate,
     isForking: isForkingThread,
-    forkToBoundary,
+    forkFromAssistantMessage,
   } = useScientThreadFork({ origin: activeThread ?? null, navigate });
   const [forkCommandTarget, setForkCommandTarget] = useState<{
     readonly threadId: ThreadId;
-    readonly boundary: OrchestrationForkBoundary;
+    readonly sourceAssistantMessageId: MessageId;
   } | null>(null);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
@@ -2566,15 +2567,19 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
-  // A message action forks at the completed boundary immediately before that
-  // user message. This source is conversation-authoritative and intentionally
-  // independent from the Git-backed revert map above.
-  const forkBoundaryByUserMessageId = useMemo(() => {
-    return mapForkBoundariesBeforeUserMessages(activeThread?.conversationForkBoundaries ?? []);
-  }, [activeThread?.conversationForkBoundaries]);
-  const latestForkBoundary = activeThread?.conversationForkBoundaries?.at(-1) ?? null;
+  const runningTurnId =
+    activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null;
+  const latestCompletedAssistantMessageId = useMemo(
+    () =>
+      findLatestCompletedAssistantMessageId({
+        timelineEntries,
+        latestTurn: activeLatestTurn,
+        runningTurnId,
+      }),
+    [activeLatestTurn, runningTurnId, timelineEntries],
+  );
   const onForkConversation = useCallback(() => {
-    if (latestForkBoundary === null) {
+    if (latestCompletedAssistantMessageId === null) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
@@ -2585,8 +2590,11 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     if (!activeThreadId) return;
-    setForkCommandTarget({ threadId: activeThreadId, boundary: latestForkBoundary });
-  }, [activeThreadId, latestForkBoundary]);
+    setForkCommandTarget({
+      threadId: activeThreadId,
+      sourceAssistantMessageId: latestCompletedAssistantMessageId,
+    });
+  }, [activeThreadId, latestCompletedAssistantMessageId]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -5964,22 +5972,12 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
-  // SCIENT-FORK:START — fork boundaries are resolved independently from
-  // Git-backed revert boundaries. The handler is read from a ref so the
-  // callback identity stays stable.
-  const forkBoundaryRef = useRef(forkBoundaryByUserMessageId);
-  forkBoundaryRef.current = forkBoundaryByUserMessageId;
-  const onForkToBoundaryRef = useRef(forkToBoundary);
-  onForkToBoundaryRef.current = forkToBoundary;
-  const onForkUserMessage = useCallback(
-    (messageId: MessageId, workspaceMode: "new-worktree" | "local") => {
-      const boundary = forkBoundaryRef.current.get(messageId);
-      if (!boundary) {
-        return;
-      }
-      void onForkToBoundaryRef.current(boundary, workspaceMode);
+  const onForkAssistantMessage = useCallback(
+    (sourceAssistantMessageId: MessageId) => {
+      if (!activeThreadId) return;
+      setForkCommandTarget({ threadId: activeThreadId, sourceAssistantMessageId });
     },
-    [],
+    [activeThreadId],
   );
   // SCIENT-FORK:END
 
@@ -6172,20 +6170,15 @@ function ChatViewContent(props: ChatViewProps) {
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}
-                runningTurnId={
-                  activeThread.session?.status === "running"
-                    ? activeThread.session.activeTurnId
-                    : null
-                }
+                runningTurnId={runningTurnId}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                forkBoundaryByUserMessageId={forkBoundaryByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 // SCIENT-FORK:START
-                onForkUserMessage={onForkUserMessage}
+                onForkAssistantMessage={onForkAssistantMessage}
                 // SCIENT-FORK:END
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
@@ -6560,7 +6553,7 @@ function ChatViewContent(props: ChatViewProps) {
           const target = forkCommandTarget;
           if (!target || target.threadId !== activeThreadId) return;
           setForkCommandTarget(null);
-          void forkToBoundary(target.boundary, workspaceMode);
+          void forkFromAssistantMessage(target.sourceAssistantMessageId, workspaceMode);
         }}
       />
     </div>

@@ -25,6 +25,8 @@ const NEW = ThreadId.make("forked-thread");
 const PROJECT = ProjectId.make("project-1");
 
 const T2 = TurnId.make("turn-2");
+const A1 = MessageId.make("assistant-1");
+const A2 = MessageId.make("assistant-2");
 
 const boundaries = [
   {
@@ -40,7 +42,7 @@ const boundaries = [
     turnId: TurnId.make("turn-1"),
     conversationTurnCount: 1,
     userMessageId: MessageId.make("user-1"),
-    assistantMessageId: MessageId.make("assistant-1"),
+    assistantMessageId: A1,
     completedAt: NOW,
     checkpointTurnCount: 1,
     checkpointStatus: "ready" as const,
@@ -49,7 +51,7 @@ const boundaries = [
     turnId: T2,
     conversationTurnCount: 2,
     userMessageId: MessageId.make("user-2"),
-    assistantMessageId: MessageId.make("assistant-2"),
+    assistantMessageId: A2,
     completedAt: NOW,
     checkpointTurnCount: 2,
     checkpointStatus: "ready" as const,
@@ -188,16 +190,14 @@ function makeReadModel(
 }
 
 function forkCommand(overrides: Partial<ThreadForkCommand> = {}): ThreadForkCommand {
-  const { forkAtTurnCount = 2, ...rest } = overrides;
   return {
     type: "thread.fork",
     commandId: CommandId.make("cmd-fork"),
     originThreadId: ORIGIN,
     newThreadId: NEW,
-    forkAtTurnId: T2,
-    forkAtTurnCount,
+    sourceAssistantMessageId: A2,
     workspaceMode: "local",
-    ...rest,
+    ...overrides,
   };
 }
 
@@ -318,8 +318,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     Effect.gen(function* () {
       const events = yield* forkThread({
         command: forkCommand({
-          forkAtTurnId: TurnId.make("turn-1"),
-          forkAtTurnCount: 1,
+          sourceAssistantMessageId: A1,
         }),
         readModel: makeReadModel(),
       });
@@ -330,21 +329,67 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("forks turn zero before the first message without inventing a turn id", () =>
+  it.effect("rejects a public request that does not name a completed assistant response", () =>
     Effect.gen(function* () {
       const command: ThreadForkCommand = {
         type: "thread.fork",
         commandId: CommandId.make("cmd-fork-zero"),
         originThreadId: ORIGIN,
         newThreadId: NEW,
-        forkAtTurnCount: 0,
+        sourceAssistantMessageId: MessageId.make("missing-assistant"),
         workspaceMode: "local",
       };
-      const events = yield* forkThread({ command, readModel: makeReadModel() });
-      expect(events.some((event) => event.type === "thread.message-sent")).toBe(false);
+      const error = yield* forkThread({ command, readModel: makeReadModel() }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("allows a real inherited baseline while keeping turn zero internal", () =>
+    Effect.gen(function* () {
+      const baselineTurnId = TurnId.make("fork-baseline-only");
+      const reforkOrigin = makeOriginThread({
+        messages: [
+          message({
+            id: "inherited-user-only",
+            role: "user",
+            text: "inherited prompt",
+            turnId: baselineTurnId,
+            createdAt: "2026-01-01T00:00:01.000Z",
+          }),
+          message({
+            id: "inherited-assistant-only",
+            role: "assistant",
+            text: "inherited answer",
+            turnId: baselineTurnId,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          }),
+        ],
+        checkpoints: [checkpoint(baselineTurnId, 0)],
+        conversationForkBoundaries: [
+          {
+            turnId: baselineTurnId,
+            conversationTurnCount: 0,
+            userMessageId: MessageId.make("inherited-user-only"),
+            assistantMessageId: MessageId.make("inherited-assistant-only"),
+            completedAt: NOW,
+            checkpointTurnCount: 0,
+            checkpointStatus: "ready",
+          },
+        ],
+      });
+      const events = yield* forkThread({
+        command: forkCommand({
+          sourceAssistantMessageId: MessageId.make("inherited-assistant-only"),
+        }),
+        readModel: makeReadModel({ origin: reforkOrigin }),
+      });
       const forked = events.find((event) => event.type === "thread.forked");
-      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : undefined).toBeNull();
-      expect(events.some((event) => event.type === "thread.turn-diff-completed")).toBe(false);
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : undefined).toBe(0);
+      expect(
+        events.flatMap((event) =>
+          event.type === "thread.message-sent" ? [event.payload.text] : [],
+        ),
+      ).toEqual(["inherited prompt", "inherited answer"]);
     }),
   );
 
@@ -406,7 +451,9 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         ],
       });
       const events = yield* forkThread({
-        command: forkCommand({ forkAtTurnId: postForkTurnId, forkAtTurnCount: 1 }),
+        command: forkCommand({
+          sourceAssistantMessageId: MessageId.make("post-fork-assistant-1"),
+        }),
         readModel: makeReadModel({ origin: reforkOrigin }),
       });
       const texts = events.flatMap((event) =>
@@ -483,6 +530,24 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("rejects a streaming assistant even if stale boundary data names it", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread({
+        messages: makeOriginThread().messages.map((entry) =>
+          entry.id === A2 ? { ...entry, streaming: true } : entry,
+        ),
+      });
+      const error = yield* forkThread({
+        command: forkCommand(),
+        readModel: makeReadModel({ origin }),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      if (error._tag === "OrchestrationCommandInvariantError") {
+        expect(error.detail).toContain("terminal completed response");
+      }
+    }),
+  );
+
   it.effect("rejects a non-existent origin thread", () =>
     Effect.gen(function* () {
       const error = yield* forkThread({
@@ -496,7 +561,9 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
   it.effect("rejects a nonexistent or stale conversational boundary", () =>
     Effect.gen(function* () {
       const error = yield* forkThread({
-        command: forkCommand({ forkAtTurnId: TurnId.make("missing-turn") }),
+        command: forkCommand({
+          sourceAssistantMessageId: MessageId.make("missing-assistant"),
+        }),
         readModel: makeReadModel(),
       }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationCommandInvariantError");

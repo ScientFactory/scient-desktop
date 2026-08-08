@@ -164,7 +164,8 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
   /**
-   * Read a single active thread detail snapshot by id.
+   * Read a single non-deleted thread detail snapshot by id, including an
+   * archived thread addressed explicitly by its id.
    */
   readonly getThreadDetailById: (
     threadId: ThreadId,

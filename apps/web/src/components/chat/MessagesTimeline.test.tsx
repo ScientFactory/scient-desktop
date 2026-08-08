@@ -225,6 +225,31 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry({
+  id = "assistant-1",
+  turnId = "turn-1",
+  streaming = false,
+}: {
+  readonly id?: string;
+  readonly turnId?: string;
+  readonly streaming?: boolean;
+} = {}) {
+  return {
+    id: `entry-${id}`,
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: MessageId.make(id),
+      role: "assistant" as const,
+      text: "Completed response",
+      turnId: TurnId.make(turnId),
+      createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      streaming,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
@@ -242,55 +267,39 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
   });
 
-  it("shows a disabled fork control only at a resolved fork boundary", () => {
-    const messageId = MessageId.make("message-1");
-    const timelineEntries = [buildUserTimelineEntry("Fork from here")];
-    const withoutBoundary = renderToStaticMarkup(
+  it("shows Fork beside a completed assistant response, including while a newer turn runs", () => {
+    const userOnly = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        timelineEntries={timelineEntries}
-        onForkUserMessage={() => {}}
+        timelineEntries={[buildUserTimelineEntry("Fork from here")]}
+        onForkAssistantMessage={() => {}}
       />,
     );
-    const withBoundary = renderToStaticMarkup(
+    const completedAssistant = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        timelineEntries={timelineEntries}
-        forkBoundaryByUserMessageId={new Map([[messageId, true]])}
-        onForkUserMessage={() => {}}
+        timelineEntries={[buildAssistantTimelineEntry()]}
+        runningTurnId={TurnId.make("turn-2")}
+        onForkAssistantMessage={() => {}}
         isWorking
       />,
     );
 
-    expect(withoutBoundary).not.toContain('aria-label="Fork conversation before this message"');
-    expect(withBoundary).toContain('aria-label="Fork conversation before this message"');
-    expect(withBoundary).toContain("disabled");
+    expect(userOnly).not.toContain('aria-label="Fork conversation from this response"');
+    expect(completedAssistant).toContain('aria-label="Fork conversation from this response"');
   });
 
-  it("does not couple fork visibility to Git-backed revert eligibility", () => {
-    const messageId = MessageId.make("message-1");
-    const timelineEntries = [buildUserTimelineEntry("Fork without reverting")];
-    const forkOnlyMarkup = renderToStaticMarkup(
+  it("does not expose Fork for a streaming assistant response", () => {
+    const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        timelineEntries={timelineEntries}
-        forkBoundaryByUserMessageId={new Map([[messageId, true]])}
-        onForkUserMessage={() => {}}
-      />,
-    );
-    const revertOnlyMarkup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={timelineEntries}
-        revertTurnCountByUserMessageId={new Map([[messageId, 1]])}
-        onForkUserMessage={() => {}}
+        timelineEntries={[buildAssistantTimelineEntry({ streaming: true })]}
+        runningTurnId={TurnId.make("turn-1")}
+        onForkAssistantMessage={() => {}}
       />,
     );
 
-    expect(forkOnlyMarkup).toContain('aria-label="Fork conversation before this message"');
-    expect(forkOnlyMarkup).not.toContain('aria-label="Revert to this message"');
-    expect(revertOnlyMarkup).toContain('aria-label="Revert to this message"');
-    expect(revertOnlyMarkup).not.toContain('aria-label="Fork conversation before this message"');
+    expect(markup).not.toContain('aria-label="Fork conversation from this response"');
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {

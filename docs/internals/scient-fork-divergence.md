@@ -6,9 +6,11 @@ small set of T3-owned seams that an upstream merge may touch.
 
 ## Product behavior
 
-From a settled user message, a user can create a new conversation at the
-completed boundary immediately before that message. The origin conversation is
-never modified. The user explicitly chooses one of two workspace behaviors:
+From the Fork action beside a completed assistant response, a user can create a
+new conversation containing the transcript through that exact response. The
+origin conversation is never modified. `/fork` selects the latest completed
+assistant response. Both paths ask the user to choose one of two workspace
+behaviors:
 
 - **Create independent worktree** creates a dedicated Git worktree at the
   selected historical checkpoint. It is available only when that checkpoint can
@@ -26,10 +28,15 @@ The client navigates to the new conversation only after durable provisioning
 has completed. A failed fork is returned as an error instead of exposing a
 half-ready conversation as successful.
 
-Conversation boundaries are server-owned and do not depend on Git. A user can
-fork the latest completed boundary while a newer turn is active. Git checkpoint
-availability only decides whether the independent-worktree choice is eligible;
-same-workspace conversation forks also work in non-Git projects.
+The clicked assistant message is the public boundary. The server resolves its
+completed turn, conversation count, and checkpoint authoritatively; the client
+never supplies those implementation details and cannot request an empty
+turn-zero fork. Internal turn-zero baselines remain valid when re-forking an
+inherited transcript. A user can fork the latest completed response while a
+newer turn is active. Git checkpoint availability only decides whether the
+independent-worktree choice is eligible; same-workspace conversation forks also
+work in non-Git projects. Explicitly addressed archived origins remain readable
+for this decision; deleted origins do not.
 
 ## Preserved Claude provenance
 
@@ -59,9 +66,10 @@ reachable even if publication later uses a different presentation strategy.
 
 Forking is a durable, restart-safe saga:
 
-1. The event-sourced decider validates an authoritative completed conversation boundary; allocates
-   fresh thread, turn, message, and attachment identities; emits the new thread
-   plus retained transcript as one immutable turn-zero baseline; and records
+1. The event-sourced decider resolves the requested assistant message to an
+   authoritative terminal completed conversation boundary; allocates fresh
+   thread, turn, message, and attachment identities; emits the new thread plus
+   retained transcript as one immutable turn-zero baseline; and records
    immutable lineage.
 2. The Scient lineage projector inserts a durable `pending` record.
 3. The Scient fork reactor claims the record, copies fork-owned attachment
@@ -100,9 +108,8 @@ internals:
 - `apps/server/src/orchestration/scient-fork/forkBoundaryProjection.ts`
 - `apps/server/src/orchestration/Services/ScientForkReactor.ts`
 - `apps/server/src/orchestration/Layers/ScientForkReactor.ts`
-- `apps/web/src/components/chat/scient-fork/ScientForkUserMessageButton.tsx`
+- `apps/web/src/components/chat/scient-fork/ScientForkMessageButton.tsx`
 - `apps/web/src/components/chat/scient-fork/ScientForkWorkspaceModeDialog.tsx`
-- `apps/web/src/components/chat/scient-fork/forkBoundaries.ts`
 - `apps/web/src/components/scient-fork/useScientThreadFork.ts`
 
 Tests live beside these modules. The checkpoint helper uses T3's existing
@@ -131,7 +138,7 @@ All production seams are additive and marked with `SCIENT-FORK:START` and
 | `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Prepare the first fork turn and mark its bootstrap accepted after provider send.                                                         | T3 exposes a provider request-decoration hook.                            |
 | `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                       | T3 supports typed asynchronous command receipts.                          |
 | `packages/client-runtime/src/operations/commands.ts`, `packages/client-runtime/src/state/threadCommands.ts`                                                                   | Dispatch and serialize the fork command.                                                                                                 | T3 client runtime has an equivalent operation.                            |
-| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`                                                                                   | Consume the authoritative boundary map and mount Scient-owned hook/control components.                                                   | T3 exposes a row action/extension slot or ships native UI.                |
+| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`                                                                                   | Send the selected completed assistant message ID and mount Scient-owned hook/control components.                                         | T3 exposes a row action/extension slot or ships native UI.                |
 
 Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
@@ -139,9 +146,10 @@ forking and would have increased every future upstream merge.
 
 ## Safety and bounded compromises
 
-- Only completed conversation boundaries are forkable. A newer streaming turn
-  is excluded from the retained prefix rather than blocking an older completed
-  boundary.
+- Only terminal completed assistant responses are forkable. Invalid,
+  non-terminal, streaming, stale, or unknown message IDs fail closed. A newer
+  streaming turn is excluded from the retained prefix rather than blocking an
+  older completed response.
 - A new worktree fails closed if the historical Git checkpoint is unavailable.
 - Same-workspace mode is honest about sharing current files; only its
   conversation and checkpoint lineage are independent.
@@ -179,14 +187,14 @@ building a parallel generic platform.
 
 ## Verification checklist
 
-- Fork-decider normal, turn-zero, non-Git, stale/incomplete boundary, active
-  newer turn, refork, identity, and attachment cases.
+- Fork-decider first/latest response, internal baseline re-fork, non-Git,
+  stale/incomplete response, active newer turn, identity, and attachment cases.
 - Durable schema upgrade, lifecycle projection, recovery, idempotency,
   checkpoint, worktree, and failure cases.
 - Provider bootstrap normal, truncation, attachment, restart, send-failure, and
   completion-marker cases.
-- Web control boundary, disabled state, same-tick duplicate prevention, and RPC
-  acknowledgement/failure gating.
+- Web assistant-response action, streaming exclusion, slash-command selection,
+  same-tick duplicate prevention, and RPC acknowledgement/failure gating.
 - Focused server, contracts, client-runtime, and web typechecks/tests; format;
   lint; `git diff --check`; and read-only merge rehearsal against current T3.
 
