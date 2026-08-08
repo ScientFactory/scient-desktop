@@ -494,11 +494,30 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
   // VAL-PERSIST-013: markAccepted cannot complete bootstrap for non-ready forks
   // -------------------------------------------------------------------------
 
+  it.effect("markAccepted fails for a missing fork", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const service = yield* ScientForkContextBootstrap;
+      const result = yield* Effect.result(service.markAccepted(THREAD));
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(result.failure.detail, "The fork context state was not found.");
+      }
+    }),
+  );
+
   it.effect("markAccepted does not complete bootstrap for a pending fork", () =>
     Effect.gen(function* () {
       yield* insertFork("pending");
       const service = yield* ScientForkContextBootstrap;
-      yield* service.markAccepted(THREAD);
+      const result = yield* Effect.result(service.markAccepted(THREAD));
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.detail,
+          "The fork workspace is not ready to accept context.",
+        );
+      }
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
@@ -511,7 +530,8 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("provisioning");
       const service = yield* ScientForkContextBootstrap;
-      yield* service.markAccepted(THREAD);
+      const result = yield* Effect.result(service.markAccepted(THREAD));
+      assert.strictEqual(result._tag, "Failure");
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
@@ -524,7 +544,8 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("failed");
       const service = yield* ScientForkContextBootstrap;
-      yield* service.markAccepted(THREAD);
+      const result = yield* Effect.result(service.markAccepted(THREAD));
+      assert.strictEqual(result._tag, "Failure");
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
@@ -537,7 +558,8 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("abandoned");
       const service = yield* ScientForkContextBootstrap;
-      yield* service.markAccepted(THREAD);
+      const result = yield* Effect.result(service.markAccepted(THREAD));
+      assert.strictEqual(result._tag, "Failure");
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
