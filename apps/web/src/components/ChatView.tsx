@@ -2,6 +2,7 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
+  isForkBaselineBoundary,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -95,7 +96,11 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
-import { ScientForkWorkspaceModeDialog } from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
+import {
+  ScientForkWorkspaceModeDialog,
+  type ForkWorktreeAvailability,
+  type ScientForkSource,
+} from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -1500,6 +1505,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [forkCommandTarget, setForkCommandTarget] = useState<{
     readonly threadId: ThreadId;
     readonly sourceAssistantMessageId: MessageId;
+    readonly source: ScientForkSource;
   } | null>(null);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
@@ -2593,6 +2599,7 @@ function ChatViewContent(props: ChatViewProps) {
     setForkCommandTarget({
       threadId: activeThreadId,
       sourceAssistantMessageId: latestCompletedAssistantMessageId,
+      source: "latest-response",
     });
   }, [activeThreadId, latestCompletedAssistantMessageId]);
 
@@ -2658,6 +2665,20 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const forkWorktreeAvailability: ForkWorktreeAvailability = useMemo(() => {
+    if (!isGitRepo) {
+      return { available: false, reason: "no-git-repository" };
+    }
+
+    const target = forkCommandTarget?.threadId === activeThreadId ? forkCommandTarget : null;
+    const checkpoint = target
+      ? turnDiffSummaryByAssistantMessageId.get(target.sourceAssistantMessageId)
+      : null;
+    if (checkpoint?.status === "ready" && checkpoint.checkpointRef !== null) {
+      return { available: true };
+    }
+    return { available: false, reason: "no-checkpoint" };
+  }, [activeThreadId, forkCommandTarget, isGitRepo, turnDiffSummaryByAssistantMessageId]);
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -5975,7 +5996,11 @@ function ChatViewContent(props: ChatViewProps) {
   const onForkAssistantMessage = useCallback(
     (sourceAssistantMessageId: MessageId) => {
       if (!activeThreadId) return;
-      setForkCommandTarget({ threadId: activeThreadId, sourceAssistantMessageId });
+      setForkCommandTarget({
+        threadId: activeThreadId,
+        sourceAssistantMessageId,
+        source: "this-response",
+      });
     },
     [activeThreadId],
   );
@@ -6176,6 +6201,13 @@ function ChatViewContent(props: ChatViewProps) {
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                hasForkBaseline={Boolean(
+                  activeThread?.conversationForkBoundaries?.some(isForkBaselineBoundary),
+                )}
+                forkBaselineAssistantMessageId={
+                  activeThread?.conversationForkBoundaries?.find(isForkBaselineBoundary)
+                    ?.assistantMessageId ?? null
+                }
                 onRevertUserMessage={onRevertUserMessage}
                 // SCIENT-FORK:START
                 onForkAssistantMessage={onForkAssistantMessage}
@@ -6544,6 +6576,8 @@ function ChatViewContent(props: ChatViewProps) {
       <ScientForkWorkspaceModeDialog
         open={forkCommandTarget?.threadId === activeThreadId}
         disabled={isForkingThread}
+        source={forkCommandTarget?.source ?? "latest-response"}
+        worktreeAvailability={forkWorktreeAvailability}
         onOpenChange={(open) => {
           if (!open && !isForkingThread) {
             setForkCommandTarget(null);

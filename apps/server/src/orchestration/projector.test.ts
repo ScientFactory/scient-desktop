@@ -972,6 +972,20 @@ describe("orchestration projector", () => {
         }),
       ];
 
+      const afterFork = yield* Effect.reduce(
+        events.slice(0, 4),
+        () => createEmptyReadModel(createdAt),
+        projectEvent,
+      );
+      const forkedThread = afterFork.threads[0];
+      expect(forkedThread?.latestTurn).toEqual(
+        expect.objectContaining({
+          turnId: "fork-baseline",
+          state: "completed",
+          assistantMessageId: "baseline-assistant",
+        }),
+      );
+
       const afterRevert = yield* Effect.reduce(
         events,
         () => createEmptyReadModel(createdAt),

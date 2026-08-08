@@ -229,7 +229,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         // A fork is an independent chat thread: no shared worktree/branch.
         expect(created.payload.branch).toBeNull();
         expect(created.payload.worktreePath).toBeNull();
-        expect(created.payload.title).toBe("Origin conversation");
+        expect(created.payload.title).toBe("Origin conversation (2)");
       }
 
       const forked = events.find((event) => event.type === "thread.forked");
@@ -258,8 +258,9 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       }
       expect(texts).toEqual(["first prompt", "first answer", "second prompt", "second answer"]);
 
-      // The imported transcript is one fresh immutable baseline, not two
-      // native provider turns.
+      // The imported transcript remains provider-neutral, but historical
+      // assistant responses need distinct projection turn ids so the UI does
+      // not fold them into one turn and hide all but the last answer.
       const emittedTurnIds = events
         .filter((event) => event.type === "thread.message-sent")
         .map((event) => (event.type === "thread.message-sent" ? event.payload.turnId : null))
@@ -268,7 +269,11 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         expect(turnId).not.toBe("turn-1");
         expect(turnId).not.toBe("turn-2");
       }
-      expect(new Set(emittedTurnIds).size).toBe(1);
+      expect(new Set(emittedTurnIds).size).toBe(2);
+      const forkedPayload = events.find((event) => event.type === "thread.forked");
+      const baselineTurnId =
+        forkedPayload?.type === "thread.forked" ? forkedPayload.payload.baselineTurnId : null;
+      expect(emittedTurnIds.at(-1)).toBe(baselineTurnId);
       const baseline = events.find((event) => event.type === "thread.turn-diff-completed");
       expect(
         baseline?.type === "thread.turn-diff-completed"
@@ -278,6 +283,99 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       // Event ids are unique.
       const eventIds = events.map((event) => event.eventId);
       expect(new Set(eventIds).size).toBe(eventIds.length);
+    }),
+  );
+
+  it.effect("numbers fork titles without colliding with sibling threads", () =>
+    Effect.gen(function* () {
+      const sibling = makeOriginThread({
+        id: ThreadId.make("existing-fork"),
+        title: "Origin conversation (2)",
+      });
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel: {
+          ...makeReadModel(),
+          threads: [makeOriginThread(), sibling],
+        },
+      });
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Origin conversation (3)",
+      );
+    }),
+  );
+
+  it.effect("preserves meaningful numeric parentheticals in source titles", () =>
+    Effect.gen(function* () {
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel: makeReadModel({
+          origin: makeOriginThread({ title: "Study (2024)" }),
+        }),
+      });
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Study (2024) (2)",
+      );
+    }),
+  );
+
+  it.effect("preserves a meaningful suffix on a renamed fork", () =>
+    Effect.gen(function* () {
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel: makeReadModel({
+          origin: makeOriginThread({
+            title: "Experiment (2024)",
+            conversationForkBoundaries: [
+              {
+                turnId: T2,
+                conversationTurnCount: 0,
+                userMessageId: MessageId.make("user-2"),
+                assistantMessageId: MessageId.make("assistant-2"),
+                completedAt: NOW,
+                checkpointTurnCount: null,
+                checkpointStatus: null,
+              },
+            ],
+          }),
+        }),
+      });
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Experiment (2024) (2)",
+      );
+    }),
+  );
+
+  it.effect("increments the suffix when reforking a numbered fork", () =>
+    Effect.gen(function* () {
+      const forkOrigin = makeOriginThread({
+        title: "Origin conversation (2)",
+        conversationForkBoundaries: [
+          {
+            turnId: T2,
+            conversationTurnCount: 0,
+            userMessageId: MessageId.make("user-2"),
+            assistantMessageId: MessageId.make("assistant-2"),
+            completedAt: NOW,
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          },
+        ],
+      });
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel: {
+          ...makeReadModel({ origin: forkOrigin }),
+          threads: [makeOriginThread({ id: ThreadId.make("original-conversation") }), forkOrigin],
+        },
+      });
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Origin conversation (3)",
+      );
     }),
   );
 
@@ -326,6 +424,21 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         .filter((event) => event.type === "thread.message-sent")
         .map((event) => (event.type === "thread.message-sent" ? event.payload.text : ""));
       expect(texts).toEqual(["first prompt", "first answer"]);
+
+      const copiedMessages = events.filter((event) => event.type === "thread.message-sent");
+      expect(
+        copiedMessages.map((event) =>
+          event.type === "thread.message-sent" ? event.payload.role : null,
+        ),
+      ).toEqual(["user", "assistant"]);
+      expect(
+        copiedMessages[0]?.type === "thread.message-sent" &&
+          copiedMessages[1]?.type === "thread.message-sent"
+          ? copiedMessages[0].payload.turnId
+          : null,
+      ).toBe(
+        copiedMessages[1]?.type === "thread.message-sent" ? copiedMessages[1].payload.turnId : null,
+      );
     }),
   );
 
@@ -460,19 +573,6 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         event.type === "thread.message-sent" ? [event.payload.text] : [],
       );
       expect(texts).toEqual(["inherited prompt", "inherited answer", "new prompt", "new answer"]);
-    }),
-  );
-
-  it.effect("applies a custom title when provided", () =>
-    Effect.gen(function* () {
-      const events = yield* forkThread({
-        command: forkCommand({ title: "Fork of origin" }),
-        readModel: makeReadModel(),
-      });
-      const created = events[0];
-      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
-        "Fork of origin",
-      );
     }),
   );
 

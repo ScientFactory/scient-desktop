@@ -318,6 +318,8 @@ export const OrchestrationForkBoundary = Schema.Struct({
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
 });
 export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
+export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
+  boundary.conversationTurnCount === 0 && boundary.turnId !== null;
 // SCIENT-FORK:END
 
 export const OrchestrationThreadActivityTone = Schema.Literals([
@@ -939,7 +941,6 @@ export const ThreadForkCommand = Schema.Struct({
   // server resolves its internal turn/count/checkpoint authoritatively.
   sourceAssistantMessageId: MessageId,
   workspaceMode: OrchestrationForkWorkspaceMode,
-  title: Schema.optional(TrimmedNonEmptyString),
 });
 export type ThreadForkCommand = typeof ThreadForkCommand.Type;
 // SCIENT-FORK:END

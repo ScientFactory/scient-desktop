@@ -1,13 +1,15 @@
-import type { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useRef, useState } from "react";
 
 import { newThreadId } from "~/lib/utils";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { waitForStartedServerThread } from "../ChatView.logic";
 
 type ForkOrigin = {
   readonly id: ThreadId;
@@ -21,6 +23,20 @@ type NavigateToThread = (input: {
     readonly threadId: ThreadId;
   };
 }) => Promise<void>;
+
+function userFacingForkError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("no ready Git checkpoint")) {
+    return "This response has no saved Git checkpoint for a separate worktree. Choose Same workspace or fork from a checkpointed response.";
+  }
+  if (
+    message.includes("not a completed conversation boundary") ||
+    message.includes("not a terminal completed response")
+  ) {
+    return "This response is no longer available as a fork point. Choose another completed response.";
+  }
+  return "Failed to fork this conversation.";
+}
 
 export function useScientThreadFork({
   origin,
@@ -59,9 +75,21 @@ export function useScientThreadFork({
             const error = squashAtomCommandFailure(result);
             setErrorUpdate({
               threadId: origin.id,
-              message: error instanceof Error ? error.message : "Failed to fork thread.",
+              message: userFacingForkError(error),
             });
           }
+          return;
+        }
+        const forkVisible = await waitForStartedServerThread(
+          scopeThreadRef(origin.environmentId, forkThreadId),
+          5_000,
+        );
+        if (!forkVisible) {
+          setErrorUpdate({
+            threadId: origin.id,
+            message:
+              "The fork was created, but it is not available in the app yet. Open it from the sidebar or try again.",
+          });
           return;
         }
         await navigate({
@@ -71,7 +99,7 @@ export function useScientThreadFork({
       } catch (cause) {
         setErrorUpdate({
           threadId: origin.id,
-          message: cause instanceof Error ? cause.message : "Failed to open the forked thread.",
+          message: userFacingForkError(cause),
         });
       } finally {
         inFlightRef.current = false;

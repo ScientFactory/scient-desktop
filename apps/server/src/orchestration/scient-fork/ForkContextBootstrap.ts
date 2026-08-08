@@ -126,6 +126,7 @@ function selectTranscriptTail(input: {
 }): ReadonlyArray<OrchestrationMessage> {
   const selected: OrchestrationMessage[] = [];
   const noAttachments = new Set<string>();
+  const allAttachments = uniqueAttachments(input.allMessages);
   for (const message of input.allMessages.toReversed()) {
     const candidate = [message, ...selected];
     const encoded = serializeTranscriptPayload({
@@ -133,7 +134,7 @@ function selectTranscriptTail(input: {
       allMessages: input.allMessages,
       selectedMessages: candidate,
       reattachedIds: noAttachments,
-      omittedRetainedAttachmentCount: uniqueAttachments(input.allMessages).length,
+      omittedRetainedAttachmentCount: allAttachments.length,
     });
     if (encoded.length > input.maxChars) break;
     selected.unshift(message);
@@ -156,7 +157,7 @@ function selectTranscriptTail(input: {
       allMessages: input.allMessages,
       selectedMessages: [candidate],
       reattachedIds: noAttachments,
-      omittedRetainedAttachmentCount: uniqueAttachments(input.allMessages).length,
+      omittedRetainedAttachmentCount: allAttachments.length,
     });
     if (encoded.length <= input.maxChars) {
       fitted = candidate;

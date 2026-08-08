@@ -223,6 +223,8 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  hasForkBaseline?: boolean;
+  forkBaselineAssistantMessageId?: MessageId | null;
   // SCIENT-FORK:START
   onForkAssistantMessage?: (messageId: MessageId) => void;
   // SCIENT-FORK:END
@@ -272,6 +274,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  hasForkBaseline,
+  forkBaselineAssistantMessageId,
   // SCIENT-FORK:START
   onForkAssistantMessage,
   // SCIENT-FORK:END
@@ -417,6 +421,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        hasForkBaseline,
+        forkBaselineAssistantMessageId,
       }),
     [
       timelineEntries,
@@ -428,6 +434,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
+      hasForkBaseline,
+      forkBaselineAssistantMessageId,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -965,6 +973,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "fork-marker" ? <ForkMarkerTimelineRow /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -975,6 +984,18 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+function ForkMarkerTimelineRow() {
+  return (
+    <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
+      <div className="h-px flex-1 bg-border/60" />
+      <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
+        Conversation forked here
+      </span>
+      <div className="h-px flex-1 bg-border/60" />
+    </div>
+  );
+}
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);

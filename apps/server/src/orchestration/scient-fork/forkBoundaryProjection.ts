@@ -1,3 +1,4 @@
+import { isForkBaselineBoundary } from "@t3tools/contracts";
 import type {
   OrchestrationForkBoundary,
   OrchestrationThread,
@@ -62,9 +63,7 @@ export function appendConversationForkBoundary(
     ),
   );
   const baselineTurnIds = new Set(
-    boundaries.flatMap((boundary) =>
-      boundary.conversationTurnCount === 0 && boundary.turnId !== null ? [boundary.turnId] : [],
-    ),
+    boundaries.flatMap((boundary) => (isForkBaselineBoundary(boundary) ? [boundary.turnId] : [])),
   );
   const eligibleUserMessages = thread.messages.filter(
     (message) =>

@@ -648,6 +648,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
 
+        // The fork baseline and its turn row are projected by separate
+        // projectors. Keep the shell's latest turn pointer here so a clean
+        // rebuild does not depend on projector execution order.
+        case "thread.forked": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.newThreadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            latestTurnId: event.payload.baselineTurnId,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
         case "thread.archived": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,

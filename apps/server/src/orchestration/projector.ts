@@ -673,6 +673,14 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.newThreadId, {
               conversationForkBoundaries: [forkBaselineBoundary(payload)],
+              latestTurn: {
+                turnId: payload.baselineTurnId,
+                state: "completed",
+                requestedAt: payload.createdAt,
+                startedAt: payload.createdAt,
+                completedAt: payload.createdAt,
+                assistantMessageId: payload.baselineAssistantMessageId,
+              },
               updatedAt: event.occurredAt,
             }),
           };

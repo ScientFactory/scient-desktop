@@ -198,6 +198,10 @@ export type MessagesTimelineRow =
       canForkConversation?: boolean | undefined;
     }
   | {
+      kind: "fork-marker";
+      id: string;
+    }
+  | {
       kind: "proposed-plan";
       id: string;
       createdAt: string;
@@ -476,6 +480,8 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  hasForkBaseline?: boolean | undefined;
+  forkBaselineAssistantMessageId?: MessageId | null | undefined;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -655,6 +661,18 @@ export function deriveMessagesTimelineRows(input: {
           ? !timelineEntry.message.streaming
           : undefined,
     });
+
+    if (
+      input.hasForkBaseline === true &&
+      input.forkBaselineAssistantMessageId !== undefined &&
+      input.forkBaselineAssistantMessageId !== null &&
+      timelineEntry.message.id === input.forkBaselineAssistantMessageId
+    ) {
+      nextRows.push({
+        kind: "fork-marker",
+        id: "conversation-fork-marker",
+      });
+    }
   }
 
   if (input.isWorking) {
@@ -724,6 +742,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.onlyToolEntries === bw.onlyToolEntries
       );
     }
+
+    case "fork-marker":
+      return true;
 
     case "message": {
       const bm = b as typeof a;

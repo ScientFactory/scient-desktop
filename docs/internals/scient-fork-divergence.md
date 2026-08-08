@@ -28,6 +28,19 @@ The client navigates to the new conversation only after durable provisioning
 has completed. A failed fork is returned as an error instead of exposing a
 half-ready conversation as successful.
 
+The fork lifecycle has three separate readiness milestones:
+
+1. **Server provisioning complete:** the durable fork workflow has created and
+   verified the destination thread, retained transcript, attachments, and
+   requested workspace substrate.
+2. **Thread visible in client state:** the destination thread's server detail has
+   reached the client store and is recognized as started.
+3. **Navigation complete:** the client has routed to the destination thread.
+
+These milestones must not be collapsed into a fixed delay or treated as
+interchangeable. Navigation is successful only after the first two milestones
+are true; the third is the final UI action.
+
 The clicked assistant message is the public boundary. The server resolves its
 completed turn, conversation count, and checkpoint authoritatively; the client
 never supplies those implementation details and cannot request an empty
@@ -54,7 +67,7 @@ Claude's implementation remains intact in Git; it was not squashed or rewritten.
   `ed886fe1814890da30ae73c77f9e894ddc9bd481`
 - Prior T3 merge commit: `d2bc490731e778cf6c3a05822452768b8403455a`
 - Explicit workspace-choice UI commit: `29ea5973c1bc0ba348ae67447ba0b6aab85a7290`
-- Current official T3 head merged during reliability integration:
+- T3 integration head at implementation time:
   `2c7267ad43a05cf3e30343400c76fd9ac47698e7`
 - Current T3 merge commit: `13e33f1ba9614fdc4490de1526d4d16a3f91ad7f`
 

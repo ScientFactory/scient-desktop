@@ -239,6 +239,80 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       assert.deepEqual(unsettledRows, [{ settledOverride: "active", settledAt: null }]);
     }),
   );
+
+  it.effect("rebuilds the fork baseline pointer in the persisted thread shell", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-fork-rebuild");
+      const baselineTurnId = TurnId.make("turn-fork-baseline");
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-fork-rebuild-created"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-rebuild-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-rebuild-created"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-fork-rebuild"),
+          title: "Fork rebuild",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.forked",
+        eventId: EventId.make("evt-fork-rebuild-forked"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-fork-rebuild-forked"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-fork-rebuild-forked"),
+        metadata: {},
+        payload: {
+          originThreadId: ThreadId.make("thread-fork-origin"),
+          newThreadId: threadId,
+          forkAtTurnId: TurnId.make("turn-origin"),
+          forkAtTurnCount: 1,
+          sourceCheckpointTurnCount: null,
+          baselineTurnId,
+          baselineUserMessageId: null,
+          baselineAssistantMessageId: null,
+          workspaceMode: "local",
+          providerMode: "transcript-bootstrap",
+          attachmentCopies: [],
+          createdAt: now,
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const rows = yield* sql<{
+        readonly latestTurnId: string | null;
+      }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(rows, [{ latestTurnId: baselineTurnId }]);
+    }),
+  );
 });
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
