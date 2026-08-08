@@ -759,9 +759,10 @@ it.layer(Layer.fresh(makeCrossAreaTestLayer("t3-cross-startup-")))(
         const eventStore = yield* OrchestrationEventStore;
         yield* pipeline.bootstrap;
 
-        // 1. T3 initializes its schema/migration ledger before projection
-        //    bootstrap; the Scient fork schema then initializes its separate
-        //    ledger without reusing T3's migration sequence.
+        // 1. SqlitePersistenceMemory initializes the Scient schema and its
+        //    separate ledger while the layer is constructed, before
+        //    pipeline.bootstrap runs T3 migrations; the ledgers remain
+        //    independent.
         const t3Ledger = yield* sql<{ readonly migration_id: number; readonly name: string }>`
           SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id ASC
         `;
