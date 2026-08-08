@@ -1,10 +1,12 @@
 # Draft PR descriptions for Scient fork modernization
 
 These descriptions are prepared for review. They must not be merged or
-published without separate authorization. Both PRs are stacked:
-PR 15 builds on PR 14, which builds on merged PR 13 (`origin/main`).
+published without separate authorization. The two changes are stacked: the
+persistence phase builds on the boundary phase, which builds on the merged
+reliable-fork foundation (`origin/main`). Final PR numbers are intentionally
+not predicted.
 
-## PR 14: Server-owned fork boundary resolution
+## Stack phase A: Server-owned fork boundary resolution
 
 **Title:** `refactor(fork): move boundary authority to server-owned SQL resolver`
 
@@ -47,13 +49,12 @@ boundary arrays, turn counts, checkpoint relationships, or caller titles.
 
 ### Verification
 
-220 focused tests across 16 files pass, including boundary resolution,
-decider, projection, snapshot, state, and cross-area integration suites.
-Typecheck, lint, format, and `git diff --check` pass.
+Record the exact focused tests, typecheck, lint, format, and `git diff --check`
+results from the final phase-A head before publication.
 
 ---
 
-## PR 15: Normalized Scient persistence
+## Stack phase B: Normalized Scient persistence
 
 **Title:** `refactor(fork): replace monolithic schema with versioned migration runner and normalize active lineage`
 
@@ -69,10 +70,12 @@ remove active runtime dependence on prototype concepts.
 ### What changed
 
 - Introduced `scientMigrator.ts`, a versioned migration runner delegating to
-  the standard Effect SQL Migrator with three migrations:
+  the standard Effect SQL Migrator with four migrations:
   `durable-thread-forks` (1), `durable-provider-bootstrap` (2), and
-  `normalize-active-lineage` (3). Each unapplied migration runs once,
-  transactionally, in ascending ID order.
+  `normalize-active-lineage` (3), plus the additive compatibility repair
+  `quarantine-invalid-lineage` (4). Each unapplied migration runs once,
+  transactionally, in ascending ID order; migration 3 remains immutable for
+  databases that already recorded it.
 - Added a Scient-owned preflight: legacy `applied_at` ledgers are rebuilt
   into the canonical `created_at` shape in one transaction (all IDs, names,
   and timestamps preserved; `applied_at` kept as nullable residue), and the
@@ -84,6 +87,10 @@ remove active runtime dependence on prototype concepts.
   `scient_thread_lineage_quarantine` (payload snapshot, reason, timestamp)
   instead of failing startup, and creates supporting indexes. Physical
   compatibility columns remain.
+- Migration 4 upgrades legacy quarantine evidence without loss and applies
+  decoder-aligned validation to databases that already recorded migration 3.
+  Invalid active rows are preserved as evidence and removed by SQLite row ID,
+  so null or blank thread IDs cannot evade cleanup or collide in quarantine.
 - Enforced terminal lifecycle guards in repository SQL predicates:
   `markForkFailed`, `markForkAbandoned`, `markForkReady`, and `claimFork`
   all prevent abandoned/ready regression. `markAccepted` requires
@@ -100,7 +107,7 @@ remove active runtime dependence on prototype concepts.
 
 ### What is preserved
 
-- All PR 13 and PR 14 behavior: exact boundaries, origin immutability,
+- All reliable-fork and phase-A behavior: exact boundaries, origin immutability,
   re-forks, attachments, checkpoint eligibility, revert, and recovery.
 - T3 migration ledger and numbering are never modified.
 - Physical compatibility columns remain queryable with data.
@@ -117,7 +124,7 @@ work.
 
 ### Verification
 
-220 focused tests across 16 files pass, including migration runner (21 tests),
-lifecycle (14 tests), provider bootstrap (18 tests), and cross-area integration
-(15 tests). Typecheck, lint, format, and `git diff --check` pass. Disposable
-loopback server health check on port 18923 returns HTTP 200.
+Record the exact focused migration, lifecycle, provider-bootstrap, cross-area,
+typecheck, lint, format, and `git diff --check` results from the final phase-B
+head before publication. Runtime health evidence, if required, must likewise
+come from that exact head rather than an earlier development run.

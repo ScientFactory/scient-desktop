@@ -1,8 +1,8 @@
 /**
- * SCIENT-FORK cross-area integration tests for PR 15.
+ * SCIENT-FORK cross-area integration tests for persistence stack phase B.
  *
- * These tests exercise cross-layer flows that span the PR 14 boundary
- * resolver/projection plus the PR 15 migration runner, lineage lifecycle,
+ * These tests exercise cross-layer flows that span the phase A boundary
+ * resolver/projection plus the phase B migration runner, lineage lifecycle,
  * recovery, and normalization:
  *
  * - VAL-MIGRATE-13: Lineage lifecycle semantics survive migration.
@@ -123,7 +123,7 @@ function projectCreatedEvent(): EventInput {
     metadata: {},
     payload: {
       projectId: PROJECT,
-      title: "PR 15 Project",
+      title: "Phase B Project",
       workspaceRoot: "/tmp/pr15",
       defaultModelSelection: null,
       scripts: [],
@@ -230,7 +230,7 @@ function makeBaseReadModel(): OrchestrationReadModel {
     projects: [
       {
         id: PROJECT,
-        title: "PR 15 Project",
+        title: "Phase B Project",
         workspaceRoot: "/tmp/pr15",
         defaultModelSelection: null,
         scripts: [],
@@ -272,6 +272,7 @@ it.effect("VAL-MIGRATE-13: lifecycle operations work on migrated prototype rows"
           fork_point_turn_count INTEGER,
           workspace_mode TEXT,
           fidelity_mode TEXT,
+          baseline_turn_id TEXT,
           created_at TEXT
         )
       `;
@@ -295,24 +296,20 @@ it.effect("VAL-MIGRATE-13: lifecycle operations work on migrated prototype rows"
         yield* sql`
           INSERT INTO scient_thread_lineage (
             thread_id, forked_from_thread_id, fork_point_turn_count,
-            workspace_mode, fidelity_mode, created_at
+            workspace_mode, fidelity_mode, baseline_turn_id, created_at
           ) VALUES (
             ${t.id}, ${t.origin}, ${t.count},
-            ${t.mode}, ${t.fidelity}, '2026-07-15T00:00:00.000Z'
+            ${t.mode}, ${t.fidelity}, ${`baseline-${t.id}`}, '2026-07-15T00:00:00.000Z'
           )
         `;
       }
 
       // 2. Run migrations — normalizes the prototype rows.
       const executed = yield* runScientMigrations(sql);
-      assert.strictEqual(executed.length, 1); // Only migration 3 ran.
-
-      // 2b. Migration 3 adds baseline_turn_id via ALTER TABLE (nullable, no
-      //     default). Prototype rows have NULL baseline_turn_id, so
-      //     listRecoverableForks (which requires baseline_turn_id IS NOT NULL)
-      //     correctly excludes them. Set baseline_turn_id on all rows to test
-      //     lifecycle recovery on the normalized schema.
-      yield* sql`UPDATE scient_thread_lineage SET baseline_turn_id = 'baseline-' || thread_id`;
+      assert.deepStrictEqual(
+        executed.map(([id]) => id),
+        [3, 4],
+      );
 
       // 3. Verify listRecoverableForks selects exactly pending/provisioning/failed
       //    rows with baseline. All prototype rows default to pending after
@@ -627,6 +624,7 @@ it.effect("VAL-CROSS-002: prototype upgrade normalizes rows and supports reposit
           fork_point_turn_count INTEGER,
           workspace_mode TEXT,
           fidelity_mode TEXT,
+          baseline_turn_id TEXT,
           created_at TEXT
         )
       `;
@@ -634,15 +632,18 @@ it.effect("VAL-CROSS-002: prototype upgrade normalizes rows and supports reposit
       yield* sql`
         INSERT INTO scient_thread_lineage (
           thread_id, forked_from_thread_id, fork_point_turn_count,
-          workspace_mode, fidelity_mode, created_at
+          workspace_mode, fidelity_mode, baseline_turn_id, created_at
         ) VALUES
-          ('proto-fork-a', 'origin-a', 2, 'local', 'chat-only', '2026-07-10T00:00:00.000Z'),
-          ('proto-fork-b', 'origin-b', 1, 'new-worktree', 'replay', '2026-07-11T00:00:00.000Z')
+          ('proto-fork-a', 'origin-a', 2, 'local', 'chat-only', 'baseline-a', '2026-07-10T00:00:00.000Z'),
+          ('proto-fork-b', 'origin-b', 1, 'new-worktree', 'replay', 'baseline-b', '2026-07-11T00:00:00.000Z')
       `;
 
       // 2. Run migrations — normalizes prototype modes.
       const executed = yield* runScientMigrations(sql);
-      assert.strictEqual(executed.length, 1);
+      assert.deepStrictEqual(
+        executed.map(([id]) => id),
+        [3, 4],
+      );
 
       // 3. Verify identity is preserved (no loss or fabrication).
       const rows = yield* sql<{
@@ -677,11 +678,6 @@ it.effect("VAL-CROSS-002: prototype upgrade normalizes rows and supports reposit
         assert.strictEqual(row.status, "pending");
       }
 
-      // 4b. Migration 3 adds baseline_turn_id via ALTER TABLE (nullable).
-      //     Set it so listRecoverableForks can decode the rows (it requires
-      //     baseline_turn_id IS NOT NULL).
-      yield* sql`UPDATE scient_thread_lineage SET baseline_turn_id = 'baseline-' || thread_id`;
-
       // 5. Verify repository decoders can read the normalized rows.
       //    listRecoverableForks decodes via Schema and maps to ThreadForkedPayload.
       const recoverable = yield* listRecoverableForks(sql);
@@ -710,7 +706,7 @@ it.effect("VAL-CROSS-002: prototype upgrade normalizes rows and supports reposit
         readonly created_at: string;
         readonly applied_at: string;
       }>`SELECT migration_id, name, created_at, applied_at FROM scient_schema_migrations ORDER BY migration_id`;
-      assert.strictEqual(ledger.length, 3);
+      assert.strictEqual(ledger.length, 4);
       assert.strictEqual(ledger[0]!.migration_id, 1);
       assert.strictEqual(ledger[0]!.name, "durable-thread-forks");
       assert.strictEqual(ledger[0]!.applied_at, "2026-07-01T10:00:00.000Z");
@@ -1272,7 +1268,7 @@ it.effect("VAL-CROSS-008: running Scient first then T3 leaves both ledgers intac
       assert.isTrue(t3Ledger.length > 0);
       assert.deepStrictEqual(
         scientLedger.map((r) => r.migration_id),
-        [1, 2, 3],
+        [1, 2, 3, 4],
       );
 
       // T3 ledger does not contain Scient migration names.

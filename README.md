@@ -23,7 +23,7 @@ disabled release authorities.
 ## Scient persistence
 
 Scient owns a versioned SQLite migration runner
-(`apps/server/src/orchestration/scient-fork/scientMigrator.ts`). It runs three
+(`apps/server/src/orchestration/scient-fork/scientMigrator.ts`). It runs four
 ordered, transactional migrations for Scient's active fork lineage and
 normalizes legacy provider modes to `transcript-bootstrap`. Its ledger is the
 separate `scient_schema_migrations` table; the inherited T3
@@ -33,9 +33,12 @@ Existing databases remain compatible: legacy `applied_at` ledger timestamps are
 reconciled into `created_at` without losing IDs, names, or timestamps, and
 physical compatibility columns remain queryable with their data. Legacy
 lineage rows are normalized in place with safe defaults and fail-closed
-validation; no valid lineage is discarded, and pending, recovery, terminal
-state, restart, and retry behavior is preserved. The finalized persistence
-design and evidence are documented in
+validation. Migration 4 is an additive compatibility repair for development
+databases that already recorded migration 3: it upgrades the quarantine
+evidence schema and removes decoder-invalid recovery rows by SQLite row ID,
+including rows with null or blank thread IDs. Valid lineage remains active,
+and pending, recovery, terminal state, restart, and retry behavior is
+preserved. The finalized persistence design and evidence are documented in
 [the Scient fork divergence record](docs/internals/scient-fork-divergence.md).
 
 Focused validation for this persistence work:

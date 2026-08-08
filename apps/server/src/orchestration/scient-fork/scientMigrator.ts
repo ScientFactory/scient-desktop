@@ -39,6 +39,7 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 import Migration001 from "./migrations/001_DurableThreadForks.ts";
 import Migration002 from "./migrations/002_DurableProviderBootstrap.ts";
 import Migration003 from "./migrations/003_NormalizeActiveLineage.ts";
+import Migration004 from "./migrations/004_QuarantineInvalidLineage.ts";
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -74,12 +75,14 @@ export interface ScientMigration {
  *
  * IDs 1 and 2 match the names recorded by the legacy `ensureScientForkSchema`
  * function. Existing databases that already have these ledger entries will not
- * re-run them. Migration 3 is the normalization pass.
+ * re-run them. Migration 3 is the historical normalization pass; migration 4
+ * finalizes decoder-aligned quarantine for databases that already recorded 3.
  */
 export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 1, name: "durable-thread-forks", effect: Migration001 },
   { id: 2, name: "durable-provider-bootstrap", effect: Migration002 },
   { id: 3, name: "normalize-active-lineage", effect: Migration003 },
+  { id: 4, name: "quarantine-invalid-lineage", effect: Migration004 },
 ] as const;
 
 const loader = Migrator.fromRecord(

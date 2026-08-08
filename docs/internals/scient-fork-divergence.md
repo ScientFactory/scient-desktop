@@ -138,9 +138,9 @@ physically for prototype upgrades but are no longer active runtime authorities;
 `transcript-bootstrap` is the only active provider bootstrap mode, enforced by
 migration normalization and active repository/bootstrap code paths.
 
-## PR 14: server-owned boundary resolution
+## Stack phase A: server-owned boundary resolution
 
-PR 14 moves fork boundary authority from client-shaped thread snapshots to a
+Stack phase A moves fork boundary authority from client-shaped thread snapshots to a
 Scient-owned server resolver. The public fork command carries only four
 fields: `originThreadId`, `newThreadId`, `sourceAssistantMessageId`, and
 `workspaceMode`. The server independently queries SQL-backed
@@ -189,7 +189,7 @@ resolution, but that representation is not a client-wide contract.
 so the reported `snapshotSequence` cannot advance ahead of the projectors
 whose tables the snapshot queries for fork-boundary, checkpoint, or
 latest-turn data. The prior PR 13 baseline omitted both while including the
-no-op `checkpoints` projector; PR 14 closes this gap.
+no-op `checkpoints` projector; stack phase A closes this gap.
 
 ### Bootstrap projector ordering
 
@@ -237,7 +237,7 @@ full resolver-to-projection-to-lineage flow:
   ledger remains unchanged after Scient schema operations.
 
 `apps/server/src/orchestration/scient-fork/crossAreaPR15.test.ts` exercises
-cross-layer flows spanning PR 14 boundary resolution and PR 15 migration,
+cross-layer flows spanning phase A boundary resolution and phase B migration,
 lifecycle, recovery, and normalization:
 
 - **VAL-MIGRATE-13:** Prototype rows migrated through the normalization
@@ -266,9 +266,9 @@ lifecycle, recovery, and normalization:
   neither ledger contains the other's migration names, reruns are idempotent,
   and hypothetical T3 ID 39 and Scient ID 3 cannot collide (separate tables).
 
-## PR 15: normalized Scient persistence
+## Stack phase B: normalized Scient persistence
 
-PR 15 replaces the monolithic startup schema inspection with a real
+Stack phase B replaces the monolithic startup schema inspection with a real
 Scient-owned versioned migration runner and normalizes the active lineage
 model. The migration runner, lifecycle guards, and provider bootstrap
 normalization are all Scient-owned and isolated from T3's migration ledger.
@@ -278,7 +278,7 @@ normalization are all Scient-owned and isolated from T3's migration ledger.
 The Scient migration runner (`scientMigrator.ts`) delegates to the standard
 Effect SQL Migrator (`Migrator.make`) with its own `scient_schema_migrations`
 ledger table. It runs as a side effect of `SqlitePersistenceMemory` layer
-construction, before `pipeline.bootstrap` runs T3 migrations. Three migrations
+construction, before `pipeline.bootstrap` runs T3 migrations. Four migrations
 are defined:
 
 1. `durable-thread-forks` — creates the initial `scient_thread_lineage` table.
@@ -287,6 +287,11 @@ are defined:
    rows into `scient_thread_lineage_quarantine` (payload snapshot, reason,
    timestamp) instead of failing startup, normalizes prototype modes to
    `transcript-bootstrap`, and creates supporting indexes.
+4. `quarantine-invalid-lineage` — preserves migration 3 as immutable history,
+   upgrades legacy quarantine evidence without loss, and quarantines every row
+   the active repository/recovery model cannot safely decode. It keys evidence
+   and deletion by SQLite row ID so null or blank thread IDs are handled
+   without collision or undeletable rows.
 
 Before the Migrator runs, two Scient-owned preflight passes execute: a
 transactional rebuild of legacy `applied_at` ledgers into the canonical
@@ -294,7 +299,7 @@ transactional rebuild of legacy `applied_at` ledgers into the canonical
 ledger to be a contiguous prefix of the manifest with exact name matches.
 Gaps, renamed entries, and unknown future IDs fail closed with a `BadState`
 error before any migration runs — the standard Migrator's high-water mark
-alone would silently accept all three.
+alone would silently accept the manifest.
 
 Each unapplied migration runs once, transactionally, in ascending ID order.
 Migration failure rolls back the entire transaction: no partial records, no
@@ -326,6 +331,15 @@ lifecycle columns (`status`, `checkpoint_status`, `workspace_status`,
 compatibility columns (`provider_mode`, `fidelity_mode`) remain queryable with
 data; only active runtime reads/writes use the canonical model. No columns are
 dropped in the first normalization pass.
+
+Migration 4 is deliberately additive because development databases had already
+recorded migration 3 before its validation rules were finalized. Rewriting
+migration 3 would make the repair invisible to those databases. Migration 4
+therefore creates or upgrades the quarantine table, preserves existing evidence,
+validates baseline identity, counts, attachment JSON, lifecycle values, and
+required IDs, then removes only invalid active rows by `rowid`. Tests cover the
+already-recorded migration-3 state, legacy evidence upgrade, null/blank IDs,
+malformed recovery data, valid-sibling preservation, and idempotent reruns.
 
 Terminal lifecycle guards are enforced in repository SQL predicates:
 
@@ -437,7 +451,7 @@ building a parallel generic platform.
 - Cross-area: fresh startup to ready fork, prototype upgrade compatibility,
   restart during pending fork, interrupted provisioning retry, exact boundary
   through projection/persistence, revert-then-fork, re-fork after
-  normalization, T3/Scient ledger isolation, and stacked PR 14+15 validation.
+  normalization, T3/Scient ledger isolation, and stacked phase A+B validation.
 - Provider bootstrap normal, truncation, attachment, restart, send-failure, and
   completion-marker cases.
 - Web assistant-response action, streaming exclusion, slash-command selection,
