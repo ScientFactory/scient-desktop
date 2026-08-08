@@ -21,8 +21,13 @@ prose in the list makes the whole list RTL; an English-only list is LTR, and
 items (including nested lists) inherit that group direction. An explicit RTL or
 LTR setting remains authoritative for the complete list.
 
+Headings follow the message's main direction even when their title is written
+in another language. A heading inside a table follows the table's direction.
+
 Tables follow the same whole-group rule: Hebrew content makes the table RTL,
-while an English-only table remains LTR even inside an RTL message.
+while an English-only table remains LTR even inside an RTL message. Every
+normal cell follows the table's direction, so a single English cell does not
+break the alignment of an RTL table.
 
 Code remains left-to-right so commands, paths, syntax, and source files keep
 their normal reading and copying order. A plain-text copy box follows its own
