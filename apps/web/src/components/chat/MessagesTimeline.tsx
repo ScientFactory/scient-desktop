@@ -52,9 +52,6 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
-  // SCIENT-FORK:START
-  GitFork as GitForkIcon,
-  // SCIENT-FORK:END
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -93,10 +90,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-// SCIENT-FORK:START — reuse the shared dropdown-menu primitive so the fork
-// control can always ask the workspace substrate (new worktree vs local).
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-// SCIENT-FORK:END
+import { ScientForkUserMessageButton } from "./scient-fork/ScientForkUserMessageButton";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -1081,9 +1075,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {/* SCIENT-FORK:START — fork sits beside revert; only shown when a
                 fork handler is wired and this message has a resolvable turn
                 boundary (same condition that enables revert). */}
-            {canRevertAgentWork && ctx.onForkUserMessage && (
-              <ForkUserMessageButton messageId={row.message.id} />
-            )}
+            {canRevertAgentWork && <ForkUserMessageButton messageId={row.message.id} />}
             {/* SCIENT-FORK:END */}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
@@ -1120,49 +1112,18 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   );
 }
 
-// SCIENT-FORK:START — mirrors RevertUserMessageButton's ghost/icon style and
-// disabled guard, but the product "always asks" the workspace substrate, so the
-// control is a dropdown menu offering new-worktree vs local instead of a single
-// action. Each item forwards the chosen mode to the wired handler.
 function ForkUserMessageButton({ messageId }: { messageId: MessageId }) {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
-  const disabled = activity.isRevertingCheckpoint || activity.isWorking;
-
+  if (!ctx.onForkUserMessage) return null;
   return (
-    <Menu>
-      <MenuTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={disabled}
-            aria-label="Fork conversation from this message"
-            title="Fork conversation from this message"
-          />
-        }
-      >
-        <GitForkIcon className="size-3" />
-      </MenuTrigger>
-      <MenuPopup align="end">
-        <MenuItem
-          onClick={() => ctx.onForkUserMessage?.(messageId, "new-worktree")}
-          aria-label="Fork into a new worktree"
-        >
-          Fork · new worktree
-        </MenuItem>
-        <MenuItem
-          onClick={() => ctx.onForkUserMessage?.(messageId, "local")}
-          aria-label="Fork in the current workspace"
-        >
-          Fork · here
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+    <ScientForkUserMessageButton
+      messageId={messageId}
+      disabled={activity.isRevertingCheckpoint || activity.isWorking}
+      onFork={ctx.onForkUserMessage}
+    />
   );
 }
-// SCIENT-FORK:END
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);

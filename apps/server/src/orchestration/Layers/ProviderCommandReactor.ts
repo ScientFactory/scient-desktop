@@ -45,6 +45,7 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { ScientForkContextBootstrap } from "../scient-fork/ForkContextBootstrap.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -320,6 +321,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const scientForkContextBootstrap = yield* ScientForkContextBootstrap;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -1161,10 +1163,41 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    const preparedTurn = yield* scientForkContextBootstrap
+      .prepareTurn({
+        thread,
+        currentMessageId: message.id,
+        messageText: message.text,
+        attachments: message.attachments ?? [],
+      })
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabelFromInstanceHint({
+                modelSelectionInstanceId:
+                  event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+                sessionProvider: thread.session?.providerName ?? undefined,
+              }),
+              method: "thread.turn.start",
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+        Effect.map(Option.some),
+        Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      );
+
+    if (Option.isNone(preparedTurn)) {
+      return;
+    }
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageText: preparedTurn.value.input,
+      ...(preparedTurn.value.attachments.length > 0
+        ? { attachments: preparedTurn.value.attachments }
+        : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),
@@ -1179,9 +1212,26 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap(() =>
+        preparedTurn.value.bootstrapPending
+          ? scientForkContextBootstrap.markAccepted(event.payload.threadId).pipe(
+              Effect.retry({ times: 2 }),
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "provider command reactor could not persist accepted Scient fork context",
+                  {
+                    threadId: event.payload.threadId,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+              ),
+            )
+          : Effect.void,
+      ),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

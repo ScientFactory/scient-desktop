@@ -7,6 +7,9 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+// SCIENT-FORK:START — independent schema ledger; never consumes a T3 migration number.
+import { ensureScientForkSchema } from "../../orchestration/scient-fork/schema.ts";
+// SCIENT-FORK:END
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -36,6 +39,9 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* runMigrations();
+    // SCIENT-FORK:START
+    yield* ensureScientForkSchema(sql);
+    // SCIENT-FORK:END
   }),
 );
 

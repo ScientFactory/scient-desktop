@@ -1414,20 +1414,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         });
       });
 
-    // SCIENT-FORK:START
-    // Native `thread/fork` is Codex-only. Mirror the same typed
-    // unsupported-op pattern Grok already uses for provider-side rollback.
-    const forkThread: GrokAdapterShape["forkThread"] = (threadId, _input) =>
-      Effect.gen(function* () {
-        yield* requireSession(threadId);
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "thread/fork",
-          detail: "Grok ACP sessions do not support provider-side fork yet.",
-        });
-      });
-    // SCIENT-FORK:END
-
     const stopSession: GrokAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -1466,9 +1452,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       interruptTurn,
       readThread,
       rollbackThread,
-      // SCIENT-FORK:START
-      forkThread,
-      // SCIENT-FORK:END
       respondToRequest,
       respondToUserInput,
       stopSession,

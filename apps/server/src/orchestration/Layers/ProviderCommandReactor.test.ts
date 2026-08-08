@@ -63,6 +63,10 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import {
+  testLayer as ScientForkContextBootstrapTest,
+  type ScientForkContextBootstrapShape,
+} from "../scient-fork/ForkContextBootstrap.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -153,6 +157,8 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly forkContextBootstrap?: Partial<ScientForkContextBootstrapShape>;
+    readonly sendTurnEffect?: ProviderServiceShape["sendTurn"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -229,11 +235,13 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
-      }),
+    const sendTurn = vi.fn<ProviderServiceShape["sendTurn"]>((request) =>
+      input?.sendTurnEffect
+        ? input.sendTurnEffect(request)
+        : Effect.succeed({
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+          }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
@@ -340,9 +348,6 @@ describe("ProviderCommandReactor", () => {
         });
       },
       rollbackConversation: () => unsupported(),
-      // SCIENT-FORK:START
-      forkConversation: () => unsupported(),
-      // SCIENT-FORK:END
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },
@@ -391,6 +396,7 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provide(ScientForkContextBootstrapTest(input?.forkContextBootstrap)),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -553,6 +559,105 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("sends the prepared fork context and records it only after provider acceptance", async () => {
+    const callOrder: string[] = [];
+    const prepareTurn = vi.fn<ScientForkContextBootstrapShape["prepareTurn"]>((input) =>
+      Effect.sync(() => {
+        callOrder.push("prepare");
+        return {
+          input: `retained-context\n${input.messageText}`,
+          attachments: input.attachments,
+          bootstrapPending: true,
+        };
+      }),
+    );
+    const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() =>
+      Effect.sync(() => {
+        callOrder.push("accepted");
+      }),
+    );
+    const harness = await createHarness({
+      forkContextBootstrap: { prepareTurn, markAccepted },
+      sendTurnEffect: () =>
+        Effect.sync(() => {
+          callOrder.push("send");
+          return {
+            threadId: ThreadId.make("thread-1"),
+            turnId: asTurnId("turn-1"),
+          };
+        }),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-bootstrap-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-user-message"),
+          role: "user",
+          text: "continue from here",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => markAccepted.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "retained-context\ncontinue from here",
+    });
+    expect(callOrder).toEqual(["prepare", "send", "accepted"]);
+  });
+
+  it("keeps fork context pending when the provider rejects the turn", async () => {
+    const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() => Effect.void);
+    const harness = await createHarness({
+      forkContextBootstrap: {
+        prepareTurn: (input) =>
+          Effect.succeed({
+            input: `retained-context\n${input.messageText}`,
+            attachments: input.attachments,
+            bootstrapPending: true,
+          }),
+        markAccepted,
+      },
+      sendTurnEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread.send",
+            detail: "deterministic send rejection",
+          }),
+        ),
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-bootstrap-rejected-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("fork-rejected-user-message"),
+          role: "user",
+          text: "continue from here",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(markAccepted).not.toHaveBeenCalled();
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

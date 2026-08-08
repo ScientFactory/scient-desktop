@@ -242,6 +242,31 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
   });
 
+  it("shows a disabled fork control only at a resolved turn boundary", () => {
+    const messageId = MessageId.make("message-1");
+    const timelineEntries = [buildUserTimelineEntry("Fork from here")];
+    const withoutBoundary = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={timelineEntries}
+        onForkUserMessage={() => {}}
+      />,
+    );
+    const withBoundary = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={timelineEntries}
+        revertTurnCountByUserMessageId={new Map([[messageId, 0]])}
+        onForkUserMessage={() => {}}
+        isWorking
+      />,
+    );
+
+    expect(withoutBoundary).not.toContain('aria-label="Fork conversation before this message"');
+    expect(withBoundary).toContain('aria-label="Fork conversation before this message"');
+    expect(withBoundary).toContain("disabled");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");

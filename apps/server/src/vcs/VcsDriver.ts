@@ -38,14 +38,6 @@ export interface VcsDeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
-// SCIENT-FORK:START — input for copying a checkpoint ref's commit to a new ref.
-export interface VcsForkBaselineInput {
-  readonly cwd: string;
-  readonly fromCheckpointRef: CheckpointRef;
-  readonly toCheckpointRef: CheckpointRef;
-}
-// SCIENT-FORK:END
-
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
@@ -58,10 +50,6 @@ export interface VcsCheckpointOps {
   readonly deleteCheckpointRefs: (
     input: VcsDeleteCheckpointRefsInput,
   ) => Effect.Effect<void, VcsError>;
-  // SCIENT-FORK:START — resolve fromCheckpointRef→commit and write it to toCheckpointRef;
-  // returns false when the source ref is missing. Retire if T3 ships native thread fork.
-  readonly forkBaseline: (input: VcsForkBaselineInput) => Effect.Effect<boolean, VcsError>;
-  // SCIENT-FORK:END
 }
 
 export class VcsDriver extends Context.Service<

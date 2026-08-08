@@ -4481,22 +4481,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
-  // SCIENT-FORK:START
-  // Native `thread/fork` is Codex-only. Mirror the typed unsupported-op
-  // pattern (ProviderAdapterRequestError) used for provider ops Claude
-  // cannot serve.
-  const forkThread: ClaudeAdapterShape["forkThread"] = Effect.fn("forkThread")(
-    function* (threadId, _input) {
-      yield* requireSession(threadId);
-      return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method: "thread/fork",
-        detail: "Claude Agent sessions do not support provider-side fork yet.",
-      });
-    },
-  );
-  // SCIENT-FORK:END
-
   const respondToRequest: ClaudeAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (threadId, requestId, decision) {
       const context = yield* requireSession(threadId);
@@ -4586,9 +4570,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
-    // SCIENT-FORK:START
-    forkThread,
-    // SCIENT-FORK:END
     respondToRequest,
     respondToUserInput,
     stopSession,

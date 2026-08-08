@@ -141,12 +141,6 @@ export interface CodexSessionRuntimeShape {
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
-  // SCIENT-FORK:START
-  readonly forkThread: (input: {
-    readonly lastTurnId?: string | undefined;
-    readonly cwd?: string | undefined;
-  }) => Effect.Effect<{ readonly forkedProviderThreadId: string }, CodexSessionRuntimeError>;
-  // SCIENT-FORK:END
   readonly respondToRequest: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1856,23 +1850,6 @@ export const makeCodexSessionRuntime = (
           });
           return parseThreadSnapshot(response);
         }),
-      // SCIENT-FORK:START
-      // `thread/fork` loads the origin thread from disk and forks it into a
-      // NEW provider thread. It must NOT mutate the origin session (no
-      // `updateSession`) so the origin stays intact for continued use.
-      forkThread: (input) =>
-        Effect.gen(function* () {
-          const providerThreadId = yield* readProviderThreadId; // origin's provider thread id
-          const response = yield* client.request("thread/fork", {
-            threadId: providerThreadId,
-            ...(input.lastTurnId ? { lastTurnId: input.lastTurnId } : {}),
-            ...(input.cwd ? { cwd: input.cwd } : {}),
-          });
-          // Mirror `parseThreadSnapshot`'s `response.thread.id` read to obtain
-          // the newly forked provider thread id.
-          return { forkedProviderThreadId: response.thread.id };
-        }),
-      // SCIENT-FORK:END
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);

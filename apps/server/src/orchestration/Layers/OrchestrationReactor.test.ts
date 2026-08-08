@@ -66,6 +66,7 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drain: Effect.void,
+            awaitCompletion: () => Effect.void,
           }),
         ),
         // SCIENT-FORK:END

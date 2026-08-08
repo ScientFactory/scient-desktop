@@ -59,6 +59,7 @@ import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/Provid
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 // SCIENT-FORK:START
 import { ScientForkReactor } from "../src/orchestration/Services/ScientForkReactor.ts";
+import { ScientForkContextBootstrapLive } from "../src/orchestration/scient-fork/ForkContextBootstrap.ts";
 // SCIENT-FORK:END
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
@@ -335,6 +336,7 @@ export const makeOrchestrationIntegrationHarness = (
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
+      Layer.provide(ScientForkContextBootstrapLive),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
@@ -377,6 +379,7 @@ export const makeOrchestrationIntegrationHarness = (
         Layer.succeed(ScientForkReactor, {
           start: () => Effect.void,
           drain: Effect.void,
+          awaitCompletion: () => Effect.void,
         }),
       ),
       // SCIENT-FORK:END

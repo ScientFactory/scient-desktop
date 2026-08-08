@@ -13,6 +13,20 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
+import { ThreadId } from "@t3tools/contracts";
+
+export class ScientForkCompletionError extends Schema.TaggedErrorClass<ScientForkCompletionError>()(
+  "ScientForkCompletionError",
+  {
+    threadId: ThreadId,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 /**
  * ScientForkReactorShape - Service API for the fork reactor lifecycle.
@@ -32,6 +46,9 @@ export interface ScientForkReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /** Typed completion receipt used by the RPC acknowledgement gate and tests. */
+  readonly awaitCompletion: (threadId: ThreadId) => Effect.Effect<void, ScientForkCompletionError>;
 }
 
 /**

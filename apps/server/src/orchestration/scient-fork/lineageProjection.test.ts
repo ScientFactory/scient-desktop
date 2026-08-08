@@ -4,9 +4,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../../persistence/Migrations.ts";
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { applyScientThreadLineageProjection } from "./lineageProjection.ts";
+import { ensureScientForkSchema } from "./schema.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const ORIGIN = ThreadId.make("origin-thread");
@@ -29,7 +29,8 @@ function forkedEvent(sequence: number): Extract<OrchestrationEvent, { type: "thr
       newThreadId: NEW,
       forkAtTurnCount: 2,
       workspaceMode: "local",
-      fidelityMode: "chat-only",
+      providerMode: "transcript-bootstrap",
+      attachmentCopies: [],
       createdAt: NOW,
     },
   };
@@ -40,90 +41,79 @@ interface LineageRow {
   readonly forked_from_thread_id: string;
   readonly fork_point_turn_count: number;
   readonly workspace_mode: string;
-  readonly fidelity_mode: string;
-  readonly created_at: string;
+  readonly provider_mode: string;
+  readonly provider_bootstrap_status: string;
+  readonly attachment_copies_json: string;
+  readonly status: string;
+  readonly checkpoint_status: string;
+  readonly workspace_status: string;
+  readonly attempt_count: number;
 }
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
 layer("scient thread lineage projection", (it) => {
-  it.effect("folds thread.forked into scient_thread_lineage", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations();
-      // The in-memory sqlite layer is memoized across the suite's tests, so
-      // isolate each test's assertions from prior inserts.
-      yield* sql`DELETE FROM scient_thread_lineage`;
+  const prepare = Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureScientForkSchema(sql);
+    yield* sql`DELETE FROM scient_thread_lineage`;
+    return sql;
+  });
 
+  it.effect("records an accepted fork as durable pending work", () =>
+    Effect.gen(function* () {
+      const sql = yield* prepare;
       yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
 
       const rows = yield* sql<LineageRow>`SELECT * FROM scient_thread_lineage`;
       assert.strictEqual(rows.length, 1);
-      assert.deepStrictEqual(rows[0], {
-        thread_id: NEW,
-        forked_from_thread_id: ORIGIN,
-        fork_point_turn_count: 2,
-        workspace_mode: "local",
-        fidelity_mode: "chat-only",
-        created_at: NOW,
-      });
+      assert.strictEqual(rows[0]?.thread_id, NEW);
+      assert.strictEqual(rows[0]?.forked_from_thread_id, ORIGIN);
+      assert.strictEqual(rows[0]?.fork_point_turn_count, 2);
+      assert.strictEqual(rows[0]?.workspace_mode, "local");
+      assert.strictEqual(rows[0]?.provider_mode, "transcript-bootstrap");
+      assert.strictEqual(rows[0]?.provider_bootstrap_status, "pending");
+      assert.strictEqual(rows[0]?.attachment_copies_json, "[]");
+      assert.strictEqual(rows[0]?.status, "pending");
+      assert.strictEqual(rows[0]?.attempt_count, 0);
     }),
   );
 
   it.effect("ignores non-fork events", () =>
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations();
-      // The in-memory sqlite layer is memoized across the suite's tests, so
-      // isolate each test's assertions from prior inserts.
-      yield* sql`DELETE FROM scient_thread_lineage`;
-
+      const sql = yield* prepare;
       const nonFork = {
         ...forkedEvent(12),
         type: "thread.deleted",
         payload: { threadId: NEW, deletedAt: NOW },
       } as unknown as OrchestrationEvent;
       yield* applyScientThreadLineageProjection(nonFork, sql);
-
       const rows = yield* sql<LineageRow>`SELECT * FROM scient_thread_lineage`;
       assert.strictEqual(rows.length, 0);
     }),
   );
 
-  it.effect("is idempotent when the same fork is re-applied", () =>
+  it.effect("does not reset completed work when projection replay re-applies lineage", () =>
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations();
-      // The in-memory sqlite layer is memoized across the suite's tests, so
-      // isolate each test's assertions from prior inserts.
-      yield* sql`DELETE FROM scient_thread_lineage`;
-
-      yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
-      yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
-
-      const rows = yield* sql<LineageRow>`SELECT * FROM scient_thread_lineage`;
-      assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]?.thread_id, NEW);
-    }),
-  );
-
-  it.effect("updates fidelity_mode when a fork completes", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations();
-      yield* sql`DELETE FROM scient_thread_lineage`;
-
+      const sql = yield* prepare;
       yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
       const completed = {
         ...forkedEvent(12),
         type: "thread.fork-completed",
-        payload: { threadId: NEW, fidelityMode: "native-session" },
-      } as unknown as OrchestrationEvent;
+        payload: {
+          threadId: NEW,
+          checkpointStatus: "ready",
+          workspaceStatus: "shared",
+        },
+      } as OrchestrationEvent;
       yield* applyScientThreadLineageProjection(completed, sql);
+      yield* applyScientThreadLineageProjection(forkedEvent(11), sql);
 
       const rows = yield* sql<LineageRow>`SELECT * FROM scient_thread_lineage`;
       assert.strictEqual(rows.length, 1);
-      assert.strictEqual(rows[0]?.fidelity_mode, "native-session");
+      assert.strictEqual(rows[0]?.status, "ready");
+      assert.strictEqual(rows[0]?.checkpoint_status, "ready");
+      assert.strictEqual(rows[0]?.workspace_status, "shared");
     }),
   );
 });

@@ -469,6 +469,51 @@ it.effect("decodes thread archived and unarchived events", () =>
   }),
 );
 
+it.effect("decodes preserved Claude fork events with conservative new defaults", () =>
+  Effect.gen(function* () {
+    const base = {
+      sequence: 1,
+      eventId: "event-fork-legacy",
+      aggregateKind: "thread",
+      aggregateId: "fork-thread",
+      occurredAt: "2026-08-08T00:00:00.000Z",
+      commandId: "cmd-fork-legacy",
+      causationEventId: null,
+      correlationId: "cmd-fork-legacy",
+      metadata: {},
+    } as const;
+    const forked = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.forked",
+      payload: {
+        originThreadId: "origin-thread",
+        newThreadId: "fork-thread",
+        forkAtTurnCount: 2,
+        workspaceMode: "local",
+        fidelityMode: "chat-only",
+        createdAt: "2026-08-08T00:00:00.000Z",
+      },
+    });
+    const completed = yield* decodeOrchestrationEvent({
+      ...base,
+      eventId: "event-fork-completed-legacy",
+      type: "thread.fork-completed",
+      payload: {
+        threadId: "fork-thread",
+        fidelityMode: "replay",
+      },
+    });
+
+    if (forked.type !== "thread.forked" || completed.type !== "thread.fork-completed") {
+      return assert.fail("Expected preserved fork events to decode.");
+    }
+    assert.strictEqual(forked.payload.providerMode, "transcript-bootstrap");
+    assert.deepStrictEqual(forked.payload.attachmentCopies, []);
+    assert.strictEqual(completed.payload.checkpointStatus, "unavailable");
+    assert.strictEqual(completed.payload.workspaceStatus, "project-root");
+  }),
+);
+
 it.effect("decodes thread settled and unsettled events", () =>
   Effect.gen(function* () {
     const settled = yield* decodeOrchestrationEvent({

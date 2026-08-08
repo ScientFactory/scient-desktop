@@ -1,8 +1,8 @@
 /**
- * Scient thread-lineage projector (Increment 1).
+ * Scient thread-lineage projector.
  *
  * SCIENT-OWNED. Folds `thread.forked` events into the standalone
- * `scient_thread_lineage` table (migration 038). Registered as one more
+ * `scient_thread_lineage` table (Scient migration ledger). Registered as one more
  * projector in the T3 ProjectionPipeline via a single marked seam; it no-ops on
  * every other event type, exactly like the existing per-table projectors. The
  * pipeline advances this projector's `projection_state` row by event sequence
@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
+import { insertPendingFork, markForkReady } from "./forkRepository.ts";
 
 /** Projector name for the `projection_state` bookkeeping row. */
 export const SCIENT_FORK_LINEAGE_PROJECTOR_NAME = "scient.thread-lineage" as const;
@@ -29,11 +30,12 @@ export function applyScientThreadLineageProjection(
   // substrates; fold that into the existing lineage row.
   if (event.type === "thread.fork-completed") {
     const completed = event.payload;
-    return sql`
-      UPDATE scient_thread_lineage
-      SET fidelity_mode = ${completed.fidelityMode}
-      WHERE thread_id = ${completed.threadId}
-    `.pipe(
+    return markForkReady(sql, {
+      threadId: completed.threadId,
+      checkpointStatus: completed.checkpointStatus,
+      workspaceStatus: completed.workspaceStatus,
+      updatedAt: event.occurredAt,
+    }).pipe(
       Effect.asVoid,
       Effect.catchTag("SqlError", (sqlError) =>
         Effect.fail(
@@ -46,29 +48,7 @@ export function applyScientThreadLineageProjection(
     return Effect.void;
   }
   const payload = event.payload;
-  return sql`
-    INSERT INTO scient_thread_lineage (
-      thread_id,
-      forked_from_thread_id,
-      fork_point_turn_count,
-      workspace_mode,
-      fidelity_mode,
-      created_at
-    ) VALUES (
-      ${payload.newThreadId},
-      ${payload.originThreadId},
-      ${payload.forkAtTurnCount},
-      ${payload.workspaceMode},
-      ${payload.fidelityMode},
-      ${payload.createdAt}
-    )
-    ON CONFLICT(thread_id) DO UPDATE SET
-      forked_from_thread_id = excluded.forked_from_thread_id,
-      fork_point_turn_count = excluded.fork_point_turn_count,
-      workspace_mode = excluded.workspace_mode,
-      fidelity_mode = excluded.fidelity_mode,
-      created_at = excluded.created_at
-  `.pipe(
+  return insertPendingFork(sql, payload).pipe(
     Effect.asVoid,
     Effect.catchTag("SqlError", (sqlError) =>
       Effect.fail(toPersistenceSqlError("ScientThreadLineageProjection.apply:upsert")(sqlError)),

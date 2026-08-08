@@ -73,6 +73,10 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+// SCIENT-FORK:START — wait for durable fork provisioning before acknowledging
+// the command, so the client cannot enter a fork with the wrong workspace.
+import * as ScientForkReactor from "./orchestration/Services/ScientForkReactor.ts";
+// SCIENT-FORK:END
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -122,6 +126,9 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+// SCIENT-FORK:START — preserve the typed, user-actionable provisioning reason.
+const isScientForkCompletionError = Schema.is(ScientForkReactor.ScientForkCompletionError);
+// SCIENT-FORK:END
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -356,6 +363,9 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      // SCIENT-FORK:START
+      const scientForkReactor = yield* ScientForkReactor.ScientForkReactor;
+      // SCIENT-FORK:END
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -1050,6 +1060,12 @@ const makeWsRpcLayer = (
                       )
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
+              // SCIENT-FORK:START — command persistence and workspace setup form
+              // a durable saga. Only expose success after its typed receipt.
+              if (normalizedCommand.type === "thread.fork") {
+                yield* scientForkReactor.awaitCompletion(normalizedCommand.newThreadId);
+              }
+              // SCIENT-FORK:END
               if (normalizedCommand.type === "thread.archive") {
                 if (shouldStopSessionAfterArchive) {
                   yield* Effect.gen(function* () {
@@ -1088,7 +1104,13 @@ const makeWsRpcLayer = (
                 isOrchestrationDispatchCommandError(cause)
                   ? cause
                   : new OrchestrationDispatchCommandError({
-                      message: "Failed to dispatch orchestration command",
+                      // SCIENT-FORK:START — generic dispatch failures retain T3's
+                      // existing message; fork provisioning failures are safe and
+                      // actionable, so do not hide their typed explanation.
+                      message: isScientForkCompletionError(cause)
+                        ? cause.message
+                        : "Failed to dispatch orchestration command",
+                      // SCIENT-FORK:END
                       cause,
                     }),
               ),

@@ -1387,7 +1387,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.fork-completed",
         payload: {
           threadId: command.threadId,
-          fidelityMode: command.fidelityMode,
+          checkpointStatus: command.checkpointStatus,
+          workspaceStatus: command.workspaceStatus,
         },
       };
     }

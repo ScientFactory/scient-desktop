@@ -336,15 +336,16 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
 });
 
 // SCIENT-FORK:START — dispatch the Scient conversation-fork command. thread.fork
-// carries no createdAt (the server stamps fork/lineage events with its own time),
-// so only a commandId is generated here.
+// carries no createdAt (the server stamps fork/lineage events with its own time).
+// Its default command id derives from the already-unique destination thread id,
+// so transport retries of the same fork request remain idempotent.
 export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.forkThread",
 )(function* (input) {
   return yield* dispatch({
     ...input,
     type: "thread.fork",
-    commandId: yield* commandId(input),
+    commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.newThreadId}`),
   });
 });
 // SCIENT-FORK:END

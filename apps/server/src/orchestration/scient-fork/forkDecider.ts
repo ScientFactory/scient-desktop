@@ -1,5 +1,5 @@
 /**
- * Scient conversation-fork decider (Increment 1: the event-sourced spine).
+ * Scient conversation-fork decider.
  *
  * SCIENT-OWNED. All fork decision logic lives here so the T3-owned decider only
  * carries a single delegation seam. Retire this module if/when T3 ships native
@@ -10,12 +10,11 @@
  * lineage, and leaves the origin thread completely untouched — the decider emits
  * events ONLY against `newThreadId`, never against `originThreadId`.
  *
- * Increment 1 is chat-only: we re-emit the transcript (`thread.message-sent`)
- * plus a `thread.created` for the new aggregate and a `thread.forked` lineage
- * event. We deliberately do NOT re-emit `thread.turn-diff-completed`: those
- * events drive the git CheckpointReactor, and git/provider-session rewind is a
- * LATER increment. Turn structure in the new thread is reconstructed by the
- * existing projection from each re-emitted assistant message's turn linkage.
+ * We re-emit the retained transcript (`thread.message-sent`) plus a
+ * `thread.created` for the new aggregate and a `thread.forked` lineage event.
+ * We deliberately do not re-emit `thread.turn-diff-completed`: those events
+ * drive T3's checkpoint reactor. The Scient fork worker instead copies the
+ * selected origin checkpoint to the new thread's turn-zero ref exactly once.
  *
  * Where origin history comes from: the decider is a pure function over the
  * in-memory `OrchestrationReadModel`, which carries per-thread `messages` and
@@ -27,22 +26,23 @@ import {
   EventId,
   MessageId,
   TurnId,
+  type ChatAttachment,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationMessage,
   type OrchestrationReadModel,
   type OrchestrationThread,
   type ThreadForkCommand,
+  type ThreadForkedPayload,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
+import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
-
-const FORK_FIDELITY_MODE = "chat-only" as const;
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -193,11 +193,13 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     );
   }
 
-  // Completed turn boundaries are the origin's checkpoint turn counts. The
-  // requested fork point must be exactly one of them.
-  const completedBoundaries = new Set(
-    origin.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
-  );
+  // Turn zero is the initial checkpoint T3 creates before the first provider
+  // turn. It is valid even though projected checkpoint summaries begin at the
+  // first completed turn.
+  const completedBoundaries = new Set([
+    0,
+    ...origin.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
+  ]);
   if (!completedBoundaries.has(command.forkAtTurnCount)) {
     return yield* invariant(
       `forkAtTurnCount ${command.forkAtTurnCount} is not a completed turn boundary of origin thread '${command.originThreadId}'.`,
@@ -218,11 +220,28 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
 
   const occurredAt = yield* nowIso;
   const events: PlannedOrchestrationEvent[] = [];
+  const attachmentThreadSegment = toSafeThreadAttachmentSegment(command.newThreadId);
+  if (attachmentThreadSegment === null) {
+    return yield* invariant(
+      `New thread id '${command.newThreadId}' cannot own safe attachment ids.`,
+    );
+  }
 
-  // 1) The new thread aggregate. Branch/worktree are intentionally null: the
-  //    fork is a fresh, independent chat thread that cold-starts its own session
-  //    on the next message. Sharing the origin's worktree is a git-substrate
-  //    concern handled in a later increment.
+  const attachmentRemap = new Map<string, ChatAttachment>();
+  const attachmentCopies: Array<ThreadForkedPayload["attachmentCopies"][number]> = [];
+  for (const message of prefixMessages) {
+    for (const source of message.attachments ?? []) {
+      if (attachmentRemap.has(source.id)) continue;
+      const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
+      const target = { ...source, id: `${attachmentThreadSegment}-${uuid}` };
+      attachmentRemap.set(source.id, target);
+      attachmentCopies.push({ source, target });
+    }
+  }
+
+  // 1) The new thread aggregate. The provider session starts independently and
+  //    receives the retained transcript once on the first post-fork turn. The
+  //    reactor assigns the requested workspace only after this decision commits.
   events.push({
     ...(yield* withForkEventBase({
       commandId: command.commandId,
@@ -254,8 +273,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     turnIdRemap.set(turnId, TurnId.make(fresh));
   }
 
-  // 2) Re-emit the prefix transcript into the new thread's stream, preserving
-  //    original timestamps and ordering.
+  // 2) Re-emit the prefix transcript into the new thread's stream. Payload
+  // timestamps preserve message history, while event occurrence stays at the
+  // fork time so the new thread cannot be sorted as if it were old.
   for (const message of prefixMessages) {
     const freshMessageId = yield* Crypto.Crypto.pipe(
       Effect.flatMap((crypto) => crypto.randomUUIDv4),
@@ -266,7 +286,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       ...(yield* withForkEventBase({
         commandId: command.commandId,
         aggregateId: command.newThreadId,
-        occurredAt: message.createdAt,
+        occurredAt,
       })),
       type: "thread.message-sent",
       payload: {
@@ -274,7 +294,13 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
         messageId: MessageId.make(freshMessageId),
         role: message.role,
         text: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(message.attachments !== undefined
+          ? {
+              attachments: message.attachments.map(
+                (attachment) => attachmentRemap.get(attachment.id) ?? attachment,
+              ),
+            }
+          : {}),
         turnId: remappedTurnId,
         streaming: false,
         createdAt: message.createdAt,
@@ -297,7 +323,8 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       newThreadId: command.newThreadId,
       forkAtTurnCount: command.forkAtTurnCount,
       workspaceMode: command.workspaceMode,
-      fidelityMode: FORK_FIDELITY_MODE,
+      providerMode: "transcript-bootstrap",
+      attachmentCopies,
       createdAt: occurredAt,
     },
   });

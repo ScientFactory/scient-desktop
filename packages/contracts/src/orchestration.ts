@@ -883,17 +883,34 @@ const ThreadSessionStopCommand = Schema.Struct({
 export const OrchestrationForkWorkspaceMode = Schema.Literals(["new-worktree", "local"]);
 export type OrchestrationForkWorkspaceMode = typeof OrchestrationForkWorkspaceMode.Type;
 
-// The fidelity a fork actually achieved. "chat-only": event-spine only (no provider
-// session carried). "native-session": the provider natively forked its session
-// (Codex thread/fork). "replay": the session was re-seeded from the transcript.
-// The decider records the initial "chat-only" intent; the fork reactor resolves the
-// final mode after it performs the provider/checkpoint side effects.
-export const OrchestrationForkFidelityMode = Schema.Literals([
-  "chat-only",
-  "native-session",
-  "replay",
+// Provider continuity is explicit instead of being folded into a vague overall
+// "fidelity" label. Exact-boundary forks start a fresh provider session and
+// inject the retained transcript once with the first post-fork turn. This avoids
+// leaking messages after the selected boundary from provider-native tip forks.
+const OrchestrationForkProviderModeWire = Schema.Literals(["transcript-bootstrap", "cold-start"]);
+export const OrchestrationForkProviderMode = OrchestrationForkProviderModeWire.pipe(
+  Schema.decodeTo(
+    Schema.Literal("transcript-bootstrap"),
+    SchemaTransformation.transform<
+      "transcript-bootstrap",
+      typeof OrchestrationForkProviderModeWire.Type
+    >({
+      decode: () => "transcript-bootstrap",
+      encode: () => "transcript-bootstrap",
+    }),
+  ),
+);
+export type OrchestrationForkProviderMode = typeof OrchestrationForkProviderMode.Type;
+
+export const OrchestrationForkCheckpointStatus = Schema.Literals(["ready", "unavailable"]);
+export type OrchestrationForkCheckpointStatus = typeof OrchestrationForkCheckpointStatus.Type;
+
+export const OrchestrationForkWorkspaceStatus = Schema.Literals([
+  "project-root",
+  "shared",
+  "worktree",
 ]);
-export type OrchestrationForkFidelityMode = typeof OrchestrationForkFidelityMode.Type;
+export type OrchestrationForkWorkspaceStatus = typeof OrchestrationForkWorkspaceStatus.Type;
 
 export const ThreadForkCommand = Schema.Struct({
   type: Schema.Literal("thread.fork"),
@@ -1033,14 +1050,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-// SCIENT-FORK:START — internal command: the fork reactor reports the fidelity it
-// actually achieved after establishing the fork's substrates. `threadId` is the
-// NEW (forked) thread. Mirrors thread.revert.complete.
+// SCIENT-FORK:START — internal command: the durable fork worker reports exactly
+// which code-state substrates it established. `threadId` is the NEW thread.
 const ThreadForkCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.fork.complete"),
   commandId: CommandId,
   threadId: ThreadId,
-  fidelityMode: OrchestrationForkFidelityMode,
+  checkpointStatus: OrchestrationForkCheckpointStatus,
+  workspaceStatus: OrchestrationForkWorkspaceStatus,
   createdAt: IsoDateTime,
 });
 // SCIENT-FORK:END
@@ -1307,21 +1324,36 @@ export const ThreadRevertedPayload = Schema.Struct({
   turnCount: NonNegativeInt,
 });
 
-// SCIENT-FORK:START — fork lineage payloads (OrchestrationForkFidelityMode is
-// defined earlier, next to OrchestrationForkWorkspaceMode).
+// SCIENT-FORK:START — immutable fork lineage plus explicit provider behavior.
+export const ThreadForkAttachmentCopy = Schema.Struct({
+  source: ChatAttachment,
+  target: ChatAttachment,
+});
+export type ThreadForkAttachmentCopy = typeof ThreadForkAttachmentCopy.Type;
+
 export const ThreadForkedPayload = Schema.Struct({
   originThreadId: ThreadId,
   newThreadId: ThreadId,
   forkAtTurnCount: NonNegativeInt,
   workspaceMode: OrchestrationForkWorkspaceMode,
-  fidelityMode: OrchestrationForkFidelityMode,
+  providerMode: OrchestrationForkProviderMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("transcript-bootstrap" as const)),
+  ),
+  attachmentCopies: Schema.Array(ThreadForkAttachmentCopy).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   createdAt: IsoDateTime,
 });
 export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
 
 export const ThreadForkCompletedPayload = Schema.Struct({
   threadId: ThreadId,
-  fidelityMode: OrchestrationForkFidelityMode,
+  checkpointStatus: OrchestrationForkCheckpointStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unavailable" as const)),
+  ),
+  workspaceStatus: OrchestrationForkWorkspaceStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed("project-root" as const)),
+  ),
 });
 export type ThreadForkCompletedPayload = typeof ThreadForkCompletedPayload.Type;
 // SCIENT-FORK:END

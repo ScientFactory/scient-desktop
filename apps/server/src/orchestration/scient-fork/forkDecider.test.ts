@@ -33,11 +33,13 @@ function message(input: {
   readonly turnId: string | null;
   readonly createdAt: string;
   readonly streaming?: boolean;
+  readonly attachments?: OrchestrationMessage["attachments"];
 }): OrchestrationMessage {
   return {
     id: MessageId.make(input.id),
     role: input.role,
     text: input.text,
+    ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
     turnId: input.turnId === null ? null : TurnId.make(input.turnId),
     streaming: input.streaming ?? false,
     createdAt: input.createdAt,
@@ -202,7 +204,8 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
           originThreadId: ORIGIN,
           newThreadId: NEW,
           forkAtTurnCount: 2,
-          fidelityMode: "chat-only",
+          providerMode: "transcript-bootstrap",
+          attachmentCopies: [],
         });
       }
 
@@ -234,6 +237,39 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("rekeys retained attachments so the fork owns an independent file", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread();
+      const sourceAttachment = {
+        type: "image" as const,
+        id: "origin-thread-00000000-0000-4000-8000-000000000001",
+        name: "evidence.png",
+        mimeType: "image/png",
+        sizeBytes: 42,
+      };
+      const messages = origin.messages.map((entry, index) =>
+        index === 1 ? { ...entry, attachments: [sourceAttachment] } : entry,
+      );
+      const events = yield* forkThread({
+        command: forkCommand(),
+        readModel: makeReadModel({ origin: { ...origin, messages } }),
+      });
+      const copiedMessage = events.find(
+        (event) => event.type === "thread.message-sent" && event.payload.text === "first answer",
+      );
+      const forked = events.find((event) => event.type === "thread.forked");
+
+      expect(copiedMessage?.type).toBe("thread.message-sent");
+      expect(forked?.type).toBe("thread.forked");
+      if (copiedMessage?.type === "thread.message-sent" && forked?.type === "thread.forked") {
+        const target = copiedMessage.payload.attachments?.[0];
+        expect(target?.id).not.toBe(sourceAttachment.id);
+        expect(target?.id).toMatch(/^forked-thread-[0-9a-f-]{36}$/);
+        expect(forked.payload.attachmentCopies).toEqual([{ source: sourceAttachment, target }]);
+      }
+    }),
+  );
+
   it.effect("forking at an earlier boundary re-emits only that prefix", () =>
     Effect.gen(function* () {
       const events = yield* forkThread({
@@ -244,6 +280,18 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         .filter((event) => event.type === "thread.message-sent")
         .map((event) => (event.type === "thread.message-sent" ? event.payload.text : ""));
       expect(texts).toEqual(["first prompt", "first answer"]);
+    }),
+  );
+
+  it.effect("accepts the initial turn-zero boundary without copying later messages", () =>
+    Effect.gen(function* () {
+      const events = yield* forkThread({
+        command: forkCommand({ forkAtTurnCount: 0 }),
+        readModel: makeReadModel(),
+      });
+      expect(events.map((event) => event.type)).toEqual(["thread.created", "thread.forked"]);
+      const forked = events.at(-1);
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(0);
     }),
   );
 

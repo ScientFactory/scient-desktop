@@ -192,19 +192,6 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       Effect.succeed({ threadId, turns: [] }),
   );
 
-  // SCIENT-FORK:START
-  const forkThread = vi.fn(
-    (
-      _threadId: ThreadId,
-      _input: {
-        readonly lastTurnId?: string | undefined;
-        readonly cwd?: string | undefined;
-      },
-    ): Effect.Effect<{ readonly forkedProviderThreadId: string }, ProviderAdapterError> =>
-      Effect.succeed({ forkedProviderThreadId: "provider-thread-forked-1" }),
-  );
-  // SCIENT-FORK:END
-
   const stopAll = vi.fn(
     (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -227,9 +214,6 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
-    // SCIENT-FORK:START
-    forkThread,
-    // SCIENT-FORK:END
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -265,9 +249,6 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
-    // SCIENT-FORK:START
-    forkThread,
-    // SCIENT-FORK:END
     stopAll,
   };
 }
@@ -986,40 +967,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(rollbackCall?.[1], 1);
     }),
   );
-
-  // SCIENT-FORK:START
-  it.effect(
-    "forks a conversation via the routed adapter and returns the forked provider thread id",
-    () =>
-      Effect.gen(function* () {
-        const provider = yield* ProviderService.ProviderService;
-
-        const initial = yield* provider.startSession(asThreadId("thread-fork-1"), {
-          provider: ProviderDriverKind.make("codex"),
-          providerInstanceId: codexInstanceId,
-          threadId: asThreadId("thread-fork-1"),
-          cwd: "/tmp/project",
-          runtimeMode: "full-access",
-        });
-        routing.codex.forkThread.mockClear();
-        routing.codex.forkThread.mockReturnValueOnce(
-          Effect.succeed({ forkedProviderThreadId: "provider-thread-forked-42" }),
-        );
-
-        const result = yield* provider.forkConversation({
-          originThreadId: initial.threadId,
-          cwd: "/tmp/fork-cwd",
-          lastTurnId: "turn-3",
-        });
-
-        assert.deepEqual(result, { forkedProviderThreadId: "provider-thread-forked-42" });
-        assert.equal(routing.codex.forkThread.mock.calls.length, 1);
-        const forkCall = routing.codex.forkThread.mock.calls[0];
-        assert.equal(forkCall?.[0], initial.threadId);
-        assert.deepEqual(forkCall?.[1], { cwd: "/tmp/fork-cwd", lastTurnId: "turn-3" });
-      }),
-  );
-  // SCIENT-FORK:END
 
   it.effect("preserves the persisted binding when stopping a session", () =>
     Effect.gen(function* () {

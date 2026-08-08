@@ -93,6 +93,7 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
+import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -1214,12 +1215,6 @@ function ChatViewContent(props: ChatViewProps) {
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
-  // SCIENT-FORK:START — fork seeds a NEW thread from the origin's prefix; the
-  // origin is never mutated (mirrors the revertCheckpoint command wiring).
-  const forkThreadCommand = useAtomCommand(threadEnvironment.fork, {
-    reportFailure: false,
-  });
-  // SCIENT-FORK:END
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
@@ -1490,6 +1485,11 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const {
+    errorUpdate: forkErrorUpdate,
+    isForking: isForkingThread,
+    forkToTurnCount,
+  } = useScientThreadFork({ origin: activeThread ?? null, navigate });
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2221,7 +2221,8 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking =
+    phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint || isForkingThread;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2707,6 +2708,11 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
+  useEffect(() => {
+    if (forkErrorUpdate) {
+      setThreadError(forkErrorUpdate.threadId, forkErrorUpdate.message);
+    }
+  }, [forkErrorUpdate, setThreadError]);
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -4765,46 +4771,6 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  // SCIENT-FORK:START — fork a NEW thread from the origin's prefix at a
-  // completed-turn boundary (the same boundary revert-to-N would retain), then
-  // navigate into it. The origin thread is left untouched. Command failures are
-  // surfaced on the origin thread exactly like onRevertToTurnCount does.
-  const onForkToTurnCount = useCallback(
-    async (turnCount: number, workspaceMode: "new-worktree" | "local") => {
-      if (!activeThread) return;
-      const forkThreadId = newThreadId();
-      const forkResult = await forkThreadCommand({
-        environmentId: activeThread.environmentId,
-        input: {
-          originThreadId: activeThread.id,
-          newThreadId: forkThreadId,
-          forkAtTurnCount: turnCount,
-          workspaceMode,
-        },
-      });
-      if (forkResult._tag === "Failure" && !isAtomCommandInterrupted(forkResult)) {
-        const error = squashAtomCommandFailure(forkResult);
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to fork thread.",
-        );
-        return;
-      }
-      if (forkResult._tag === "Failure") {
-        return;
-      }
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId: activeThread.environmentId,
-          threadId: forkThreadId,
-        },
-      });
-    },
-    [activeThread, forkThreadCommand, navigate, setThreadError],
-  );
-  // SCIENT-FORK:END
-
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -5925,8 +5891,8 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — fork reuses the SAME resolved turn boundary as revert
   // (revertTurnCountRef); a fork at turn N seeds exactly what revert-to-N keeps.
   // The handler is read from a ref so the callback identity stays stable.
-  const onForkToTurnCountRef = useRef(onForkToTurnCount);
-  onForkToTurnCountRef.current = onForkToTurnCount;
+  const onForkToTurnCountRef = useRef(forkToTurnCount);
+  onForkToTurnCountRef.current = forkToTurnCount;
   const onForkUserMessage = useCallback(
     (messageId: MessageId, workspaceMode: "new-worktree" | "local") => {
       const targetTurnCount = revertTurnCountRef.current.get(messageId);
