@@ -7,8 +7,91 @@ import {
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  resolveBrowseEnterAction,
+  shouldOfferProjectPathCreation,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("resolveBrowseEnterAction", () => {
+  const enter = {
+    canSubmitBrowsePath: true,
+    forceSubmitCurrentPath: false,
+    key: "Enter",
+    isComposing: false,
+    isPrimaryModifierPressed: false,
+    highlightedItemValue: null,
+  } as const;
+
+  it("submits the current folder when no browse row is currently highlighted", () => {
+    expect(resolveBrowseEnterAction(enter)).toBe("submit-current-path");
+  });
+
+  it("leaves a current browse-row selection to the component library", () => {
+    expect(
+      resolveBrowseEnterAction({ ...enter, highlightedItemValue: "browse:directory:Projects" }),
+    ).toBe("activate-highlighted");
+  });
+
+  it("lets the modifier submit the current folder instead of the highlighted row", () => {
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        isPrimaryModifierPressed: true,
+        highlightedItemValue: "browse:up",
+      }),
+    ).toBe("submit-current-path");
+  });
+
+  it("submits a new-folder draft even when the picker retained its previous row", () => {
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        forceSubmitCurrentPath: true,
+        highlightedItemValue: "browse:up",
+      }),
+    ).toBe("submit-current-path");
+  });
+
+  it("ignores non-submit and composing keyboard events", () => {
+    expect(resolveBrowseEnterAction({ ...enter, key: "ArrowDown" })).toBe("ignore");
+    expect(resolveBrowseEnterAction({ ...enter, isComposing: true })).toBe("ignore");
+  });
+});
+
+describe("shouldOfferProjectPathCreation", () => {
+  const confirmedMissingPath = {
+    canSubmitBrowsePath: true,
+    isBrowsePending: false,
+    hasBrowseResult: true,
+    query: "~/Projects/New project",
+    hasHighlightedBrowseItem: false,
+    hasTrailingPathSeparator: false,
+    exactEntryExists: false,
+  } as const;
+
+  it("offers creation only after the containing directory confirms a missing path", () => {
+    expect(shouldOfferProjectPathCreation(confirmedMissingPath)).toBe(true);
+    expect(
+      shouldOfferProjectPathCreation({ ...confirmedMissingPath, exactEntryExists: true }),
+    ).toBe(false);
+  });
+
+  it("does not label unresolved or navigated directory paths as creation", () => {
+    expect(
+      shouldOfferProjectPathCreation({ ...confirmedMissingPath, hasBrowseResult: false }),
+    ).toBe(false);
+    expect(shouldOfferProjectPathCreation({ ...confirmedMissingPath, isBrowsePending: true })).toBe(
+      false,
+    );
+    expect(
+      shouldOfferProjectPathCreation({
+        ...confirmedMissingPath,
+        query: "~/Projects/Existing project/",
+        hasTrailingPathSeparator: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("reduceCommandPaletteUiState", () => {
   const closedState = { open: false, mode: "command", openIntent: null } as const;

@@ -1042,6 +1042,8 @@ export interface DesktopBridge {
    * web callers fall back to a plain file input.
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
+  /** Resolve the absolute path of an OS-dropped file or folder in Electron. */
+  getPathForFile?: (file: File) => string | null;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
