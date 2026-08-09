@@ -52,6 +52,11 @@ export function startAnalyticsWorker(input: {
     installationId = `installation:${NodeCrypto.randomUUID()}`;
     outbox.writeMeta("installation_id", installationId);
   }
+  let installationToken = outbox.readMeta("installation_token");
+  if (!installationToken) {
+    installationToken = NodeCrypto.randomBytes(32).toString("hex");
+    outbox.writeMeta("installation_token", installationToken);
+  }
 
   let closed = false;
   let activeFlush: Promise<number> | null = null;
@@ -79,7 +84,10 @@ export function startAnalyticsWorker(input: {
       try {
         const response = await fetch(input.endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Scient-Installation-Token": installationToken,
+          },
           body: JSON.stringify(batch),
           signal: controller.signal,
         });

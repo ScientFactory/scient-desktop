@@ -31,9 +31,12 @@ function options(overrides: Partial<AnalyticsRuntimeOptions> = {}): AnalyticsRun
 async function ingestionServer(): Promise<{
   readonly endpoint: string;
   readonly bodies: unknown[];
+  readonly installationTokens: string[];
 }> {
   const bodies: unknown[] = [];
+  const installationTokens: string[] = [];
   const server = NodeHttp.createServer((request, response) => {
+    installationTokens.push(String(request.headers["x-scient-installation-token"] ?? ""));
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
@@ -49,7 +52,11 @@ async function ingestionServer(): Promise<{
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("Missing test server port");
-  return { endpoint: `http://127.0.0.1:${address.port}/v1/events`, bodies };
+  return {
+    endpoint: `http://127.0.0.1:${address.port}/v1/events`,
+    bodies,
+    installationTokens,
+  };
 }
 
 afterEach(async () => {
@@ -94,6 +101,7 @@ describe("Scient analytics background runtime", () => {
     await runtime.close();
 
     const payload = server.bodies[0];
+    expect(server.installationTokens).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/)]);
     expect(JSON.stringify(payload)).not.toContain("gpt-5.6-private-model-name");
     expect(JSON.stringify(payload)).not.toContain("/private/project");
     expect(payload).toMatchObject({
