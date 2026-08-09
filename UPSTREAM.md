@@ -108,6 +108,12 @@ hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
 
+The owned release seam also verifies a complete cross-platform updater asset
+set, manifest sizes and SHA-512 hashes, final native signing evidence, and an
+exact source-commit handoff before publication. Signing credentials are scoped
+to their operating-system jobs, and release-owned actions are commit-pinned;
+these guards must survive future T3 workflow refreshes.
+
 Production identity is a conscious cutover divergence: the package uses the
 canonical Scient bundle ID and protocol so the legacy updater can replace the
 old app, while keeping `scient-next` user data isolated. Future upstream merges

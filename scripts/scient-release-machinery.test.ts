@@ -4,16 +4,59 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 
 import { createScientReleaseHandoff } from "./create-scient-release-handoff.ts";
 import {
   createScientServerPackageJson,
   resolveNpmCompatibleOverrides,
 } from "./package-scient-server.ts";
-import { resolveReleaseNoteSource } from "./scient-release-preflight.ts";
+import {
+  renderScientReleaseNotesMarkdown,
+  resolveReleaseNoteSource,
+  runScientReleasePreflight,
+} from "./scient-release-preflight.ts";
 
 describe("Scient release machinery", () => {
+  it("pins every release-owned action to an immutable commit", () => {
+    for (const workflowName of ["promote-release.yml", "release.yml"]) {
+      const workflow = NodeFS.readFileSync(
+        NodePath.join(import.meta.dirname, "../.github/workflows", workflowName),
+        "utf8",
+      );
+      const uses = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
+      assert(uses.length > 0, `${workflowName} must declare at least one action`);
+      for (const action of uses) {
+        assert.match(
+          action ?? "",
+          /@[0-9a-f]{40}$/u,
+          `${workflowName} has a mutable action: ${action}`,
+        );
+      }
+    }
+  });
+
+  it("requires release/stable to be the exact selected main commit", async () => {
+    await expect(
+      runScientReleasePreflight({
+        version: "0.6.0",
+        sourceSha: "a".repeat(40),
+        releaseSha: "b".repeat(40),
+        root: process.cwd(),
+        allowNoteFree: true,
+      }),
+    ).rejects.toThrow("must point at the exact selected main commit");
+    await expect(
+      runScientReleasePreflight({
+        version: "00.6.0",
+        sourceSha: "a".repeat(40),
+        releaseSha: "a".repeat(40),
+        root: process.cwd(),
+        allowNoteFree: true,
+      }),
+    ).rejects.toThrow("exact x.y.z version");
+  });
+
   it("uses the validated owned What's New catalog for the exact release", () => {
     assert.equal(
       resolveReleaseNoteSource({
@@ -33,6 +76,24 @@ describe("Scient release machinery", () => {
           allowNoteFree: true,
         }),
       "catalog is invalid",
+    );
+  });
+
+  it("renders the approved in-app note as the public GitHub release body", () => {
+    assert.equal(
+      renderScientReleaseNotesMarkdown({
+        version: "0.6.0",
+        kicker: "The new Scient foundation",
+        headline: "A faster, clearer Scient",
+        summary: "Scient now runs on its new maintained desktop foundation.",
+        highlights: [
+          {
+            title: "Easier setup",
+            description: "Connect an existing AI subscription from the composer.",
+          },
+        ],
+      }),
+      "# A faster, clearer Scient\n\n**The new Scient foundation**\n\nScient now runs on its new maintained desktop foundation.\n\n## Highlights\n\n- **Easier setup** — Connect an existing AI subscription from the composer.\n",
     );
   });
 

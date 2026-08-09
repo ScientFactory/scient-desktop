@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   preflight:
-    name: Exact-tree release preflight
+    name: Exact-commit release preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -41,6 +41,7 @@ jobs:
       source_sha: ${{ steps.meta.outputs.source_sha }}
       source_tree: ${{ steps.meta.outputs.source_tree }}
       publish_release: ${{ steps.meta.outputs.publish_release }}
+      release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
     steps:
       - name: Require release/stable
         shell: bash
@@ -51,7 +52,7 @@ jobs:
           fi
 
       - name: Checkout exact release head
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -61,7 +62,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -73,13 +74,18 @@ jobs:
 
       - name: Verify exact source and approved release notes
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ALLOW_NOTE_FREE: ${{ inputs.allow_note_free }}
         run: |
           args=(
-            --version "${{ inputs.version }}"
-            --source-sha "${{ inputs.source_sha }}"
+            --version "$RELEASE_VERSION"
+            --source-sha "$SOURCE_SHA"
             --release-sha "${GITHUB_SHA}"
+            --notes-output "$RUNNER_TEMP/scient-release-notes.md"
           )
-          if [[ "${{ inputs.allow_note_free }}" == "true" ]]; then
+          if [[ "$ALLOW_NOTE_FREE" == "true" ]]; then
             args+=(--allow-note-free)
           fi
           node scripts/scient-release-preflight.ts "${args[@]}"
@@ -107,14 +113,21 @@ jobs:
       - id: meta
         name: Export immutable release metadata
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
-          version="${{ inputs.version }}"
+          set -euo pipefail
+          version="$RELEASE_VERSION"
           version="${version#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "source_sha=${{ inputs.source_sha }}" >> "$GITHUB_OUTPUT"
-          echo "source_tree=$(git rev-parse '${{ inputs.source_sha }}^{tree}')" >> "$GITHUB_OUTPUT"
-          echo "publish_release=${{ inputs.publish_release }}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_tree=$(git rev-parse "$SOURCE_SHA^{tree}")" >> "$GITHUB_OUTPUT"
+          echo "publish_release=$PUBLISH_RELEASE" >> "$GITHUB_OUTPUT"
+          release_notes_base64="$(base64 < "$RUNNER_TEMP/scient-release-notes.md" | tr -d '\n')"
+          echo "release_notes_base64=$release_notes_base64" >> "$GITHUB_OUTPUT"
 
   # Scient cloud is intentionally disabled for the first migration release.
   # Keep T3's proven relay/tracing handoff visible and structurally intact so
@@ -127,10 +140,10 @@ jobs:
     timeout-minutes: 5
     environment: production
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -146,7 +159,7 @@ jobs:
             --github-output \
             --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
       - name: Upload relay client tracing config
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing.env
@@ -159,10 +172,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -175,10 +188,10 @@ jobs:
           set -euo pipefail
           pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
           pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
+          ( cd "$pty_dir" && npx --yes node-gyp@12.3.0 rebuild )
           mkdir -p wsl-prebuild
           cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild/pty.node
@@ -222,10 +235,10 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             resource_key: win32-x64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -234,13 +247,13 @@ jobs:
               - --filter=@t3tools/desktop...
               - --filter=t3...
               - --filter=@t3tools/scripts...
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           targets: ${{ matrix.rust_target }}
 
       - name: Download disabled relay client tracing config
         if: ${{ false }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -255,11 +268,13 @@ jobs:
           cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align staged package versions
-        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
 
       - name: Download WSL native dependency
         if: matrix.platform == 'win'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild
@@ -312,39 +327,46 @@ jobs:
             "SCIENT_WINDOWS_SIGNING_READY=false" >> $env:GITHUB_ENV
             exit 0
           }
-          Install-Module TrustedSigning -MinimumVersion 0.5.0 -Force -AllowClobber -Scope CurrentUser
-          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
+          Install-Module TrustedSigning -RequiredVersion 0.5.0 -Force -AllowClobber -Scope CurrentUser
+          Import-Module TrustedSigning -RequiredVersion 0.5.0 -Force
           "SCIENT_WINDOWS_SIGNING_READY=true" >> $env:GITHUB_ENV
 
       - name: Build desktop artifact
         shell: bash
         env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_ARCH: ${{ matrix.arch }}
           PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ScientFactory/scient-desktop-next
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY || '' }}
+          APPLE_API_KEY_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'mac' && secrets.APPLE_API_ISSUER || '' }}
+          AZURE_TENANT_ID: ${{ matrix.platform == 'win' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ matrix.platform == 'win' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ matrix.platform == 'win' && secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ matrix.platform == 'win' && secrets.AZURE_TRUSTED_SIGNING_ENDPOINT || '' }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ matrix.platform == 'win' && secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME || '' }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ matrix.platform == 'win' && secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME || '' }}
+          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ matrix.platform == 'win' && secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME || '' }}
         run: |
           set -euo pipefail
           args=(
-            --platform "${{ matrix.platform }}"
-            --target "${{ matrix.target }}"
-            --arch "${{ matrix.arch }}"
-            --build-version "${{ needs.preflight.outputs.version }}"
+            --platform "$RELEASE_PLATFORM"
+            --target "$RELEASE_TARGET"
+            --arch "$RELEASE_ARCH"
+            --build-version "$RELEASE_VERSION"
             --verbose
           )
           signed=false
+          key_path=""
+          cleanup_key() { [[ -z "$key_path" ]] || rm -f "$key_path"; }
+          trap cleanup_key EXIT
           has_all() { for value in "$@"; do [[ -n "$value" ]] || return 1; done; }
-          if [[ "${{ matrix.platform }}" == "mac" ]]; then
+          if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
             if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
               key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
               printf '%s' "$APPLE_API_KEY" > "$key_path"
@@ -355,7 +377,7 @@ jobs:
               echo "macOS signing and notarization configuration is required for publication." >&2
               exit 1
             fi
-          elif [[ "${{ matrix.platform }}" == "win" ]]; then
+          elif [[ "$RELEASE_PLATFORM" == "win" ]]; then
             args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
             if [[ "${SCIENT_WINDOWS_SIGNING_READY:-false}" == "true" ]]; then
               args+=(--signed)
@@ -363,17 +385,54 @@ jobs:
             fi
           fi
           vp run dist:desktop:artifact "${args[@]}"
+          cleanup_key
+          trap - EXIT
           mkdir -p release-publish
           shopt -s nullglob
           for pattern in release/*.dmg release/*.zip release/*.AppImage release/*.exe release/*.blockmap release/*.yml; do
             for file in $pattern; do cp "$file" release-publish/; done
           done
-          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" == "x64" ]]; then
+          if [[ "$RELEASE_PLATFORM" == "mac" && "$RELEASE_ARCH" == "x64" ]]; then
             for manifest in release-publish/*-mac.yml; do mv "$manifest" "${manifest%.yml}-x64.yml"; done
           fi
           printf '{"platform":"%s","arch":"%s","signed":%s}\n' \
-            "${{ matrix.platform }}" "${{ matrix.arch }}" "$signed" \
-            > "release-publish/signing-${{ matrix.platform }}-${{ matrix.arch }}.json"
+            "$RELEASE_PLATFORM" "$RELEASE_ARCH" "$signed" \
+            > "release-publish/signing-$RELEASE_PLATFORM-$RELEASE_ARCH.json"
+          if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
+            echo "SCIENT_MAC_SIGNING_READY=$signed" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verify macOS signing and notarization
+        if: matrix.platform == 'mac' && env.SCIENT_MAC_SIGNING_READY == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(release-publish/*.dmg)
+          zips=(release-publish/*.zip)
+          [[ ${#dmgs[@]} -eq 1 && ${#zips[@]} -eq 1 ]] || {
+            echo "Expected exactly one macOS DMG and one updater ZIP." >&2
+            exit 1
+          }
+          mount_dir="$(mktemp -d)"
+          zip_dir="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
+            rm -rf "$mount_dir" "$zip_dir"
+          }
+          trap cleanup EXIT
+          hdiutil attach "${dmgs[0]}" -nobrowse -readonly -mountpoint "$mount_dir" >/dev/null
+          dmg_apps=("$mount_dir"/*.app)
+          [[ ${#dmg_apps[@]} -eq 1 ]] || { echo "Signed DMG does not contain exactly one app." >&2; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "${dmg_apps[0]}"
+          xcrun stapler validate "${dmg_apps[0]}"
+          spctl --assess --type execute --verbose=2 "${dmg_apps[0]}"
+          ditto -x -k "${zips[0]}" "$zip_dir"
+          zip_apps=("$zip_dir"/*.app)
+          [[ ${#zip_apps[@]} -eq 1 ]] || { echo "Updater ZIP does not contain exactly one app." >&2; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "${zip_apps[0]}"
+          xcrun stapler validate "${zip_apps[0]}"
+          spctl --assess --type execute --verbose=2 "${zip_apps[0]}"
 
       - name: Verify Windows signature
         if: matrix.platform == 'win' && env.SCIENT_WINDOWS_SIGNING_READY == 'true'
@@ -392,12 +451,12 @@ jobs:
           mkdir -p "resource-monitor/${{ matrix.resource_key }}"
           cp "$source" "resource-monitor/${{ matrix.resource_key }}/$binary"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: resource-monitor-${{ matrix.resource_key }}
           path: resource-monitor/${{ matrix.resource_key }}/*
@@ -409,26 +468,30 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
           run-install: true
       - name: Align package versions and build server
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+          node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
           vp run --filter @t3tools/web build
           vp run --filter t3 build:bundle
           cp -R apps/web/dist apps/server/dist/client
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: resource-monitor-*
           path: resource-monitors
       - name: Add native monitors and create tarball
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
           for dir in resource-monitors/resource-monitor-*; do
@@ -438,9 +501,9 @@ jobs:
             chmod +x "apps/server/dist/resource-monitor/$key/t3-resource-monitor" 2>/dev/null || true
           done
           node scripts/package-scient-server.ts \
-            --version "${{ needs.preflight.outputs.version }}" \
+            --version "$RELEASE_VERSION" \
             --output-dir release-server
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: scient-server
           path: release-server/*
@@ -452,15 +515,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: scient-server
           path: release-assets
@@ -488,15 +551,26 @@ jobs:
           done
       - name: Remove internal signing attestations
         run: rm release-assets/signing-*.json
+      - name: Verify complete updater and server artifact set
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          node scripts/verify-scient-release-assets.ts \
+            --assets-dir release-assets \
+            --version "$RELEASE_VERSION"
       - name: Create checksums and compatibility handoff
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
         run: |
           node scripts/create-scient-release-handoff.ts \
             --assets-dir release-assets \
-            --version "${{ needs.preflight.outputs.version }}" \
-            --source-sha "${{ needs.preflight.outputs.source_sha }}" \
-            --source-tree "${{ needs.preflight.outputs.source_tree }}" \
+            --version "$RELEASE_VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree "$SOURCE_TREE" \
             --output "release-assets/scient-release-handoff.json"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}
           path: release-assets/*
@@ -521,17 +595,65 @@ jobs:
             echo "SCIENT_DESKTOP_RELEASES_ENABLED must equal true." >&2
             exit 1
           }
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}
           path: release-assets
-      - uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.preflight.outputs.tag }}
-          target_commitish: ${{ needs.preflight.outputs.source_sha }}
-          name: Scient v${{ needs.preflight.outputs.version }}
-          generate_release_notes: true
-          prerelease: false
-          make_latest: true
-          files: release-assets/*
-          fail_on_unmatched_files: true
+      - name: Refuse to overwrite an existing tag or release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag $RELEASE_TAG already exists; refusing to repurpose it." >&2
+            exit 1
+          fi
+      - name: Stage, verify, and publish the immutable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          RELEASE_NOTES_BASE64: ${{ needs.preflight.outputs.release_notes_base64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$RELEASE_NOTES_BASE64" | base64 --decode > "$RUNNER_TEMP/scient-release-notes.md"
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "Scient v$RELEASE_VERSION" \
+            --notes-file "$RUNNER_TEMP/scient-release-notes.md" \
+            --draft \
+            --latest=false
+
+          mkdir published-assets
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir published-assets
+          (cd release-assets && sha256sum -- * | sort) > "$RUNNER_TEMP/expected-release-sha256.txt"
+          (cd published-assets && sha256sum -- * | sort) > "$RUNNER_TEMP/published-release-sha256.txt"
+          diff -u "$RUNNER_TEMP/expected-release-sha256.txt" "$RUNNER_TEMP/published-release-sha256.txt"
+
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
+          latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          [[ "$latest_tag" == "$RELEASE_TAG" ]] || {
+            echo "Published release is not current Latest ($latest_tag)." >&2
+            exit 1
+          }
+          tag_sha="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')"
+          [[ "$tag_sha" == "$SOURCE_SHA" ]] || {
+            echo "$RELEASE_TAG resolves to $tag_sha, not $SOURCE_SHA." >&2
+            exit 1
+          }

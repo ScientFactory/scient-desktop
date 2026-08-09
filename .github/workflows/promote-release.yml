@@ -18,11 +18,11 @@ concurrency:
 
 jobs:
   promote:
-    name: Exact-tree promotion
+    name: Exact-commit promotion
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
           fetch-depth: 0
@@ -48,6 +48,14 @@ jobs:
             }
       - name: Fast-forward release/stable to the exact main commit
         shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
-          git push origin "${{ inputs.source_sha }}:refs/heads/release/stable"
-          echo "Promoted ${{ inputs.source_sha }} without creating a commit or changing its tree." >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          git push origin "$SOURCE_SHA:refs/heads/release/stable"
+          promoted_sha="$(git ls-remote origin refs/heads/release/stable | awk 'NR == 1 { print $1 }')"
+          [[ "$promoted_sha" == "$SOURCE_SHA" ]] || {
+            echo "release/stable resolved to $promoted_sha after promotion, not $SOURCE_SHA." >&2
+            exit 1
+          }
+          echo "Promoted $SOURCE_SHA without creating a commit or changing its tree." >> "$GITHUB_STEP_SUMMARY"

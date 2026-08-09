@@ -23,6 +23,7 @@ describe("Scient release distribution", () => {
 
   it("rejects channel names and shell-like values", () => {
     assert.isFalse(isExactScientReleaseVersion("latest"));
+    assert.isFalse(isExactScientReleaseVersion("00.6.0"));
     assert.isFalse(isExactScientReleaseVersion("0.6.0; touch /tmp/no"));
     assert.throws(() => scientServerAssetName("latest"));
   });
