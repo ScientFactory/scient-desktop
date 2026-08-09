@@ -34,7 +34,7 @@ const testLayer = Layer.mergeAll(
 const runRequest = (relativeUrl: string, init?: RequestInit) =>
   Effect.gen(function* () {
     const request = HttpServerRequest.fromWeb(
-      new Request(new URL(relativeUrl, "http://127.0.0.1:3774"), init),
+      new Request(new URL(relativeUrl, "http://127.0.0.1:3774").toString(), init),
     );
     const response = yield* assetRouteHandler.pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request),
