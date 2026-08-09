@@ -103,7 +103,9 @@ export function DraftHeroHeadline({
     activeProjectRef?.projectId === null
       ? "without a project"
       : (activeProjectGroup?.displayName ?? activeProjectTitle);
-  const hasResolvedTarget = activeProjectRef !== null;
+  const hasResolvedProject =
+    activeProjectRef?.projectId != null &&
+    (activeProjectGroup !== null || activeProjectTitle !== null);
   const canChooseProject = projectPickerEntries.length > 0;
   const projectlessEnvironmentId: EnvironmentId | null =
     activeProjectRef?.environmentId ?? primaryEnvironmentId;
@@ -115,7 +117,7 @@ export function DraftHeroHeadline({
   const projectSelector = shouldShowProjectMenu ? (
     <Menu>
       <MenuTrigger
-        aria-label={hasResolvedTarget ? "Change workspace" : "Choose a workspace"}
+        aria-label={hasResolvedProject ? "Change workspace" : "Choose a workspace"}
         className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-bottom text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         title={activeProjectDisplayName ?? undefined}
       >
@@ -179,8 +181,8 @@ export function DraftHeroHeadline({
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
       {activeProjectRef?.projectId === null ? (
-        <>What should we work on {projectSelector}?</>
-      ) : hasResolvedTarget ? (
+        <>What would you like to explore?</>
+      ) : hasResolvedProject ? (
         <>What should we build in {projectSelector}?</>
       ) : canChooseProject ? (
         <>{projectSelector} to start</>

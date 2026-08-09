@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import ChatView from "../components/ChatView";
@@ -10,13 +11,26 @@ import {
 import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { useThread, useThreadRefs } from "../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useProject,
+  useThread,
+  useThreadRefs,
+} from "../state/entities";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
   const { draftId: rawDraftId } = Route.useParams();
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
+  const projectRef =
+    draftSession?.projectId == null
+      ? null
+      : scopeProjectRef(draftSession.environmentId, draftSession.projectId);
+  const project = useProject(projectRef);
+  const environmentShellsBootstrapped = useAllEnvironmentShellsBootstrapped();
+  const projectRequired = draftSession?.projectId != null;
+  const projectUnavailable = projectRequired && project === null;
   const threadRefs = useThreadRefs();
   const inferredThreadRef = draftSession
     ? (threadRefs.find(
@@ -60,13 +74,22 @@ function DraftChatThreadRouteView() {
   }, [canonicalThreadRef, navigate]);
 
   useEffect(() => {
-    if (draftSession || canonicalThreadRef) {
+    if ((draftSession && !projectUnavailable) || canonicalThreadRef) {
+      return;
+    }
+    if (projectUnavailable && !environmentShellsBootstrapped) {
       return;
     }
     void navigate({ to: "/", replace: true });
-  }, [canonicalThreadRef, draftSession, navigate]);
+  }, [
+    canonicalThreadRef,
+    draftSession,
+    environmentShellsBootstrapped,
+    navigate,
+    projectUnavailable,
+  ]);
 
-  if (!draftSession) {
+  if (!draftSession || projectUnavailable) {
     return null;
   }
 
