@@ -11,9 +11,12 @@ authorization.
 
 > **Post-D4 identity note:** this record preserves the exact D4 state and names
 > as historical evidence. The candidate now presents the Scient product label
-> (`Scient` and `Scient (Dev)`) while retaining the D4 `scient-next` bundle,
-> protocol, state, persistence, and safety identifiers. That visible rebrand
-> does not authorize cutover, release, updater, cloud, mobile, or data import.
+> (`Scient` and `Scient (Dev)`). Later release-machinery work deliberately
+> adopted the canonical Scient production bundle ID and `scient://` protocol
+> so the legacy updater can replace the installed application. The separate
+> `scient-next` data, development, persistence, and safety boundaries remain.
+> Neither that identity decision nor the machinery authorizes a release,
+> cutover, cloud, mobile, or data import.
 
 ## Integration base
 

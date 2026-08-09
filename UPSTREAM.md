@@ -93,3 +93,17 @@ components. See [Scient local voice architecture](docs/internals/scient-voice.md
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient
 gates even when inherited T3 code contains the capability.
+
+## Scient-owned release seam
+
+The stable release graph is separate from inherited T3 publication. Scient
+does not enable T3's tag/nightly workflow, npm publication, relay deployment,
+hosted-web aliases, or release bot. The owned manual workflow packages the
+exact promoted Scient tree, embeds the owned updater repository, and
+distributes the exact server runtime as a GitHub release asset.
+
+Production identity is a conscious cutover divergence: the package uses the
+canonical Scient bundle ID and protocol so the legacy updater can replace the
+old app, while keeping `scient-next` user data isolated. Future upstream merges
+must not restore T3 publication authority or a dependency on
+`t3@<Scient version>`.

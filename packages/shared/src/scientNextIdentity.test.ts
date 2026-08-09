@@ -2,13 +2,13 @@ import { assert, describe, it } from "@effect/vitest";
 
 import { SCIENT_NEXT_IDENTITY } from "./scientNextIdentity.ts";
 
-describe("Scient candidate identity", () => {
-  it("uses the Scient product label while keeping runtime namespaces distinct from T3", () => {
+describe("Scient desktop identity", () => {
+  it("uses the canonical production identity while keeping development and data isolated", () => {
     assert.equal(SCIENT_NEXT_IDENTITY.baseName, "Scient");
     assert.equal(SCIENT_NEXT_IDENTITY.developmentName, "Scient (Dev)");
-    assert.equal(SCIENT_NEXT_IDENTITY.appId, "com.scientfactory.scient.next");
+    assert.equal(SCIENT_NEXT_IDENTITY.appId, "com.scientfactory.scient");
     assert.equal(SCIENT_NEXT_IDENTITY.developmentAppId, "com.scientfactory.scient.next.dev");
-    assert.equal(SCIENT_NEXT_IDENTITY.productionScheme, "scient-next");
+    assert.equal(SCIENT_NEXT_IDENTITY.productionScheme, "scient");
     assert.equal(SCIENT_NEXT_IDENTITY.developmentScheme, "scient-next-dev");
     assert.equal(SCIENT_NEXT_IDENTITY.productionUserDataDirName, "scient-next");
     assert.equal(SCIENT_NEXT_IDENTITY.developmentUserDataDirName, "scient-next-dev");
@@ -16,9 +16,9 @@ describe("Scient candidate identity", () => {
     assert.equal(SCIENT_NEXT_IDENTITY.clientSettingsStorageKey, "scient-next:client-settings:v1");
   });
 
-  it("fails closed for D4 outbound telemetry and update publication", () => {
+  it("keeps cloud and telemetry closed while enabling the owned updater", () => {
     assert.isFalse(SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled);
-    assert.isFalse(SCIENT_NEXT_IDENTITY.autoUpdateEnabled);
+    assert.isTrue(SCIENT_NEXT_IDENTITY.autoUpdateEnabled);
     assert.isTrue(SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled);
     assert.isFalse(SCIENT_NEXT_IDENTITY.cloudEnabled);
   });

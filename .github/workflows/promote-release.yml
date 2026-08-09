@@ -1,0 +1,53 @@
+name: Promote main to release/stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact green main commit to promote"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: scient-release-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Exact-tree promotion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Require exact current main and successful CI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main release/stable || git fetch origin main
+          main_sha="$(git rev-parse origin/main)"
+          [[ "$SOURCE_SHA" == "$main_sha" ]] || {
+            echo "Selected source $SOURCE_SHA is not current origin/main $main_sha." >&2
+            exit 1
+          }
+          result="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SOURCE_SHA" --limit 20 --json headSha,status,conclusion)"
+          jq -e --arg sha "$SOURCE_SHA" \
+            'any(.[]; .headSha == $sha and .status == "completed" and .conclusion == "success")' \
+            <<<"$result" >/dev/null || {
+              echo "No successful CI workflow was found for $SOURCE_SHA." >&2
+              exit 1
+            }
+      - name: Fast-forward release/stable to the exact main commit
+        shell: bash
+        run: |
+          git push origin "${{ inputs.source_sha }}:refs/heads/release/stable"
+          echo "Promoted ${{ inputs.source_sha }} without creating a commit or changing its tree." >> "$GITHUB_STEP_SUMMARY"

@@ -224,15 +224,6 @@ export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedError
   }
 }
 
-export class ScientNextSigningDisabledError extends Schema.TaggedErrorClass<ScientNextSigningDisabledError>()(
-  "ScientNextSigningDisabledError",
-  {},
-) {
-  override get message(): string {
-    return "Desktop signing is disabled for this Scient candidate during the D4 bootstrap.";
-  }
-}
-
 const InvalidMockUpdateServerPortReason = Schema.Literals([
   "not-numeric",
   "not-integer",
@@ -1134,10 +1125,6 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const signed = resolveBooleanFlag(input.signed, env.signed);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
-  if (SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && signed) {
-    return yield* new ScientNextSigningDisabledError();
-  }
-
   const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
   const configuredMockUpdateServerPort = Option.getOrUndefined(env.mockUpdateServerPort);
   const mockUpdateServerPort =
@@ -1553,10 +1540,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       }
     | undefined,
 ) {
+  const updateChannel = resolveDesktopUpdateChannel(version);
+  const publishConfig = mockUpdates
+    ? {
+        provider: "generic",
+        url: resolveMockUpdateServerUrl(mockUpdateServerPort),
+        channel: updateChannel,
+      }
+    : yield* resolveGitHubPublishConfig(updateChannel);
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "Scient-Next-${version}-${arch}.${ext}",
+    artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS],
     directories: {
@@ -1567,9 +1562,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // extracts native libraries, which fff-node finds in app.asar.unpacked.
     ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
     extraResources: DESKTOP_EXTRA_RESOURCES,
+    ...(publishConfig ? { publish: [publishConfig] } : {}),
   };
-  // D4 candidate builds are never allowed to publish or contain an updater
-  // feed. Release authority is a later, explicit cutover decision.
 
   if (platform === "mac") {
     buildConfig.mac = {
@@ -1594,12 +1588,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "scient-next",
+      executableName: "scient",
       icon: "icons",
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
-      // scient-next:// OAuth callbacks to the app.
+      // scient:// OAuth callbacks to the app.
       protocols: [
         {
           name: SCIENT_NEXT_IDENTITY.baseName,
@@ -1884,7 +1878,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    options.platform === "mac" && options.signed && SCIENT_NEXT_IDENTITY.cloudEnabled
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,

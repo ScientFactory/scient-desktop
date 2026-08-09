@@ -1,10 +1,15 @@
-# Scient desktop migration candidate
+# Scient desktop
 
-This private repository is ScientFactory's provisional T3-derived desktop
-candidate. It preserves the complete official T3 history and has integrated
-the bounded D4 bootstrap safety envelope. It is not a public Scient release, does not
-replace the supported `scient-desktop` application, and has no enabled updater,
-release, production cloud, or user-data migration authority.
+This repository is ScientFactory's T3-derived desktop application. It preserves
+the official T3 history while keeping Scient-owned product behavior behind
+explicit seams. Release machinery is implemented but does not itself authorize
+publication: every release still requires an exact-tree promotion, green source
+CI, native packaging and signing proof, and an explicit publishing run.
+
+Production packages use the canonical Scient installation identity so the
+legacy updater can install the replacement. The new application keeps its own
+`scient-next` data directory; installing it does not silently open or mutate
+legacy Scient data. Development builds remain independently named and isolated.
 
 The exact donor base, safety envelope, verification, limitations, and rollback
 are recorded in the
@@ -16,9 +21,8 @@ Maintainers can run the isolated **Scient (Dev)** application with
 `pnpm dev:app`. The canonical installation, lifecycle, feature-worktree, and
 recovery procedure is the
 [local dev app runbook](docs/operations/local-dev-app.md). This development app
-is not a public build or release candidate. Its visible Scient identity is
-separate from the still-isolated candidate runtime IDs, state, protocols, and
-disabled release authorities.
+is never a publication source. Its identity, state, and protocol remain
+separate from production.
 
 ## Scient persistence
 

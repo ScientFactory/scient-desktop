@@ -161,17 +161,17 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.equal(recorded.files.length, 1);
       assert.equal(
         recorded.files[0]?.path,
-        "/home/alice/.local/share/applications/scient-next-url-handler.desktop",
+        "/home/alice/.local/share/applications/scient-url-handler.desktop",
       );
       assert.include(
         recorded.files[0]?.content,
         'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
       );
-      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/scient-next;");
+      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/scient;");
       assert.deepEqual(recorded.commands, [
         {
           command: "xdg-mime",
-          args: ["default", "scient-next-url-handler.desktop", "x-scheme-handler/scient-next"],
+          args: ["default", "scient-url-handler.desktop", "x-scheme-handler/scient"],
         },
       ]);
     });

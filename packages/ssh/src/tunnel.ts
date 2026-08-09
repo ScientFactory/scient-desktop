@@ -6,6 +6,7 @@ import {
   describeReadinessCause,
   waitForHttpReady as waitForHttpReadyShared,
 } from "@t3tools/shared/httpReadiness";
+import { scientServerAllowedScriptsValue } from "@t3tools/shared/scientRelease";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -426,10 +427,10 @@ if command -v t3 >/dev/null 2>&1; then
   exec t3 "$@"
 fi
 if command -v npx >/dev/null 2>&1; then
-  exec npx --yes @@T3_PACKAGE_SPEC@@ "$@"
+  exec npx --yes --allow-scripts=@@T3_ALLOWED_SCRIPTS@@ --package @@T3_PACKAGE_SPEC@@ t3 "$@"
 fi
 if command -v npm >/dev/null 2>&1; then
-  exec npm exec --yes @@T3_PACKAGE_SPEC@@ -- "$@"
+  exec npm exec --yes --allow-scripts=@@T3_ALLOWED_SCRIPTS@@ --package @@T3_PACKAGE_SPEC@@ -- t3 "$@"
 fi
 printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
 exit 1
@@ -636,6 +637,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,
+      T3_ALLOWED_SCRIPTS: shellSingleQuote(scientServerAllowedScriptsValue()),
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
