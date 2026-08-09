@@ -989,6 +989,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -1988,7 +1989,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                       )
                     : Result.failVoid,
-                  ),
+                ),
                 threads: Arr.filterMap(threadRows, (row) =>
                   row.deletedAt === null
                     ? Result.succeed({
@@ -2148,7 +2149,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                       )
                     : Result.failVoid,
-                  ),
+                ),
                 threads: threadRows.map(
                   (row): OrchestrationThreadShell => ({
                     id: row.threadId,
