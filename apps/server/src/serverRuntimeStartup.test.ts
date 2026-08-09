@@ -102,6 +102,9 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
         Effect.provideService(AnalyticsService.AnalyticsService, {
           record: () => Effect.void,
           flush: Effect.void,
+          status: Effect.succeed({ available: false, consent: "off" as const }),
+          setConsent: () => Effect.succeed({ available: false, consent: "off" as const }),
+          deleteData: Effect.succeed(false),
         }),
       );
     }),

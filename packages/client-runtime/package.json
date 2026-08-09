@@ -111,6 +111,10 @@
       "types": "./src/state/scientProjectHttp.ts",
       "default": "./src/state/scientProjectHttp.ts"
     },
+    "./state/scient-analytics": {
+      "types": "./src/state/scientAnalyticsHttp.ts",
+      "default": "./src/state/scientAnalyticsHttp.ts"
+    },
     "./state/shell": {
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"

@@ -47,16 +47,20 @@ export function startAnalyticsWorker(input: {
     return;
   }
 
-  let installationId = outbox.readMeta("installation_id");
-  if (!installationId) {
-    installationId = `installation:${NodeCrypto.randomUUID()}`;
-    outbox.writeMeta("installation_id", installationId);
-  }
-  let installationToken = outbox.readMeta("installation_token");
-  if (!installationToken) {
-    installationToken = NodeCrypto.randomBytes(32).toString("hex");
-    outbox.writeMeta("installation_token", installationToken);
-  }
+  const ensureInstallationIdentity = () => {
+    let id = outbox.readMeta("installation_id");
+    if (!id) {
+      id = `installation:${NodeCrypto.randomUUID()}`;
+      outbox.writeMeta("installation_id", id);
+    }
+    let token = outbox.readMeta("installation_token");
+    if (!token) {
+      token = NodeCrypto.randomBytes(32).toString("hex");
+      outbox.writeMeta("installation_token", token);
+    }
+    return { id, token } as const;
+  };
+  let installation = ensureInstallationIdentity();
 
   let closed = false;
   let activeFlush: Promise<number> | null = null;
@@ -86,7 +90,7 @@ export function startAnalyticsWorker(input: {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-Scient-Installation-Token": installationToken,
+            "X-Scient-Installation-Token": installation.token,
           },
           body: JSON.stringify(batch),
           signal: controller.signal,
@@ -143,7 +147,7 @@ export function startAnalyticsWorker(input: {
           const events: AnalyticsEvent[] = command.events.map(
             ({ priority: _priority, ...event }) => ({
               ...event,
-              distinct_id: installationId,
+              distinct_id: installation.id,
             }),
           );
           const accepted = outbox.enqueueBatch(
@@ -166,6 +170,35 @@ export function startAnalyticsWorker(input: {
         }
         case "pending-count": {
           post({ type: "result", requestId: command.requestId, value: outbox.size() });
+          return;
+        }
+        case "delete-data": {
+          const deletionUrl = new URL("/v1/installations/delete", input.endpoint);
+          activeAbortController?.abort();
+          void (activeFlush ?? Promise.resolve(0))
+            .then(() =>
+              fetch(deletionUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Scient-Installation-Token": installation.token,
+                },
+                body: JSON.stringify({ schema_version: 1, installation_id: installation.id }),
+                signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+              }),
+            )
+            .then(async (response) => {
+              if (!response.ok) return 0;
+              const acknowledgement = (await response.json().catch(() => null)) as {
+                readonly accepted?: unknown;
+              } | null;
+              if (acknowledgement?.accepted !== true) return 0;
+              outbox.reset();
+              installation = ensureInstallationIdentity();
+              return 1;
+            })
+            .catch(() => 0)
+            .then((value) => post({ type: "result", requestId: command.requestId, value }));
           return;
         }
         case "close": {

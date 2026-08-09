@@ -28,13 +28,15 @@ function options(overrides: Partial<AnalyticsRuntimeOptions> = {}): AnalyticsRun
   };
 }
 
-async function ingestionServer(): Promise<{
+async function ingestionServer(deleteAccepted = true): Promise<{
   readonly endpoint: string;
   readonly bodies: unknown[];
   readonly installationTokens: string[];
+  readonly deletionBodies: unknown[];
 }> {
   const bodies: unknown[] = [];
   const installationTokens: string[] = [];
+  const deletionBodies: unknown[] = [];
   const server = NodeHttp.createServer((request, response) => {
     installationTokens.push(String(request.headers["x-scient-installation-token"] ?? ""));
     const chunks: Buffer[] = [];
@@ -43,6 +45,12 @@ async function ingestionServer(): Promise<{
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
         readonly events: ReadonlyArray<unknown>;
       };
+      if (request.url === "/v1/installations/delete") {
+        deletionBodies.push(body);
+        response.writeHead(202, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ accepted: deleteAccepted }));
+        return;
+      }
       bodies.push(body);
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ accepted: body.events.length }));
@@ -56,6 +64,7 @@ async function ingestionServer(): Promise<{
     endpoint: `http://127.0.0.1:${address.port}/v1/events`,
     bodies,
     installationTokens,
+    deletionBodies,
   };
 }
 
@@ -113,6 +122,8 @@ describe("Scient analytics background runtime", () => {
           privacy_level: "product",
           consent_level: "product",
           properties: {
+            appVersion: "0.0.32",
+            buildChannel: "development",
             provider: "codex",
             modelFamily: "openai",
             interactionMode: "plan",
@@ -168,5 +179,44 @@ describe("Scient analytics background runtime", () => {
     inspected.close();
     expect(deadLetters.count).toBe(1);
     expect(server.bodies).toHaveLength(0);
+  });
+
+  it("deletes the authenticated installation and rotates its local identity", async () => {
+    const server = await ingestionServer();
+    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
+    runtime.record("server.boot.heartbeat");
+    expect(await runtime.flush()).toBe(1);
+
+    const firstBatch = server.bodies[0] as {
+      readonly events: ReadonlyArray<{ readonly distinct_id: string }>;
+    };
+    expect(await runtime.deleteData()).toBe(true);
+    expect(server.deletionBodies).toEqual([
+      { schema_version: 1, installation_id: firstBatch.events[0]?.distinct_id },
+    ]);
+
+    runtime.record("server.boot.heartbeat");
+    expect(await runtime.flush()).toBe(1);
+    await runtime.close();
+
+    const secondBatch = server.bodies[1] as {
+      readonly events: ReadonlyArray<{ readonly distinct_id: string }>;
+    };
+    expect(secondBatch.events[0]?.distinct_id).not.toBe(firstBatch.events[0]?.distinct_id);
+    expect(server.installationTokens[2]).not.toBe(server.installationTokens[0]);
+  });
+
+  it("retains local events when the deletion gateway does not acknowledge erasure", async () => {
+    const server = await ingestionServer(false);
+    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
+    runtime.record("server.boot.heartbeat");
+
+    expect(await runtime.deleteData()).toBe(false);
+    expect(await runtime.pendingCount()).toBe(1);
+    expect(await runtime.flush()).toBe(1);
+    await runtime.close();
+
+    expect(server.deletionBodies).toHaveLength(1);
+    expect(server.bodies).toHaveLength(1);
   });
 });

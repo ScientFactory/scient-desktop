@@ -143,6 +143,8 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
+import { useRecordScientAnalytics } from "../../scient/analytics/client";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -928,6 +930,7 @@ function BackgroundActivityAdvancedDialog({
 }
 
 export function AppearanceSettingsPanel() {
+  const recordAnalytics = useRecordScientAnalytics();
   const {
     appearanceMode,
     refreshTheme,
@@ -962,7 +965,16 @@ export function AppearanceSettingsPanel() {
             initialAppearance={resolvedTheme}
             refreshTheme={refreshTheme}
             isImportOpen={isImportThemeOpen}
-            setAppearanceMode={setAppearanceMode}
+            setAppearanceMode={(value) => {
+              const saved = setAppearanceMode(value);
+              if (saved) {
+                recordAnalytics({
+                  name: "setting.changed",
+                  properties: { setting: "theme", value },
+                });
+              }
+              return saved;
+            }}
             setTheme={setTheme}
             setThemeHalf={setThemeHalf}
             theme={theme}
@@ -1076,6 +1088,13 @@ export function AppearanceSettingsPanel() {
               onValueChange={(value) => {
                 if (value === "auto" || value === "rtl" || value === "ltr") {
                   updateSettings({ contentDirection: value });
+                  recordAnalytics({
+                    name: "setting.changed",
+                    properties: {
+                      setting: "direction",
+                      value: value === "auto" ? "automatic" : value,
+                    },
+                  });
                 }
               }}
             >
@@ -2253,6 +2272,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <AnalyticsPrivacySettings />
 
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

@@ -51,6 +51,13 @@ const TURN_FAILURE_CLASSES = new Set([
   "unknown",
 ]);
 const PROJECT_ADD_METHODS = new Set(["picker", "drag-drop", "recent", "unknown"]);
+const PROJECT_ADD_FAILURE_STAGES = new Set([
+  "validation",
+  "inspection",
+  "registration",
+  "navigation",
+  "unknown",
+]);
 const PROJECT_STATES = new Set(["existing", "new", "unknown"]);
 const PROJECT_INITIALIZATION_STATES = new Set([
   "initialized",
@@ -452,6 +459,15 @@ export function normalizeInheritedEvent(
         priority: "core",
         properties: {
           method: normalizedEnum(property(input, "method"), PROJECT_ADD_METHODS),
+        },
+      };
+    case "project.add.failed":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "critical",
+        properties: {
+          stage: normalizedEnum(property(input, "stage"), PROJECT_ADD_FAILURE_STAGES),
         },
       };
     case "project.opened":

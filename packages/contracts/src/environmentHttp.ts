@@ -48,6 +48,13 @@ import {
   ScientProjectInitializeRequest,
   ScientProjectInitializationResult,
 } from "./scientProject.ts";
+import {
+  ScientAnalyticsDeletionResult,
+  ScientAnalyticsPreferenceUpdate,
+  ScientAnalyticsRecordResult,
+  ScientAnalyticsStatus,
+  ScientAnalyticsUiEvent,
+} from "./scientAnalytics.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -92,6 +99,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_dispatch_failed",
   "scient_project_inspection_failed",
   "scient_project_initialization_failed",
+  "scient_analytics_consent_update_failed",
+  "scient_analytics_deletion_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -526,6 +535,38 @@ export class EnvironmentScientProjectHttpApi extends HttpApiGroup.make("scientPr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
+  .add(
+    HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
+      headers: OptionalBearerHeaders,
+      success: ScientAnalyticsStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preferences", "/api/scient/analytics/preferences", {
+      headers: OptionalBearerHeaders,
+      payload: ScientAnalyticsPreferenceUpdate,
+      success: ScientAnalyticsStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("record", "/api/scient/analytics/events", {
+      headers: OptionalBearerHeaders,
+      payload: ScientAnalyticsUiEvent,
+      success: ScientAnalyticsRecordResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("deleteData", "/api/scient/analytics/delete", {
+      headers: OptionalBearerHeaders,
+      success: ScientAnalyticsDeletionResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -592,4 +633,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentScientProjectHttpApi)
+  .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

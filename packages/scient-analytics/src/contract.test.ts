@@ -56,4 +56,18 @@ describe("Scient analytics contract", () => {
     );
     expect(surface?.properties).toEqual({ surface: "settings" });
   });
+
+  it("classifies project-registration failures without accepting raw errors", () => {
+    const failure = normalizeInheritedEvent(
+      "project.add.failed",
+      { stage: "registration", error: "/private/path could not be created" },
+      context,
+    );
+    expect(failure).toMatchObject({
+      privacyLevel: "essential",
+      priority: "critical",
+      properties: { stage: "registration" },
+    });
+    expect(JSON.stringify(failure)).not.toContain("/private/path");
+  });
 });

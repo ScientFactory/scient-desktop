@@ -17,6 +17,7 @@ export type AnalyticsWorkerCommand =
       readonly consent: AnalyticsConsent;
     }
   | { readonly type: "pending-count"; readonly requestId: number }
+  | { readonly type: "delete-data"; readonly requestId: number }
   | { readonly type: "close"; readonly requestId: number };
 
 export type AnalyticsWorkerResponse =

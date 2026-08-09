@@ -45,6 +45,7 @@ export interface AnalyticsRuntime {
   readonly flush: () => Promise<number>;
   readonly setConsent: (consent: AnalyticsConsent) => Promise<number>;
   readonly pendingCount: () => Promise<number>;
+  readonly deleteData: () => Promise<boolean>;
   readonly close: () => Promise<void>;
 }
 
@@ -55,6 +56,7 @@ function disabledRuntime(): AnalyticsRuntime {
     flush: async () => 0,
     setConsent: async () => 0,
     pendingCount: async () => 0,
+    deleteData: async () => false,
     close: async () => undefined,
   };
 }
@@ -94,6 +96,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   let ready = false;
   let available = true;
   let closed = false;
+  let deleting = false;
   let writeTimer: ReturnType<typeof setTimeout> | null = null;
   let nextBatchId = 1;
   let nextRequestId = 1;
@@ -232,7 +235,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const record: AnalyticsRuntime["record"] = (name, properties) => {
-    if (closed || !available || consent === "off") return false;
+    if (closed || deleting || !available || consent === "off") return false;
     const normalized = normalizeInheritedEvent(name, properties, options);
     if (!normalized || !consentAllows(consent, normalized.privacyLevel)) return false;
     const accepted = admit({
@@ -242,7 +245,11 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       occurred_at: now().toISOString(),
       privacy_level: normalized.privacyLevel,
       consent_level: consent,
-      properties: normalized.properties,
+      properties: {
+        appVersion: options.appVersion,
+        buildChannel: options.buildChannel,
+        ...normalized.properties,
+      },
       priority: normalized.priority,
     });
     if (accepted) scheduleDrain();
@@ -288,6 +295,20 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       if (!ready || !available) return bufferedCount();
       drain();
       return queue.length + (await request((requestId) => ({ type: "pending-count", requestId })));
+    },
+    deleteData: async () => {
+      if (closed || deleting || !available) return false;
+      deleting = true;
+      try {
+        await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+        if (!ready || !available) return false;
+        drain();
+        const deleted = (await request((requestId) => ({ type: "delete-data", requestId }))) === 1;
+        if (deleted) queue.length = 0;
+        return deleted;
+      } finally {
+        deleting = false;
+      }
     },
     close: async () => {
       if (closed) return;
