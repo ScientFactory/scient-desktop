@@ -90,6 +90,12 @@ composer mount plus a positioned footer, and one desktop-packaging call into
 narrow mounts rather than moving voice orchestration into inherited T3
 components. See [Scient local voice architecture](docs/internals/scient-voice.md).
 
+Scient's comfortable-reading defaults reuse T3's appearance settings and font
+application pipeline. Fixed-pixel and shadow-root exceptions are routed through
+four tokens in `apps/web/src/scient/typography/profile.css`; do not spread those
+overrides across inherited components during upstream conflict resolution. See
+[Scient typography profile](docs/internals/scient-typography.md).
+
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient
 gates even when inherited T3 code contains the capability.

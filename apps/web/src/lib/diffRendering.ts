@@ -242,4 +242,12 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   background-color: var(--diffs-bg) !important;
   color: var(--code-foreground) !important;
 }
+
+[data-diffs-header] {
+  font-size: var(--scient-font-size-diff-header, 14px);
+}
+
+[data-separator] {
+  font-size: var(--scient-font-size-compact-meta, 13px);
+}
 `;

@@ -158,7 +158,7 @@ const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   border-bottom-color: transparent !important;
   align-items: center !important;
   font-family: var(--font-sans) !important;
-  font-size: 12px !important;
+  font-size: var(--scient-font-size-diff-header, 14px) !important;
   line-height: 1 !important;
   min-height: 32px !important;
   padding-block: 6px !important;
@@ -188,7 +188,7 @@ const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   background-color: transparent !important;
   color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
   font-family: var(--font-sans) !important;
-  font-size: 11px !important;
+  font-size: var(--scient-font-size-compact-meta, 13px) !important;
   text-decoration: none !important;
 }
 
@@ -267,7 +267,7 @@ const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 [data-diffs-header] [data-additions-count],
 [data-diffs-header] [data-deletions-count] {
   font-family: var(--font-mono) !important;
-  font-size: 11px !important;
+  font-size: var(--scient-font-size-compact-meta, 13px) !important;
   font-variant-numeric: tabular-nums;
   line-height: 1 !important;
 }
@@ -935,7 +935,7 @@ export default function DiffPanel({
           <DiffStatLabel
             additions={diffLineStat.additions}
             deletions={diffLineStat.deletions}
-            className="mr-1 text-[11px]"
+            className="scient-compact-meta mr-1"
             layout="inline"
           />
         )}
@@ -1067,14 +1067,14 @@ export default function DiffPanel({
         <>
           <div className="diff-panel-viewport flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {isSelectedPatchTruncated && (
-              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+              <p className="scient-compact-meta shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are
                 incomplete.
               </p>
             )}
             {selectedPatchError && !renderablePatch && (
               <div className="px-3">
-                <p className="mb-2 text-[11px] text-error/80">{selectedPatchError}</p>
+                <p className="scient-compact-meta mb-2 text-error/80">{selectedPatchError}</p>
               </div>
             )}
             {!renderablePatch ? (
@@ -1174,10 +1174,12 @@ export default function DiffPanel({
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">
-                  <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
+                  <p className="scient-compact-meta text-muted-foreground/75">
+                    {renderablePatch.reason}
+                  </p>
                   <pre
                     className={cn(
-                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                      "scient-code-text max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono leading-relaxed text-muted-foreground/90",
                       wordWrap
                         ? "overflow-auto whitespace-pre-wrap wrap-break-word"
                         : "overflow-auto",

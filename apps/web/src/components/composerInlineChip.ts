@@ -1,10 +1,11 @@
 // Chip metrics are in em so the pills scale with the text they sit in (the
-// composer honors the prompt font-size preference). The chat variant pins the
-// original 12px, where every em value resolves to the same pixels as before.
+// composer honors the prompt font-size preference). The chat variant uses the
+// Scient reading-profile token because chat prose and file links must remain
+// legible together.
 const INLINE_CHIP_CLASS_NAME =
   "inline-flex max-w-full items-center gap-[0.33em] rounded-[0.5em] border border-border/70 bg-accent/40 px-[0.5em] py-[0.08em] font-medium leading-[1.1] text-foreground align-middle";
 
-export const CHAT_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[12px]`;
+export const CHAT_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} scient-chat-inline-chip`;
 
 export const COMPOSER_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[0.86em] select-none`;
 
