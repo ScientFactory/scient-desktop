@@ -168,6 +168,7 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
+import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -3347,13 +3348,18 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
-  const openFileSurface = useCallback(
+  const openFileSourceSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
     [activeProject, activeThreadRef],
   );
+  const openFileSurface = useScientFileOpening({
+    threadRef: activeThreadRef,
+    workspaceRoot: activeWorkspaceRoot ?? null,
+    openSource: openFileSourceSurface,
+  });
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
     if (previewPanelOpen) {
@@ -6166,6 +6172,7 @@ function ChatViewContent(props: ChatViewProps) {
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
           onOpenFile={openFileSurface}
+          onOpenFileSource={openFileSourceSurface}
           onPendingChange={handleFilePendingChange}
         />
       </Suspense>

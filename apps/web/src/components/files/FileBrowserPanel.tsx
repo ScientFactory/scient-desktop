@@ -18,6 +18,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
@@ -31,6 +32,7 @@ interface FileBrowserPanelProps {
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  onOpenFileSource: (relativePath: string) => void;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -105,6 +107,7 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  onOpenFileSource,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
@@ -153,11 +156,18 @@ export default function FileBrowserPanel({
     try {
       const clicked = await api.contextMenu.show(
         [
+          ...(shouldOpenInBrowserByDefault(relativePath)
+            ? ([{ id: "open-source", label: "Open source" }] as const)
+            : []),
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
         ],
         position,
       );
+      if (clicked === "open-source") {
+        onOpenFileSource(relativePath);
+        return;
+      }
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);
