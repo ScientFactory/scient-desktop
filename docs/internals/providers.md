@@ -137,16 +137,16 @@ installation branches.
 | Host target                                 | Tier in this implementation  | Managed action                                                 |
 | ------------------------------------------- | ---------------------------- | -------------------------------------------------------------- |
 | Local desktop, macOS Apple silicon          | `fully_assisted`             | Install, repair, and remove the reviewed private artifact      |
-| Local desktop, macOS Intel                  | `external_runtime_supported` | Preserve and use a healthy custom or system runtime            |
-| Local desktop, Windows ARM64 or x64         | `external_runtime_supported` | Preserve and use a healthy custom or system runtime            |
-| Local desktop, Linux ARM64 or x64           | `external_runtime_supported` | Preserve and use a healthy custom or system runtime            |
+| Local desktop, macOS Intel                  | `fully_assisted`             | Install, repair, and remove the reviewed private artifact      |
+| Local desktop, Windows ARM64 or x64         | `fully_assisted`             | Install, repair, and remove the reviewed private executable    |
+| Local desktop, Linux ARM64 or x64           | `fully_assisted`             | Install, repair, and remove the reviewed private static binary |
 | Remote or web/server mode on a known target | `external_runtime_supported` | Use the runtime administered on that host; no managed mutation |
 | Unknown operating system or architecture    | `unsupported`                | No invented fallback action                                    |
 
-Official Intel-macOS, Windows, and Linux artifact metadata is represented and contract-tested, but
-those rows remain external-runtime-only until their packaged clean-machine, cancellation,
-permission, low-disk, interruption, authentication, and recovery evidence exists. A successful
-Apple-silicon run is not evidence for another row.
+Official Intel-macOS, Windows, and Linux artifact metadata is represented and contract-tested, and
+the local desktop offers the same verified managed lifecycle on each reviewed row. Platform release
+validation remains a separate acceptance responsibility: a failure on one row must not be treated
+as evidence that another row is healthy or unhealthy.
 
 ### Upstream-maintenance boundary
 

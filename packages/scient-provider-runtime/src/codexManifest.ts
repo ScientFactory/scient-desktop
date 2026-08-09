@@ -57,7 +57,7 @@ const ARTIFACTS = {
     size: 95_851_149,
     archiveFormat: "tar.gz",
     executablePath: "codex-x86_64-apple-darwin",
-    fullyAssisted: false,
+    fullyAssisted: true,
   },
   "linux-arm64": {
     name: "codex-aarch64-unknown-linux-musl.tar.gz",
@@ -65,7 +65,7 @@ const ARTIFACTS = {
     size: 91_607_658,
     archiveFormat: "tar.gz",
     executablePath: "codex-aarch64-unknown-linux-musl",
-    fullyAssisted: false,
+    fullyAssisted: true,
   },
   "linux-x64": {
     name: "codex-x86_64-unknown-linux-musl.tar.gz",
@@ -73,7 +73,7 @@ const ARTIFACTS = {
     size: 98_970_270,
     archiveFormat: "tar.gz",
     executablePath: "codex-x86_64-unknown-linux-musl",
-    fullyAssisted: false,
+    fullyAssisted: true,
   },
   "win32-arm64": {
     name: "codex-aarch64-pc-windows-msvc.exe",
@@ -81,7 +81,7 @@ const ARTIFACTS = {
     size: 250_102_064,
     archiveFormat: "raw",
     executablePath: "codex.exe",
-    fullyAssisted: false,
+    fullyAssisted: true,
   },
   "win32-x64": {
     name: "codex-x86_64-pc-windows-msvc.exe",
@@ -89,7 +89,7 @@ const ARTIFACTS = {
     size: 298_668_336,
     archiveFormat: "raw",
     executablePath: "codex.exe",
-    fullyAssisted: false,
+    fullyAssisted: true,
   },
 } as const satisfies Readonly<Record<string, ArtifactRecord>>;
 
@@ -119,7 +119,7 @@ export function resolveReviewedCodexArtifact(
     catalogRevision: `openai-codex:${RELEASE_TAG}:${artifact.sha256}`,
     supportTier: artifact.fullyAssisted ? "fully_assisted" : "external_runtime_supported",
     supportMessage: artifact.fullyAssisted
-      ? "This exact managed Codex artifact is the first Scient release-proof target."
-      : "Scient recognizes this official target, but managed installation is not release-proven here yet.",
+      ? "Scient can install this verified official Codex artifact privately for this computer."
+      : "Scient recognizes this official target, but managed installation is not available here.",
   };
 }

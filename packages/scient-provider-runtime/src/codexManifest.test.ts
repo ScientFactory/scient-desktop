@@ -3,20 +3,21 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveReviewedCodexArtifact } from "./codexManifest.ts";
 
 describe("reviewed Codex runtime manifest", () => {
-  it("advertises only the proven macOS Apple Silicon row as fully assisted", () => {
-    const proven = resolveReviewedCodexArtifact({ platform: "darwin", arch: "arm64" });
-    const macIntel = resolveReviewedCodexArtifact({ platform: "darwin", arch: "x64" });
-    const windows = resolveReviewedCodexArtifact({ platform: "win32", arch: "x64" });
-    const linux = resolveReviewedCodexArtifact({
-      platform: "linux",
-      arch: "x64",
-      libc: "glibc",
-    });
+  it("offers assisted installation on every reviewed desktop target", () => {
+    const targets = [
+      { platform: "darwin", arch: "arm64" },
+      { platform: "darwin", arch: "x64" },
+      { platform: "win32", arch: "arm64" },
+      { platform: "win32", arch: "x64" },
+      { platform: "linux", arch: "arm64", libc: "glibc" },
+      { platform: "linux", arch: "arm64", libc: "musl" },
+      { platform: "linux", arch: "x64", libc: "glibc" },
+      { platform: "linux", arch: "x64", libc: "musl" },
+    ] as const;
 
-    expect(proven?.supportTier).toBe("fully_assisted");
-    expect(macIntel?.supportTier).toBe("external_runtime_supported");
-    expect(windows?.supportTier).toBe("external_runtime_supported");
-    expect(linux?.supportTier).toBe("external_runtime_supported");
+    for (const target of targets) {
+      expect(resolveReviewedCodexArtifact(target)?.supportTier).toBe("fully_assisted");
+    }
   });
 
   it("uses raw official executables on Windows and reviewed archives elsewhere", () => {

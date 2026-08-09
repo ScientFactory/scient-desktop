@@ -29,7 +29,7 @@ describe("Codex managed runtime policy", () => {
     ).toBe("custom");
   });
 
-  it("offers installation only for the proven local-desktop target", () => {
+  it("offers installation for a reviewed local-desktop target", () => {
     expect(
       resolveCodexManagedRuntimePolicy({
         source: "missing",

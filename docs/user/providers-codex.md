@@ -13,7 +13,7 @@ action: **Install**, **Sign in**, **Update**, or **Manage**.
 The flow:
 
 1. detects a healthy custom, system, or Scient-managed Codex runtime;
-2. offers managed installation only on a release-proven computer target;
+2. offers managed installation on reviewed macOS, Windows, and Linux desktop targets;
 3. starts a private managed installation only after the user explicitly chooses **Install Codex**,
    using the reviewed artifact selected for that computer;
 4. opens Codex's official browser or device-code sign-in flow and lets Codex's local callback page
@@ -34,19 +34,19 @@ kept in the app's private data, and removing it does not remove a system or cust
 
 The current support boundary is intentionally explicit:
 
-| Computer or host                            | What Scient currently promises                                                                  |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Local Scient desktop on Apple-silicon macOS | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in                 |
-| Intel Mac                                   | Use and verify a healthy external Codex runtime; managed installation is not release-proven yet |
-| Windows on ARM64 or x64                     | Use and verify a healthy external Codex runtime; managed installation is not release-proven yet |
-| Linux on ARM64 or x64                       | Use and verify a healthy external Codex runtime; managed installation is not release-proven yet |
-| Remote or web-hosted Scient server          | Use the runtime already administered on that server; the client cannot take ownership of it     |
-| Other operating systems or architectures    | No managed Codex promise; Scient explains that the target is unsupported                        |
+| Computer or host                            | What Scient currently promises                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Local Scient desktop on Apple-silicon macOS | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in             |
+| Intel Mac                                   | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in             |
+| Windows on ARM64 or x64                     | Fully assisted installation of the reviewed Codex executable, plus guided sign-in           |
+| Linux on ARM64 or x64                       | Fully assisted installation of the reviewed static Codex artifact, plus guided sign-in      |
+| Remote or web-hosted Scient server          | Use the runtime already administered on that server; the client cannot take ownership of it |
+| Other operating systems or architectures    | No managed Codex promise; Scient explains that the target is unsupported                    |
 
-The application contains target-specific official artifact metadata for Intel Mac, Windows, and
-Linux so those paths can be proven later without redesigning the lifecycle. Merely knowing an
-artifact exists is not enough to expose managed installation. Each operating system, architecture,
-package shape, cancellation path, and recovery path must pass its own clean-machine release proof.
+The application selects a target-specific official Codex artifact for each supported operating
+system and architecture. Every managed download is bounded by the catalogued byte size and verified
+against its exact SHA-256 digest before Scient runs or activates it. Unknown operating systems and
+architectures remain unsupported instead of receiving an invented fallback.
 
 If a managed install, repair, or download fails, that operation cleans its incomplete staging
 directory and the previous working copy remains active. Routine status refreshes never delete an
