@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-foundation-refresh-20260809.md`](docs/internals/t3-foundation-refresh-20260809.md)
+[`docs/internals/t3-foundation-refresh-20260809-1a003e38.md`](docs/internals/t3-foundation-refresh-20260809-1a003e38.md)
 and in `upstream-state.json`. The latest refresh merged the exact fetched
-`upstream/main` tip `89ee692bf0436505d008c1d70215e70836eba4e2` into the
+`upstream/main` tip `1a003e383ac6b10258b8100c2617d938c4f06c69` into the
 refresh branch, preserving the full T3 range from the previous integrated tip
-`2c7267ad43a05cf3e30343400c76fd9ac47698e7`. Later observed T3 tips never move
+`89ee692bf0436505d008c1d70215e70836eba4e2`. Later observed T3 tips never move
 `integrationBase` by themselves; it advances only after the exact ancestry and
 verification gate are complete.
 
@@ -65,6 +65,15 @@ pricing/chart correction, and persisted diff-panel display mode. The usage
 surface reads local provider transcripts through the authenticated server
 environment and sends only aggregated buckets and source diagnostics; it does
 not authorize cloud publication or make scientific state canonical.
+
+The later 2026-08-09 refresh received 20 more official commits. It preserved
+both Scient's durable conversation-fork completion and T3's new archive/settle
+session cleanup in the only product-code conflict. Scient deliberately did not
+inherit two T3 contributor-trust entries, did not expose T3's live-data dev-DB
+copy command, and kept the new hosted-web preview deployment disabled. A new
+user-facing project-setting description was relabeled from `T3 Code` to
+`Scient`; the compatible `t3.json` contract and official ancestry remain
+unchanged.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
