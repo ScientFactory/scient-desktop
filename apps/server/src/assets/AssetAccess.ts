@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import {
   isWorkspaceImagePreviewPath,
+  isWorkspacePdfPreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -74,6 +75,8 @@ const AssetClaimsSchema = Schema.Union([
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
     expiresAt: Schema.Number,
+    revisionSize: Schema.optional(Schema.Number),
+    revisionMtimeMs: Schema.optional(Schema.NullOr(Schema.Number)),
   }),
   Schema.Struct({
     version: Schema.Literal(1),
@@ -95,7 +98,11 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset = {
+  readonly kind: "file";
+  readonly path: string;
+  readonly revision?: { readonly size: number; readonly mtimeMs: number | null };
+};
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -240,21 +247,47 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
-        ? {
-            version: 1,
-            kind: "workspace-file-exact",
-            workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
-            expiresAt,
-          }
-        : {
-            version: 1,
-            kind: "workspace-file",
-            workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
-            expiresAt,
-          };
+      claims =
+        isWorkspaceImagePreviewPath(resolved.relativePath) ||
+        isWorkspacePdfPreviewPath(resolved.relativePath)
+          ? yield* Effect.gen(function* () {
+              const revision = isWorkspacePdfPreviewPath(resolved.relativePath)
+                ? yield* fileSystem.stat(canonicalFile).pipe(
+                    Effect.map(
+                      (info) =>
+                        ({
+                          revisionSize: Number(info.size),
+                          revisionMtimeMs: Option.match(info.mtime, {
+                            onNone: () => null,
+                            onSome: (mtime) => mtime.getTime(),
+                          }),
+                        }) as const,
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetWorkspaceAssetInspectionError({
+                          resource: input.resource,
+                          cause,
+                        }),
+                    ),
+                  )
+                : {};
+              return {
+                version: 1 as const,
+                kind: "workspace-file-exact" as const,
+                workspaceRoot: canonicalWorkspaceRoot,
+                relativePath: resolved.relativePath,
+                expiresAt,
+                ...revision,
+              };
+            })
+          : {
+              version: 1,
+              kind: "workspace-file",
+              workspaceRoot: canonicalWorkspaceRoot,
+              baseRelativePath: path.dirname(resolved.relativePath),
+              expiresAt,
+            };
       fileName = path.basename(resolved.relativePath);
       break;
     }
@@ -451,7 +484,18 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       relativePath: claims.relativePath,
     });
     return exactWorkspaceFile
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: exactWorkspaceFile,
+          ...(claims.revisionSize === undefined
+            ? {}
+            : {
+                revision: {
+                  size: claims.revisionSize,
+                  mtimeMs: claims.revisionMtimeMs ?? null,
+                },
+              }),
+        } satisfies ResolvedAsset)
       : null;
   }
   const segments = decodedPath.split(/[\\/]/);

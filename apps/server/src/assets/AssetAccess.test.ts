@@ -184,6 +184,63 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact workspace URLs for PDF previews", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-pdf-workspace-",
+      });
+      const sourcesDirectory = path.join(root, "sources");
+      const pdfPath = path.join(sourcesDirectory, "paper.pdf");
+      const siblingPath = path.join(sourcesDirectory, "private-notes.pdf");
+      yield* fileSystem.makeDirectory(sourcesDirectory, { recursive: true });
+      yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF-1.7\n"));
+      yield* fileSystem.writeFile(siblingPath, new TextEncoder().encode("%PDF-1.7\n"));
+      const canonicalPdfPath = yield* fileSystem.realPath(pdfPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: pdfPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "paper.pdf")).toMatchObject({
+        kind: "file",
+        path: canonicalPdfPath,
+        revision: { size: 9 },
+      });
+      expect(yield* resolveAsset(token, "private-notes.pdf")).toBeNull();
+
+      yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF-1.7\nchanged"));
+      const staleAsset = yield* resolveAsset(token, "paper.pdf");
+      expect(staleAsset).toMatchObject({ revision: { size: 9 } });
+
+      const refreshed = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: pdfPath,
+        },
+        workspaceRoot: root,
+      });
+      const refreshedSuffix = refreshed.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const refreshedSeparator = refreshedSuffix.indexOf("/");
+      expect(
+        yield* resolveAsset(
+          refreshedSuffix.slice(0, refreshedSeparator),
+          refreshedSuffix.slice(refreshedSeparator + 1),
+        ),
+      ).toMatchObject({ revision: { size: 16 } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues exact attachment capabilities by attachment id", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

@@ -2,8 +2,14 @@ import { expect, it } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 
 import { isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 describe("http dev routing", () => {
+  it("allows PDF.js HEAD and range requests across approved web origins", () => {
+    expect(browserApiCorsAllowedMethods).toContain("HEAD");
+    expect(browserApiCorsAllowedHeaders).toContain("range");
+  });
+
   it("treats localhost and loopback addresses as local", () => {
     expect(isLoopbackHostname("127.0.0.1")).toBe(true);
     expect(isLoopbackHostname("localhost")).toBe(true);
