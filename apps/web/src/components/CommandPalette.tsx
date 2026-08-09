@@ -68,7 +68,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { useProjects, useServerConfigs, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -579,6 +579,7 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -686,7 +687,10 @@ function OpenCommandPaletteDialog(props: {
     () =>
       buildSidebarProjectPickerEntries({
         groups: projectGroups,
-        preferredProjectRef: contextualProjectRef,
+        preferredProjectRef:
+          contextualProjectRef?.projectId == null
+            ? null
+            : scopeProjectRef(contextualProjectRef.environmentId, contextualProjectRef.projectId),
       }),
     [contextualProjectRef, projectGroups],
   );
@@ -1405,6 +1409,23 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    });
+  }
+
+  const projectlessEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
+  if (
+    projectlessEnvironmentId !== null &&
+    serverConfigs.get(projectlessEnvironmentId)?.projectlessThreads === true
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-thread-without-project",
+      searchTerms: ["new thread", "without project", "no project", "chat"],
+      title: "New thread without a project",
+      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await handleNewThread({ environmentId: projectlessEnvironmentId, projectId: null });
+      },
     });
   }
 

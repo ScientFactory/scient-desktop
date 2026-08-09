@@ -2303,7 +2303,11 @@ export default function Sidebar() {
         ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
         : shell
           ? () =>
-              void handleNewThreadRef.current(scopeProjectRef(shell.environmentId, shell.projectId))
+              void handleNewThreadRef.current(
+                shell.projectId === null
+                  ? { environmentId: shell.environmentId, projectId: null }
+                  : scopeProjectRef(shell.environmentId, shell.projectId),
+              )
           : () => void router.navigate({ to: "/" });
     },
     [navigateToThread, router],
@@ -2923,10 +2927,12 @@ export default function Sidebar() {
         }
         switch (clicked.value) {
           case "new-thread-on-branch": {
+            if (thread.projectId === null) return;
+            const projectId = thread.projectId;
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
-              handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId), {
+              handleNewThreadRef.current(scopeProjectRef(thread.environmentId, projectId), {
                 branch: thread.branch,
                 worktreePath: thread.worktreePath,
                 envMode: thread.worktreePath ? "worktree" : "local",
@@ -3368,9 +3374,11 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         projectTitle={
-                          projectDisplayNameByKey.get(
-                            `${thread.environmentId}:${thread.projectId}`,
-                          ) ?? null
+                          thread.projectId === null
+                            ? "No project"
+                            : (projectDisplayNameByKey.get(
+                                `${thread.environmentId}:${thread.projectId}`,
+                              ) ?? null)
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                         providerEntryByInstanceId={providerEntryByInstanceId}
@@ -3476,9 +3484,11 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         projectTitle={
-                          projectDisplayNameByKey.get(
-                            `${thread.environmentId}:${thread.projectId}`,
-                          ) ?? null
+                          thread.projectId === null
+                            ? "No project"
+                            : (projectDisplayNameByKey.get(
+                                `${thread.environmentId}:${thread.projectId}`,
+                              ) ?? null)
                         }
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         timestampFormat={timestampFormat}

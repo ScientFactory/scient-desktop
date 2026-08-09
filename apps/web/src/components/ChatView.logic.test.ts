@@ -538,7 +538,7 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
 
 describe("startNewThreadForProject", () => {
   it("starts a thread through the supplied shared handler for the active project", () => {
-    const calls: Array<{ environmentId: EnvironmentId; projectId: ProjectId }> = [];
+    const calls: Array<{ environmentId: EnvironmentId; projectId: ProjectId | null }> = [];
     const projectRef = { environmentId, projectId };
 
     expect(
