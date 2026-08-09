@@ -17,10 +17,26 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
+import {
+  PROVIDER_LAB_ENABLED,
+  providerLabStateAtom,
+} from "../scient/providerConnection/lab/providerLabState";
 
-export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
+const realServerEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
 });
+const providersValueAtom = Atom.family(
+  (environmentId: Parameters<typeof realServerEnvironment.providersValueAtom>[0]) =>
+    Atom.make((get) =>
+      PROVIDER_LAB_ENABLED
+        ? get(providerLabStateAtom).providers
+        : get(realServerEnvironment.providersValueAtom(environmentId)),
+    ),
+);
+export const serverEnvironment = {
+  ...realServerEnvironment,
+  providersValueAtom,
+};
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
@@ -77,7 +93,9 @@ export const primaryServerSettingsAtom = Atom.make(
 
 export const primaryServerProvidersAtom = Atom.make(
   (get): ReadonlyArray<ServerProvider> =>
-    get(primaryServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS,
+    PROVIDER_LAB_ENABLED
+      ? get(providerLabStateAtom).providers
+      : (get(primaryServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS),
 ).pipe(Atom.withLabel("web-primary-server-providers"));
 
 export const primaryServerKeybindingsAtom = Atom.make(

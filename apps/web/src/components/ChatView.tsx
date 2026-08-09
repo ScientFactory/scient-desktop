@@ -181,6 +181,10 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import {
+  PROVIDER_LAB_ENABLED,
+  providerLabStateAtom,
+} from "../scient/providerConnection/lab/providerLabState";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
   useClientSettings,
@@ -2153,7 +2157,10 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchSelfUpdate,
     versionMismatchServerLabel,
   ]);
-  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const providerLabState = useAtomValue(providerLabStateAtom);
+  const providerStatuses = PROVIDER_LAB_ENABLED
+    ? providerLabState.providers
+    : (serverConfig?.providers ?? EMPTY_PROVIDERS);
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider,
