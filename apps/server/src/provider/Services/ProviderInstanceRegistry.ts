@@ -9,6 +9,8 @@
  *
  * What rest-of-server reads from here:
  *   - `getInstance(instanceId)` — for routing turn/session calls.
+ *   - `rebuildInstance(instanceId)` — explicitly rematerialize one instance
+ *     when an external runtime dependency changed without a settings edit.
  *   - `listInstances` — for snapshot aggregation in `ProviderRegistry`.
  *   - `listUnavailable` — `ServerProvider` shadows for instances whose
  *     driver is not registered in this build (rollback / fork tolerance).
@@ -35,6 +37,16 @@ export interface ProviderInstanceRegistryShape {
   readonly getInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstance | undefined>;
+  /**
+   * Recreate one configured instance from its unchanged authoritative config.
+   *
+   * Normal hot reload remains settings-driven. This narrow escape hatch is
+   * for dependencies that deliberately live outside settings, such as an
+   * app-private provider runtime that was atomically installed or updated.
+   * Unknown ids are a no-op. The old instance scope closes before the fresh
+   * instance is created, preserving the registry's one-live-instance rule.
+   */
+  readonly rebuildInstance: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
   /**
    * Every available (driver-registered, successfully created) instance,
    * in stable settings-author order.

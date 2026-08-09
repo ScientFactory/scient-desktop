@@ -19,7 +19,9 @@ const connectionError = (message: string, cause?: unknown) =>
     ...(cause === undefined ? {} : { cause }),
   });
 
-function methodParams(method: ProviderConnectionMethod): CodexSchema.V2LoginAccountParams {
+function methodParams(
+  method: Extract<ProviderConnectionMethod, "codex_browser" | "codex_device_code">,
+): CodexSchema.V2LoginAccountParams {
   switch (method) {
     case "codex_browser":
       return {
@@ -57,6 +59,9 @@ export function makeCodexConnectionActionsFromOpen(
     methods: ["codex_browser", "codex_device_code"],
     start: (method) =>
       Effect.gen(function* () {
+        if (method !== "codex_browser" && method !== "codex_device_code") {
+          return yield* connectionError("Codex does not support this sign-in method.");
+        }
         const { client } = yield* open;
         const notifications =
           yield* Queue.unbounded<CodexSchema.V2AccountLoginCompletedNotification>();
@@ -106,11 +111,13 @@ export function makeCodexConnectionActionsFromOpen(
         return response.type === "chatgpt"
           ? {
               authorizationUrl: response.authUrl,
+              authorizationUrlKind: "primary" as const,
               waitForCompletion,
               cancel,
             }
           : {
               authorizationUrl: response.verificationUrl,
+              authorizationUrlKind: "primary" as const,
               userCode: response.userCode,
               waitForCompletion,
               cancel,

@@ -220,6 +220,17 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
+
+      // External runtime activation can require one instance to be
+      // rematerialized even though its settings envelope did not change.
+      // The explicit rebuild must replace only that instance and preserve
+      // every unrelated instance and its live scope.
+      yield* registry.rebuildInstance(personalId);
+      const rebuiltPersonal = yield* registry.getInstance(personalId);
+      const unchangedWork = yield* registry.getInstance(workId);
+      expect(rebuiltPersonal).toBeDefined();
+      expect(rebuiltPersonal).not.toBe(personal);
+      expect(unchangedWork).toBe(work);
     }).pipe(Effect.provide(testLayer)),
   );
 

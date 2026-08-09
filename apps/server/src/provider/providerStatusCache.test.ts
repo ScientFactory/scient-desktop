@@ -182,6 +182,49 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("drops cached Claude aliases while preserving the current curated and custom catalog", () => {
+    const cachedClaude = makeProvider(CLAUDE_AGENT_DRIVER, {
+      models: [
+        {
+          slug: "default",
+          name: "Default (recommended)",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "haiku",
+          name: "Haiku",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackClaude = makeProvider(CLAUDE_AGENT_DRIVER, {
+      models: [
+        {
+          slug: "claude-sonnet-4-6",
+          name: "Sonnet 4.6",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "laboratory-preview",
+          name: "laboratory-preview",
+          isCustom: true,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedClaude,
+        fallbackProvider: fallbackClaude,
+      }).models,
+      fallbackClaude.models,
+    );
+  });
+
   it("ignores stale cached enabled state when the provider is now disabled", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",

@@ -72,6 +72,7 @@ import {
   ProviderConnectionDisconnectInput,
   ProviderConnectionError,
   ProviderConnectionStartInput,
+  ProviderConnectionSubmitAuthorizationCodeInput,
   ProviderRuntimeCancelInput,
   ProviderRuntimePlan,
   ProviderRuntimePlanInput,
@@ -240,6 +241,7 @@ export const WS_METHODS = {
   serverRefreshProviders: "server.refreshProviders",
   serverStartProviderConnection: "server.startProviderConnection",
   serverCancelProviderConnection: "server.cancelProviderConnection",
+  serverSubmitProviderAuthorizationCode: "server.submitProviderAuthorizationCode",
   serverDisconnectProvider: "server.disconnectProvider",
   serverPlanProviderRuntime: "server.planProviderRuntime",
   serverStartProviderRuntime: "server.startProviderRuntime",
@@ -342,6 +344,15 @@ export const WsServerCancelProviderConnectionRpc = Rpc.make(
   WS_METHODS.serverCancelProviderConnection,
   {
     payload: ProviderConnectionCancelInput,
+    success: ServerProviderUpdatedPayload,
+    error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerSubmitProviderAuthorizationCodeRpc = Rpc.make(
+  WS_METHODS.serverSubmitProviderAuthorizationCode,
+  {
+    payload: ProviderConnectionSubmitAuthorizationCodeInput,
     success: ServerProviderUpdatedPayload,
     error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
   },
@@ -874,6 +885,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,
   WsServerStartProviderRuntimeRpc,

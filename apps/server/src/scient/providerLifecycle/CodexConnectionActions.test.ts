@@ -78,6 +78,7 @@ describe("CodexConnectionActions", () => {
 
         const attempt = yield* actions.start("codex_browser");
         assert.strictEqual(attempt.authorizationUrl, "https://auth.openai.com/authorize");
+        assert.strictEqual(attempt.authorizationUrlKind, "primary");
         assert.strictEqual(attempt.userCode, undefined);
         assert.deepStrictEqual(fake.requests[0], {
           method: "account/login/start",
@@ -128,6 +129,7 @@ describe("CodexConnectionActions", () => {
         );
         const attempt = yield* actions.start("codex_device_code");
         assert.strictEqual(attempt.authorizationUrl, "https://auth.openai.com/device");
+        assert.strictEqual(attempt.authorizationUrlKind, "primary");
         assert.strictEqual(attempt.userCode, "ABCD-EFGH");
 
         yield* fake.notifyCompleted({

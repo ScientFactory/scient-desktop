@@ -1,28 +1,8 @@
+import type {
+  ManagedRuntimeArchiveFormat,
+  ManagedRuntimeArtifact,
+} from "./managedRuntimeArtifact.ts";
 import type { ManagedRuntimeTarget } from "./target.ts";
-
-export type ManagedRuntimeArchiveFormat = "raw" | "tar.gz";
-export type ManagedRuntimeSupportTier =
-  | "fully_assisted"
-  | "external_runtime_supported"
-  | "manual_or_advanced_only"
-  | "unsupported";
-
-export interface ManagedRuntimeArtifact {
-  readonly provider: "codex";
-  readonly version: string;
-  readonly target: ManagedRuntimeTarget;
-  readonly artifactName: string;
-  readonly url: string;
-  readonly allowedHosts: ReadonlyArray<string>;
-  readonly sha256: string;
-  readonly size: number;
-  readonly archiveFormat: ManagedRuntimeArchiveFormat;
-  readonly executablePath: string;
-  readonly smokeArgs: ReadonlyArray<string>;
-  readonly catalogRevision: string;
-  readonly supportTier: ManagedRuntimeSupportTier;
-  readonly supportMessage: string;
-}
 
 const VERSION = "0.147.0";
 const RELEASE_TAG = `rust-v${VERSION}`;

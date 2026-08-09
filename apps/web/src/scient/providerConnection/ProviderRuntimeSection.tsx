@@ -25,6 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
+import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
 
@@ -335,8 +336,13 @@ export function ProviderRuntimeSection(props: {
 
   const terminalOperation =
     operation && !ACTIVE_RUNTIME_STATUSES.has(operation.status) ? operation : null;
+  const providerRuntimeError = needsManagedRuntimeRecovery(props.provider)
+    ? props.provider.message
+    : null;
   const statusIcon =
-    runtime.source === "missing" || terminalOperation?.status === "failed" ? (
+    runtime.source === "missing" ||
+    terminalOperation?.status === "failed" ||
+    providerRuntimeError ? (
       <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
     ) : (
       <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
@@ -349,7 +355,7 @@ export function ProviderRuntimeSection(props: {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            {terminalOperation?.message ?? runtime.message}
+            {terminalOperation?.message ?? providerRuntimeError ?? runtime.message}
           </p>
           {runtime.managedVersion ? (
             <p className="mt-1 text-[11px] text-muted-foreground">

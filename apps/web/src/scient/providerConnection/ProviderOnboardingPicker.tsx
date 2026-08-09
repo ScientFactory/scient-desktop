@@ -1,15 +1,16 @@
 import { useNavigate } from "@tanstack/react-router";
-import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import type { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
 import { PROVIDER_CLIENT_DEFINITIONS } from "../../components/settings/providerDriverMeta";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "~/lib/utils";
 import { CodexInlineSetup } from "./CodexInlineSetup";
+import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
@@ -17,8 +18,9 @@ import {
 } from "./providerConnectionPresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
-function statusLabel(entry: ProviderInstanceEntry | undefined): string {
+export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
+  if (isProviderInstancePickerReady(entry)) return "Ready";
   switch (providerConnectionPresentation(entry.snapshot).kind) {
     case "not-installed":
       return "Not installed";
@@ -30,12 +32,23 @@ function statusLabel(entry: ProviderInstanceEntry | undefined): string {
       return "Connecting";
     case "connected":
     case "not-required":
-      return "Connected";
+      return "Needs attention";
     case "unsupported":
       return "Manual setup";
     case "unavailable":
       return "Unavailable";
   }
+}
+
+/** Resolve the first model a newly connected provider can safely hand to T3's composer. */
+export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefined): string | null {
+  if (!entry || !isProviderInstancePickerReady(entry)) return null;
+  return (
+    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    entry.models.find((model) => !model.isCustom)?.slug ??
+    entry.models[0]?.slug ??
+    null
+  );
 }
 
 export function ProviderOnboardingPicker(props: {
@@ -44,6 +57,8 @@ export function ProviderOnboardingPicker(props: {
   readonly compact?: boolean;
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
+  readonly onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  readonly autoSelectReadyProvider?: boolean;
 }) {
   const navigate = useNavigate();
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -51,10 +66,13 @@ export function ProviderOnboardingPicker(props: {
   const [query, setQuery] = useState("");
   const [dialogEntry, setDialogEntry] = useState<ProviderInstanceEntry | null>(null);
   const open = props.open ?? uncontrolledOpen;
-  const setOpen = (nextOpen: boolean) => {
-    props.onOpenChange?.(nextOpen);
-    if (props.open === undefined) setUncontrolledOpen(nextOpen);
-  };
+  const setOpen = useCallback(
+    (nextOpen: boolean) => {
+      props.onOpenChange?.(nextOpen);
+      if (props.open === undefined) setUncontrolledOpen(nextOpen);
+    },
+    [props.onOpenChange, props.open],
+  );
 
   useEffect(() => {
     if (open) return;
@@ -79,6 +97,32 @@ export function ProviderOnboardingPicker(props: {
   );
   const selectedEntry = selectedDriver ? entriesByDriver.get(selectedDriver) : undefined;
   const showHome = selectedDefinition === undefined || normalizedQuery.length > 0;
+
+  const readyModel = readyProviderDefaultModel(selectedEntry);
+  useEffect(() => {
+    if (
+      !open ||
+      showHome ||
+      !selectedEntry ||
+      !readyModel ||
+      props.autoSelectReadyProvider === false
+    ) {
+      return;
+    }
+    // Setup completion is asynchronous. Hand the ready instance and its
+    // canonical default model back to T3's existing selection path so the
+    // user leaves onboarding with a provider they can immediately use.
+    props.onInstanceModelChange(selectedEntry.instanceId, readyModel);
+    setOpen(false);
+  }, [
+    open,
+    props.autoSelectReadyProvider,
+    props.onInstanceModelChange,
+    readyModel,
+    selectedEntry,
+    setOpen,
+    showHome,
+  ]);
 
   const openSettings = () => {
     setOpen(false);
@@ -151,7 +195,7 @@ export function ProviderOnboardingPicker(props: {
                     key={definition.value}
                     active={!showHome && definition.value === selectedDriver}
                     icon={definition.icon}
-                    label={`${definition.label}, ${statusLabel(entriesByDriver.get(definition.value))}`}
+                    label={`${definition.label}, ${providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}`}
                     onClick={() => {
                       setSelectedDriver(definition.value);
                       setQuery("");
@@ -162,17 +206,19 @@ export function ProviderOnboardingPicker(props: {
             </aside>
 
             <section className="flex min-w-0 flex-1 flex-col border-l border-border/70 bg-muted/40">
-              <label className="flex h-11 shrink-0 items-center gap-2 border-b border-border/70 px-3">
-                <SearchIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
-                <span className="sr-only">Search providers or models</span>
-                <input
-                  className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-placeholder"
-                  onChange={(event) => setQuery(event.currentTarget.value)}
-                  placeholder="Search providers or models…"
-                  type="search"
-                  value={query}
-                />
-              </label>
+              {showHome ? (
+                <label className="flex h-11 shrink-0 items-center gap-2 border-b border-border/70 px-3">
+                  <SearchIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
+                  <span className="sr-only">Search providers</span>
+                  <input
+                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-placeholder"
+                    onChange={(event) => setQuery(event.currentTarget.value)}
+                    placeholder="Search providers…"
+                    type="search"
+                    value={query}
+                  />
+                </label>
+              ) : null}
 
               {showHome ? (
                 normalizedQuery.length === 0 ? (
@@ -204,7 +250,7 @@ export function ProviderOnboardingPicker(props: {
                               {definition.label}
                             </span>
                             <span className="block truncate text-muted-foreground text-xs">
-                              {statusLabel(entriesByDriver.get(definition.value))}
+                              {providerOnboardingStatusLabel(entriesByDriver.get(definition.value))}
                             </span>
                           </span>
                           <ChevronRightIcon
@@ -228,10 +274,16 @@ export function ProviderOnboardingPicker(props: {
                     environmentId={props.environmentId}
                     provider={selectedEntry.snapshot}
                   />
+                ) : selectedDefinition.value === "claudeAgent" ? (
+                  <ClaudeSetupWithController
+                    displayName={selectedEntry.displayName}
+                    environmentId={props.environmentId}
+                    provider={selectedEntry.snapshot}
+                  />
                 ) : (
                   <ProviderSetupDetail
                     displayName={selectedDefinition.label}
-                    status={statusLabel(selectedEntry)}
+                    status={providerOnboardingStatusLabel(selectedEntry)}
                     onManage={() => {
                       if (canManageProviderLifecycle(selectedEntry.snapshot)) {
                         setOpen(false);
@@ -279,6 +331,55 @@ function CodexSetupWithController(props: {
     provider: props.provider,
   });
   return <CodexInlineSetup {...props} controller={controller} />;
+}
+
+function ClaudeSetupWithController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ProviderInstanceEntry["snapshot"];
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  return <ClaudeInlineSetup {...props} controller={controller} />;
+}
+
+/**
+ * Inline setup surface used by the regular model picker after another provider
+ * is already ready. Keeping this in Scient-owned code lets T3 continue to own
+ * model discovery and selection while every provider remains reachable.
+ */
+export function ProviderLifecycleSetupSurface(props: {
+  readonly environmentId: EnvironmentId;
+  readonly entry: ProviderInstanceEntry;
+}) {
+  const navigate = useNavigate();
+  if (props.entry.driverKind === "codex") {
+    return (
+      <CodexSetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  if (props.entry.driverKind === "claudeAgent") {
+    return (
+      <ClaudeSetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  return (
+    <ProviderSetupDetail
+      displayName={props.entry.displayName}
+      status={providerOnboardingStatusLabel(props.entry)}
+      onManage={() => void navigate({ to: "/settings/providers" })}
+    />
+  );
 }
 
 function RailButton(props: {

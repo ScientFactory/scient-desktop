@@ -12,7 +12,12 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  type ProviderConnectionMethod,
+  ProviderDriverKind,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
@@ -26,6 +31,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
+import { makeClaudeConnectionActions } from "../../scient/providerLifecycle/ClaudeConnectionActions.ts";
+import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecycle/ClaudeManagedRuntimeActions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
@@ -38,6 +45,7 @@ import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
+  type ProviderConnectionActions,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
@@ -45,6 +53,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -54,11 +63,49 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import { hasExternalClaudeAccountConfiguration } from "./ClaudeAuthStatus.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+
+function environmentValue(environment: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = environment[key]?.trim();
+  return value ? value : undefined;
+}
+
+/**
+ * Account changes invalidate Claude's per-instance initialization cache before
+ * the connection manager refreshes the authoritative provider snapshot.
+ */
+export function invalidateClaudeCapabilitiesAfterAccountChange(
+  actions: ProviderConnectionActions,
+  invalidate: Effect.Effect<void>,
+): ProviderConnectionActions {
+  return {
+    ...actions,
+    start: (method) =>
+      actions.start(method).pipe(
+        Effect.map((attempt) => ({
+          ...attempt,
+          waitForCompletion: attempt.waitForCompletion.pipe(Effect.tap(() => invalidate)),
+        })),
+      ),
+    disconnect: actions.disconnect.pipe(Effect.tap(() => invalidate)),
+  };
+}
+
+/** Expose only account flows the configured provider can consume and Scient is authorized to ship. */
+export function assistedClaudeConnectionMethods(
+  providerEnvironment: NodeJS.ProcessEnv,
+  deploymentEnvironment: NodeJS.ProcessEnv = process.env,
+): ReadonlyArray<ProviderConnectionMethod> {
+  if (hasExternalClaudeAccountConfiguration(providerEnvironment)) return [];
+  const subscriptionApproved =
+    environmentValue(deploymentEnvironment, "SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED") === "1";
+  return subscriptionApproved ? ["claude_subscription", "claude_console"] : ["claude_console"];
+}
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -98,6 +145,8 @@ const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
+    readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
+    readonly connectionMethods: ReadonlyArray<ProviderConnectionMethod>;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
@@ -106,6 +155,15 @@ const withInstanceIdentity =
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
+    connection: {
+      methods: snapshot.auth.required === false ? [] : input.connectionMethods,
+      canDisconnect:
+        snapshot.auth.required !== false &&
+        input.connectionMethods.length > 0 &&
+        snapshot.auth.status === "authenticated",
+      operation: null,
+      runtime: input.runtime,
+    },
   });
 
 export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
@@ -121,7 +179,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { cwd } = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -130,44 +188,81 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
+      const managedRuntime = yield* makeClaudeManagedRuntimeResolution({
+        settings: config,
+        baseDir: serverConfig.baseDir,
+        environment: processEnv,
+        spawner,
+        managedInstallationAllowed: serverConfig.mode === "desktop",
       });
+      const effectiveConfig = {
+        ...config,
+        enabled,
+        binaryPath: managedRuntime.effectiveBinaryPath,
+      } satisfies ClaudeSettings;
+      const effectiveProcessEnv = managedRuntime.usesManagedPath
+        ? { ...processEnv, DISABLE_UPDATES: "1" }
+        : processEnv;
+      const connectionMethods = assistedClaudeConnectionMethods(effectiveProcessEnv, process.env);
+      const maintenanceCapabilities = managedRuntime.usesManagedPath
+        ? makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          })
+        : yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+            binaryPath: effectiveConfig.binaryPath,
+            env: effectiveProcessEnv,
+          });
       const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,
         accentColor,
         continuationGroupKey,
+        runtime: managedRuntime.summary,
+        connectionMethods,
       });
 
       const adapterOptions = {
         instanceId,
-        environment: processEnv,
+        environment: effectiveProcessEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
-      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
-
+      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, effectiveProcessEnv);
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
       const capabilitiesProbeCache = yield* Cache.make({
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          probeClaudeCapabilities(effectiveConfig, effectiveProcessEnv, serverConfig.cwd).pipe(
             Effect.provideService(Path.Path, path),
           ),
       });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
+        effectiveConfig,
+        serverConfig.cwd,
+      );
+      const providerConnectionActions =
+        connectionMethods.length > 0
+          ? yield* makeClaudeConnectionActions(effectiveConfig, effectiveProcessEnv, spawner)
+          : undefined;
+      const connectionActions = providerConnectionActions
+        ? {
+            ...invalidateClaudeCapabilitiesAfterAccountChange(
+              providerConnectionActions,
+              Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey),
+            ),
+            methods: connectionMethods,
+          }
+        : undefined;
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
-        processEnv,
-        cwd,
+        effectiveProcessEnv,
+        serverConfig.cwd,
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -216,6 +311,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        ...(connectionActions ? { connectionActions } : {}),
+        managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
 };

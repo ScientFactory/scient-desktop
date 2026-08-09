@@ -8,7 +8,7 @@ import * as NodeStreamPromises from "node:stream/promises";
 
 import * as Tar from "tar";
 
-import type { ManagedRuntimeArchiveFormat } from "./codexManifest.ts";
+import type { ManagedRuntimeArchiveFormat } from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;

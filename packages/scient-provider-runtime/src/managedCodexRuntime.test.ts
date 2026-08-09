@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import type { ManagedRuntimeArtifact } from "./codexManifest.ts";
+import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { ManagedCodexRuntime } from "./managedCodexRuntime.ts";
 
 const temporaryRoots: string[] = [];
@@ -35,11 +35,16 @@ function artifact(version: string): ManagedRuntimeArtifact {
   };
 }
 
-async function makeRuntime(input?: { readonly smokeFailsAtCall?: number }) {
+async function makeRuntime(input?: {
+  readonly smokeFailsAtCall?: number;
+  readonly stateCommitFailsAtCall?: number;
+}) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
   temporaryRoots.push(root);
   let now = 1;
+  let materializeCalls = 0;
   let smokeCalls = 0;
+  let stateCommitCalls = 0;
   const runtime = new ManagedCodexRuntime(root, {
     now: () => now++,
     download: async ({ destination }) => {
@@ -48,9 +53,12 @@ async function makeRuntime(input?: { readonly smokeFailsAtCall?: number }) {
     },
     verify: async () => undefined,
     materialize: async ({ destination, executablePath }) => {
+      materializeCalls += 1;
       await NodeFSP.mkdir(destination, { recursive: true });
       const executable = NodePath.join(destination, executablePath);
-      await NodeFSP.writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      await NodeFSP.writeFile(executable, `#!/bin/sh\n# install ${materializeCalls}\nexit 0\n`, {
+        mode: 0o755,
+      });
       return executable;
     },
     smoke: async () => {
@@ -58,6 +66,16 @@ async function makeRuntime(input?: { readonly smokeFailsAtCall?: number }) {
       if (input?.smokeFailsAtCall === smokeCalls) {
         throw new Error("smoke failed");
       }
+    },
+    commitState: async (statePath, state, nonce) => {
+      stateCommitCalls += 1;
+      if (input?.stateCommitFailsAtCall === stateCommitCalls) {
+        throw new Error("state commit failed");
+      }
+      await NodeFSP.mkdir(NodePath.dirname(statePath), { recursive: true });
+      const temporary = `${statePath}.${nonce}.tmp`;
+      await NodeFSP.writeFile(temporary, `${JSON.stringify(state)}\n`, { flag: "wx" });
+      await NodeFSP.rename(temporary, statePath);
     },
   });
   return { root, runtime };
@@ -102,6 +120,34 @@ describe("ManagedCodexRuntime", () => {
     expect((await runtime.status(first)).installed).toBe(true);
   });
 
+  it("restores the working runtime when activation state cannot be committed", async () => {
+    const { root, runtime } = await makeRuntime({ stateCommitFailsAtCall: 2 });
+    const recipe = artifact("1.0.0");
+    const installed = await runtime.install({
+      artifact: recipe,
+      signal: new AbortController().signal,
+    });
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toContain("install 1");
+
+    await expect(
+      runtime.install({ artifact: recipe, signal: new AbortController().signal }),
+    ).rejects.toThrow("state commit failed");
+
+    expect((await runtime.status(recipe)).installed).toBe(true);
+    expect((await runtime.readState())?.activeVersion).toBe("1.0.0");
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toContain("install 1");
+    const targetDirectory = NodePath.dirname(installed.launchPath);
+    const targetEntries = await NodeFSP.readdir(NodePath.dirname(targetDirectory));
+    expect(
+      targetEntries.some((entry) =>
+        entry.startsWith(`${NodePath.basename(targetDirectory)}.replaced-`),
+      ),
+    ).toBe(false);
+    expect(
+      await NodeFSP.readdir(NodePath.join(root, "provider-runtimes", "codex", "staging")),
+    ).toEqual([]);
+  });
+
   it("keeps launching the active release while a newer reviewed artifact is available", async () => {
     const { runtime } = await makeRuntime();
     const first = artifact("1.0.0");
@@ -115,6 +161,26 @@ describe("ManagedCodexRuntime", () => {
     expect(status.installed).toBe(true);
     expect(status.activeVersion).toBe("1.0.0");
     expect(status.launchPath).toBe(installed.launchPath);
+  });
+
+  it("atomically activates a reviewed update and records the previous version", async () => {
+    const { runtime } = await makeRuntime();
+    const first = await runtime.install({
+      artifact: artifact("1.0.0"),
+      signal: new AbortController().signal,
+    });
+
+    const updated = await runtime.install({
+      artifact: artifact("2.0.0"),
+      signal: new AbortController().signal,
+    });
+
+    expect(updated.installed).toBe(true);
+    expect(updated.activeVersion).toBe("2.0.0");
+    expect(updated.previousVersion).toBe("1.0.0");
+    expect(updated.launchPath).not.toBe(first.launchPath);
+    expect(await NodeFSP.readFile(updated.launchPath, "utf8")).toContain("install 2");
+    expect(await NodeFSP.readFile(first.launchPath, "utf8")).toContain("install 1");
   });
 
   it("does not launch a managed binary recorded for a different computer target", async () => {

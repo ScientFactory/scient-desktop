@@ -8,6 +8,7 @@ export type ProviderSettingsLifecycleKind =
   | "sign-in-required"
   | "signing-in"
   | "ready"
+  | "attention"
   | "failed"
   | "manual";
 
@@ -110,6 +111,15 @@ export function providerSettingsLifecyclePresentation(
     };
   }
   if (provider.auth.status === "authenticated" || provider.auth.required === false) {
+    if (provider.status !== "ready" || provider.models.length === 0) {
+      return {
+        kind: "attention",
+        statusLabel: "Needs attention",
+        detail: provider.message ?? `${displayName} is connected but has no available model.`,
+        actionLabel: "Manage",
+        busy: false,
+      };
+    }
     return {
       kind: "ready",
       statusLabel: "Ready",

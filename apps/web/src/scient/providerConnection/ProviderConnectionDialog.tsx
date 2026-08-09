@@ -17,7 +17,7 @@ import {
   ShieldCheckIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -39,6 +39,7 @@ import {
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
+import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -73,14 +74,15 @@ interface ProviderConnectionDialogProps {
 }
 
 export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
-  return props.provider.driver === "codex" ? (
-    <CodexProviderConnectionDialog key={props.provider.instanceId} {...props} />
+  return props.provider.driver === "codex" || props.provider.driver === "claudeAgent" ? (
+    <AssistedProviderConnectionDialog key={props.provider.instanceId} {...props} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...props} />
   );
 }
 
-function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+function AssistedProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
     provider: props.provider,
@@ -88,6 +90,7 @@ function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const isConnected = providerConnectionPresentation(props.provider).kind === "connected";
+  const isClaude = props.provider.driver === "claudeAgent";
 
   const disconnect = async () => {
     setDisconnecting(true);
@@ -105,19 +108,29 @@ function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogPopup className="max-w-sm" showCloseButton>
+      <DialogPopup className="max-w-sm" initialFocus={titleRef} showCloseButton>
         <DialogHeader>
-          <DialogTitle>Codex</DialogTitle>
+          <DialogTitle ref={titleRef}>{isClaude ? "Claude" : "Codex"}</DialogTitle>
           <DialogDescription>
-            Connect and manage your existing ChatGPT subscription.
+            {isClaude
+              ? "Connect and manage your Claude account."
+              : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="flex min-h-64 flex-col">
-          <CodexInlineSetup
-            controller={controller}
-            displayName={props.displayName}
-            provider={props.provider}
-          />
+          {isClaude ? (
+            <ClaudeInlineSetup
+              controller={controller}
+              displayName={props.displayName}
+              provider={props.provider}
+            />
+          ) : (
+            <CodexInlineSetup
+              controller={controller}
+              displayName={props.displayName}
+              provider={props.provider}
+            />
+          )}
           {disconnectError ? (
             <div
               className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"
@@ -131,7 +144,7 @@ function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
         <DialogFooter className="sm:justify-between">
           {isConnected && props.provider.connection?.canDisconnect ? (
             <Button
-              className="text-destructive hover:text-destructive"
+              className="text-destructive hover:text-destructive focus-visible:ring-1 focus-visible:ring-destructive/40 focus-visible:ring-offset-0"
               disabled={disconnecting}
               onClick={() => void disconnect()}
               type="button"
@@ -228,7 +241,10 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     const returnedProvider = providerFromResult(result.value.providers, props.provider.instanceId);
     const nextOperation = returnedProvider?.connection?.operation ?? null;
     setLocalOperation(nextOperation);
-    if (nextOperation?.authorizationUrl) {
+    if (
+      nextOperation?.authorizationUrl &&
+      nextOperation.authorizationUrlKind !== "manual_fallback"
+    ) {
       await openAuthorizationPage(nextOperation.authorizationUrl);
     }
   };
@@ -357,7 +373,9 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
                   onClick={() => void openAuthorizationPage(operation.authorizationUrl!)}
                 >
                   <ExternalLinkIcon />
-                  Open secure sign-in page
+                  {operation.authorizationUrlKind === "manual_fallback"
+                    ? "Browser didn’t open?"
+                    : "Open secure sign-in page"}
                 </Button>
               ) : null}
             </div>
@@ -402,7 +420,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
             <Button
               type="button"
               variant="ghost"
-              className="text-destructive hover:text-destructive"
+              className="text-destructive hover:text-destructive focus-visible:ring-1 focus-visible:ring-destructive/40 focus-visible:ring-offset-0"
               disabled={isWorking}
               onClick={() => void disconnect()}
             >

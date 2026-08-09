@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -64,6 +65,9 @@ const yieldUntil = <A>(
 function makeHarness(options?: {
   readonly provider?: ServerProvider;
   readonly actions?: ProviderConnectionActions | undefined;
+  readonly beforeSetProviderConnectionOperation?: (
+    operation: ProviderConnectionOperation | null,
+  ) => Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
@@ -75,6 +79,7 @@ function makeHarness(options?: {
     const setProviderConnectionOperation: ProviderRegistryShape["setProviderConnectionOperation"] =
       (input) =>
         Effect.gen(function* () {
+          yield* options?.beforeSetProviderConnectionOperation?.(input.operation) ?? Effect.void;
           yield* Ref.update(transitionsRef, (transitions) => [...transitions, input.operation]);
           return yield* Ref.updateAndGet(providersRef, (providers) =>
             providers.map((provider) =>
@@ -114,6 +119,7 @@ function makeHarness(options?: {
             ),
           );
         }),
+      reloadInstance: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
@@ -147,6 +153,7 @@ describe("ProviderConnectionManager", () => {
           start: () =>
             Effect.succeed({
               authorizationUrl: "https://auth.openai.com/",
+              authorizationUrlKind: "primary",
               waitForCompletion: Deferred.await(completed),
               cancel: Effect.void,
             }),
@@ -166,6 +173,10 @@ describe("ProviderConnectionManager", () => {
           started.providers[0]?.connection?.operation?.authorizationUrl,
           "https://auth.openai.com/",
         );
+        assert.strictEqual(
+          started.providers[0]?.connection?.operation?.authorizationUrlKind,
+          "primary",
+        );
 
         yield* Deferred.succeed(completed, undefined);
         const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
@@ -179,6 +190,202 @@ describe("ProviderConnectionManager", () => {
       }),
   );
 
+  it.effect("forwards an optional authorization code only to the matching live attempt", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const submittedCode = yield* Ref.make<string | null>(null);
+      const actions: ProviderConnectionActions = {
+        methods: ["claude_subscription"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://claude.ai/oauth/authorize",
+            authorizationUrlKind: "manual_fallback",
+            submitAuthorizationCode: (code) => Ref.set(submittedCode, code),
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: {
+          ...disconnectedProvider,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          connection: {
+            methods: ["claude_subscription"],
+            canDisconnect: false,
+            operation: null,
+          },
+        },
+      });
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "claude_subscription",
+      });
+      const operationId = started.providers[0]?.connection?.operation?.operationId;
+      assert.ok(operationId);
+      assert.strictEqual(
+        started.providers[0]?.connection?.operation?.authorizationUrlKind,
+        "manual_fallback",
+      );
+
+      const wrongOperation = yield* manager
+        .submitAuthorizationCode({
+          instanceId: CODEX_INSTANCE,
+          operationId: "not-current",
+          authorizationCode: "must-not-be-forwarded",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(wrongOperation.reason, "operation_not_found");
+      assert.strictEqual(yield* Ref.get(submittedCode), null);
+
+      const submitted = yield* manager.submitAuthorizationCode({
+        instanceId: CODEX_INSTANCE,
+        operationId,
+        authorizationCode: "one-time-code",
+      });
+      assert.strictEqual(yield* Ref.get(submittedCode), "one-time-code");
+      assert.strictEqual(submitted.providers[0]?.connection?.operation?.status, "verifying");
+
+      yield* manager.submitAuthorizationCode({
+        instanceId: CODEX_INSTANCE,
+        operationId,
+        authorizationCode: "second-code",
+      });
+      assert.strictEqual(yield* Ref.get(submittedCode), "second-code");
+
+      yield* Deferred.succeed(completed, undefined);
+    }),
+  );
+
+  it.effect("allows the user to retry when forwarding the authorization code fails", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const submittedCodes = yield* Ref.make<ReadonlyArray<string>>([]);
+      const actions: ProviderConnectionActions = {
+        methods: ["claude_console"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://platform.claude.com/oauth/authorize",
+            authorizationUrlKind: "manual_fallback",
+            submitAuthorizationCode: (code) =>
+              Ref.updateAndGet(submittedCodes, (codes) => [...codes, code]).pipe(
+                Effect.flatMap((codes) =>
+                  codes.length === 1
+                    ? Effect.fail(
+                        new ProviderConnectionActionError({
+                          message: "The Claude login process was not ready for the code.",
+                        }),
+                      )
+                    : Effect.void,
+                ),
+              ),
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: {
+          ...disconnectedProvider,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          connection: {
+            methods: ["claude_console"],
+            canDisconnect: false,
+            operation: null,
+          },
+        },
+      });
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "claude_console",
+      });
+      const operationId = started.providers[0]?.connection?.operation?.operationId;
+      assert.ok(operationId);
+
+      const first = yield* manager
+        .submitAuthorizationCode({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          authorizationCode: "first-code",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(first.reason, "connection_failed");
+
+      yield* manager.submitAuthorizationCode({
+        instanceId: CODEX_INSTANCE,
+        operationId,
+        authorizationCode: "second-code",
+      });
+      assert.deepStrictEqual(yield* Ref.get(submittedCodes), ["first-code", "second-code"]);
+
+      yield* Deferred.succeed(completed, undefined);
+    }),
+  );
+
+  it.effect("serializes fallback-code writes to the live Claude process", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const codeStarted = yield* Deferred.make<void>();
+      const releaseCode = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["claude_subscription"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://claude.ai/oauth/authorize",
+            authorizationUrlKind: "manual_fallback",
+            submitAuthorizationCode: () =>
+              Deferred.succeed(codeStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCode)),
+              ),
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: {
+          ...disconnectedProvider,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          connection: {
+            methods: ["claude_subscription"],
+            canDisconnect: false,
+            operation: null,
+          },
+        },
+      });
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "claude_subscription",
+      });
+      const operationId = started.providers[0]?.connection?.operation?.operationId;
+      assert.ok(operationId);
+
+      const first = yield* manager
+        .submitAuthorizationCode({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          authorizationCode: "first-code",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(codeStarted);
+      const overlapping = yield* manager
+        .submitAuthorizationCode({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          authorizationCode: "overlapping-code",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(overlapping.reason, "authorization_code_not_supported");
+
+      yield* Deferred.succeed(releaseCode, undefined);
+      yield* Fiber.join(first);
+      yield* Deferred.succeed(completed, undefined);
+    }),
+  );
+
   it.effect("rejects a duplicate operation and cancels only the matching active operation", () =>
     Effect.gen(function* () {
       const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
@@ -188,6 +395,7 @@ describe("ProviderConnectionManager", () => {
         start: () =>
           Effect.succeed({
             authorizationUrl: "https://auth.openai.com/",
+            authorizationUrlKind: "primary",
             waitForCompletion: Deferred.await(completed),
             cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
           }),
@@ -222,6 +430,116 @@ describe("ProviderConnectionManager", () => {
       yield* Effect.yieldNow;
       const transitions = yield* Ref.get(transitionsRef);
       assert.strictEqual(transitions.at(-1)?.status, "cancelled");
+    }),
+  );
+
+  it.effect("does not resurrect a browser flow cancelled while the provider is starting", () =>
+    Effect.gen(function* () {
+      const startReleased = yield* Deferred.make<void>();
+      const providerCancelled = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Deferred.await(startReleased).pipe(
+            Effect.as({
+              authorizationUrl: "https://auth.openai.com/",
+              authorizationUrlKind: "primary" as const,
+              waitForCompletion: Effect.never,
+              cancel: Deferred.succeed(providerCancelled, undefined).pipe(Effect.asVoid),
+            }),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef, transitionsRef } = yield* makeHarness({ actions });
+
+      const startFiber = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.forkChild);
+      const starting = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.operation?.status === "starting",
+      );
+      const operationId = starting[0]?.connection?.operation?.operationId;
+      assert.ok(operationId);
+
+      yield* manager.cancel({ instanceId: CODEX_INSTANCE, operationId });
+      yield* Deferred.succeed(startReleased, undefined);
+      const result = yield* Fiber.join(startFiber);
+
+      assert.strictEqual(result.providers[0]?.connection?.operation?.status, "cancelled");
+      assert.strictEqual(yield* Deferred.isDone(providerCancelled), true);
+      assert.deepStrictEqual(
+        (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+        ["starting", "cancelled"],
+      );
+    }),
+  );
+
+  it.effect("serializes cancellation with publishing the browser-ready state", () =>
+    Effect.gen(function* () {
+      const waitingPublishStarted = yield* Deferred.make<void>();
+      const releaseWaitingPublish = yield* Deferred.make<void>();
+      const providerCancelled = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["claude_subscription"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://claude.ai/oauth/authorize",
+            authorizationUrlKind: "manual_fallback",
+            waitForCompletion: Effect.never,
+            cancel: Deferred.succeed(providerCancelled, undefined).pipe(Effect.asVoid),
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef, transitionsRef } = yield* makeHarness({
+        actions,
+        provider: {
+          ...disconnectedProvider,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          connection: {
+            methods: ["claude_subscription"],
+            canDisconnect: false,
+            operation: null,
+          },
+        },
+        beforeSetProviderConnectionOperation: (operation) =>
+          operation?.status === "waiting_for_browser"
+            ? Deferred.succeed(waitingPublishStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseWaitingPublish)),
+              )
+            : Effect.void,
+      });
+
+      const startFiber = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "claude_subscription" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(waitingPublishStarted);
+      const operationId = (yield* Ref.get(providersRef))[0]?.connection?.operation?.operationId;
+      assert.ok(operationId);
+
+      const cancelFiber = yield* manager
+        .cancel({ instanceId: CODEX_INSTANCE, operationId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.succeed(releaseWaitingPublish, undefined);
+      const [started, cancelled] = yield* Effect.all(
+        [Fiber.join(startFiber), Fiber.join(cancelFiber)],
+        { concurrency: "unbounded" },
+      );
+
+      assert.strictEqual(
+        started.providers[0]?.connection?.operation?.status,
+        "waiting_for_browser",
+      );
+      assert.strictEqual(cancelled.providers[0]?.connection?.operation?.status, "cancelled");
+      assert.strictEqual(
+        (yield* Ref.get(providersRef))[0]?.connection?.operation?.status,
+        "cancelled",
+      );
+      assert.strictEqual(yield* Deferred.isDone(providerCancelled), true);
+      assert.deepStrictEqual(
+        (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+        ["starting", "waiting_for_browser", "cancelled"],
+      );
     }),
   );
 

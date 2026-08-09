@@ -40,6 +40,10 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import {
+  decodeClaudeAuthStatus,
+  hasExternalClaudeAccountConfiguration,
+} from "../Drivers/ClaudeAuthStatus.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
@@ -892,11 +896,61 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
+  const usesExternalAccountConfiguration =
+    hasExternalClaudeAccountConfiguration(resolvedEnvironment);
+  let firstPartyAccountConfirmed = false;
+  if (!usesExternalAccountConfiguration) {
+    // SDK initialization can return model metadata even when no Claude account
+    // is connected. Treat the official CLI's machine-readable auth status as
+    // the first-party readiness gate; installation alone must never expose
+    // usable models. Explicit API/custom-backend configurations retain T3's
+    // SDK-derived readiness path below.
+    const authStatusProbe = yield* runClaudeCommand(
+      claudeSettings,
+      ["auth", "status", "--json"],
+      resolvedEnvironment,
+    ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+    const authStatusResult = Result.isSuccess(authStatusProbe)
+      ? Option.getOrUndefined(authStatusProbe.success)
+      : undefined;
+    const authStatus = authStatusResult
+      ? decodeClaudeAuthStatus(authStatusResult.stdout)
+      : undefined;
+
+    if (!authStatus || (authStatus.loggedIn && authStatusResult?.code !== 0)) {
+      return buildServerProvider({
+        presentation: CLAUDE_PRESENTATION,
+        enabled: claudeSettings.enabled,
+        checkedAt,
+        models: [],
+        probe: {
+          installed: true,
+          version: parsedVersion,
+          status: "warning",
+          auth: { status: "unknown", required: true },
+          message: "Could not verify Claude account status.",
+        },
+      });
+    }
+
+    if (!authStatus.loggedIn) {
+      return buildServerProvider({
+        presentation: CLAUDE_PRESENTATION,
+        enabled: claudeSettings.enabled,
+        checkedAt,
+        models: [],
+        probe: {
+          installed: true,
+          version: parsedVersion,
+          status: "warning",
+          auth: { status: "unauthenticated", required: true },
+          message: "Claude is installed but not signed in.",
+        },
+      });
+    }
+    firstPartyAccountConfirmed = true;
+  }
+
   const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
     ? undefined
     : supportsClaudeFable5(parsedVersion)
@@ -906,6 +960,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         : supportsClaudeOpus47(parsedVersion)
           ? formatClaudeOpus48UpgradeMessage(parsedVersion)
           : formatClaudeOpus47UpgradeMessage(parsedVersion);
+  const models = providerModelsFromSettings(
+    getBuiltInClaudeModelsForVersion(parsedVersion),
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
@@ -926,8 +985,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         installed: true,
         version: parsedVersion,
         status: "warning",
-        auth: { status: "unknown" },
-        message: "Could not verify Claude authentication status from initialization result.",
+        auth: firstPartyAccountConfirmed
+          ? { status: "authenticated", required: true }
+          : { status: "unknown" },
+        message: firstPartyAccountConfirmed
+          ? "Claude is signed in, but Scient could not complete its readiness check."
+          : "Could not verify Claude authentication status from initialization result.",
       },
     });
   }

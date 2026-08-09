@@ -1,7 +1,75 @@
-# Claude
+# Claude in Scient
 
-This guide is for people who want to use more than one Claude setup in T3 Code. For Codex, see
-[Codex](./providers-codex.md). For first-time setup, see [Install T3 Code](./install.md).
+Scient keeps installing the Claude tool and connecting a Claude account as two separate, visible
+facts. A saved provider configuration is not treated as a working connection.
+
+## The Easiest Setup Path
+
+When Claude is not ready, choose it from **Choose your AI** in the composer or open **Settings >
+Providers**. The same guided surface appears in both places:
+
+1. Scient preserves and verifies a healthy custom or system Claude installation when one exists;
+2. otherwise, the local desktop app can install a reviewed official Claude Code executable in
+   Scient's private app data;
+3. the available sign-in button starts Claude Code's official account flow and opens its secure
+   page in your browser; and
+4. Scient asks Claude for fresh account and model state before reporting it as ready.
+
+Connecting another AI does not hide Claude. Every enabled provider remains available from the
+model picker's provider rail. After Claude confirms the account and reports models, Scient hands
+Claude's declared default model to the existing composer selection path and closes onboarding. You
+can work immediately or reopen the normal model picker to choose another Claude model.
+
+An approved Scient deployment can offer **Sign in to Claude** for an existing Claude.ai Pro, Max,
+Team, or Enterprise subscription. Until Anthropic has authorized that third-party experience, the
+assisted default is **Sign in with Console** for an Anthropic Console account. Existing API-key,
+Bedrock, Vertex, Foundry, and custom-endpoint setups remain advanced provider configurations rather
+than being rewritten by the guided account flow.
+
+Most browser sign-ins return to Claude automatically. If the browser itself displays a one-time
+code, expand **Browser showed a code?** and paste it into the compact recovery field. This is an occasional fallback for
+environments where the local callback cannot complete, not a normal extra step. The code is sent
+only to the live Claude process and is not saved as provider state.
+
+Scient never asks for or receives your Claude password. Claude Code continues to own its
+credentials, refresh, expiry, and revocation.
+
+## Computers And Installations
+
+Scient never silently replaces a healthy custom or system installation. A Scient-managed copy is
+private and removable, and removing it does not remove a system Claude install, a custom binary,
+or Claude-owned account data.
+
+For a Scient-managed copy, expand Claude in **Settings > Providers** to repair or remove the
+private runtime. If the executable stops working, **Manage** opens directly on that recovery path
+instead of asking you to sign in again.
+
+The reviewed catalog currently contains Anthropic's official native Claude Code `2.1.170`
+executables for Apple-silicon and Intel macOS, Windows ARM64 and x64, and Linux ARM64 and x64 with
+glibc or musl. Managed installation is offered only by the local desktop host; remote and web
+servers continue using the runtime administered on that host.
+
+This initial managed version is deliberately paired with the Claude Agent SDK already used by the
+app. It supports the reviewed default model set but does not advertise Claude Opus 5, which requires
+Claude Code `2.1.219` or newer. Scient will expose Opus 5 only after a compatible newer Claude
+runtime is present; a future managed update must review the SDK and runtime together.
+
+The catalog implements each listed target, but packaged clean-machine release qualification is
+tracked separately for every operating system and architecture. Scient should not publicly claim a
+target as release-proven until installation, authentication, update, cancellation, and recovery
+have passed on that exact target.
+
+For Windows, release qualification is separate for x64 and ARM64. On a clean machine for each
+architecture, verify the complete user flow: download the reviewed `claude.exe`, verify its size and
+SHA-256 digest, run the version smoke test, activate it, restart Scient, complete Claude's browser
+sign-in, discover a usable curated model, repair the managed copy, and remove it without affecting
+Claude-owned account data. Cross-platform automated tests protect this sequence, but they do not
+replace running the packaged application and executable on the real Windows architecture.
+
+## Advanced And Multiple-Account Setups
+
+The remaining sections are for people who deliberately want more than one Claude setup or an
+external Claude-compatible route. For Codex, see [Codex](./providers-codex.md).
 
 Common reasons:
 
@@ -14,13 +82,16 @@ Common reasons:
 
 Use the default provider.
 
-Log in with Claude Code normally:
+The guided Scient flow is recommended. The equivalent Console recovery command is:
 
 ```bash
-claude auth login
+claude auth login --console
 ```
 
-In T3 Code Settings, your Claude provider can stay like this:
+For a deployment authorized to offer Claude.ai subscription login, use
+`claude auth login --claudeai` instead.
+
+In Scient Settings, your Claude provider can stay like this:
 
 ```text
 Display name: Claude
@@ -28,9 +99,9 @@ Binary path: claude
 CLAUDE_CONFIG_DIR path: empty
 ```
 
-An empty `CLAUDE_CONFIG_DIR path` means T3 Code uses Claude Code's normal config directory.
+An empty `CLAUDE_CONFIG_DIR path` means Scient uses Claude Code's normal config directory.
 
-When you set this field, T3 Code points Claude Code at that directory with the
+When you set this field, Scient points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
@@ -47,13 +118,13 @@ default config dir           work account
 
 ### Set Up The First Account
 
-Log in normally:
+Log in with the account method your deployment offers. For Console:
 
 ```bash
-claude auth login
+claude auth login --console
 ```
 
-In T3 Code Settings:
+In Scient Settings:
 
 ```text
 Display name: Claude Work
@@ -67,13 +138,16 @@ Log in with a separate config directory:
 
 ```bash
 mkdir -p ~/.claude_personal_home
-CLAUDE_CONFIG_DIR=~/.claude_personal_home claude auth login
+CLAUDE_CONFIG_DIR=~/.claude_personal_home claude auth login --console
 ```
 
-Use `CLAUDE_CONFIG_DIR`, not `HOME`. Setting `HOME` writes the login to
-`~/.claude_personal_home/.claude`, which is not where T3 Code looks.
+Use `--claudeai` instead of `--console` only in a deployment authorized for Claude.ai subscription
+login.
 
-Then add another Claude provider in T3 Code:
+Use `CLAUDE_CONFIG_DIR`, not `HOME`. Setting `HOME` writes the login to
+`~/.claude_personal_home/.claude`, which is not where Scient looks.
+
+Then add another Claude provider in Scient:
 
 ```text
 Display name: Claude Personal
@@ -88,11 +162,11 @@ blurred by default; click the blurred email to reveal it.
 
 Usually, no.
 
-T3 Code only offers Claude providers that use the same config directory for an existing thread. A
+Scient only offers Claude providers that use the same config directory for an existing thread. A
 different config directory is treated as a different Claude environment.
 
 This is different from the recommended Codex setup. Claude Code keeps account and local state across
-multiple files under its config directory, so T3 Code keeps separate config directories isolated
+multiple files under its config directory, so Scient keeps separate config directories isolated
 instead of trying to share part of the state.
 
 ## I Want To Use OpenRouter
@@ -105,7 +179,7 @@ variables.
 
 ### Configure A Claude OpenRouter Provider
 
-Add or edit a Claude provider in T3 Code Settings:
+Add or edit a Claude provider in Scient Settings:
 
 ```text
 Display name: Claude OpenRouter
@@ -121,7 +195,7 @@ ANTHROPIC_AUTH_TOKEN sk-or-...                Sensitive
 ANTHROPIC_API_KEY                              Empty value
 ```
 
-Mark `ANTHROPIC_AUTH_TOKEN` as sensitive. T3 Code stores the value as a server secret and does not
+Mark `ANTHROPIC_AUTH_TOKEN` as sensitive. Scient stores the value as a server secret and does not
 send it back to the app after saving.
 
 If you want this setup isolated from your normal Claude account, create that home first:
@@ -180,7 +254,7 @@ OpenRouter's setup can change over time. Use its upstream Claude Code guide for 
 Claude Code Router is useful when you want a local routing layer with more control than a direct
 OpenRouter setup.
 
-T3 Code does not need a special Claude Code Router provider. Treat the router as a Claude
+Scient does not need a special Claude Code Router provider. Treat the router as a Claude
 environment: give a Claude provider its own `CLAUDE_CONFIG_DIR path`, and put whatever variables
 the router tells you to export into that provider's Environment variables section. Mark tokens
 and API keys as sensitive.

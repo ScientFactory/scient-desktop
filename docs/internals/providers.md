@@ -45,14 +45,14 @@ Scient adds an optional lifecycle seam to the existing T3 provider instance. It 
 second provider registry, model catalog, session router, or credential store. A driver without the
 optional seam keeps its inherited setup and provider behavior.
 
-The first vertical implementation is Codex:
+The current vertical implementations are Codex and Claude:
 
 - [`ProviderDriver.ts`][driver] exposes optional provider-owned connection and managed-runtime
   actions on a materialized provider instance;
 - [`ProviderRegistry`][provider-registry] applies transient operation summaries to the canonical
   provider snapshot without persisting them as provider truth;
-- [`ProviderConnectionManager`][connection-manager] supervises official browser and device-code
-  sign-in, cancellation, verification, and logout;
+- [`ProviderConnectionManager`][connection-manager] supervises official browser, device-code, and
+  Claude account sign-in, cancellation, verification, and logout;
 - [`ProviderRuntimeManager`][runtime-manager] plans, starts, cancels, and reconciles an app-private
   runtime action; and
 - [`packages/scient-provider-runtime`][runtime-package] owns the reviewed artifact catalog and the
@@ -99,11 +99,46 @@ refreshes the provider instance, and derives the next UI state from the resultin
 and model snapshot. Logout uses the provider operation and then refreshes the same canonical
 snapshot.
 
+### Claude authentication
+
+[`ClaudeConnectionActions`][claude-connection] supervises Claude Code's official `auth login`
+process. It does not replace T3's Claude Agent SDK adapter, session transport, permissions, or model
+execution. Anthropic Console authentication is the default assisted method. Claude.ai subscription
+authentication is exposed only when the deployment has documented Anthropic authorization and sets
+`SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED=1`; the switch is consumed by Scient and is removed from
+the Claude child-process environment. Configured API keys, custom endpoints, and Bedrock, Vertex,
+or Foundry backends keep their existing provider-specific setup and do not receive an irrelevant
+interactive account flow.
+
+This gate follows [Anthropic's current third-party integration policy][claude-legal]. It preserves
+the intended subscription experience in approved deployments without silently shipping it where
+Anthropic has not authorized it. Both account methods are still executed by Claude Code itself;
+Scient never receives the provider password or becomes the credential owner.
+
+Claude normally completes its local browser callback automatically. When Claude's browser page
+instead displays a one-time code, the UI may send that transient value to the stdin of the matching
+live Claude process. The operation identity is checked first, the value is bounded and rejected if
+it contains control characters, and it is never added to the provider snapshot, URL, logs, settings,
+or persistent storage. Claude owns the resulting credentials and Scient verifies success through
+`claude auth status --json` before refreshing the canonical models.
+
+Claude Code also owns the initial browser launch. Scient captures and validates the printed HTTPS
+authorization URL only to provide a **Reopen browser** recovery action; it does not open the same
+page a second time and create duplicate tabs.
+
 ### Managed runtime trust boundary
 
-The initial managed runtime is OpenAI Codex `0.147.0`, release tag `rust-v0.147.0`. Each known
-artifact has an exact HTTPS URL, allowlisted redirect hosts, byte size, SHA-256 digest, archive
-shape, executable path, and smoke command compiled into the signed application source.
+The reviewed runtime catalogs currently include OpenAI Codex `0.147.0`, release tag
+`rust-v0.147.0`, and Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version
+already used by T3. Each known artifact has an exact HTTPS URL, allowlisted redirect hosts, byte
+size, SHA-256 digest, archive shape, executable path, and smoke command compiled into the signed
+application source.
+
+That paired Claude runtime satisfies the current Fable 5 capability threshold, but it does not
+claim Opus 5 support: Opus 5 remains hidden until a healthy Claude Code `2.1.219` or newer is
+actually detected. A managed upgrade must review the Claude Agent SDK and executable together, or
+prove that the existing SDK is compatible with the newer executable; the executable must not be
+advanced alone merely to expose a model label.
 
 An install, update, or repair:
 
@@ -116,19 +151,27 @@ An install, update, or repair:
 6. activates the verified directory atomically; and
 7. removes staging data on success, failure, or cancellation.
 
+Routine status reconciliation never deletes staging because another serialized install may still
+own it. Abandoned staging is removed only after the installation reservation has been acquired and
+a new install, update, or repair begins.
+
 A newly reviewed artifact does not make an older healthy managed copy disappear. Status and launch
 resolution continue to use the atomically activated executable recorded in the private runtime
 state. An update stages and verifies the reviewed replacement, then switches that state only after
 activation. A failed replacement leaves the previous working managed runtime in place. `Remove`
-deletes only Scient's private Codex runtime root. It never changes a custom path, system package,
+deletes only the selected Scient-private provider runtime root. It never changes a custom path,
+system package,
 provider credential home, or provider-owned account data. A user-visible manual rollback action is
 not exposed until two distinct managed releases have each passed the required release proof.
+Settings exposes repair and removal for a managed copy. When the canonical provider probe reports
+that an existing managed executable cannot run, the assisted dialog routes directly to runtime
+recovery rather than presenting authentication as the next step.
 
 The app-private store has one owning Scient server process per data directory. The desktop
 single-instance and server lifecycle enforce that deployment invariant; independent server
 processes must not be configured to mutate the same application data directory.
 
-### Platform capability matrix
+### Codex platform capability matrix
 
 Support is selected by host mode, operating system, architecture, and, for Linux diagnostics,
 runtime libc. The shared UI consumes the resulting support tier; it contains no operating-system
@@ -148,6 +191,18 @@ the local desktop offers the same verified managed lifecycle on each reviewed ro
 validation remains a separate acceptance responsibility: a failure on one row must not be treated
 as evidence that another row is healthy or unhealthy.
 
+### Claude platform capability matrix
+
+Claude's official native catalog covers Apple-silicon and Intel macOS, Windows ARM64 and x64, and
+Linux ARM64 and x64 with glibc or musl. Those targets share the same fail-closed download, digest,
+smoke-test, atomic-activation, and recovery pipeline. Managed mutation remains local-desktop-only;
+remote and web hosts use an externally administered runtime.
+
+Catalog coverage is implementation evidence, not a public release-proof claim. Before a packaged
+build enables or advertises a target, that exact operating-system and architecture row must pass
+clean-machine installation, cancellation, authentication, update, interruption, and recovery
+qualification. Passing those checks on one target does not certify another.
+
 ### Upstream-maintenance boundary
 
 Most lifecycle behavior is under `apps/server/src/scient`, `apps/web/src/scient`, and
@@ -158,6 +213,15 @@ remains authoritative for provider instances, adapters, sessions, model discover
 ownership, update commands, provider enablement, and the surrounding UI. Future T3 refreshes should
 preserve those seams and reconcile only the bounded inherited edits rather than porting the
 lifecycle into a parallel host architecture.
+
+The composer keeps T3's model picker and model-selection logic. Two optional presentation callbacks
+allow an enabled provider that is not ready to remain selectable in the picker rail and render its
+Scient-owned setup surface in place of the model list. Once the canonical provider snapshot becomes
+ready, the callback stops applying and the same selected rail item returns to T3's model list. This
+keeps other providers reachable after the first connection without creating a second model picker.
+When setup began in the first-provider onboarding picker, readiness hands the provider's declared
+default model to that same T3 selection path and closes onboarding; it does not create a separate
+Scient model-selection state.
 
 ## How provider work is requested
 
@@ -210,6 +274,8 @@ when a request opens (approval) or user input is requested, via
 [connection-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderConnectionManager.ts
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
 [codex-connection]: ../../apps/server/src/scient/providerLifecycle/CodexConnectionActions.ts
+[claude-connection]: ../../apps/server/src/scient/providerLifecycle/ClaudeConnectionActions.ts
+[claude-legal]: https://code.claude.com/docs/en/legal-and-compliance
 [runtime-package]: ../../packages/scient-provider-runtime/
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts

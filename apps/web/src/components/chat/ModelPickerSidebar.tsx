@@ -52,6 +52,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
   /**
+   * Not-ready instances that have an in-picker setup surface. They remain
+   * selectable so connecting one provider never hides setup for the others.
+   */
+  setupAvailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
+  /**
    * Instance id values that should render the "new" sparkle badge. Callers
    * pass the subset of default built-in ids they want flagged (custom
    * instances are never flagged — the user just made them).
@@ -139,7 +144,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           {props.instanceEntries.map((entry) => {
             const isUnavailable = !isProviderInstancePickerReady(entry);
             const isContextDisabled = props.disabledInstanceIds?.has(entry.instanceId) ?? false;
-            const isDisabled = isUnavailable || isContextDisabled;
+            const hasSetupSurface = props.setupAvailableInstanceIds?.has(entry.instanceId) ?? false;
+            const isDisabled = (isUnavailable && !hasSetupSurface) || isContextDisabled;
             const isSelected = props.selectedInstanceId === entry.instanceId;
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
@@ -173,7 +179,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled={isDisabled}
                 type="button"
                 aria-label={
-                  isDisabled
+                  isUnavailable
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`

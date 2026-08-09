@@ -33,7 +33,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
-import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
+import {
+  ProviderLifecycleSetupSurface,
+  ProviderOnboardingPicker,
+} from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
@@ -869,6 +872,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
+  );
+  const isProviderSetupAvailable = useCallback(
+    (entry: ProviderInstanceEntry) => entry.enabled && entry.isAvailable,
+    [],
+  );
+  const renderProviderSetup = useCallback(
+    (entry: ProviderInstanceEntry) => (
+      <ProviderLifecycleSetupSurface environmentId={environmentId} entry={entry} />
+    ),
+    [environmentId],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -3153,9 +3166,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {selectedProviderNeedsConnection || noProviderAvailable ? (
                   <ProviderOnboardingPicker
+                    autoSelectReadyProvider={lockedProvider === null}
                     compact={isComposerFooterCompact}
                     environmentId={environmentId}
                     instanceEntries={providerInstanceEntries}
+                    onInstanceModelChange={onProviderModelSelect}
                   />
                 ) : (
                   <ProviderModelPicker
@@ -3180,6 +3195,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       setIsComposerModelPickerOpen(open);
                     }}
                     getModelDisabledReason={getModelDisabledReason}
+                    isProviderSetupAvailable={isProviderSetupAvailable}
+                    renderProviderSetup={renderProviderSetup}
                     onInstanceModelChange={onProviderModelSelect}
                   />
                 )}

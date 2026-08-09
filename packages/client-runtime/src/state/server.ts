@@ -753,6 +753,14 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
+    submitProviderAuthorizationCode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:submit-provider-authorization-code",
+      tag: WS_METHODS.serverSubmitProviderAuthorizationCode,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
     disconnectProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:disconnect-provider",
       tag: WS_METHODS.serverDisconnectProvider,

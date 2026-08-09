@@ -7,13 +7,16 @@ import {
 } from "./target.ts";
 
 describe("managed runtime target detection", () => {
-  it("normalizes the supported macOS and Windows architectures", () => {
+  it("normalizes the supported macOS and both Windows architectures", () => {
     expect(
       managedRuntimeTargetKey(detectManagedRuntimeTarget({ platform: "darwin", arch: "aarch64" })),
     ).toBe("darwin-arm64");
     expect(
       managedRuntimeTargetKey(detectManagedRuntimeTarget({ platform: "win32", arch: "amd64" })),
     ).toBe("win32-x64");
+    expect(
+      managedRuntimeTargetKey(detectManagedRuntimeTarget({ platform: "win32", arch: "aarch64" })),
+    ).toBe("win32-arm64");
   });
 
   it("keeps Linux libc in the target identity", () => {

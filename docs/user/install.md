@@ -43,21 +43,23 @@ yay -S t3code-bin
 
 ## Providers
 
-T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
-to use, then authenticate it.
+Scient drives provider-owned tools. In the local desktop app, **Choose your AI** can privately
+install reviewed Codex and Claude runtimes and start their official sign-in flows. A healthy system
+or custom installation remains supported and is never silently replaced. Other providers still use
+their externally installed tools.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                   | Default binary | Manual recovery command       |
+| ---------- | ----------------------------------------------------- | -------------- | ----------------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`                 |
+| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login --console` |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`                 |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`                  |
+| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login`         |
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
 
-Run the login command on the machine running the T3 Code server, not on the device you browse
+Run a manual recovery command on the machine running the Scient server, not on the device you browse
 from.
 
 ### Binary Discovery
@@ -70,9 +72,8 @@ started T3 Code.
 ### When Auth Is Needed
 
 Provider auth is required before you start a session with that provider, not before you start
-T3 Code. You can install T3 Code, open it, and add providers afterwards. A provider that is not
-authenticated shows its status in **Settings** and fails at session start with the login command
-to run.
+Scient. You can open Scient and connect providers afterwards. The composer and **Settings >
+Providers** show whether the tool is missing, sign-in is required, or a usable model is ready.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
 

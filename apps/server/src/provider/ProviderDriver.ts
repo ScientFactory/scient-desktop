@@ -22,6 +22,7 @@
  * @module provider/ProviderDriver
  */
 import type {
+  ProviderAuthorizationUrlKind,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
   ProviderRuntimeOperationStatus,
@@ -89,7 +90,17 @@ export interface ProviderConnectionActionFailure {
 
 export interface ProviderConnectionAttempt {
   readonly authorizationUrl: string;
+  /** Explicitly declares whether the client should open this URL automatically. */
+  readonly authorizationUrlKind: ProviderAuthorizationUrlKind;
   readonly userCode?: string | undefined;
+  /**
+   * Some official browser flows return a one-time code that must be handed
+   * back to the provider CLI. The code is written directly to the live
+   * provider process and is never persisted in Scient state.
+   */
+  readonly submitAuthorizationCode?:
+    | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
+    | undefined;
   readonly waitForCompletion: Effect.Effect<void, ProviderConnectionActionFailure>;
   readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
 }
