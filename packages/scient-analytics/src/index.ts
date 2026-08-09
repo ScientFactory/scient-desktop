@@ -5,6 +5,8 @@ export {
   AnalyticsPriority,
   consentAllows,
   countBucket,
+  durationBucket,
+  modelKey,
   normalizeInheritedEvent,
   type AnalyticsBatch,
   type AnalyticsEvent,

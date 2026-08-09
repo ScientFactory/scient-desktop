@@ -31,6 +31,7 @@ import * as OrchestrationReactor from "./orchestration/Services/OrchestrationRea
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import { launchAnalyticsEventObservers } from "./telemetry/AnalyticsEventObservers.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
@@ -351,6 +352,7 @@ export const make = (options?: StartupOptions) =>
         Effect.gen(function* () {
           yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
           yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+          yield* launchAnalyticsEventObservers.pipe(Scope.provide(reactorScope));
         }),
       );
 
