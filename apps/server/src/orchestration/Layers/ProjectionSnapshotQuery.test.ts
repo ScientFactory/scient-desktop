@@ -1298,6 +1298,18 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.equal(threadDetail.value.latestTurn?.state, "running");
         assert.equal(threadDetail.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }
+
+      const fullDiffContext = yield* snapshotQuery.getFullThreadDiffContext(
+        ThreadId.make("thread-1"),
+        5,
+      );
+      assert.equal(fullDiffContext._tag, "Some");
+      if (fullDiffContext._tag === "Some") {
+        assert.equal(fullDiffContext.value.projectId, null);
+        assert.equal(fullDiffContext.value.workspaceRoot, "/tmp/projectless");
+        assert.equal(fullDiffContext.value.latestCheckpointTurnCount, 5);
+        assert.equal(fullDiffContext.value.toCheckpointRef, asCheckpointRef("checkpoint-5"));
+      }
     }),
   );
 

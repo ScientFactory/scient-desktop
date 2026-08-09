@@ -34,10 +34,12 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-// Stable retry discriminator for the short race between an accepted provider
-// stop request and the authoritative stopped session reaching projections.
+// SCIENT-FORK:START — stable discriminator for the one relocation race the
+// client may retry: an accepted provider stop request reaching the command
+// projection just before the authoritative stopped session.
 export const GENERAL_CHAT_MOVE_SESSION_STOP_PENDING =
   "SCIENT_GENERAL_CHAT_MOVE_SESSION_STOP_PENDING";
+// SCIENT-FORK:END
 
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -1257,9 +1259,12 @@ export const ProjectDeletedPayload = Schema.Struct({
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: Schema.NullOr(ProjectId),
+  // SCIENT-FORK:START — pending upstream projectless-thread events may decode
+  // with an explicit undefined as well as an omitted legacy key.
   // Accept both an omitted key from historical events and the explicit
   // `undefined` produced while decoding the backward-compatible event union.
   workspaceRoot: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // SCIENT-FORK:END
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

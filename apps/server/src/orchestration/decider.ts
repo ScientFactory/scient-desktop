@@ -839,11 +839,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Project '${moveTarget.id}' is deleted and cannot receive a General Chat.`,
         });
       }
-      if (
-        moveTarget !== undefined &&
-        thread.projectId !== null &&
-        thread.projectId !== moveTarget.id
-      ) {
+      if (moveTarget !== undefined && thread.projectId !== null) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Thread '${thread.id}' already belongs to a project and cannot be relocated again.`,

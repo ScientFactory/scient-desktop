@@ -157,6 +157,7 @@ import {
   ScientGeneralChatIcon,
   ScientGeneralChatSection,
 } from "./scient-general-chat/ScientGeneralChatSection";
+import { ScientGeneralChatPinnedList } from "./scient-general-chat/ScientGeneralChatPinnedList";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -1955,9 +1956,8 @@ export default function Sidebar() {
         pinned
           .filter(
             (thread) =>
-              thread.projectId !== null &&
               serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinReorder ===
-                true,
+              true,
           )
           .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       ),
@@ -3398,9 +3398,30 @@ export default function Sidebar() {
                   routeDraftId={routeDraftIdForRows}
                   onNavigateToDraft={navigateToDraft}
                 />
-                {generalPinnedThreads.map((thread) =>
-                  renderThreadRow(thread, "pinned", undefined, true),
-                )}
+                <ScientGeneralChatPinnedList
+                  threads={generalPinnedThreads}
+                  reorderableKeys={reorderablePinnedKeys}
+                  onReorder={async (thread, orderKey) => {
+                    const result = await reorderPinnedThread(
+                      scopeThreadRef(thread.environmentId, thread.id),
+                      orderKey,
+                    );
+                    if (result._tag !== "Failure") return true;
+                    if (!isAtomCommandInterrupted(result)) {
+                      const error = squashAtomCommandFailure(result);
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: "Failed to reorder pinned threads",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        }),
+                      );
+                    }
+                    return false;
+                  }}
+                  renderRow={(thread, bag) => renderThreadRow(thread, "pinned", bag, true)}
+                />
                 {generalActiveThreads.map((thread) =>
                   renderThreadRow(thread, "active", undefined, true),
                 )}
@@ -3755,7 +3776,7 @@ export default function Sidebar() {
               ) : scopedProjectGroup ? (
                 `No threads in ${scopedProjectGroup.displayName} yet`
               ) : (
-                "No threads yet"
+                "No project threads yet"
               )}
             </div>
           ) : null}

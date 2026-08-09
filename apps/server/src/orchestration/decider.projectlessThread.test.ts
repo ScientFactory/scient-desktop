@@ -1,7 +1,9 @@
 import {
   CommandId,
+  MessageId,
   ProjectId,
   ThreadId,
+  TurnId,
   ProviderInstanceId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
@@ -37,6 +39,7 @@ function relocationReadModel(input?: {
   sessionStatus?: OrchestrationSessionStatus | null;
   threadProjectId?: ProjectId | null;
   targetDeletedAt?: string | null;
+  workInFlight?: boolean;
 }): OrchestrationReadModel {
   const targetProjectId = ProjectId.make("project-target");
   const sessionStatus = input?.sessionStatus ?? null;
@@ -68,7 +71,17 @@ function relocationReadModel(input?: {
         interactionMode: "default",
         branch: "general-chat-branch",
         worktreePath: "/tmp/general-chat-worktree",
-        latestTurn: null,
+        latestTurn:
+          input?.workInFlight === true
+            ? {
+                turnId: TurnId.make("turn-running"),
+                state: "running",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                assistantMessageId: MessageId.make("assistant-running"),
+              }
+            : null,
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
@@ -176,6 +189,35 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
           readModel: relocationReadModel({
             threadProjectId: ProjectId.make("project-existing"),
           }),
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("rejects retrying relocation after the thread already reached the target project", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        decideOrchestrationCommand({
+          command: moveGeneralChatCommand,
+          readModel: relocationReadModel({
+            sessionStatus: "stopped",
+            threadProjectId: ProjectId.make("project-target"),
+          }),
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("rejects relocation while a turn is running", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        decideOrchestrationCommand({
+          command: moveGeneralChatCommand,
+          readModel: relocationReadModel({ sessionStatus: "stopped", workInFlight: true }),
         }),
       );
 
