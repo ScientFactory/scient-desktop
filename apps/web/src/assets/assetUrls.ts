@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -10,33 +10,39 @@ import { usePreparedConnection } from "~/state/session";
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
 export type AssetUrlState =
-  | { readonly _tag: "Loading" }
-  | { readonly _tag: "Failure" }
-  | { readonly _tag: "Success"; readonly url: string; readonly sourcePath?: string };
+  | { readonly _tag: "Loading"; readonly refresh: () => void }
+  | { readonly _tag: "Failure"; readonly refresh: () => void }
+  | {
+      readonly _tag: "Success";
+      readonly url: string;
+      readonly sourcePath?: string;
+      readonly refresh: () => void;
+    };
 
 export function useAssetUrlState(
   environmentId: EnvironmentId,
   resource: AssetResource,
 ): AssetUrlState {
   const preparedConnection = usePreparedConnection(environmentId);
-  const result = useAtomValue(
-    assetEnvironment.createUrl({
-      environmentId,
-      input: { resource },
-    }),
-  );
+  const assetAtom = assetEnvironment.createUrl({
+    environmentId,
+    input: { resource },
+  });
+  const result = useAtomValue(assetAtom);
+  const refresh = useAtomRefresh(assetAtom);
   if (result._tag === "Failure") {
-    return { _tag: "Failure" };
+    return { _tag: "Failure", refresh };
   }
   if (preparedConnection._tag === "None" || result._tag !== "Success") {
-    return { _tag: "Loading" };
+    return { _tag: "Loading", refresh };
   }
   const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
   return url === null
-    ? { _tag: "Failure" }
+    ? { _tag: "Failure", refresh }
     : {
         _tag: "Success",
         url,
+        refresh,
         ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
       };
 }

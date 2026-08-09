@@ -7,6 +7,10 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
+  isWorkspaceBrowserPreviewPath,
+  isWorkspacePdfPreviewPath,
+} from "@t3tools/shared/filePreview";
+import {
   type AtomCommandResult,
   mapAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
@@ -22,8 +26,18 @@ import {
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
-export const isBrowserPreviewFile = (path: string): boolean =>
-  /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+export const isBrowserPreviewFile = isWorkspaceBrowserPreviewPath;
+
+/**
+ * HTML workspace links keep T3's browser-first behavior. PDF links instead
+ * mount the Scient file surface, which owns the range-aware PDF reader. Users
+ * can still explicitly open a PDF in the integrated browser from that surface.
+ */
+export function resolveWorkspaceFileLinkOpenTarget(path: string): "browser" | "file" {
+  return isWorkspaceBrowserPreviewPath(path) && !isWorkspacePdfPreviewPath(path)
+    ? "browser"
+    : "file";
+}
 
 export class BrowserPreviewUnavailableError extends Data.TaggedError(
   "BrowserPreviewUnavailableError",

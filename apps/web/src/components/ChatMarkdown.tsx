@@ -87,10 +87,10 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
-  isBrowserPreviewFile,
   openFileInPreview,
   openUrlInPreview,
   BrowserPreviewUnavailableError,
+  resolveWorkspaceFileLinkOpenTarget,
 } from "../browser/openFileInPreview";
 import {
   resolveStreamingMarkdownDirection,
@@ -1459,7 +1459,7 @@ function ChatMarkdown({
           onOpenInBrowser={
             threadRef &&
             isPreviewSupportedInRuntime() &&
-            isBrowserPreviewFile(fileLinkMeta.filePath)
+            resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"
               ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
               : undefined
           }

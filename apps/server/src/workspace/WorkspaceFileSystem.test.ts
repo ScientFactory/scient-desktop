@@ -166,6 +166,26 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("keeps PDF bytes out of the text readFile path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.writeFile(
+          path.join(cwd, "paper.pdf"),
+          Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0]),
+        );
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "paper.pdf" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+        expect("contents" in error).toBe(false);
+      }),
+    );
+
     it.effect("preserves the real cause and path for I/O failures", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
