@@ -8,11 +8,22 @@ describe("resolveClerkSignInProps", () => {
     expect(resolveClerkSignInProps(href, false)).toEqual({ forceRedirectUrl: href });
   });
 
-  it("omits the redirect override on packaged desktop", () => {
-    expect(resolveClerkSignInProps("scient-next://app/#/settings/general", true)).toEqual({});
+  it("removes a Clerk virtual pathname and callback params while preserving the desktop route", () => {
+    expect(
+      resolveClerkSignInProps(
+        "scient-next://app/CLERK-ROUTER/VIRTUAL/sign-up?__clerk_status=complete#/settings/connections",
+        true,
+      ),
+    ).toEqual({
+      forceRedirectUrl: "scient-next://app/#/settings/connections",
+      signUpForceRedirectUrl: "scient-next://app/#/settings/connections",
+    });
   });
 
-  it("omits the redirect override on development desktop", () => {
-    expect(resolveClerkSignInProps("scient-next-dev://app/#/settings/general", true)).toEqual({});
+  it("preserves a clean development desktop route", () => {
+    expect(resolveClerkSignInProps("scient-next-dev://app/#/settings/general", true)).toEqual({
+      forceRedirectUrl: "scient-next-dev://app/#/settings/general",
+      signUpForceRedirectUrl: "scient-next-dev://app/#/settings/general",
+    });
   });
 });
