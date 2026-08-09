@@ -15,6 +15,7 @@ import { useCallback, useMemo } from "react";
 import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useOptionalProviderLifecycleController } from "./ProviderLifecycleController";
 import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation";
 
 export interface ProviderLifecycleController {
@@ -53,6 +54,7 @@ export function useProviderLifecycleController(input: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
 }): ProviderLifecycleController {
+  const override = useOptionalProviderLifecycleController();
   const startProviderConnection = useAtomCommand(serverEnvironment.startProviderConnection, {
     reportFailure: false,
   });
@@ -166,7 +168,7 @@ export function useProviderLifecycleController(input: {
     return providerFromResult(value.providers, instanceId);
   }, [input.environmentId, instanceId, providerDriver, updateProvider]);
 
-  return useMemo(
+  const controller = useMemo(
     () => ({
       startConnection,
       cancelConnection,
@@ -188,4 +190,6 @@ export function useProviderLifecycleController(input: {
       updateExternalRuntime,
     ],
   );
+
+  return override ?? controller;
 }

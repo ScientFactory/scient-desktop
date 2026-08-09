@@ -107,11 +107,16 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
             ...provider.connection!,
             runtime: {
               ...provider.connection!.runtime!,
-              operation: runtimeOperation(status, `Simulated runtime step: ${status}.`),
+              operation: runtimeOperation(
+                status,
+                `Simulated runtime step: ${status}.`,
+                plan.action,
+              ),
             },
           },
         };
-        commit(replaceCodex(current, nextProvider, `Started simulated ${plan.action}.`));
+        const next = replaceCodex(current, nextProvider, `Started simulated ${plan.action}.`);
+        commit({ ...next, snapshot: plan.action === "update" ? "updating" : next.snapshot });
         scheduleAutomaticAdvance(generation, plan.action === "remove" ? 1 : 5);
         return nextProvider;
       },
@@ -125,7 +130,11 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
             ...provider.connection!,
             runtime: {
               ...provider.connection!.runtime!,
-              operation: runtimeOperation("cancelled", "Setup was cancelled safely."),
+              operation: runtimeOperation(
+                "cancelled",
+                "Setup was cancelled safely.",
+                provider.connection?.runtime?.operation?.action,
+              ),
             },
           },
         };
@@ -176,15 +185,15 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
         commit(replaceCodex(current, nextProvider, "Signed out of the simulated account."));
         return nextProvider;
       },
-      startUpdate: async () => {
+      updateExternalRuntime: async () => {
         const generation = ++automationGenerationRef.current;
         const current = stateRef.current;
         const next = {
           ...makeProviderLabState("updating", current.target),
-          events: ["Started simulated Codex update.", ...current.events].slice(0, 6),
+          events: ["Started simulated external Codex update.", ...current.events].slice(0, 6),
         };
         commit(next);
-        scheduleAutomaticAdvance(generation, 1);
+        scheduleAutomaticAdvance(generation, 5);
         return activeCodex(next);
       },
       openAuthorizationPage: async () => {

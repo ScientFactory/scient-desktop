@@ -6,9 +6,9 @@ This lab runs the normal Scient application while replacing only the web client'
 
 ## Checkout
 
-- Worktree: `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-desktop-next-provider-full-app-lab-20260809`
-- Branch: `experiment/provider-full-app-lab-20260809`
-- Provider implementation base: `849ea2580d9bad07d5499c939b62fe532ada2d24`
+- Worktree: `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-desktop-next-provider-full-app-lab-refreshed-20260809`
+- Branch: `experiment/provider-full-app-lab-refreshed-20260809`
+- Provider implementation base: `fc63f10e40a3bacd80b2a529551de2bf0dcb2d47`
 
 ## Run in isolation
 
@@ -24,7 +24,7 @@ With offset `531`, the web app is `http://localhost:6264` and its isolated serve
 
 The floating **Provider simulation** control changes the simulated computer, jumps to a provider state, injects the next failure, or resets the lab. Install and sign-in operations advance automatically so the primary flow can be tried like a real product flow; **Advance** remains available for explicitly loaded in-progress states. Reset and cancellation clear scheduled synthetic work so an old operation cannot change a newly selected state.
 
-Only Codex is synthesized because it is the provider with an implemented assisted lifecycle in this branch. The lab deliberately does not invent equivalent Claude, Cursor, Grok, or OpenCode flows.
+Only Codex is synthesized because it is the provider with an implemented assisted lifecycle in this branch. The lab deliberately does not invent equivalent Claude, Cursor, Grok, or OpenCode flows. The lab imports the production provider UI and replaces only provider snapshots and lifecycle actions at the application boundary, so visual changes cannot drift into a second implementation unnoticed.
 
 ## Fresh-provider visual experiment
 
@@ -40,4 +40,4 @@ The Codex path stays inside the picker instead of opening a second confirmation 
 4. Scient verifies the account and available models. When the provider becomes ready, the composer returns to the normal inherited model picker with the discovered Codex model selected.
 5. Installation and sign-in failures remain in the same surface with a focused retry action. Repair, removal, and advanced troubleshooting remain outside this compact first-run flow.
 
-This is a visual and interaction prototype backed by synthetic lifecycle state. It performs no real download, installation, browser authorization, credential access, or provider request.
+This is a visual and interaction prototype backed by synthetic lifecycle state. It performs no real download, installation, browser authorization, credential access, or provider request. Managed updates follow the same reviewed `plan -> start -> verify -> activate` action shape as production; the simulator advances those states without touching a runtime.

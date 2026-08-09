@@ -71,6 +71,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ProviderConnectionDialog } from "../../scient/providerConnection/ProviderConnectionDialog";
+import { PROVIDER_LAB_ENABLED } from "../../scient/providerConnection/lab/providerLabState";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
@@ -422,6 +423,7 @@ export function EnvironmentProviderSettings({
       : null;
 
   const refreshProviders = useCallback(() => {
+    if (PROVIDER_LAB_ENABLED) return;
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);

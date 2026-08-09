@@ -43,10 +43,11 @@ const codexDriver = ProviderDriverKind.make("codex");
 function runtimeOperation(
   status: ProviderRuntimeOperation["status"],
   message: string,
+  action: ProviderManagedRuntimeAction = "install",
 ): ProviderRuntimeOperation {
   return {
     operationId: "provider-lab-runtime",
-    action: status === "removing" ? "remove" : "install",
+    action: status === "removing" ? "remove" : action,
     status,
     startedAt,
     finishedAt: ["failed", "cancelled", "succeeded"].includes(status) ? checkedAt : null,
@@ -86,12 +87,18 @@ function runtimeSummary(
   target: ProviderLabTarget,
   source: ProviderRuntimeSummary["source"],
   operation: ProviderRuntimeOperation | null = null,
+  updateAvailable = false,
 ): ProviderRuntimeSummary {
   return {
     source,
     supportTier: "fully_assisted",
     target,
-    actions: source === "missing" ? ["install"] : ["repair", "remove"],
+    actions:
+      source === "missing"
+        ? ["install"]
+        : updateAvailable
+          ? ["update", "repair", "remove"]
+          : ["repair", "remove"],
     managedVersion: source === "scient_managed" ? "0.147.0" : null,
     previousManagedVersion: null,
     operation,
@@ -197,12 +204,16 @@ function codexProvider(snapshot: ProviderLabSnapshot, target: ProviderLabTarget)
   if (snapshot === "update-available") {
     return {
       ...connected,
+      connection: {
+        ...connected.connection!,
+        runtime: runtimeSummary(target, "scient_managed", null, true),
+      },
       versionAdvisory: {
         status: "behind_latest",
         currentVersion: "0.147.0",
         latestVersion: "0.148.0",
-        updateCommand: "npm install -g @openai/codex@0.148.0",
-        canUpdate: true,
+        updateCommand: null,
+        canUpdate: false,
         checkedAt,
         message: "Codex 0.148.0 is available.",
       },
@@ -218,24 +229,32 @@ function codexProvider(snapshot: ProviderLabSnapshot, target: ProviderLabTarget)
   if (snapshot === "updating") {
     return {
       ...codexProvider("update-available", target),
-      updateState: {
-        status: "running",
-        startedAt,
-        finishedAt: null,
-        message: "Downloading and verifying Codex 0.148.0.",
-        output: null,
+      connection: {
+        ...connected.connection!,
+        runtime: runtimeSummary(
+          target,
+          "scient_managed",
+          runtimeOperation("downloading", "Downloading and verifying Codex 0.148.0.", "update"),
+          true,
+        ),
       },
     };
   }
   if (snapshot === "update-failed") {
     return {
       ...codexProvider("update-available", target),
-      updateState: {
-        status: "failed",
-        startedAt,
-        finishedAt: checkedAt,
-        message: "The update could not be verified. Codex 0.147.0 is still available.",
-        output: null,
+      connection: {
+        ...connected.connection!,
+        runtime: runtimeSummary(
+          target,
+          "scient_managed",
+          runtimeOperation(
+            "failed",
+            "The update could not be verified. Codex 0.147.0 is still available.",
+            "update",
+          ),
+          true,
+        ),
       },
     };
   }
@@ -284,34 +303,6 @@ export function activeCodex(state: ProviderLabState): ServerProvider {
 
 export function nextProviderLabState(state: ProviderLabState): ProviderLabState | null {
   const provider = activeCodex(state);
-  if (provider.updateState?.status === "running") {
-    return {
-      ...makeProviderLabState("connected", state.target),
-      providers: [
-        {
-          ...codexProvider("connected", state.target),
-          version: "0.148.0",
-          versionAdvisory: {
-            status: "current",
-            currentVersion: "0.148.0",
-            latestVersion: "0.148.0",
-            updateCommand: null,
-            canUpdate: false,
-            checkedAt,
-            message: "Codex is up to date.",
-          },
-          updateState: {
-            status: "succeeded",
-            startedAt,
-            finishedAt: checkedAt,
-            message: "Codex was updated successfully.",
-            output: null,
-          },
-        },
-      ],
-      events: ["Codex updated and verified.", ...state.events],
-    };
-  }
   const runtime = provider.connection?.runtime;
   const status = runtime?.operation?.status;
   const nextRuntime: Partial<
@@ -332,7 +323,11 @@ export function nextProviderLabState(state: ProviderLabState): ProviderLabState 
           ...provider.connection!,
           runtime: {
             ...runtime!,
-            operation: runtimeOperation(nextStatus, `Simulated runtime step: ${nextStatus}.`),
+            operation: runtimeOperation(
+              nextStatus,
+              `Simulated runtime step: ${nextStatus}.`,
+              runtime!.operation!.action,
+            ),
           },
         },
       },
@@ -340,9 +335,50 @@ export function nextProviderLabState(state: ProviderLabState): ProviderLabState 
     );
   }
   if (status === "activating") {
+    if (runtime?.operation?.action === "update") {
+      const updated = codexProvider("connected", state.target);
+      return {
+        ...makeProviderLabState("connected", state.target),
+        providers: [
+          {
+            ...updated,
+            version: "0.148.0",
+            connection: {
+              ...updated.connection!,
+              runtime: {
+                ...updated.connection!.runtime!,
+                managedVersion: "0.148.0",
+                previousManagedVersion: "0.147.0",
+                operation: runtimeOperation(
+                  "succeeded",
+                  "Codex 0.148.0 was activated successfully.",
+                  "update",
+                ),
+              },
+            },
+            versionAdvisory: {
+              status: "current",
+              currentVersion: "0.148.0",
+              latestVersion: "0.148.0",
+              updateCommand: null,
+              canUpdate: false,
+              checkedAt,
+              message: "Codex is up to date.",
+            },
+          },
+        ],
+        events: ["Codex updated and verified.", ...state.events],
+      };
+    }
     return {
       ...makeProviderLabState("installed-signed-out", state.target),
       events: ["Runtime activated.", ...state.events],
+    };
+  }
+  if (status === "removing") {
+    return {
+      ...makeProviderLabState("nothing-installed", state.target),
+      events: ["Private Codex runtime removed.", ...state.events],
     };
   }
   const connectionStatus = provider.connection?.operation?.status;

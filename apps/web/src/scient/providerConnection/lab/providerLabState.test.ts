@@ -36,10 +36,13 @@ describe("provider full-app lab state", () => {
 
     const updating = makeProviderLabState("updating");
     expect(activeCodex(updating).version).toBe("0.147.0");
-    expect(activeCodex(updating).updateState?.status).toBe("running");
+    expect(activeCodex(updating).connection?.runtime?.operation?.action).toBe("update");
+    expect(activeCodex(updating).connection?.runtime?.operation?.status).toBe("downloading");
 
-    const updated = nextProviderLabState(updating);
+    let updated = updating;
+    for (let step = 0; step < 5; step += 1) updated = nextProviderLabState(updated)!;
     expect(activeCodex(updated!).version).toBe("0.148.0");
     expect(activeCodex(updated!).versionAdvisory?.status).toBe("current");
+    expect(activeCodex(updated!).connection?.runtime?.previousManagedVersion).toBe("0.147.0");
   });
 });

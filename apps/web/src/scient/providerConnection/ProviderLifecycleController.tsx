@@ -1,22 +1,8 @@
-import type {
-  ProviderConnectionMethod,
-  ProviderManagedRuntimeAction,
-  ProviderRuntimePlan,
-  ServerProvider,
-} from "@t3tools/contracts";
 import { createContext, useContext, type ReactNode } from "react";
 
-export interface ProviderLifecycleController {
-  readonly startConnection: (method: ProviderConnectionMethod) => Promise<ServerProvider>;
-  readonly cancelConnection: (operationId: string) => Promise<ServerProvider>;
-  readonly disconnect: () => Promise<ServerProvider>;
-  readonly openAuthorizationPage: (url: string) => Promise<void>;
-  readonly planRuntime: (action: ProviderManagedRuntimeAction) => Promise<ProviderRuntimePlan>;
-  readonly startRuntime: (plan: ProviderRuntimePlan) => Promise<ServerProvider>;
-  readonly cancelRuntime: (operationId: string) => Promise<ServerProvider>;
-  /** Lab/prototype override. Production provider updates remain owned by T3's update command. */
-  readonly startUpdate?: () => Promise<ServerProvider>;
-}
+import type { ProviderLifecycleController } from "./useProviderLifecycleController";
+
+export type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 const Context = createContext<ProviderLifecycleController | null>(null);
 
