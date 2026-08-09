@@ -294,6 +294,23 @@ export class AnalyticsOutbox {
     return ids.length;
   }
 
+  reset(): void {
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database.exec(`
+        DELETE FROM analytics_outbox;
+        DELETE FROM analytics_dead_letter;
+        DELETE FROM analytics_meta
+          WHERE key IN ('installation_id', 'installation_token');
+      `);
+      this.#database.exec("COMMIT");
+      this.#size = 0;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   size(): number {
     return this.#size;
   }

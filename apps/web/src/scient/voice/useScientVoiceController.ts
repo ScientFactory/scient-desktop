@@ -8,6 +8,7 @@ import type {
 import { type VoiceRecorderErrorKind, useVoiceRecorder } from "./useVoiceRecorder.ts";
 import type { VoiceTranscriptionClient } from "./voiceClient.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
+import { useRecordScientAnalytics } from "../analytics/client.ts";
 
 export type VoicePhase =
   | "idle"
@@ -105,6 +106,7 @@ export function useScientVoiceController({
   getDraft,
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
+  const recordAnalytics = useRecordScientAnalytics();
   const [phase, setPhaseState] = useState<VoicePhase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<VoiceModelDownloadProgress | null>(null);
@@ -154,6 +156,11 @@ export function useScientVoiceController({
       }
       setErrorMessage(null);
       setPhase("transcribing");
+      const transcriptionStartedAt = performance.now();
+      recordAnalytics({
+        name: "voice.transcription.started",
+        properties: { engineClass: "local-whisper", languageMode: "automatic" },
+      });
       try {
         const request: VoiceTranscribeRequest = {
           audioBase64: clip.base64,
@@ -167,17 +174,33 @@ export function useScientVoiceController({
         setPhase("idle");
         if (!text) {
           setErrorMessage(EMPTY_TRANSCRIPT_MESSAGE);
+          recordAnalytics({
+            name: "voice.transcription.failed",
+            properties: { engineClass: "local-whisper", failureClass: "audio" },
+          });
           return;
         }
         applyTranscript(text);
+        recordAnalytics({
+          name: "voice.transcription.completed",
+          properties: {
+            engineClass: "local-whisper",
+            durationMs: performance.now() - transcriptionStartedAt,
+            audioDurationMs: clip.durationMs,
+          },
+        });
         if (send && onRequestSubmit) requestAnimationFrame(onRequestSubmit);
       } catch (error) {
         if (operation !== operationRef.current) return;
         setPhase("idle");
         setErrorMessage(describeTranscriptionError(error));
+        recordAnalytics({
+          name: "voice.transcription.failed",
+          properties: { engineClass: "local-whisper", failureClass: "engine" },
+        });
       }
     },
-    [applyTranscript, client, onRequestSubmit, setPhase],
+    [applyTranscript, client, onRequestSubmit, recordAnalytics, setPhase],
   );
 
   const beginRecording = useCallback(async (): Promise<void> => {
@@ -262,6 +285,7 @@ export function useScientVoiceController({
   );
 
   const cancel = useCallback(async (): Promise<void> => {
+    const cancelledPhase = phaseRef.current;
     const operation = (operationRef.current += 1);
     const cancelDownload =
       phaseRef.current === "downloading"
@@ -273,10 +297,16 @@ export function useScientVoiceController({
         : undefined;
     await Promise.all([cancelRecording(), cancelDownload, cancelHost]);
     if (operation !== operationRef.current) return;
+    if (cancelledPhase === "recording" || cancelledPhase === "transcribing") {
+      recordAnalytics({
+        name: "voice.transcription.cancelled",
+        properties: { stage: cancelledPhase },
+      });
+    }
     setElapsedMs(0);
     setErrorMessage(null);
     setPhase("idle");
-  }, [cancelRecording, client, setPhase]);
+  }, [cancelRecording, client, recordAnalytics, setPhase]);
 
   const dismissSetup = useCallback(() => {
     operationRef.current += 1;
@@ -293,7 +323,14 @@ export function useScientVoiceController({
     if (recorderStatus !== "error" || !recorderErrorKind) return;
     setPhase("idle");
     setErrorMessage(describeVoiceRecorderError(recorderErrorKind));
-  }, [recorderErrorKind, recorderStatus, setPhase]);
+    recordAnalytics({
+      name: "voice.transcription.failed",
+      properties: {
+        engineClass: "local-whisper",
+        failureClass: recorderErrorKind === "permission-denied" ? "permission" : "audio",
+      },
+    });
+  }, [recordAnalytics, recorderErrorKind, recorderStatus, setPhase]);
 
   useEffect(() => {
     if (phase !== "recording") return;

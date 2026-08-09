@@ -66,7 +66,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
-import { usePreparedConnection } from "../state/session";
+import { readPreparedConnection, usePreparedConnection } from "../state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -100,6 +100,7 @@ import {
   resolveProjectPickerTarget,
   resolveWslProjectSelection,
 } from "../wslPaths";
+import { recordScientAnalytics } from "../scient/analytics/client";
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
@@ -1562,6 +1563,7 @@ function OpenCommandPaletteDialog(props: {
       readonly platform: string;
       readonly currentProjectCwd: string | null;
       readonly prepared: PreparedConnection | null;
+      readonly analyticsMethod: "picker" | "drag-drop" | "recent" | "unknown";
     }) => {
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
@@ -1579,6 +1581,10 @@ function OpenCommandPaletteDialog(props: {
       const rawCwd = input.rawCwd;
 
       if (isUnsupportedWindowsProjectPath(rawCwd.trim(), input.platform)) {
+        recordScientAnalytics(readPreparedConnection(input.environmentId), {
+          name: "project.add.failed",
+          properties: { stage: "validation" },
+        });
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -1590,6 +1596,10 @@ function OpenCommandPaletteDialog(props: {
       }
 
       if (isExplicitRelativeProjectPath(rawCwd.trim()) && !input.currentProjectCwd) {
+        recordScientAnalytics(readPreparedConnection(input.environmentId), {
+          name: "project.add.failed",
+          properties: { stage: "validation" },
+        });
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -1652,7 +1662,18 @@ function OpenCommandPaletteDialog(props: {
             );
             return;
           }
+          recordScientAnalytics(readPreparedConnection(input.environmentId), {
+            name: "thread.created",
+            properties: { creationSource: "new" },
+          });
         }
+        recordScientAnalytics(readPreparedConnection(input.environmentId), {
+          name: "project.opened",
+          properties: {
+            projectState: "existing",
+            initializationState: initializeProject ? "missing" : "unknown",
+          },
+        });
         setOpen(false);
         return;
       }
@@ -1676,6 +1697,10 @@ function OpenCommandPaletteDialog(props: {
         },
       });
       if (createResult._tag === "Failure") {
+        recordScientAnalytics(readPreparedConnection(input.environmentId), {
+          name: "project.add.failed",
+          properties: { stage: "registration" },
+        });
         if (!isAtomCommandInterrupted(createResult)) {
           const error = squashAtomCommandFailure(createResult);
           toastManager.add(
@@ -1700,6 +1725,10 @@ function OpenCommandPaletteDialog(props: {
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
       );
       if (navigationResult._tag === "Failure") {
+        recordScientAnalytics(readPreparedConnection(input.environmentId), {
+          name: "project.add.failed",
+          properties: { stage: "navigation" },
+        });
         const error = squashAtomCommandFailure(navigationResult);
         toastManager.add(
           stackedThreadToast({
@@ -1710,6 +1739,22 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      const analyticsConnection = readPreparedConnection(input.environmentId);
+      recordScientAnalytics(analyticsConnection, {
+        name: "project.added",
+        properties: { method: input.analyticsMethod },
+      });
+      recordScientAnalytics(analyticsConnection, {
+        name: "project.opened",
+        properties: {
+          projectState: "new",
+          initializationState: initializeProject ? "missing" : "unknown",
+        },
+      });
+      recordScientAnalytics(analyticsConnection, {
+        name: "thread.created",
+        properties: { creationSource: "new" },
+      });
       setOpen(false);
     },
     [
@@ -1729,7 +1774,10 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const handleAddProject = useCallback(
-    async (rawCwd: string) => {
+    async (
+      rawCwd: string,
+      analyticsMethod: "picker" | "drag-drop" | "recent" | "unknown" = "picker",
+    ) => {
       if (!browseEnvironmentId) return;
       await handleAddProjectForEnvironment({
         environmentId: browseEnvironmentId,
@@ -1737,6 +1785,7 @@ function OpenCommandPaletteDialog(props: {
         platform: browseEnvironmentPlatform,
         currentProjectCwd: currentProjectCwdForBrowse,
         prepared: Option.getOrNull(browsePreparedConnection),
+        analyticsMethod,
       });
     },
     [
@@ -1885,7 +1934,7 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
-    await handleAddProject(cloneResult.value.cwd);
+    await handleAddProject(cloneResult.value.cwd, "unknown");
   }
 
   const browseTo = useCallback(
@@ -2059,7 +2108,7 @@ function OpenCommandPaletteDialog(props: {
     (path: string) => {
       setIsNewProjectFolderDraft(false);
       setQuery(path);
-      void handleAddProject(path);
+      void handleAddProject(path, "drag-drop");
     },
     [handleAddProject],
   );
@@ -2248,6 +2297,7 @@ function OpenCommandPaletteDialog(props: {
           selection.environmentId === browseEnvironmentId
             ? Option.getOrNull(browsePreparedConnection)
             : null,
+        analyticsMethod: "picker",
       });
       return;
     }

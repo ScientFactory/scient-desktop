@@ -72,6 +72,9 @@ const makeRecordingAnalytics = Effect.gen(function* () {
       record: (event, properties) =>
         Ref.update(recorded, (current) => [...current, { event, properties }]),
       flush: Effect.void,
+      status: Effect.succeed({ available: true, consent: "product" }),
+      setConsent: (consent) => Effect.succeed({ available: true, consent }),
+      deleteData: Effect.succeed(true),
     }),
   );
   return { layer, get: Ref.get(recorded) } as const;
