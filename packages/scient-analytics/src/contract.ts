@@ -4,6 +4,8 @@ export const ANALYTICS_SOURCE = "desktop" as const;
 export const AnalyticsConsent = ["off", "essential", "product", "diagnostic"] as const;
 export type AnalyticsConsent = (typeof AnalyticsConsent)[number];
 export type EventPrivacyLevel = Exclude<AnalyticsConsent, "off">;
+export const AnalyticsPriority = ["critical", "core", "summary"] as const;
+export type AnalyticsPriority = (typeof AnalyticsPriority)[number];
 
 export interface AnalyticsEvent {
   readonly id: string;
@@ -30,6 +32,7 @@ export interface NormalizationContext {
 export interface NormalizedEvent {
   readonly name: string;
   readonly privacyLevel: EventPrivacyLevel;
+  readonly priority: AnalyticsPriority;
   readonly properties: Readonly<Record<string, boolean | string>>;
 }
 
@@ -122,6 +125,7 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "essential",
+        priority: "summary",
         properties: {
           appVersion: context.appVersion,
           buildChannel: context.buildChannel,
@@ -131,6 +135,7 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: {
           provider,
           runtimeMode: normalizedRuntimeMode(property(input, "runtimeMode")),
@@ -143,6 +148,7 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: {
           provider,
           strategy:
@@ -154,12 +160,14 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "summary",
         properties: { provider },
       };
     case "provider.sessions.stopped_all":
       return {
         name,
         privacyLevel: "essential",
+        priority: "critical",
         properties: {
           sessionCountBucket: countBucket(property(input, "sessionCount")),
           shutdownClass: "unknown",
@@ -169,6 +177,7 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: {
           provider,
           from: normalizedRuntimeMode(property(input, "from")),
@@ -179,6 +188,7 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: {
           provider,
           modelFamily: modelFamily(provider, property(input, "model")),
@@ -192,12 +202,14 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: { provider, initiator: "user" },
       };
     case "provider.request.responded":
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: {
           provider,
           requestKind: "approval",
@@ -208,6 +220,7 @@ export function normalizeInheritedEvent(
       return {
         name,
         privacyLevel: "product",
+        priority: "core",
         properties: {
           provider,
           turnCountBucket: countBucket(property(input, "turns")),

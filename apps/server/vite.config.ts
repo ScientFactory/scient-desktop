@@ -8,6 +8,7 @@ import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 const bundledPackagePrefixes = [
   "@pierre/diffs",
+  "@scientfactory/",
   "@t3tools/",
   "effect-acp",
   "effect-codex-app-server",
@@ -33,7 +34,7 @@ export default mergeConfig(
       },
     },
     pack: {
-      entry: ["src/bin.ts"],
+      entry: ["src/bin.ts", "src/analytics-worker.ts"],
       outDir: "dist",
       sourcemap: true,
       clean: true,

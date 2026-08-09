@@ -2,6 +2,7 @@ export {
   ANALYTICS_SCHEMA_VERSION,
   ANALYTICS_SOURCE,
   AnalyticsConsent,
+  AnalyticsPriority,
   consentAllows,
   countBucket,
   normalizeInheritedEvent,
