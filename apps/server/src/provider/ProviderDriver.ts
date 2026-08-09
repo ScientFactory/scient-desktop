@@ -22,6 +22,11 @@
  * @module provider/ProviderDriver
  */
 import type {
+  ProviderConnectionMethod,
+  ProviderManagedRuntimeAction,
+  ProviderRuntimeOperationStatus,
+  ProviderRuntimePlan,
+  ProviderRuntimeSummary,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
@@ -71,6 +76,53 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /** Scient-owned optional lifecycle seam; absent drivers keep pure T3 behavior. */
+  readonly connectionActions?: ProviderConnectionActions | undefined;
+  /** Scient-owned optional app-private runtime seam; absent drivers keep pure T3 behavior. */
+  readonly managedRuntimeActions?: ProviderManagedRuntimeActions | undefined;
+}
+
+export interface ProviderConnectionActionFailure {
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+export interface ProviderConnectionAttempt {
+  readonly authorizationUrl: string;
+  readonly userCode?: string | undefined;
+  readonly waitForCompletion: Effect.Effect<void, ProviderConnectionActionFailure>;
+  readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
+}
+
+/**
+ * Minimal optional driver SPI for official provider-owned account flows.
+ * Drivers retain credential ownership; the registry only supervises state.
+ */
+export interface ProviderConnectionActions {
+  readonly methods: ReadonlyArray<ProviderConnectionMethod>;
+  readonly start: (
+    method: ProviderConnectionMethod,
+  ) => Effect.Effect<ProviderConnectionAttempt, ProviderConnectionActionFailure, Scope.Scope>;
+  readonly disconnect: Effect.Effect<void, ProviderConnectionActionFailure, Scope.Scope>;
+}
+
+export interface ProviderManagedRuntimeProgress {
+  readonly status: ProviderRuntimeOperationStatus;
+  readonly message: string;
+  readonly downloadedBytes?: number | undefined;
+  readonly totalBytes?: number | undefined;
+}
+
+export interface ProviderManagedRuntimeActions {
+  readonly getSummary: Effect.Effect<ProviderRuntimeSummary, ProviderConnectionActionFailure>;
+  readonly plan: (
+    action: ProviderManagedRuntimeAction,
+  ) => Effect.Effect<Omit<ProviderRuntimePlan, "instanceId">, ProviderConnectionActionFailure>;
+  readonly run: (
+    action: ProviderManagedRuntimeAction,
+    catalogRevision: string,
+    report: (progress: ProviderManagedRuntimeProgress) => Effect.Effect<void>,
+  ) => Effect.Effect<void, ProviderConnectionActionFailure>;
 }
 
 export interface ProviderContinuationIdentity {

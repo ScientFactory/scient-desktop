@@ -33,6 +33,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
+import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
+import {
+  canManageProviderLifecycle,
+  providerConnectionPresentation,
+} from "../../scient/providerConnection/providerConnectionPresentation.ts";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -805,9 +810,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const requestedDriverEntries = compatibleEntries.filter(
       (entry) => entry.driverKind === requestedDriverKind,
     );
+    const assistedFallback = [...requestedDriverEntries, ...compatibleEntries].find(
+      (entry) => entry.enabled && entry.isAvailable && canManageProviderLifecycle(entry.snapshot),
+    );
     return (
       resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined)?.instanceId ??
       resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)?.instanceId ??
+      assistedFallback?.instanceId ??
       NO_PROVIDER_MODEL_SELECTION.instanceId
     );
   }, [
@@ -829,6 +838,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [providerInstanceEntries, selectedInstanceId],
   );
   const noProviderAvailable = selectedProviderEntry === undefined;
+  const selectedProviderConnectionKind = providerConnectionPresentation(
+    selectedProviderEntry?.snapshot,
+  ).kind;
+  const selectedProviderNeedsConnection =
+    selectedProviderEntry !== undefined &&
+    (selectedProviderConnectionKind === "not-installed" ||
+      selectedProviderConnectionKind === "setting-up" ||
+      selectedProviderConnectionKind === "not-connected" ||
+      selectedProviderConnectionKind === "connecting");
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -3133,18 +3151,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {noProviderAvailable ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled
-                    data-chat-provider-unavailable="true"
-                    className="shrink-0 gap-2 px-2 text-secondary-label sm:px-3"
-                  >
-                    <CircleAlertIcon className="size-4" />
-                    No provider available
-                  </Button>
+                {selectedProviderNeedsConnection || noProviderAvailable ? (
+                  <ProviderOnboardingPicker
+                    compact={isComposerFooterCompact}
+                    environmentId={environmentId}
+                    instanceEntries={providerInstanceEntries}
+                  />
                 ) : (
                   <ProviderModelPicker
                     compact={isComposerFooterCompact}

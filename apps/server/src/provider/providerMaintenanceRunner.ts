@@ -26,6 +26,7 @@ import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenance
 import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
@@ -199,6 +200,7 @@ function makeUpdateState(input: {
 
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
+  const lifecycleCoordinator = yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
@@ -302,6 +304,19 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       return yield* new ServerProviderUpdateError({
         provider,
         reason: "This provider does not support one-click updates.",
+      });
+    }
+
+    const operationId = `provider-update:${instanceId}`;
+    const reserved = yield* lifecycleCoordinator.reserve({
+      instanceId,
+      provider,
+      reservation: { operationId, kind: "maintenance" },
+    });
+    if (!reserved) {
+      return yield* new ServerProviderUpdateError({
+        provider,
+        reason: "Another provider setup, connection, or update is already running.",
       });
     }
 
@@ -414,6 +429,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               })
             : error,
         ),
+        Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
       );
   });
 

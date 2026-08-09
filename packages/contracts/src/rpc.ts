@@ -68,6 +68,16 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderConnectionCancelInput,
+  ProviderConnectionDisconnectInput,
+  ProviderConnectionError,
+  ProviderConnectionStartInput,
+  ProviderRuntimeCancelInput,
+  ProviderRuntimePlan,
+  ProviderRuntimePlanInput,
+  ProviderRuntimeStartInput,
+} from "./providerLifecycle.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -228,6 +238,12 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
+  serverStartProviderConnection: "server.startProviderConnection",
+  serverCancelProviderConnection: "server.cancelProviderConnection",
+  serverDisconnectProvider: "server.disconnectProvider",
+  serverPlanProviderRuntime: "server.planProviderRuntime",
+  serverStartProviderRuntime: "server.startProviderRuntime",
+  serverCancelProviderRuntime: "server.cancelProviderRuntime",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -311,6 +327,48 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerStartProviderConnectionRpc = Rpc.make(
+  WS_METHODS.serverStartProviderConnection,
+  {
+    payload: ProviderConnectionStartInput,
+    success: ServerProviderUpdatedPayload,
+    error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerCancelProviderConnectionRpc = Rpc.make(
+  WS_METHODS.serverCancelProviderConnection,
+  {
+    payload: ProviderConnectionCancelInput,
+    success: ServerProviderUpdatedPayload,
+    error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerDisconnectProviderRpc = Rpc.make(WS_METHODS.serverDisconnectProvider, {
+  payload: ProviderConnectionDisconnectInput,
+  success: ServerProviderUpdatedPayload,
+  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerPlanProviderRuntimeRpc = Rpc.make(WS_METHODS.serverPlanProviderRuntime, {
+  payload: ProviderRuntimePlanInput,
+  success: ProviderRuntimePlan,
+  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerStartProviderRuntimeRpc = Rpc.make(WS_METHODS.serverStartProviderRuntime, {
+  payload: ProviderRuntimeStartInput,
+  success: ServerProviderUpdatedPayload,
+  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerCancelProviderRuntimeRpc = Rpc.make(WS_METHODS.serverCancelProviderRuntime, {
+  payload: ProviderRuntimeCancelInput,
+  success: ServerProviderUpdatedPayload,
+  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
@@ -814,6 +872,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
+  WsServerStartProviderConnectionRpc,
+  WsServerCancelProviderConnectionRpc,
+  WsServerDisconnectProviderRpc,
+  WsServerPlanProviderRuntimeRpc,
+  WsServerStartProviderRuntimeRpc,
+  WsServerCancelProviderRuntimeRpc,
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,

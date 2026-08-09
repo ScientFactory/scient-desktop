@@ -1594,9 +1594,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            // Boot-time probe: the default codex instance is enabled with
-            // `firstMissing`, so the real spawner yields ENOENT and the
-            // snapshot should be `status: "error"`.
+            // Boot-time checks: managed-runtime resolution first verifies the
+            // configured executable, then the provider status probe checks the
+            // same executable's protocol. Both yield ENOENT for `firstMissing`,
+            // and the resulting snapshot should be `status: "error"`.
             let initialProviders = yield* registry.getProviders;
             for (
               let attempts = 0;
@@ -1614,7 +1615,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             );
             assert.strictEqual(initialCodex?.status, "error");
             assert.strictEqual(initialCodex?.installed, false);
-            assert.deepStrictEqual(spawnedCommands, [firstMissing]);
+            assert.deepStrictEqual(spawnedCommands, [firstMissing, firstMissing]);
 
             // Drive a settings change. The Hydration layer's
             // `SettingsWatcherLive` consumes this via `streamChanges`,
@@ -1630,9 +1631,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               },
             });
 
-            // Poll until the injected process boundary observes the new
-            // executable. This verifies the public settings-to-probe behavior
-            // without depending on timestamps assigned by TestClock.
+            // Poll until both the runtime-health check and provider-status
+            // probe observe the new executable. Waiting for only the first
+            // spawn can return the still-cached pre-change error snapshot.
+            // This verifies the public settings-to-probe behavior without
+            // depending on timestamps assigned by TestClock.
             const refreshed = yield* Effect.gen(function* () {
               for (let attempts = 0; attempts < 60; attempts += 1) {
                 const providers = yield* registry.getProviders;
@@ -1640,7 +1643,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 if (
                   codex !== undefined &&
                   codex.status === "error" &&
-                  spawnedCommands.includes(secondMissing)
+                  spawnedCommands.filter((command) => command === secondMissing).length === 2
                 ) {
                   return providers;
                 }
@@ -1651,7 +1654,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             });
 
             const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
-            assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
+            assert.deepStrictEqual(spawnedCommands, [
+              firstMissing,
+              firstMissing,
+              secondMissing,
+              secondMissing,
+            ]);
             assert.strictEqual(reprobedCodex?.status, "error");
             assert.strictEqual(reprobedCodex?.installed, false);
           }).pipe(Effect.provide(runtimeServices));

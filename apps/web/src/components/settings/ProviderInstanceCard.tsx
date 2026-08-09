@@ -6,6 +6,7 @@ import {
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
+  LogInIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -15,6 +16,7 @@ import * as Result from "effect/Result";
 import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  type EnvironmentId,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -43,6 +45,9 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { canManageProviderLifecycle } from "../../scient/providerConnection/providerConnectionPresentation";
+import { providerSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
+import { CodexProviderLifecycleAction } from "../../scient/providerConnection/CodexProviderLifecycleAction";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -319,6 +324,7 @@ function ProviderEnvironmentSection(props: {
 }
 
 interface ProviderInstanceCardProps {
+  readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
@@ -349,6 +355,7 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onManageConnection?: (() => void) | undefined;
 }
 
 /**
@@ -376,6 +383,7 @@ interface ProviderInstanceCardProps {
  *     flows through the envelope.
  */
 export function ProviderInstanceCard({
+  environmentId,
   instanceId,
   instance,
   driverOption,
@@ -393,6 +401,7 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  onManageConnection,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -409,12 +418,32 @@ export function ProviderInstanceCard({
     ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
     : null;
   const summary = rawSummary;
-  const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+  const connectionPresentation = providerSettingsLifecyclePresentation(liveProvider, displayName);
+  const showConnectionStatus =
+    liveProvider !== undefined && connectionPresentation.kind !== "manual";
+  const connectionBadgeVariant =
+    connectionPresentation.kind === "ready"
+      ? "success"
+      : connectionPresentation.kind === "signing-in" || connectionPresentation.kind === "installing"
+        ? "info"
+        : connectionPresentation.kind === "sign-in-required" ||
+            connectionPresentation.kind === "not-installed"
+          ? "warning"
+          : "secondary";
+  const versionLabel = getProviderVersionLabel(liveProvider?.version);
+  const usesScientManagedRuntime =
+    liveProvider?.driver === "codex" &&
+    liveProvider.connection?.runtime?.source === "scient_managed";
+  // A Scient-managed Codex copy updates only through the reviewed managed
+  // artifact path. Do not expose T3's external package-manager update command
+  // for that same executable; the visible lifecycle action below owns it.
+  const versionAdvisory = usesScientManagedRuntime
+    ? null
+    : getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const FallbackIconComponent = driverOption?.icon;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -544,6 +573,11 @@ export function ProviderInstanceCard({
           {driverOption.badgeLabel}
         </Badge>
       ) : null}
+      {showConnectionStatus ? (
+        <Badge variant={connectionBadgeVariant} size="sm">
+          {connectionPresentation.statusLabel}
+        </Badge>
+      ) : null}
     </>
   );
 
@@ -587,7 +621,7 @@ export function ProviderInstanceCard({
         </>
       ) : (
         <>
-          <span>{summary.headline}</span>
+          <span>{connectionPresentation.detail ?? summary.headline}</span>
           <ProviderAuthEmail email={authEmail} separator prefix="Email" />
         </>
       )}
@@ -707,6 +741,44 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {onManageConnection && liveProvider?.driver === "codex" ? (
+              <CodexProviderLifecycleAction
+                displayName={displayName}
+                environmentId={environmentId}
+                onManage={onManageConnection}
+                provider={liveProvider}
+              />
+            ) : onManageConnection && canManageProviderLifecycle(liveProvider) ? (
+              <Button
+                type="button"
+                size="sm"
+                variant={
+                  connectionPresentation.kind === "sign-in-required" ||
+                  connectionPresentation.kind === "not-installed"
+                    ? "default"
+                    : "outline"
+                }
+                className="h-7 gap-1.5 px-2.5 text-xs"
+                onClick={onManageConnection}
+              >
+                {connectionPresentation.kind === "signing-in" ||
+                connectionPresentation.kind === "installing" ? (
+                  <LoaderIcon className="animate-spin" />
+                ) : connectionPresentation.kind === "not-installed" ? (
+                  <DownloadIcon />
+                ) : connectionPresentation.kind === "sign-in-required" ? (
+                  <LogInIcon />
+                ) : null}
+                {connectionPresentation.kind === "not-installed"
+                  ? "Install"
+                  : connectionPresentation.kind === "sign-in-required"
+                    ? "Sign in"
+                    : connectionPresentation.kind === "signing-in" ||
+                        connectionPresentation.kind === "installing"
+                      ? "Continue"
+                      : "Manage"}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"

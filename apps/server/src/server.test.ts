@@ -650,7 +650,11 @@ const buildAppUnderTest = (options?: {
             Effect.succeed(
               makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
             ),
+          getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+          getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+          setProviderManagedRuntimeSummary: () => Effect.succeed([]),
           setProviderMaintenanceActionState: () => Effect.succeed([]),
+          setProviderConnectionOperation: () => Effect.succeed([]),
           streamChanges: Stream.empty,
           ...options?.layers?.providerRegistry,
         }),

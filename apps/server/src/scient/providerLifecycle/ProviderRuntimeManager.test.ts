@@ -1,0 +1,251 @@
+import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderRuntimeSummary,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+
+import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
+import {
+  ProviderRegistry,
+  type ProviderRegistryShape,
+} from "../../provider/Services/ProviderRegistry.ts";
+import {
+  make as makeLifecycleCoordinator,
+  ProviderLifecycleCoordinator,
+} from "./ProviderLifecycleCoordinator.ts";
+import { make } from "./ProviderRuntimeManager.ts";
+
+const CODEX = ProviderDriverKind.make("codex");
+const INSTANCE = ProviderInstanceId.make("codex");
+const SECOND_INSTANCE = ProviderInstanceId.make("codex-work");
+
+const missingRuntime: ProviderRuntimeSummary = {
+  source: "missing",
+  supportTier: "fully_assisted",
+  target: "darwin-arm64",
+  actions: ["install"],
+  managedVersion: null,
+  previousManagedVersion: null,
+  operation: null,
+  message: "Codex setup is available.",
+};
+
+const provider: ServerProvider = {
+  instanceId: INSTANCE,
+  driver: CODEX,
+  enabled: true,
+  installed: false,
+  version: null,
+  status: "error",
+  auth: { status: "unknown", required: true },
+  checkedAt: "2026-08-09T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+  connection: {
+    methods: ["codex_browser", "codex_device_code"],
+    canDisconnect: false,
+    operation: null,
+    runtime: missingRuntime,
+  },
+};
+
+const yieldUntil = <A>(
+  effect: Effect.Effect<A>,
+  predicate: (value: A) => boolean,
+): Effect.Effect<A> =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const value = yield* effect;
+      if (predicate(value)) return value;
+      yield* Effect.yieldNow;
+    }
+    return yield* Effect.die(new Error("Timed out waiting for provider runtime state."));
+  });
+
+function makeHarness(
+  actions: ProviderManagedRuntimeActions,
+  initialProviders: ReadonlyArray<ServerProvider> = [provider],
+) {
+  return Effect.gen(function* () {
+    const providersRef = yield* Ref.make(initialProviders);
+    const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
+      Ref.updateAndGet(providersRef, (providers) =>
+        providers.map((candidate) =>
+          candidate.instanceId === input.instanceId && candidate.connection && input.runtime
+            ? {
+                ...candidate,
+                connection: { ...candidate.connection, runtime: input.runtime },
+              }
+            : candidate,
+        ),
+      );
+    const registry: ProviderRegistryShape = {
+      getProviders: Ref.get(providersRef),
+      refresh: () => Ref.get(providersRef),
+      refreshInstance: () => Ref.get(providersRef),
+      getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
+        ),
+      getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+      getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
+      setProviderMaintenanceActionState: () => Ref.get(providersRef),
+      setProviderConnectionOperation: () => Ref.get(providersRef),
+      setProviderManagedRuntimeSummary: setRuntime,
+      streamChanges: Stream.empty,
+    };
+    const coordinator = yield* makeLifecycleCoordinator;
+    const manager = yield* make().pipe(
+      Effect.provideService(ProviderRegistry, registry),
+      Effect.provideService(ProviderLifecycleCoordinator, coordinator),
+      Effect.provide(NodeServices.layer),
+    );
+    return { manager, providersRef };
+  });
+}
+
+function installPlan() {
+  return {
+    action: "install" as const,
+    target: "darwin-arm64",
+    version: "0.147.0",
+    downloadBytes: 100,
+    sourceLabel: "Official OpenAI release",
+    catalogRevision: "reviewed:1",
+    message: "Install reviewed Codex.",
+  };
+}
+
+describe("ProviderRuntimeManager", () => {
+  it.effect("publishes progress and completion around one reviewed managed install", () =>
+    Effect.gen(function* () {
+      const installed = yield* Ref.make(false);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Ref.get(installed).pipe(
+          Effect.map((ready) =>
+            ready
+              ? {
+                  ...missingRuntime,
+                  source: "scient_managed" as const,
+                  actions: ["repair" as const, "remove" as const],
+                  managedVersion: "0.147.0",
+                  message: "Managed Codex is ready.",
+                }
+              : missingRuntime,
+          ),
+        ),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, report) =>
+          report({
+            status: "downloading",
+            message: "Downloading.",
+            downloadedBytes: 50,
+            totalBytes: 100,
+          }).pipe(Effect.andThen(Ref.set(installed, true))),
+      };
+      const { manager, providersRef } = yield* makeHarness(actions);
+      const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
+      assert.strictEqual(planned.catalogRevision, "reviewed:1");
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: planned.catalogRevision,
+      });
+      const completed = yield* yieldUntil(Ref.get(providersRef), (providers) =>
+        providers.some(
+          (candidate) => candidate.connection?.runtime?.operation?.status === "succeeded",
+        ),
+      );
+      const runtime = completed[0]?.connection?.runtime;
+      assert.strictEqual(runtime?.source, "scient_managed");
+      assert.strictEqual(runtime?.managedVersion, "0.147.0");
+    }),
+  );
+
+  it.effect("rejects stale consent before starting the runtime action", () =>
+    Effect.gen(function* () {
+      const runCount = yield* Ref.make(0);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(missingRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Ref.update(runCount, (count) => count + 1),
+      };
+      const { manager } = yield* makeHarness(actions);
+      const result = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "stale" })
+        .pipe(Effect.result);
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure")
+        assert.strictEqual(result.failure.reason, "runtime_plan_stale");
+      assert.strictEqual(yield* Ref.get(runCount), 0);
+    }),
+  );
+
+  it.effect("cancels the active download without claiming installation", () =>
+    Effect.gen(function* () {
+      const never = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(missingRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Deferred.await(never),
+      };
+      const { manager } = yield* makeHarness(actions);
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+      assert.ok(operationId);
+      const cancelled = yield* manager.cancel({ instanceId: INSTANCE, operationId });
+      assert.strictEqual(
+        cancelled.providers[0]?.connection?.runtime?.operation?.status,
+        "cancelled",
+      );
+      assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "missing");
+    }),
+  );
+
+  it.effect("serializes one shared provider runtime across separate accounts", () =>
+    Effect.gen(function* () {
+      const never = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(missingRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Deferred.await(never),
+      };
+      const secondProvider: ServerProvider = {
+        ...provider,
+        instanceId: SECOND_INSTANCE,
+      };
+      const { manager } = yield* makeHarness(actions, [provider, secondProvider]);
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const second = yield* manager
+        .start({
+          instanceId: SECOND_INSTANCE,
+          action: "install",
+          catalogRevision: "reviewed:1",
+        })
+        .pipe(Effect.result);
+      assert.strictEqual(second._tag, "Failure");
+      if (second._tag === "Failure") assert.strictEqual(second.failure.reason, "runtime_busy");
+
+      const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+      assert.ok(operationId);
+      yield* manager.cancel({ instanceId: INSTANCE, operationId });
+    }),
+  );
+});

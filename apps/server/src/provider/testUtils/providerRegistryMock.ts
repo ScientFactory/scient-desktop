@@ -13,7 +13,11 @@ export const makeProviderRegistryMock = (
   refreshInstance: () => Effect.succeed(providers),
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
+  getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+  getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+  setProviderManagedRuntimeSummary: () => Effect.succeed([]),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),
+  setProviderConnectionOperation: () => Effect.succeed(providers),
   streamChanges: Stream.empty,
 });
 

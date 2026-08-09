@@ -20,6 +20,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
+import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
@@ -191,7 +192,11 @@ function makeRegistry(
       refreshInstance: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
+      getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+      getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState,
+      setProviderConnectionOperation: () => Ref.get(providersRef),
       streamChanges: Stream.empty,
     };
 
@@ -206,6 +211,7 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
       ProviderMaintenanceRunner.layer.pipe(
+        Layer.provide(ProviderLifecycleCoordinator.layer),
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ProviderRegistry, registry),
