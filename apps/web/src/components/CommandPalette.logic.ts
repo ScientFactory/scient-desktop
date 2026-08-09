@@ -124,6 +124,16 @@ export function enumerateCommandPaletteItems(
   });
 }
 
+export function shouldOpenNewThreadTargetPicker(input: {
+  readonly legacySidebarEnabled: boolean;
+  readonly projectGroupCount: number;
+  readonly supportsProjectlessThreads: boolean;
+}): boolean {
+  return (
+    input.supportsProjectlessThreads || (!input.legacySidebarEnabled && input.projectGroupCount > 1)
+  );
+}
+
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 export function normalizeSearchText(value: string): string {

@@ -97,7 +97,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -135,6 +135,7 @@ import {
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
+import { shouldOpenNewThreadTargetPicker } from "./CommandPalette.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -3131,13 +3132,29 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
+  const newThreadTarget = resolveThreadActionProjectRef({
+    activeDraftThread: newThreadContext.activeDraftThread,
+    activeThread: newThreadContext.activeThread ?? undefined,
+    defaultProjectRef: newThreadContext.defaultProjectRef,
+    handleNewThread: newThreadContext.handleNewThread,
+  });
+  const newThreadEnvironmentId = newThreadTarget?.environmentId ?? primaryEnvironmentId;
+  const supportsProjectlessThreads =
+    newThreadEnvironmentId !== null &&
+    serverConfigs.get(newThreadEnvironmentId)?.projectlessThreads === true;
+
   // New thread defaults to the project you're in (active thread's project,
-  // falling back to the top project) — same resolution the command palette
-  // uses. The command palette already offers a "New thread in..." submenu
-  // for multi-project setups.
+  // falling back to the top project). When the environment supports
+  // projectless threads, the target picker remains useful even with one
+  // project because it also offers "Don't work in a project".
   const handleNewThreadClick = useCallback(() => {
-    // One project: nothing to pick, create immediately.
-    if (projectGroups.length <= 1) {
+    if (
+      !shouldOpenNewThreadTargetPicker({
+        legacySidebarEnabled: false,
+        projectGroupCount: projectGroups.length,
+        supportsProjectlessThreads,
+      })
+    ) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -3149,12 +3166,12 @@ export default function Sidebar() {
     }
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
+  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile, supportsProjectlessThreads]);
 
-  // The button mirrors chat.new: in multi-project setups both route through
-  // the command palette's "New thread in..." picker, and in single-project
-  // setups both create immediately. chat.newLocal always creates directly, so
-  // it is only a correct label when chat.new is unbound.
+  // The button mirrors chat.new: both route through the target picker whenever
+  // there is more than one project or projectless threads are available.
+  // chat.newLocal always creates directly, so it is only a correct label when
+  // chat.new is unbound.
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
     shortcutLabelForCommand(keybindings, "chat.newLocal");

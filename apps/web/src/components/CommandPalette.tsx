@@ -683,6 +683,10 @@ function OpenCommandPaletteDialog(props: {
       }),
     [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
   );
+  const projectlessEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
+  const supportsProjectlessThreads =
+    projectlessEnvironmentId !== null &&
+    serverConfigs.get(projectlessEnvironmentId)?.projectlessThreads === true;
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
@@ -961,38 +965,61 @@ function OpenCommandPaletteDialog(props: {
     [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
   );
 
-  const projectThreadItems = useMemo(
-    () =>
-      enumerateCommandPaletteItems(
-        buildProjectActionItems({
-          projects: pickerProjects,
-          valuePrefix: "new-thread-in",
-          searchTerms: (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            return (
-              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
-            );
-          },
-          icon: projectFavicon,
-          runProject: async (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const contextualRefBelongsToGroup =
-              contextualProjectRef !== null &&
-              group?.memberProjectRefs.some(
-                (projectRef) =>
-                  projectRef.environmentId === contextualProjectRef.environmentId &&
-                  projectRef.projectId === contextualProjectRef.projectId,
-              );
-            await handleNewThread(
-              contextualRefBelongsToGroup
-                ? contextualProjectRef
-                : scopeProjectRef(project.environmentId, project.id),
-            );
-          },
-        }),
-      ),
-    [contextualProjectRef, handleNewThread, pickerProjects, projectGroupByTargetKey],
-  );
+  const projectThreadItems = useMemo(() => {
+    const projectItems = buildProjectActionItems({
+      projects: pickerProjects,
+      valuePrefix: "new-thread-in",
+      searchTerms: (project) => {
+        const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+        return (
+          group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+        );
+      },
+      icon: projectFavicon,
+      runProject: async (project) => {
+        const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+        const contextualRefBelongsToGroup =
+          contextualProjectRef !== null &&
+          group?.memberProjectRefs.some(
+            (projectRef) =>
+              projectRef.environmentId === contextualProjectRef.environmentId &&
+              projectRef.projectId === contextualProjectRef.projectId,
+          );
+        await handleNewThread(
+          contextualRefBelongsToGroup
+            ? contextualProjectRef
+            : scopeProjectRef(project.environmentId, project.id),
+        );
+      },
+    });
+    const projectlessItems: CommandPaletteActionItem[] =
+      supportsProjectlessThreads && projectlessEnvironmentId !== null
+        ? [
+            {
+              kind: "action",
+              value: `new-thread-in:${projectlessEnvironmentId}:projectless`,
+              searchTerms: ["new thread", "without project", "no project", "chat"],
+              title: "Don't work in a project",
+              icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+              run: async () => {
+                await handleNewThread({
+                  environmentId: projectlessEnvironmentId,
+                  projectId: null,
+                });
+              },
+            },
+          ]
+        : [];
+
+    return enumerateCommandPaletteItems([...projectItems, ...projectlessItems]);
+  }, [
+    contextualProjectRef,
+    handleNewThread,
+    pickerProjects,
+    projectGroupByTargetKey,
+    projectlessEnvironmentId,
+    supportsProjectlessThreads,
+  ]);
 
   const allThreadItems = useMemo(
     () =>
@@ -1342,9 +1369,11 @@ function OpenCommandPaletteDialog(props: {
     setViewStack([]);
     setQuery("");
     const currentPrefix =
-      currentProjectEnvironmentId && currentProjectId
-        ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
-        : null;
+      contextualProjectRef?.projectId === null
+        ? `new-thread-in:${contextualProjectRef.environmentId}:projectless`
+        : currentProjectEnvironmentId && currentProjectId
+          ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
+          : null;
     const prioritized = currentPrefix
       ? [
           ...projectThreadItems.filter((item) => item.value === currentPrefix),
@@ -1366,6 +1395,7 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation,
     currentProjectEnvironmentId,
     currentProjectId,
+    contextualProjectRef,
     openIntent,
     projectThreadItems,
     pushPaletteView,
@@ -1412,16 +1442,12 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const projectlessEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
-  if (
-    projectlessEnvironmentId !== null &&
-    serverConfigs.get(projectlessEnvironmentId)?.projectlessThreads === true
-  ) {
+  if (projectlessEnvironmentId !== null && supportsProjectlessThreads) {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
       searchTerms: ["new thread", "without project", "no project", "chat"],
-      title: "New thread without a project",
+      title: "Don't work in a project",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         await handleNewThread({ environmentId: projectlessEnvironmentId, projectId: null });
