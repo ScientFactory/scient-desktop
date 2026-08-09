@@ -126,7 +126,7 @@ const ProjectionThreadSearchRequest = Schema.Struct({
 });
 const ProjectionThreadSearchRow = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   source: OrchestrationThreadSearchSource,
   matchText: Schema.String,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
@@ -427,6 +427,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -463,6 +464,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -501,6 +503,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -818,11 +821,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           FROM projection_thread_messages AS messages
           INNER JOIN projection_threads AS threads
             ON threads.thread_id = messages.thread_id
-          INNER JOIN projection_projects AS projects
+          LEFT JOIN projection_projects AS projects
             ON projects.project_id = threads.project_id
           WHERE threads.deleted_at IS NULL
             AND threads.archived_at IS NULL
-            AND projects.deleted_at IS NULL
+            AND (
+              threads.project_id IS NULL
+              OR (projects.project_id IS NOT NULL AND projects.deleted_at IS NULL)
+            )
             AND messages.is_streaming = 0
             AND (
               messages.role = 'user'
@@ -943,6 +949,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -1628,6 +1635,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
                 id: row.threadId,
                 projectId: row.projectId,
+                workspaceRoot: row.workspaceRoot,
                 title: row.title,
                 modelSelection: row.modelSelection,
                 runtimeMode: row.runtimeMode,
@@ -1836,6 +1844,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 threads.push({
                   id: row.threadId,
                   projectId: row.projectId,
+                  workspaceRoot: row.workspaceRoot,
                   title: row.title,
                   modelSelection: row.modelSelection,
                   runtimeMode: row.runtimeMode,
@@ -1979,12 +1988,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                       )
                     : Result.failVoid,
-                ),
+                  ),
                 threads: Arr.filterMap(threadRows, (row) =>
                   row.deletedAt === null
                     ? Result.succeed({
                         id: row.threadId,
                         projectId: row.projectId,
+                        workspaceRoot: row.workspaceRoot,
                         title: row.title,
                         modelSelection: row.modelSelection,
                         runtimeMode: row.runtimeMode,
@@ -2138,11 +2148,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                       )
                     : Result.failVoid,
-                ),
+                  ),
                 threads: threadRows.map(
                   (row): OrchestrationThreadShell => ({
                     id: row.threadId,
                     projectId: row.projectId,
+                    workspaceRoot: row.workspaceRoot,
                     title: row.title,
                     modelSelection: row.modelSelection,
                     runtimeMode: row.runtimeMode,
@@ -2431,6 +2442,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       return Option.some({
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        workspaceRoot: threadRow.value.workspaceRoot,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
@@ -2562,6 +2574,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       const thread = {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        workspaceRoot: threadRow.value.workspaceRoot,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,

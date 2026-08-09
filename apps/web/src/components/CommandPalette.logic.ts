@@ -124,6 +124,16 @@ export function enumerateCommandPaletteItems(
   });
 }
 
+export function shouldOpenNewThreadTargetPicker(input: {
+  readonly legacySidebarEnabled: boolean;
+  readonly projectGroupCount: number;
+  readonly supportsProjectlessThreads: boolean;
+}): boolean {
+  return (
+    input.supportsProjectlessThreads || (!input.legacySidebarEnabled && input.projectGroupCount > 1)
+  );
+}
+
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 export type BrowseEnterAction = "ignore" | "activate-highlighted" | "submit-current-path";
@@ -223,7 +233,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     input.limit === undefined ? sortedThreads : sortedThreads.slice(0, input.limit);
 
   return visibleThreads.map((thread) => {
-    const projectTitle = input.projectTitleById.get(thread.projectId);
+    const projectTitle =
+      thread.projectId === null ? "No project" : input.projectTitleById.get(thread.projectId);
     const descriptionParts: string[] = [];
 
     if (projectTitle) {

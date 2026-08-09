@@ -912,6 +912,7 @@ const makeWsRpcLayer = (
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
                 projectId: bootstrap.createThread.projectId,
+                workspaceRoot: bootstrap.createThread.workspaceRoot ?? null,
                 title: bootstrap.createThread.title,
                 modelSelection: bootstrap.createThread.modelSelection,
                 runtimeMode: bootstrap.createThread.runtimeMode,
@@ -1016,6 +1017,7 @@ const makeWsRpcLayer = (
           environment,
           auth,
           cwd: config.cwd,
+          projectlessThreads: true,
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -1875,25 +1877,34 @@ const makeWsRpcLayer = (
                   resource: input.resource,
                 });
               }
-              const project = yield* projectionSnapshotQuery
-                .getProjectShellById(thread.value.projectId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new AssetWorkspaceContextResolutionError({
-                        resource: input.resource,
-                        cause,
-                      }),
-                  ),
-                );
-              if (Option.isNone(project)) {
+              const project =
+                thread.value.projectId === null
+                  ? Option.none()
+                  : yield* projectionSnapshotQuery.getProjectShellById(thread.value.projectId).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new AssetWorkspaceContextResolutionError({
+                            resource: input.resource,
+                            cause,
+                          }),
+                      ),
+                    );
+              if (thread.value.projectId !== null && Option.isNone(project)) {
+                return yield* new AssetWorkspaceContextNotFoundError({
+                  resource: input.resource,
+                });
+              }
+              const workspaceRoot =
+                thread.value.worktreePath ??
+                (Option.isSome(project) ? project.value.workspaceRoot : thread.value.workspaceRoot);
+              if (!workspaceRoot) {
                 return yield* new AssetWorkspaceContextNotFoundError({
                   resource: input.resource,
                 });
               }
               return yield* issueAssetUrl({
                 resource: input.resource,
-                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                workspaceRoot,
               });
             }),
             { "rpc.aggregate": "workspace" },
