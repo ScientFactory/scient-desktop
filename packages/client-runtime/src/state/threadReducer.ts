@@ -219,6 +219,13 @@ export function applyThreadDetailEvent(
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
             : {}),
+          // SCIENT-FORK:START — update the open chat immediately when it is
+          // relocated from General Chat into a project.
+          ...(event.payload.projectId !== undefined ? { projectId: event.payload.projectId } : {}),
+          ...(event.payload.workspaceRoot !== undefined
+            ? { workspaceRoot: event.payload.workspaceRoot }
+            : {}),
+          // SCIENT-FORK:END
           updatedAt: event.payload.updatedAt,
         },
       };

@@ -136,7 +136,7 @@ function NoProjectsHero({
                 What should we work on?
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project, or start a thread without one.
+                Add a project, or start a general chat.
               </EmptyDescription>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 <Button size="sm" onClick={openAddProject}>
@@ -145,7 +145,7 @@ function NoProjectsHero({
                 </Button>
                 {onStartWithoutProject ? (
                   <Button size="sm" variant="outline" onClick={() => void onStartWithoutProject()}>
-                    Start without a project
+                    Start a general chat
                   </Button>
                 ) : null}
               </div>

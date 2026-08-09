@@ -39,7 +39,7 @@ export interface ProjectionSnapshotSequence {
 
 export interface ProjectionThreadCheckpointContext {
   readonly threadId: ThreadId;
-  readonly projectId: ProjectId;
+  readonly projectId: ProjectId | null;
   readonly workspaceRoot: string;
   readonly worktreePath: string | null;
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;

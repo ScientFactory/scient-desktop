@@ -1037,9 +1037,16 @@ function OpenCommandPaletteDialog(props: {
       ({ environmentId, environmentLabel }) => ({
         kind: "action",
         value: `new-thread-in:${environmentId}:projectless`,
-        searchTerms: ["new thread", "without project", "no project", "chat", environmentLabel],
-        title: "Don't work in a project",
-        ...(showEnvironmentLabel ? { description: environmentLabel } : {}),
+        searchTerms: [
+          "new thread",
+          "general chat",
+          "without project",
+          "no project",
+          "chat",
+          environmentLabel,
+        ],
+        title: "General chat",
+        description: showEnvironmentLabel ? environmentLabel : "Chat without a project",
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         run: async () => {
           await handleNewThread({ environmentId, projectId: null });
@@ -1489,8 +1496,9 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:new-thread-without-project",
       searchTerms: ["new thread", "without project", "no project", "chat"],
-      title: "Don't work in a project",
+      title: "General chat",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      ...(projects.length === 0 ? { shortcutCommand: "chat.new" as const } : {}),
       run: async () => {
         await handleNewThread({ environmentId: projectlessEnvironmentId, projectId: null });
       },

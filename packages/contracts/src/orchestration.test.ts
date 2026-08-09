@@ -729,6 +729,51 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
+it.effect("accepts a single-purpose General Chat relocation", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-move-general-chat",
+      threadId: "thread-general",
+      moveToProjectId: "project-research",
+    });
+    assert.strictEqual(parsed.type, "thread.meta.update");
+    if (parsed.type === "thread.meta.update") {
+      assert.strictEqual(parsed.moveToProjectId, "project-research");
+    }
+  }),
+);
+
+it.effect("rejects relocation combined with unrelated metadata changes", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.meta.update",
+        commandId: "cmd-move-and-rename",
+        threadId: "thread-general",
+        moveToProjectId: "project-research",
+        title: "Unexpected coupled rename",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes relocation fields on thread.meta-updated", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadMetaUpdatedPayload({
+      threadId: "thread-general",
+      projectId: "project-research",
+      workspaceRoot: null,
+      branch: null,
+      worktreePath: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.projectId, "project-research");
+    assert.strictEqual(parsed.workspaceRoot, null);
+  }),
+);
+
 it.effect("accepts an internal title regeneration completion", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -11,7 +12,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
-import { ChevronDownIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FolderInputIcon,
+  LoaderCircleIcon,
+  MessageSquareIcon,
+} from "lucide-react";
 import {
   memo,
   useCallback,
@@ -24,6 +30,7 @@ import {
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
@@ -50,6 +57,15 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
+  isGeneralChat: boolean;
+  generalChatMoveTargets: ReadonlyArray<{
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly workspaceRoot: string;
+    readonly faviconPath?: string | null | undefined;
+  }>;
+  isMovingGeneralChat: boolean;
+  generalChatMoveDisabledReason: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -58,6 +74,7 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
+  onMoveGeneralChatToProject: (projectId: ProjectId) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -103,6 +120,10 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
+  isGeneralChat,
+  generalChatMoveTargets,
+  isMovingGeneralChat,
+  generalChatMoveDisabledReason,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -111,6 +132,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   gitCwd,
   onNewThreadInProject,
+  onMoveGeneralChatToProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -242,6 +264,16 @@ export const ChatHeader = memo(function ChatHeader({
               /
             </span>
           </span>
+        ) : isGeneralChat ? (
+          <span className="inline-flex shrink-0 items-center gap-2 text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <MessageSquareIcon aria-hidden className="size-3.5" />
+              <span className="max-w-40 truncate text-sm font-medium">General chat</span>
+            </span>
+            <span aria-hidden className="text-icon-muted">
+              /
+            </span>
+          </span>
         ) : null}
         {renamingTitle !== null ? (
           <input
@@ -303,6 +335,43 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {isGeneralChat && isServerThread ? (
+          <Tooltip>
+            <Menu>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    disabled={generalChatMoveDisabledReason !== null || isMovingGeneralChat}
+                    aria-label="Move chat to project"
+                    className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-icon-muted transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                  />
+                }
+              >
+                {isMovingGeneralChat ? (
+                  <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
+                ) : (
+                  <FolderInputIcon aria-hidden className="size-4" />
+                )}
+              </TooltipTrigger>
+              <MenuPopup align="end">
+                {generalChatMoveTargets.map((project) => (
+                  <MenuItem key={project.id} onClick={() => onMoveGeneralChatToProject(project.id)}>
+                    <ProjectFavicon
+                      environmentId={activeThreadEnvironmentId}
+                      cwd={project.workspaceRoot}
+                      faviconPath={project.faviconPath}
+                      className="size-4"
+                    />
+                    <span className="max-w-64 truncate">{project.title}</span>
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+            <TooltipPopup side="top">
+              {generalChatMoveDisabledReason ?? "Move chat to project"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

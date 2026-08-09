@@ -176,7 +176,7 @@ const ProjectionThreadIdLookupRowSchema = Schema.Struct({
 });
 const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
 });
@@ -930,13 +930,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           threads.thread_id AS "threadId",
           threads.project_id AS "projectId",
-          projects.workspace_root AS "workspaceRoot",
+          COALESCE(threads.workspace_root, projects.workspace_root) AS "workspaceRoot",
           threads.worktree_path AS "worktreePath"
         FROM projection_threads AS threads
-        INNER JOIN projection_projects AS projects
+        LEFT JOIN projection_projects AS projects
           ON projects.project_id = threads.project_id
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
+          AND COALESCE(threads.workspace_root, projects.workspace_root) IS NOT NULL
         LIMIT 1
       `,
   });

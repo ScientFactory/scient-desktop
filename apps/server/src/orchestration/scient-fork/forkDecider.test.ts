@@ -775,6 +775,31 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("preserves a General Chat environment root on a local fork", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread({
+        projectId: null,
+        workspaceRoot: "/tmp/general-chat-environment",
+        branch: null,
+        worktreePath: null,
+        checkpoints: [],
+      });
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ workspaceMode: "local" }),
+        readModel: makeReadModel({ origin }),
+      });
+      const created = events.find((event) => event.type === "thread.created");
+
+      expect(created?.type).toBe("thread.created");
+      if (created?.type === "thread.created") {
+        expect(created.payload.projectId).toBeNull();
+        expect(created.payload.workspaceRoot).toBe("/tmp/general-chat-environment");
+        expect(created.payload.branch).toBeNull();
+        expect(created.payload.worktreePath).toBeNull();
+      }
+    }),
+  );
+
   it.effect("rejects a new worktree when the conversational boundary has no checkpoint", () =>
     Effect.gen(function* () {
       const origin = makeOriginThread({ checkpoints: [] });

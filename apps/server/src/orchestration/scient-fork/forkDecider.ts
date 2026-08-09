@@ -351,6 +351,10 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     payload: {
       threadId: command.newThreadId,
       projectId: origin.projectId,
+      // A General Chat owns its environment root directly because there is no
+      // project row to recover it from. Preserve that root across a fork so the
+      // new conversation remains runnable in the same environment.
+      workspaceRoot: origin.projectId === null ? (origin.workspaceRoot ?? null) : null,
       // Fork titles are server-owned so every entry point gets the same
       // collision-safe numbering. A caller-provided title would otherwise
       // silently bypass the fork naming convention.

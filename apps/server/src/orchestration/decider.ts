@@ -1,5 +1,6 @@
 import {
   EventId,
+  GENERAL_CHAT_MOVE_SESSION_STOP_PENDING,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -818,13 +819,64 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const occurredAt = yield* nowIso;
+      // SCIENT-FORK:START — relocate one projectless General Chat without
+      // changing its identity or replaying its conversation. A stopped
+      // provider session is an authoritative workspace boundary: the client
+      // asks the provider reactor to stop first, and this invariant closes the
+      // race if the reassignment arrives before that stop has completed.
+      const moveTarget =
+        command.moveToProjectId === undefined
+          ? undefined
+          : yield* requireProject({
+              readModel,
+              command,
+              projectId: command.moveToProjectId,
+            });
+      if (moveTarget !== undefined && moveTarget.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Project '${moveTarget.id}' is deleted and cannot receive a General Chat.`,
+        });
+      }
+      if (
+        moveTarget !== undefined &&
+        thread.projectId !== null &&
+        thread.projectId !== moveTarget.id
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${thread.id}' already belongs to a project and cannot be relocated again.`,
+        });
+      }
+      if (
+        moveTarget !== undefined &&
+        thread.projectId === null &&
+        thread.session !== null &&
+        thread.session.status !== "stopped"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `${GENERAL_CHAT_MOVE_SESSION_STOP_PENDING}: Thread '${thread.id}' provider session must be stopped before relocation.`,
+        });
+      }
+      if (
+        moveTarget !== undefined &&
+        thread.projectId === null &&
+        (thread.latestTurn?.state === "running" || threadHasQueuedTurnStart(thread, occurredAt))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${thread.id}' still has work in flight and cannot be relocated.`,
+        });
+      }
+      // SCIENT-FORK:END
       const branch =
         command.branch !== undefined &&
         command.expectedBranch !== undefined &&
         thread.branch !== command.expectedBranch
           ? thread.branch
           : command.branch;
-      const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -854,6 +906,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          // SCIENT-FORK:START — project threads derive their workspace from
+          // the project, so clear the projectless root and any workspace-bound
+          // branch/worktree metadata at the ownership transition.
+          ...(moveTarget !== undefined
+            ? {
+                projectId: moveTarget.id,
+                workspaceRoot: null,
+                branch: null,
+                worktreePath: null,
+              }
+            : {}),
+          // SCIENT-FORK:END
           updatedAt: occurredAt,
         },
       };

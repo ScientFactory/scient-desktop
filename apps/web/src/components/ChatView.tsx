@@ -258,6 +258,7 @@ import {
   resolveTimelineIsAtEnd,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useScientGeneralChatMove } from "./scient-general-chat/useScientGeneralChatMove";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -1759,6 +1760,21 @@ function ChatViewContent(props: ChatViewProps) {
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
   const allProjects = useProjects();
+  const generalChatMoveTargets = useMemo(
+    () =>
+      activeServerThread?.projectId === null
+        ? allProjects
+            .filter((project) => project.environmentId === activeServerThread.environmentId)
+            .toSorted((left, right) => left.title.localeCompare(right.title))
+        : [],
+    [activeServerThread, allProjects],
+  );
+  const { isMoving: isMovingGeneralChat, moveToProject: moveGeneralChatToProject } =
+    useScientGeneralChatMove({
+      environmentId: activeServerThread?.environmentId ?? null,
+      threadId: activeServerThread?.id ?? null,
+      sessionStatus: activeServerThread?.session?.status ?? null,
+    });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {
     if (!clientSettingsHydrated || !activeThreadRef || !activeProject) return;
@@ -6193,6 +6209,16 @@ function ChatViewContent(props: ChatViewProps) {
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
+            isGeneralChat={activeThread.projectId === null}
+            generalChatMoveTargets={generalChatMoveTargets}
+            isMovingGeneralChat={isMovingGeneralChat}
+            generalChatMoveDisabledReason={
+              generalChatMoveTargets.length === 0
+                ? "Add a project before moving this chat"
+                : isWorking
+                  ? "Wait for the current response to finish"
+                  : null
+            }
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             preferredScriptId={
@@ -6203,6 +6229,9 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            onMoveGeneralChatToProject={(projectId) => {
+              void moveGeneralChatToProject(projectId);
+            }}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}

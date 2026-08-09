@@ -1,4 +1,11 @@
-import { CommandId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  ProjectId,
+  ThreadId,
+  ProviderInstanceId,
+  type OrchestrationReadModel,
+  type OrchestrationSessionStatus,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -26,6 +33,79 @@ const projectlessCreate = (workspaceRoot: string | null) => ({
   createdAt: now,
 });
 
+function relocationReadModel(input?: {
+  sessionStatus?: OrchestrationSessionStatus | null;
+  threadProjectId?: ProjectId | null;
+  targetDeletedAt?: string | null;
+}): OrchestrationReadModel {
+  const targetProjectId = ProjectId.make("project-target");
+  const sessionStatus = input?.sessionStatus ?? null;
+  return {
+    snapshotSequence: 0,
+    projects: [
+      {
+        id: targetProjectId,
+        title: "Research project",
+        workspaceRoot: "/tmp/research-project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: input?.targetDeletedAt ?? null,
+      },
+    ],
+    threads: [
+      {
+        id: ThreadId.make("thread-general"),
+        projectId: input?.threadProjectId ?? null,
+        workspaceRoot: "/tmp/environment-root",
+        title: "General chat",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "general-chat-branch",
+        worktreePath: "/tmp/general-chat-worktree",
+        latestTurn: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        deletedAt: null,
+        messages: [],
+        proposedPlans: [],
+        activities: [],
+        checkpoints: [],
+        session:
+          sessionStatus === null
+            ? null
+            : {
+                threadId: ThreadId.make("thread-general"),
+                status: sessionStatus,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: now,
+              },
+      },
+    ],
+    updatedAt: now,
+  };
+}
+
+const moveGeneralChatCommand = {
+  type: "thread.meta.update" as const,
+  commandId: CommandId.make("cmd-move-general-chat"),
+  threadId: ThreadId.make("thread-general"),
+  moveToProjectId: ProjectId.make("project-target"),
+};
+
 it.layer(NodeServices.layer)("decider projectless threads", (it) => {
   it.effect("creates a thread with an explicit environment workspace root", () =>
     Effect.gen(function* () {
@@ -47,6 +127,68 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
         decideOrchestrationCommand({
           command: projectlessCreate(null),
           readModel: createEmptyReadModel(now),
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("moves one stopped general chat into a project without changing its identity", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: moveGeneralChatCommand,
+        readModel: relocationReadModel({ sessionStatus: "stopped" }),
+      });
+      const event = Array.isArray(result) ? result[0] : result;
+
+      expect(event.type).toBe("thread.meta-updated");
+      if (event.type === "thread.meta-updated") {
+        expect(event.payload).toMatchObject({
+          threadId: ThreadId.make("thread-general"),
+          projectId: ProjectId.make("project-target"),
+          workspaceRoot: null,
+          branch: null,
+          worktreePath: null,
+        });
+      }
+    }),
+  );
+
+  it.effect("rejects relocation while the provider session is still live", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        decideOrchestrationCommand({
+          command: moveGeneralChatCommand,
+          readModel: relocationReadModel({ sessionStatus: "ready" }),
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("rejects relocating a thread that already belongs to another project", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        decideOrchestrationCommand({
+          command: moveGeneralChatCommand,
+          readModel: relocationReadModel({
+            threadProjectId: ProjectId.make("project-existing"),
+          }),
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("rejects a deleted destination project", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        decideOrchestrationCommand({
+          command: moveGeneralChatCommand,
+          readModel: relocationReadModel({ targetDeletedAt: now }),
         }),
       );
 
