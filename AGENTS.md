@@ -1,6 +1,6 @@
 # Scient desktop candidate instructions
 
-Status: private post-D4 migration candidate. These instructions override the
+Status: post-D4 migration candidate. These instructions override the
 inherited T3 guidance below when the two conflict.
 
 ScientFactory owns this repository and the candidate product direction. Yaacov
@@ -15,8 +15,10 @@ authorization.
   application until a later cutover gate.
 - The product label is `Scient`. The canonical local baseline is named
   `Scient (Dev) Stable`; disposable feature-worktree instances remain
-  `Scient (Dev)`. Collision-safe candidate runtime identifiers deliberately
-  remain `scient-next` until the separate cutover audit.
+  `Scient (Dev)`. Production packages now use the canonical Scient install
+  identity so the legacy updater can replace the installed application. The
+  new app's data, development identity, state root, and browser persistence
+  deliberately remain isolated under `scient-next` boundaries.
 - The integrated D4 envelope establishes identity/state isolation and
   fail-closed telemetry, cloud, updater, service, signing, and publication
   guards. Later work must follow the currently authorized parent migration
@@ -40,8 +42,8 @@ authorization.
   with a Scient feature.
 - Keep `main` protected by process: no direct product commits, force pushes,
   history rewrites, releases, or publication. Use short-lived branches and
-  draft pull requests. The private-repository plan currently prevents GitHub
-  branch-protection configuration; this limitation is not release-acceptable.
+  draft pull requests. Verify hosted branch rules and required checks again as
+  a release gate; repository visibility alone is not protection evidence.
 - Before changing a protected divergence, read [UPSTREAM.md](UPSTREAM.md),
   [upstream-state.json](upstream-state.json), and the
   [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).

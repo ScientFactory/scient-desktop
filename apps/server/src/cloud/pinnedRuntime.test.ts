@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -14,6 +15,8 @@ import {
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 
+const decodeUnknownJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
 const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   ProcessRunner.ProcessRunner.of({
     run: (input) =>
@@ -21,6 +24,13 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
         const prefixIndex = input.args.indexOf("--prefix");
         const stagingDir = input.args[prefixIndex + 1];
         if (stagingDir === undefined) return yield* Effect.die("missing npm --prefix");
+        const installPolicy = decodeUnknownJsonString(
+          yield* fs.readFileString(path.join(stagingDir, "package.json")).pipe(Effect.orDie),
+        ) as { readonly allowScripts?: Record<string, boolean> };
+        assert.deepEqual(installPolicy.allowScripts, {
+          "node-pty@1.1.0": true,
+          "msgpackr-extract@3.0.4": true,
+        });
         const entry = path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs");
         yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
         yield* fs.writeFileString(entry, "export {};\n").pipe(Effect.orDie);

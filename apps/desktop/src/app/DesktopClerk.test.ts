@@ -214,7 +214,7 @@ describe("DesktopClerk", () => {
 
   it.each([
     { isDevelopment: true, scheme: "scient-next-dev" },
-    { isDevelopment: false, scheme: "scient-next" },
+    { isDevelopment: false, scheme: "scient" },
   ])("configures the SDK with the $scheme renderer origin", ({ isDevelopment, scheme }) => {
     const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
     storageMock.mockReturnValue(storageAdapter);

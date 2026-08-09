@@ -215,6 +215,10 @@
       "types": "./src/scientNextIdentity.ts",
       "import": "./src/scientNextIdentity.ts"
     },
+    "./scientRelease": {
+      "types": "./src/scientRelease.ts",
+      "import": "./src/scientRelease.ts"
+    },
     "./usageMerge": {
       "types": "./src/usageMerge.ts",
       "import": "./src/usageMerge.ts"

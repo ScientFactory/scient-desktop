@@ -1,5 +1,6 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { scientServerNpxCommand } from "@t3tools/shared/scientRelease";
 
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
@@ -59,7 +60,7 @@ export function resolveServerSelfUpdateCapability(
 
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return scientServerNpxCommand(targetVersion);
 }
 
 /** One sentence telling the user how to resolve version skew for a server,

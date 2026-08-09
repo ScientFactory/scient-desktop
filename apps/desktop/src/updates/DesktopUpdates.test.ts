@@ -274,7 +274,7 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("keeps update publication and updater access disabled in the D4 envelope", () => {
+  it.effect("enables the owned updater after the release gate opens", () => {
     const harness = makeHarness({ env: { SCIENT_NEXT_SAFETY_ENVELOPE: "true" } });
 
     return Effect.scoped(
@@ -284,14 +284,13 @@ describe("DesktopUpdates", () => {
 
         const state = yield* updates.getState;
         const disabledReason = yield* updates.disabledReason;
-        assert.equal(state.enabled, false);
-        assert.equal(state.status, "disabled");
-        assert.isTrue(Option.isSome(disabledReason));
-        if (Option.isSome(disabledReason)) {
-          assert.include(disabledReason.value, "D4 bootstrap");
-        }
-        assert.deepEqual(harness.feedUrls(), []);
-        assert.equal(harness.listenerCount(), 0);
+        assert.equal(state.enabled, true);
+        assert.equal(state.status, "idle");
+        assert.isTrue(Option.isNone(disabledReason));
+        assert.deepEqual(harness.feedUrls(), [
+          { provider: "generic", url: "http://localhost:4141" },
+        ]);
+        assert.equal(harness.listenerCount(), 6);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

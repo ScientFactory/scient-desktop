@@ -94,8 +94,14 @@ describe("ssh tunnel scripts", () => {
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
     assert.include(script, 'exec t3 "$@"');
-    assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
-    assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
+    assert.include(
+      script,
+      "exec npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest' t3 \"$@\"",
+    );
+    assert.include(
+      script,
+      "exec npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest' -- t3 \"$@\"",
+    );
     assert.include(script, "could not install 't3@latest'");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
@@ -127,9 +133,9 @@ describe("ssh tunnel scripts", () => {
       packageSpec: "t3@nightly; touch /tmp/t3-owned",
     });
 
-    assert.include(script, "exec npx --yes 't3@nightly; touch /tmp/t3-owned' \"$@\"");
-    assert.include(script, "exec npm exec --yes 't3@nightly; touch /tmp/t3-owned' -- \"$@\"");
-    assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
+    assert.include(script, "--package 't3@nightly; touch /tmp/t3-owned' t3 \"$@\"");
+    assert.include(script, "--package 't3@nightly; touch /tmp/t3-owned' -- t3 \"$@\"");
+    assert.notInclude(script, "--package t3@nightly; touch /tmp/t3-owned");
   });
 
   it("builds the remote t3 runner with a node script override", () => {

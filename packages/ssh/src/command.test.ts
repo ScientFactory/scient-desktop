@@ -106,14 +106,14 @@ describe("ssh command", () => {
           appVersion: "0.0.17",
           updateChannel: "latest",
         }),
-        "t3@0.0.17",
+        "https://github.com/ScientFactory/scient-desktop-next/releases/download/v0.0.17/scient-server-0.0.17.tgz",
       );
       assert.equal(
         resolveRemoteT3CliPackageSpec({
           appVersion: "0.0.17-nightly.20260415.44",
           updateChannel: "nightly",
         }),
-        "t3@0.0.17-nightly.20260415.44",
+        "https://github.com/ScientFactory/scient-desktop-next/releases/download/v0.0.17-nightly.20260415.44/scient-server-0.0.17-nightly.20260415.44.tgz",
       );
       assert.equal(
         resolveRemoteT3CliPackageSpec({

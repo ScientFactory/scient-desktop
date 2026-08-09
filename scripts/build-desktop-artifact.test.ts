@@ -30,7 +30,6 @@ import {
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
   resolveBuildOptions,
-  ScientNextSigningDisabledError,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
@@ -91,7 +90,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("uses the stable candidate product name for every D4 build", () => {
+  it("uses the stable Scient product name for every release build", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "Scient");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Scient");
   });
@@ -351,9 +350,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notProperty(linux, "asarUnpack");
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
       // Linux must register the production renderer scheme so the generated
-      // .desktop entry advertises the Scient Next OAuth deep-link handler.
+      // .desktop entry advertises the canonical Scient OAuth deep-link handler.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
-        { name: "Scient", schemes: ["scient-next"] },
+        { name: "Scient", schemes: ["scient"] },
       ]);
       for (const config of [mac, linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
@@ -410,7 +409,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(configuration, {
-      appId: "com.scientfactory.scient.next",
+      appId: "com.scientfactory.scient",
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
@@ -430,7 +429,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(entitlements, "<string>ABC1234567.com.scientfactory.scient.next</string>");
+    assert.include(entitlements, "<string>ABC1234567.com.scientfactory.scient</string>");
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
@@ -527,10 +526,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
 
         const mac = config.mac as Record<string, unknown>;
-        assert.equal(config.appId, "com.scientfactory.scient.next");
+        assert.equal(config.appId, "com.scientfactory.scient");
         assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
         assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
-        assert.deepStrictEqual(mac.protocols, [{ name: "Scient", schemes: ["scient-next"] }]);
+        assert.deepStrictEqual(mac.protocols, [{ name: "Scient", schemes: ["scient"] }]);
       }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
@@ -772,26 +771,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
-  it.effect("rejects signing during the D4 candidate bootstrap", () =>
+  it.effect("permits an explicitly signed production build", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        resolveBuildOptions({
-          platform: Option.some("mac"),
-          target: Option.none(),
-          arch: Option.some("arm64"),
-          buildVersion: Option.none(),
-          outputDir: Option.none(),
-          skipBuild: Option.some(true),
-          keepStage: Option.none(),
-          signed: Option.some(true),
-          verbose: Option.none(),
-          mockUpdates: Option.none(),
-          mockUpdateServerPort: Option.none(),
-          wslPrebuild: Option.none(),
-        }),
-      );
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("mac"),
+        target: Option.none(),
+        arch: Option.some("arm64"),
+        buildVersion: Option.none(),
+        outputDir: Option.none(),
+        skipBuild: Option.some(true),
+        keepStage: Option.none(),
+        signed: Option.some(true),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
+      });
 
-      assert.instanceOf(error, ScientNextSigningDisabledError);
+      assert.isTrue(resolved.signed);
     }),
   );
 });
