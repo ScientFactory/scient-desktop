@@ -16,10 +16,20 @@ const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
 
+const CLAUDE_AGENT_DRIVER = "claudeAgent";
+
 const mergeProviderModels = (
+  provider: ServerProvider,
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
   cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
+  // Claude's fallback is built from T3's curated catalog plus the current
+  // settings-defined custom models. Cached additions are not authoritative and
+  // may contain moving SDK aliases such as `default`, `sonnet`, or `haiku`.
+  if (provider.driver === CLAUDE_AGENT_DRIVER) {
+    return fallbackModels;
+  }
+
   const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
   return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
 };
@@ -59,7 +69,11 @@ export const hydrateCachedProvider = (input: {
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
-    models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
+    models: mergeProviderModels(
+      input.fallbackProvider,
+      input.fallbackProvider.models,
+      input.cachedProvider.models,
+    ),
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,

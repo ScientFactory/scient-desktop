@@ -9,7 +9,12 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * Credentials never cross this contract. A method only identifies an
  * official provider flow that the server is allowed to start.
  */
-export const ProviderConnectionMethod = Schema.Literals(["codex_browser", "codex_device_code"]);
+export const ProviderConnectionMethod = Schema.Literals([
+  "codex_browser",
+  "codex_device_code",
+  "claude_subscription",
+  "claude_console",
+]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
 
 export const ProviderConnectionOperationStatus = Schema.Literals([
@@ -23,6 +28,16 @@ export const ProviderConnectionOperationStatus = Schema.Literals([
 ]);
 export type ProviderConnectionOperationStatus = typeof ProviderConnectionOperationStatus.Type;
 
+/**
+ * How Scient should treat a provider-supplied authorization URL.
+ *
+ * Primary URLs are opened by the host as part of the normal connection flow.
+ * Manual fallback URLs are retained for explicit user recovery only because
+ * the provider process owns the normal browser launch and callback.
+ */
+export const ProviderAuthorizationUrlKind = Schema.Literals(["primary", "manual_fallback"]);
+export type ProviderAuthorizationUrlKind = typeof ProviderAuthorizationUrlKind.Type;
+
 export const ProviderConnectionOperation = Schema.Struct({
   operationId: TrimmedNonEmptyString,
   method: ProviderConnectionMethod,
@@ -31,6 +46,7 @@ export const ProviderConnectionOperation = Schema.Struct({
   finishedAt: Schema.NullOr(IsoDateTime),
   message: TrimmedNonEmptyString,
   authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  authorizationUrlKind: Schema.optionalKey(ProviderAuthorizationUrlKind),
   userCode: Schema.optionalKey(
     TrimmedNonEmptyString.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/)),
   ),
@@ -121,6 +137,27 @@ export const ProviderConnectionCancelInput = Schema.Struct({
 });
 export type ProviderConnectionCancelInput = typeof ProviderConnectionCancelInput.Type;
 
+const authorizationCodeHasNoControlCharacters = Schema.makeFilter((value: string) => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) {
+      return "Authorization code must not contain control characters.";
+    }
+  }
+  return true;
+});
+
+export const ProviderConnectionSubmitAuthorizationCodeInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  operationId: TrimmedNonEmptyString,
+  authorizationCode: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(8_192),
+    authorizationCodeHasNoControlCharacters,
+  ),
+});
+export type ProviderConnectionSubmitAuthorizationCodeInput =
+  typeof ProviderConnectionSubmitAuthorizationCodeInput.Type;
+
 export const ProviderConnectionDisconnectInput = Schema.Struct({
   instanceId: ProviderInstanceId,
 });
@@ -168,6 +205,7 @@ export class ProviderConnectionError extends Schema.TaggedErrorClass<ProviderCon
       "invalid_method",
       "already_running",
       "operation_not_found",
+      "authorization_code_not_supported",
       "provider_disabled",
       "connection_failed",
       "disconnect_failed",

@@ -41,6 +41,7 @@ function controller(overrides: Partial<ProviderLifecycleController> = {}) {
   return {
     startConnection: vi.fn(async () => provider()),
     cancelConnection: vi.fn(async () => provider()),
+    submitAuthorizationCode: vi.fn(async () => provider()),
     disconnect: vi.fn(async () => provider()),
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async () => updatePlan),

@@ -55,6 +55,15 @@ export interface ProviderRegistryShape {
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Recreate one provider instance from unchanged settings, attach its fresh
+   * snapshot source, and run a probe before returning. Used when an external
+   * dependency such as a managed provider executable changed atomically.
+   */
+  readonly reloadInstance: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
    */

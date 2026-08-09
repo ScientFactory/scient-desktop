@@ -18,9 +18,17 @@ import {
   startReviewedCodexRuntimeAction,
   updateCodexRuntime,
 } from "./codexLifecycleActions";
+import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-type PendingAction = "install" | "update" | "sign-in" | "cancel-runtime" | "cancel-sign-in" | null;
+type PendingAction =
+  | "install"
+  | "repair"
+  | "update"
+  | "sign-in"
+  | "cancel-runtime"
+  | "cancel-sign-in"
+  | null;
 
 const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
   "preparing",
@@ -104,6 +112,7 @@ export function CodexInlineSetup(props: {
   const updateAvailable = managedUpdateAvailable || externalUpdateAvailable;
   const updateState = props.provider.updateState;
   const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
+  const needsRuntimeRepair = needsManagedRuntimeRecovery(props.provider);
 
   const install = async () => {
     setLocalError(null);
@@ -124,6 +133,18 @@ export function CodexInlineSetup(props: {
       await updateCodexRuntime(props.controller, props.provider);
     } catch (error) {
       setLocalError(failureMessage(error, "Scient could not update Codex."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const repair = async () => {
+    setLocalError(null);
+    setPendingAction("repair");
+    try {
+      await startReviewedCodexRuntimeAction(props.controller, "repair");
+    } catch (error) {
+      setLocalError(failureMessage(error, "Scient could not repair Codex."));
     } finally {
       setPendingAction(null);
     }
@@ -167,18 +188,24 @@ export function CodexInlineSetup(props: {
     }
   };
 
-  if (activeRuntimeOperation || pendingAction === "install" || pendingAction === "update") {
+  if (
+    activeRuntimeOperation ||
+    pendingAction === "install" ||
+    pendingAction === "repair" ||
+    pendingAction === "update"
+  ) {
     const stage = runtimeStage(activeRuntimeOperation);
     const updating = pendingAction === "update" || activeRuntimeOperation?.action === "update";
+    const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
     return (
       <SetupFrame>
         <LoaderIcon aria-hidden className="mb-3 size-7 animate-spin text-primary" />
         <h2 className="font-semibold text-lg">
-          {updating ? "Updating Codex" : "Installing Codex"}
+          {updating ? "Updating Codex" : repairing ? "Repairing Codex" : "Installing Codex"}
         </h2>
         <p className="mt-1.5 text-muted-foreground text-sm">{stage.label}</p>
         <div
-          aria-label={`Codex ${updating ? "update" : "installation"} progress`}
+          aria-label={`Codex ${updating ? "update" : repairing ? "repair" : "installation"} progress`}
           aria-valuemax={100}
           aria-valuemin={0}
           aria-valuenow={stage.progress}
@@ -209,6 +236,26 @@ export function CodexInlineSetup(props: {
             Cancel
           </Button>
         ) : null}
+      </SetupFrame>
+    );
+  }
+
+  if (needsRuntimeRepair) {
+    const error =
+      localError ??
+      (runtimeOperation?.status === "failed"
+        ? runtimeOperation.message
+        : (props.provider.message ?? "Codex's private runtime could not start."));
+    return (
+      <SetupFrame>
+        <TriangleAlertIcon aria-hidden className="mb-3 size-8 text-warning" />
+        <h2 className="font-semibold text-lg">Codex needs repair</h2>
+        <p className="mt-1.5 max-w-60 text-balance text-muted-foreground text-sm leading-relaxed">
+          {error}
+        </p>
+        <Button className="mt-4 gap-1.5" onClick={() => void repair()} size="sm" type="button">
+          <RefreshCwIcon aria-hidden /> Repair Codex
+        </Button>
       </SetupFrame>
     );
   }

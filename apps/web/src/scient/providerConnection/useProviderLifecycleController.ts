@@ -20,6 +20,10 @@ import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation
 export interface ProviderLifecycleController {
   readonly startConnection: (method: ProviderConnectionMethod) => Promise<ServerProvider>;
   readonly cancelConnection: (operationId: string) => Promise<ServerProvider>;
+  readonly submitAuthorizationCode: (
+    operationId: string,
+    authorizationCode: string,
+  ) => Promise<ServerProvider>;
   readonly disconnect: () => Promise<ServerProvider>;
   readonly openAuthorizationPage: (url: string) => Promise<void>;
   readonly planRuntime: (action: ProviderManagedRuntimeAction) => Promise<ProviderRuntimePlan>;
@@ -59,6 +63,10 @@ export function useProviderLifecycleController(input: {
   const cancelProviderConnection = useAtomCommand(serverEnvironment.cancelProviderConnection, {
     reportFailure: false,
   });
+  const submitProviderAuthorizationCode = useAtomCommand(
+    serverEnvironment.submitProviderAuthorizationCode,
+    { reportFailure: false },
+  );
   const disconnectProvider = useAtomCommand(serverEnvironment.disconnectProvider, {
     reportFailure: false,
   });
@@ -100,6 +108,18 @@ export function useProviderLifecycleController(input: {
       return providerFromResult(value.providers, instanceId);
     },
     [cancelProviderConnection, input.environmentId, instanceId],
+  );
+
+  const submitAuthorizationCode = useCallback(
+    async (operationId: string, authorizationCode: string) => {
+      const result = await submitProviderAuthorizationCode({
+        environmentId: input.environmentId,
+        input: { instanceId, operationId, authorizationCode },
+      });
+      const value = resultValue(result, "Scient could not submit the provider authorization code.");
+      return providerFromResult(value.providers, instanceId);
+    },
+    [input.environmentId, instanceId, submitProviderAuthorizationCode],
   );
 
   const disconnect = useCallback(async () => {
@@ -170,6 +190,7 @@ export function useProviderLifecycleController(input: {
     () => ({
       startConnection,
       cancelConnection,
+      submitAuthorizationCode,
       disconnect,
       openAuthorizationPage,
       planRuntime,
@@ -184,6 +205,7 @@ export function useProviderLifecycleController(input: {
       openAuthorizationPage,
       planRuntime,
       startConnection,
+      submitAuthorizationCode,
       startRuntime,
       updateExternalRuntime,
     ],

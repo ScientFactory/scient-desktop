@@ -47,6 +47,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -80,6 +81,7 @@ interface LiveEntry {
 interface RegistryState {
   readonly entries: Ref.Ref<ReadonlyMap<ProviderInstanceId, LiveEntry>>;
   readonly unavailable: Ref.Ref<ReadonlyMap<ProviderInstanceId, ServerProvider>>;
+  readonly configMap: Ref.Ref<ProviderInstanceConfigMap>;
   readonly changes: PubSub.PubSub<void>;
 }
 
@@ -212,9 +214,15 @@ const makeReconcile = <R>(input: {
   readonly state: RegistryState;
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
   readonly parentScope: Scope.Scope;
-}): ((configMap: ProviderInstanceConfigMap) => Effect.Effect<void, never, R>) => {
+}): ((
+  configMap: ProviderInstanceConfigMap,
+  forceRebuild?: ReadonlySet<ProviderInstanceId>,
+) => Effect.Effect<void, never, R>) => {
   const { state, driversById, parentScope } = input;
-  return (configMap: ProviderInstanceConfigMap) =>
+  return (
+    configMap: ProviderInstanceConfigMap,
+    forceRebuild: ReadonlySet<ProviderInstanceId> = new Set(),
+  ) =>
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
@@ -234,7 +242,10 @@ const makeReconcile = <R>(input: {
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        if (
+          nextEntry !== undefined &&
+          (forceRebuild.has(instanceId) || !entryEqual(live.entry, nextEntry))
+        ) {
           replacedIds.add(instanceId);
         }
       }
@@ -304,6 +315,7 @@ const makeReconcile = <R>(input: {
 
       yield* Ref.set(state.entries, builtEntries);
       yield* Ref.set(state.unavailable, builtUnavailable);
+      yield* Ref.set(state.configMap, configMap);
 
       if (entriesChanged || unavailableChanged) {
         yield* PubSub.publish(state.changes, undefined);
@@ -357,13 +369,28 @@ export const makeProviderInstanceRegistry = <R>(input: {
 
     const entries = yield* Ref.make<ReadonlyMap<ProviderInstanceId, LiveEntry>>(new Map());
     const unavailable = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ServerProvider>>(new Map());
+    const configMap = yield* Ref.make(input.configMap);
     const changes = yield* PubSub.unbounded<void>();
+    const reconcileSemaphore = yield* Semaphore.make(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
 
-    const state: RegistryState = { entries, unavailable, changes };
+    const state: RegistryState = { entries, unavailable, configMap, changes };
     const reconcileWithR = makeReconcile({ state, driversById, parentScope });
-    const reconcile: ProviderInstanceRegistryMutatorShape["reconcile"] = (configMap) =>
-      reconcileWithR(configMap).pipe(Effect.provideContext(driverContext));
+    const reconcile: ProviderInstanceRegistryMutatorShape["reconcile"] = (nextConfigMap) =>
+      reconcileSemaphore.withPermit(
+        reconcileWithR(nextConfigMap).pipe(Effect.provideContext(driverContext)),
+      );
+    const rebuildInstanceUnserialized = Effect.fn(
+      "ProviderInstanceRegistry.rebuildInstanceUnserialized",
+    )(function* (instanceId: ProviderInstanceId) {
+      const currentConfigMap = yield* Ref.get(configMap);
+      if (!(instanceId in currentConfigMap)) return;
+      yield* reconcileWithR(currentConfigMap, new Set([instanceId])).pipe(
+        Effect.provideContext(driverContext),
+      );
+    });
+    const rebuildInstance: ProviderInstanceRegistryShape["rebuildInstance"] = (instanceId) =>
+      reconcileSemaphore.withPermit(rebuildInstanceUnserialized(instanceId));
 
     // Hydrate the initial configMap synchronously so callers can read
     // `listInstances` immediately after this effect completes.
@@ -371,6 +398,7 @@ export const makeProviderInstanceRegistry = <R>(input: {
 
     const registry: ProviderInstanceRegistryShape = {
       getInstance: (id) => Ref.get(entries).pipe(Effect.map((map) => map.get(id)?.instance)),
+      rebuildInstance,
       listInstances: Ref.get(entries).pipe(
         Effect.map(
           (map) =>

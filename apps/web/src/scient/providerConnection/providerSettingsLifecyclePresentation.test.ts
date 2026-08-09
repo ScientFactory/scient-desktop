@@ -106,9 +106,38 @@ describe("provider settings lifecycle presentation", () => {
   it("shows an authenticated provider as ready and manageable", () => {
     expect(
       providerSettingsLifecyclePresentation(
-        provider({ installed: true, auth: { status: "authenticated", label: "ChatGPT" } }),
+        provider({
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", label: "ChatGPT" },
+          models: [
+            {
+              slug: "gpt-5",
+              name: "GPT-5",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        }),
         "Codex",
       ),
     ).toMatchObject({ kind: "ready", statusLabel: "Ready", actionLabel: "Manage" });
+  });
+
+  it("does not call a connected provider ready until it has a usable model", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          auth: { status: "authenticated", label: "Claude subscription" },
+          message: "Claude is signed in, but model discovery failed.",
+        }),
+        "Claude",
+      ),
+    ).toMatchObject({
+      kind: "attention",
+      statusLabel: "Needs attention",
+      detail: "Claude is signed in, but model discovery failed.",
+    });
   });
 });

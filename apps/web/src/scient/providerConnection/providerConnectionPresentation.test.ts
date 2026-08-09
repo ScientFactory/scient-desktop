@@ -4,6 +4,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import {
   canManageProviderLifecycle,
   isSafeProviderAuthorizationUrl,
+  needsManagedRuntimeRecovery,
   preferredProviderConnectionMethod,
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
@@ -109,11 +110,86 @@ describe("providerConnectionPresentation", () => {
     ).toBe("setting-up");
   });
 
+  it("routes a broken managed executable to repair instead of account sign-in", () => {
+    const managedRuntime = {
+      source: "scient_managed" as const,
+      supportTier: "fully_assisted" as const,
+      target: "win32-arm64",
+      actions: ["repair", "remove"] as const,
+      managedVersion: "2.1.170",
+      previousManagedVersion: null,
+      operation: null,
+      message: "Scient is using an app-private, verified Claude runtime.",
+    };
+    expect(
+      needsManagedRuntimeRecovery({
+        ...provider,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "error",
+        auth: { status: "unknown", required: true },
+        message: "Claude is installed but failed to run.",
+        connection: { ...provider.connection!, runtime: managedRuntime },
+      }),
+    ).toBe(true);
+    expect(
+      needsManagedRuntimeRecovery({
+        ...provider,
+        status: "error",
+        auth: { status: "unauthenticated", required: true },
+        message: "Codex CLI is not authenticated.",
+        connection: { ...provider.connection!, runtime: managedRuntime },
+      }),
+    ).toBe(false);
+    expect(
+      needsManagedRuntimeRecovery({
+        ...provider,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "ready",
+        auth: { status: "authenticated", required: true },
+        models: [
+          {
+            slug: "claude-fable-5",
+            name: "Claude Fable 5",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            ...managedRuntime,
+            operation: {
+              operationId: "failed-update",
+              action: "update",
+              status: "failed",
+              startedAt: "2026-08-09T00:00:00.000Z",
+              finishedAt: "2026-08-09T00:00:01.000Z",
+              message: "The update failed; the previous version is still active.",
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("prefers browser login and only permits HTTPS authorization URLs", () => {
     expect(preferredProviderConnectionMethod(provider)).toBe("codex_browser");
     expect(isSafeProviderAuthorizationUrl("https://auth.openai.com/device")).toBe(true);
     expect(isSafeProviderAuthorizationUrl("http://auth.openai.com/device")).toBe(false);
     expect(isSafeProviderAuthorizationUrl("javascript:alert(1)")).toBe(false);
     expect(isSafeProviderAuthorizationUrl("not a URL")).toBe(false);
+  });
+
+  it("prefers a Claude subscription before the console fallback", () => {
+    expect(
+      preferredProviderConnectionMethod({
+        ...provider,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        connection: {
+          ...provider.connection!,
+          methods: ["claude_console", "claude_subscription"],
+        },
+      }),
+    ).toBe("claude_subscription");
   });
 });

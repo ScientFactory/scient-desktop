@@ -134,15 +134,18 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     return { actions, snapshot, provider };
   });
 
+  const takeIfCurrent = (instanceId: ProviderInstanceId, operationId: string) =>
+    Ref.modify(activeRef, (active) => {
+      const current = active.get(instanceId);
+      if (current?.operationId !== operationId) return [undefined, active] as const;
+      const next = new Map(active);
+      next.delete(instanceId);
+      return [current, next] as const;
+    });
+
   const removeIfCurrent = (instanceId: ProviderInstanceId, operationId: string) =>
     Effect.gen(function* () {
-      const removed = yield* Ref.modify(activeRef, (active) => {
-        const current = active.get(instanceId);
-        if (current?.operationId !== operationId) return [undefined, active] as const;
-        const next = new Map(active);
-        next.delete(instanceId);
-        return [current, next] as const;
-      });
+      const removed = yield* takeIfCurrent(instanceId, operationId);
       if (removed) yield* lifecycleCoordinator.release({ operationId });
       return removed;
     });
@@ -181,7 +184,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                 runtime: summary,
               });
             }
-            yield* providerRegistry.refreshInstance(candidate.instanceId);
+            yield* providerRegistry.reloadInstance(candidate.instanceId);
           }).pipe(Effect.ignore),
         { concurrency: 1, discard: true },
       );
@@ -291,69 +294,88 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         },
       });
 
+      const publishUnexpectedFailure = Effect.gen(function* () {
+        const finishedAt = yield* nowIso;
+        yield* providerRegistry.setProviderManagedRuntimeSummary({
+          instanceId: input.instanceId,
+          runtime: {
+            ...baseSummary,
+            operation: operation({
+              operationId,
+              action: input.action,
+              status: "failed",
+              startedAt,
+              finishedAt,
+              message: "The provider runtime operation stopped unexpectedly.",
+            }),
+          },
+        });
+        yield* Effect.logError("Provider runtime supervisor failed");
+      });
+
       const supervise = target.actions
         .run(input.action, input.catalogRevision, publishProgress)
         .pipe(
           Effect.result,
           Effect.flatMap((result) =>
             Effect.gen(function* () {
-              if (result._tag === "Success") {
-                yield* refreshRuntimeInstances(target.provider);
-              }
-              const removed = yield* removeIfCurrent(input.instanceId, operationId);
-              if (!removed) return;
-              const finishedAt = yield* nowIso;
-              const latestSummary = yield* target.actions.getSummary.pipe(
-                Effect.orElseSucceed(() => baseSummary),
+              // Claim finalization atomically. If cancellation won, the
+              // operation must not reload providers or publish a late success.
+              const claimed = yield* takeIfCurrent(input.instanceId, operationId);
+              if (!claimed) return;
+              yield* Effect.gen(function* () {
+                if (result._tag === "Success") {
+                  yield* refreshRuntimeInstances(target.provider);
+                }
+                const finishedAt = yield* nowIso;
+                const latestSummary = yield* target.actions.getSummary.pipe(
+                  Effect.orElseSucceed(() => baseSummary),
+                );
+                yield* providerRegistry.setProviderManagedRuntimeSummary({
+                  instanceId: input.instanceId,
+                  runtime: {
+                    ...latestSummary,
+                    operation: operation({
+                      operationId,
+                      action: input.action,
+                      status: result._tag === "Success" ? "succeeded" : "failed",
+                      startedAt,
+                      finishedAt,
+                      message:
+                        result._tag === "Success"
+                          ? input.action === "remove"
+                            ? "Scient's private provider runtime was removed."
+                            : input.action === "update"
+                              ? "The provider runtime was updated and verified."
+                              : "The provider runtime is installed and verified."
+                          : result.failure.message,
+                    }),
+                  },
+                });
+              }).pipe(
+                Effect.catchCause(() => publishUnexpectedFailure),
+                Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
               );
-              yield* providerRegistry.setProviderManagedRuntimeSummary({
-                instanceId: input.instanceId,
-                runtime: {
-                  ...latestSummary,
-                  operation: operation({
-                    operationId,
-                    action: input.action,
-                    status: result._tag === "Success" ? "succeeded" : "failed",
-                    startedAt,
-                    finishedAt,
-                    message:
-                      result._tag === "Success"
-                        ? input.action === "remove"
-                          ? "Scient's private provider runtime was removed."
-                          : input.action === "update"
-                            ? "The provider runtime was updated and verified."
-                            : "The provider runtime is installed and verified."
-                        : result.failure.message,
-                  }),
-                },
-              });
             }),
           ),
           Effect.catchCause(() =>
             Effect.gen(function* () {
-              const removed = yield* removeIfCurrent(input.instanceId, operationId);
-              if (!removed) return;
-              const finishedAt = yield* nowIso;
-              yield* providerRegistry.setProviderManagedRuntimeSummary({
-                instanceId: input.instanceId,
-                runtime: {
-                  ...baseSummary,
-                  operation: operation({
-                    operationId,
-                    action: input.action,
-                    status: "failed",
-                    startedAt,
-                    finishedAt,
-                    message: "The provider runtime operation stopped unexpectedly.",
-                  }),
-                },
-              });
-              yield* Effect.logError("Provider runtime supervisor failed");
+              const claimed = yield* takeIfCurrent(input.instanceId, operationId);
+              if (!claimed) return;
+              yield* publishUnexpectedFailure.pipe(
+                Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
+              );
             }),
           ),
         );
       const fiber = yield* Effect.forkDetach(supervise);
       yield* Ref.set(fiberRef, fiber);
+      const stillCurrent = (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId;
+      if (stillCurrent !== operationId) {
+        // Cancellation can arrive between publishing the operation and
+        // storing its fiber. Close that tiny race by interrupting immediately.
+        yield* Fiber.interrupt(fiber);
+      }
       return { providers: initialProviders };
     },
   );

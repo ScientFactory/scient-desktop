@@ -61,15 +61,33 @@ export function canManageProviderLifecycle(provider: ServerProvider | undefined)
   );
 }
 
+/**
+ * A managed executable can still exist while its provider probe proves that it
+ * no longer starts correctly. Route that state to runtime recovery instead of
+ * presenting account sign-in as the next action.
+ */
+export function needsManagedRuntimeRecovery(provider: ServerProvider | undefined): boolean {
+  const runtime = provider?.connection?.runtime;
+  return (
+    runtime?.source === "scient_managed" &&
+    provider?.status === "error" &&
+    provider.auth.status !== "unauthenticated"
+  );
+}
+
 export function preferredProviderConnectionMethod(
   provider: ServerProvider,
 ): ProviderConnectionMethod | undefined {
   const methods = provider.connection?.methods ?? [];
   return methods.includes("codex_browser")
     ? "codex_browser"
-    : methods.includes("codex_device_code")
-      ? "codex_device_code"
-      : undefined;
+    : methods.includes("claude_subscription")
+      ? "claude_subscription"
+      : methods.includes("codex_device_code")
+        ? "codex_device_code"
+        : methods.includes("claude_console")
+          ? "claude_console"
+          : undefined;
 }
 
 export function isSafeProviderAuthorizationUrl(value: string): boolean {

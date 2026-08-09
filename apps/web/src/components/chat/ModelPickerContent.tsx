@@ -5,7 +5,16 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  memo,
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
@@ -91,6 +100,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onRequestClose?: () => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  /** Keep a not-ready provider selectable when Scient can render its setup flow inline. */
+  isProviderSetupAvailable?: (entry: ProviderInstanceEntry) => boolean;
+  renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
 }) {
   const {
     keybindings: providedKeybindings,
@@ -138,6 +150,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleSelectInstance = useCallback(
     (instanceId: ProviderInstanceId | "favorites") => {
+      setSearchQuery("");
       setSelectedInstanceId(instanceId);
       window.requestAnimationFrame(() => {
         focusSearchInput();
@@ -264,7 +277,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const setupAvailableInstanceIds = useMemo(() => {
+    if (!props.isProviderSetupAvailable || !props.renderProviderSetup || isLocked) {
+      return undefined;
+    }
+    const instanceIds = new Set<ProviderInstanceId>();
+    for (const entry of sidebarInstanceEntries) {
+      if (!isProviderInstancePickerReady(entry) && props.isProviderSetupAvailable(entry)) {
+        instanceIds.add(entry.instanceId);
+      }
+    }
+    return instanceIds.size > 0 ? instanceIds : undefined;
+  }, [isLocked, props.isProviderSetupAvailable, props.renderProviderSetup, sidebarInstanceEntries]);
+  const selectedSetupEntry =
+    selectedInstanceId !== "favorites" && setupAvailableInstanceIds?.has(selectedInstanceId)
+      ? entryByInstanceId.get(selectedInstanceId)
+      : undefined;
+  const isSearchingModels = isSearching && !selectedSetupEntry;
+  const showSidebar = !isSearchingModels && sidebarInstanceEntries.length > 0;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -608,6 +638,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             onSelectInstance={handleSelectInstance}
             instanceEntries={sidebarInstanceEntries}
             showFavorites
+            {...(setupAvailableInstanceIds ? { setupAvailableInstanceIds } : {})}
             {...(lockedDisabledInstanceIds
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
@@ -658,58 +689,65 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               showSidebar && "border-l border-border/70",
             )}
           >
-            {/* Search bar */}
-            <div className="px-2 pt-2">
-              <div className="border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
-                <ComboboxInput
-                  ref={searchInputRef}
-                  className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm"
-                  placeholder="Search models..."
-                  showTrigger={false}
-                  startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground opacity-70" />
-                  }
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      props.onRequestClose?.();
-                      return;
+            {/* Search is useful only when the selected surface can expose models. */}
+            {!selectedSetupEntry ? (
+              <div className="px-2 pt-2">
+                <div className="border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
+                  <ComboboxInput
+                    ref={searchInputRef}
+                    className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
+                    inputClassName="rounded-none bg-transparent text-sm"
+                    placeholder="Search models..."
+                    showTrigger={false}
+                    startAddon={
+                      <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground opacity-70" />
                     }
-                    if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                      (
-                        e as typeof e & { preventBaseUIHandler?: () => void }
-                      ).preventBaseUIHandler?.();
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const legacyInstanceId = parseModelPickerLegacySectionKey(
-                        highlightedModelKeyRef.current,
-                      );
-                      if (legacyInstanceId) {
-                        toggleLegacySection(legacyInstanceId);
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        props.onRequestClose?.();
                         return;
                       }
-                      const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
-                      if (model) {
-                        handleModelSelect(model.slug, model.instanceId);
+                      if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                        (
+                          e as typeof e & { preventBaseUIHandler?: () => void }
+                        ).preventBaseUIHandler?.();
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const legacyInstanceId = parseModelPickerLegacySectionKey(
+                          highlightedModelKeyRef.current,
+                        );
+                        if (legacyInstanceId) {
+                          toggleLegacySection(legacyInstanceId);
+                          return;
+                        }
+                        const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
+                        if (model) {
+                          handleModelSelect(model.slug, model.instanceId);
+                        }
+                        return;
                       }
-                      return;
-                    }
-                    e.stopPropagation();
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onTouchStart={(e) => e.stopPropagation()}
-                  size="sm"
-                  unstyled
-                />
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    size="sm"
+                    unstyled
+                  />
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
+              {selectedSetupEntry && props.renderProviderSetup ? (
+                <div className="absolute inset-0 z-10 flex overflow-y-auto bg-muted/40">
+                  {props.renderProviderSetup(selectedSetupEntry)}
+                </div>
+              ) : null}
               <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
                 <LegendList<string>
                   ref={modelListRef}
@@ -788,7 +826,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 />
               </ComboboxListVirtualized>
             </div>
-            <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
+            <ComboboxEmpty
+              className={cn(
+                "not-empty:py-6 empty:h-0 text-xs font-normal leading-snug",
+                selectedSetupEntry && "hidden",
+              )}
+            >
               No models found
             </ComboboxEmpty>
           </div>

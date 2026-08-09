@@ -39,8 +39,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
@@ -81,6 +82,13 @@ const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean 
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  // Claude's probe returns T3's curated versioned catalog together with the
+  // current settings-defined custom models. Treat it as authoritative so SDK
+  // aliases or models from an older catalog cannot survive a refresh.
+  if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
+    return false;
+  }
+
   if (provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
   }
@@ -215,6 +223,7 @@ export const ProviderRegistryLive = Layer.effect(
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const layerScope = yield* Scope.Scope;
 
     // Aggregator PubSub — consumers (WS gateway, etc.) subscribe here for
     // coalesced updates across every instance.
@@ -796,6 +805,16 @@ export const ProviderRegistryLive = Layer.effect(
       () => syncLiveSourcesAndContinue,
     ).pipe(Effect.forkScoped);
 
+    const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
+      instanceId: ProviderInstanceId,
+    ) {
+      yield* instanceRegistry.rebuildInstance(instanceId);
+      // Do not race the registry-change subscriber: attach the replacement
+      // source synchronously before asking it to probe the newly active path.
+      yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
+      return yield* refreshInstance(instanceId);
+    });
+
     const recoverRefreshFailure = Effect.fn("recoverRefreshFailure")(function* (
       cause: Cause.Cause<unknown>,
     ) {
@@ -814,6 +833,8 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      reloadInstance: (instanceId: ProviderInstanceId) =>
+        reloadInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,

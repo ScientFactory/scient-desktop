@@ -1492,6 +1492,12 @@ const makeWsRpcLayer = (
             providerConnectionManager.cancel(input),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverSubmitProviderAuthorizationCode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSubmitProviderAuthorizationCode,
+            providerConnectionManager.submitAuthorizationCode(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverDisconnectProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverDisconnectProvider,

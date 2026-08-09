@@ -77,6 +77,7 @@ function makeHarness(
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
+    const reloadCountRef = yield* Ref.make(0);
     const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
       Ref.updateAndGet(providersRef, (providers) =>
         providers.map((candidate) =>
@@ -92,6 +93,10 @@ function makeHarness(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
+      reloadInstance: () =>
+        Ref.update(reloadCountRef, (count) => count + 1).pipe(
+          Effect.andThen(Ref.get(providersRef)),
+        ),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
@@ -109,7 +114,7 @@ function makeHarness(
       Effect.provideService(ProviderLifecycleCoordinator, coordinator),
       Effect.provide(NodeServices.layer),
     );
-    return { manager, providersRef };
+    return { manager, providersRef, reloadCountRef };
   });
 }
 
@@ -152,7 +157,7 @@ describe("ProviderRuntimeManager", () => {
             totalBytes: 100,
           }).pipe(Effect.andThen(Ref.set(installed, true))),
       };
-      const { manager, providersRef } = yield* makeHarness(actions);
+      const { manager, providersRef, reloadCountRef } = yield* makeHarness(actions);
       const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
       assert.strictEqual(planned.catalogRevision, "reviewed:1");
       yield* manager.start({
@@ -168,6 +173,7 @@ describe("ProviderRuntimeManager", () => {
       const runtime = completed[0]?.connection?.runtime;
       assert.strictEqual(runtime?.source, "scient_managed");
       assert.strictEqual(runtime?.managedVersion, "0.147.0");
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
     }),
   );
 
@@ -198,7 +204,7 @@ describe("ProviderRuntimeManager", () => {
         plan: () => Effect.succeed(installPlan()),
         run: () => Deferred.await(never),
       };
-      const { manager } = yield* makeHarness(actions);
+      const { manager, reloadCountRef } = yield* makeHarness(actions);
       const started = yield* manager.start({
         instanceId: INSTANCE,
         action: "install",
@@ -212,6 +218,8 @@ describe("ProviderRuntimeManager", () => {
         "cancelled",
       );
       assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "missing");
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
     }),
   );
 

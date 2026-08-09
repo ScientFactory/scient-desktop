@@ -3,7 +3,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -42,6 +42,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  isProviderSetupAvailable?: (entry: ProviderInstanceEntry) => boolean;
+  renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -204,6 +206,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.getModelDisabledReason
             ? { getModelDisabledReason: props.getModelDisabledReason }
             : {})}
+          {...(props.isProviderSetupAvailable
+            ? { isProviderSetupAvailable: props.isProviderSetupAvailable }
+            : {})}
+          {...(props.renderProviderSetup ? { renderProviderSetup: props.renderProviderSetup } : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
       </PopoverPopup>

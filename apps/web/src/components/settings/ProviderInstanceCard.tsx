@@ -48,6 +48,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { canManageProviderLifecycle } from "../../scient/providerConnection/providerConnectionPresentation";
 import { providerSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
 import { CodexProviderLifecycleAction } from "../../scient/providerConnection/CodexProviderLifecycleAction";
+import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -429,14 +430,15 @@ export function ProviderInstanceCard({
       : connectionPresentation.kind === "signing-in" || connectionPresentation.kind === "installing"
         ? "info"
         : connectionPresentation.kind === "sign-in-required" ||
-            connectionPresentation.kind === "not-installed"
+            connectionPresentation.kind === "not-installed" ||
+            connectionPresentation.kind === "attention"
           ? "warning"
           : "secondary";
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const usesScientManagedRuntime =
-    liveProvider?.driver === "codex" &&
+    (liveProvider?.driver === "codex" || liveProvider?.driver === "claudeAgent") &&
     liveProvider.connection?.runtime?.source === "scient_managed";
-  // A Scient-managed Codex copy updates only through the reviewed managed
+  // A Scient-managed provider copy updates only through the reviewed managed
   // artifact path. Do not expose T3's external package-manager update command
   // for that same executable; the visible lifecycle action below owns it.
   const versionAdvisory = usesScientManagedRuntime
@@ -802,6 +804,17 @@ export function ProviderInstanceCard({
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
+            {usesScientManagedRuntime && liveProvider ? (
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-foreground">Runtime maintenance</p>
+                <ProviderRuntimeSection
+                  displayName={displayName}
+                  environmentId={environmentId}
+                  provider={liveProvider}
+                />
+              </div>
+            ) : null}
+
             <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
                 <span className="text-xs font-medium text-foreground">Display name</span>
