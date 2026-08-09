@@ -3,22 +3,38 @@ import { AuthOrchestrationOperateScope, EnvironmentHttpApi } from "@t3tools/cont
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as Option from "effect/Option";
 
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 
 class ScientProjectFilesystemError extends Data.TaggedError("ScientProjectFilesystemError")<{
   readonly cause: unknown;
 }> {}
 
+function projectFailureClass(cause: unknown): "filesystem" | "permission" | "validation" {
+  if (cause instanceof Error && "code" in cause) {
+    const code = String(cause.code);
+    if (code === "EACCES" || code === "EPERM") return "permission";
+    if (["EIO", "ENOENT", "ENOSPC", "EROFS"].includes(code)) return "filesystem";
+  }
+  return "validation";
+}
+
 export const scientProjectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "scientProject",
   Effect.fnUntraced(function* (handlers) {
-    yield* Effect.void;
+    const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
+    const recordAnalytics = (event: string, properties: Readonly<Record<string, unknown>>) =>
+      Option.match(analytics, {
+        onNone: () => Effect.void,
+        onSome: (service) => service.record(event, properties),
+      });
     return handlers
       .handle(
         "inspect",
@@ -49,6 +65,17 @@ export const scientProjectHttpApiLayer = HttpApiBuilder.group(
               }),
             catch: (cause) => new ScientProjectFilesystemError({ cause }),
           }).pipe(
+            Effect.tap((result) =>
+              recordAnalytics("project.initialization.completed", {
+                outcome: result.created.length === 0 ? "already-ready" : "created",
+                filesCreated: result.created.length,
+              }),
+            ),
+            Effect.tapError((error) =>
+              recordAnalytics("project.initialization.failed", {
+                failureClass: projectFailureClass(error.cause),
+              }),
+            ),
             Effect.catch((cause) =>
               failEnvironmentInternal("scient_project_initialization_failed", cause),
             ),

@@ -14,8 +14,10 @@ import {
   type AnalyticsRuntime,
 } from "@scientfactory/analytics";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -94,6 +96,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
   const consent = parseConsent(analyticsConfig.consent);
+  const sessionStartedAt = yield* Clock.currentTimeMillis;
 
   if (analyticsConfig.enabled && consent === "off" && analyticsConfig.consent !== "off") {
     yield* Effect.logWarning("Invalid Scient analytics consent; analytics remains off");
@@ -119,11 +122,31 @@ export const make = Effect.gen(function* () {
       ),
     ),
     (activeRuntime) =>
-      Effect.tryPromise({
-        try: () => activeRuntime.close(),
-        catch: () => "analytics-shutdown-failed" as const,
+      Effect.gen(function* () {
+        const sessionEndedAt = yield* Clock.currentTimeMillis;
+        activeRuntime.record("app.session.ended", {
+          durationMs: sessionEndedAt - sessionStartedAt,
+          shutdownClass: "graceful",
+        });
+        yield* Effect.tryPromise({
+          try: () => activeRuntime.close(),
+          catch: () => "analytics-shutdown-failed" as const,
+        });
       }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics shutdown cleanup failed"))),
   );
+
+  runtime.record("app.session.started", {
+    platform:
+      NodeProcess.platform === "darwin"
+        ? "macos"
+        : NodeProcess.platform === "win32"
+          ? "windows"
+          : NodeProcess.platform === "linux"
+            ? "linux"
+            : "other",
+    architecture:
+      NodeProcess.arch === "arm64" || NodeProcess.arch === "x64" ? NodeProcess.arch : "other",
+  });
 
   const record: AnalyticsService["Service"]["record"] = (event, properties) =>
     Effect.try({
