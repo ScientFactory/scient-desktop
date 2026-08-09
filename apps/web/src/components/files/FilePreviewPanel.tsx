@@ -4,7 +4,6 @@ import type {
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
@@ -14,9 +13,9 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import { openFileInPreview, resolveWorkspaceFileLinkOpenTarget } from "~/browser/openFileInPreview";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
@@ -55,7 +54,12 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { LocalCommentAnnotation } from "./LocalCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isMarkdownPreviewFile,
+  resolveFilePreviewKind,
+  setMarkdownTaskChecked,
+  shouldLoadFileAsText,
+} from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
@@ -125,6 +129,11 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
     color: var(--diffs-selection-number-fg) !important;
   }
 `;
+const ScientPdfReader = lazy(() =>
+  import("~/scient/pdf/ScientPdfReader").then((module) => ({
+    default: module.ScientPdfReader,
+  })),
+);
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 
 function WorkspaceImagePreview(props: {
@@ -779,9 +788,18 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
-  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
+  const previewKind = resolveFilePreviewKind(relativePath);
+  const isImage = previewKind === "image";
+  const isPdf = previewKind === "pdf";
+  const file = useProjectFileQuery(
+    environmentId,
+    cwd,
+    relativePath,
+    shouldLoadFileAsText(relativePath),
+  );
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
+  const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
@@ -804,7 +822,9 @@ export default function FilePreviewPanel({
     (revealLine === null ||
       (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
   const canOpenInBrowser =
-    relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
+    relativePath !== null &&
+    isPreviewSupportedInRuntime() &&
+    resolveWorkspaceFileLinkOpenTarget(relativePath) === "browser";
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
   const breadcrumbs = useMemo(
     () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
@@ -820,6 +840,10 @@ export default function FilePreviewPanel({
   }, [relativePath]);
 
   const toggleExplorer = () => {
+    if (isPdf) {
+      setPdfExplorerOpen((current) => !current);
+      return;
+    }
     setExplorerOpen((current) => {
       const next = !current;
       try {
@@ -953,9 +977,9 @@ export default function FilePreviewPanel({
               render={
                 <Toggle
                   className="shrink-0"
-                  pressed={explorerOpen}
+                  pressed={effectiveExplorerOpen}
                   onPressedChange={toggleExplorer}
-                  aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+                  aria-label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
                   variant="ghost"
                   size="sm"
                 >
@@ -964,12 +988,12 @@ export default function FilePreviewPanel({
               }
             />
             <TooltipPopup>
-              {explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              {effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
             </TooltipPopup>
           </Tooltip>
         </div>
       ) : null}
-      {relativePath && file.data?.truncated ? (
+      {relativePath && !isPdf && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
@@ -989,6 +1013,22 @@ export default function FilePreviewPanel({
               absolutePath={absolutePath}
               alt={relativePath}
             />
+          ) : relativePath && isPdf && absolutePath ? (
+            <Suspense
+              fallback={
+                <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+                  <LoaderCircle className="size-5 animate-spin" />
+                </div>
+              }
+            >
+              <ScientPdfReader
+                key={absolutePath}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                absolutePath={absolutePath}
+                fileName={relativePath.split(/[\\/]/).at(-1) ?? relativePath}
+              />
+            </Suspense>
           ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
               {file.error}
@@ -1050,7 +1090,7 @@ export default function FilePreviewPanel({
             )
           ) : null}
         </div>
-        {explorerOpen || relativePath === null ? (
+        {effectiveExplorerOpen || relativePath === null ? (
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",

@@ -5,7 +5,12 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isMarkdownPreviewFile,
+  resolveFilePreviewKind,
+  setMarkdownTaskChecked,
+  shouldLoadFileAsText,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -63,6 +68,23 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("PDF file routing", () => {
+  it.each(["paper.pdf", "sources/PAPER.PDF", "paper.pdf?download=1"])(
+    "bypasses projects.readFile for %s",
+    (path) => {
+      expect(resolveFilePreviewKind(path)).toBe("pdf");
+      expect(shouldLoadFileAsText(path)).toBe(false);
+    },
+  );
+
+  it("keeps binary-image and text routing distinct", () => {
+    expect(resolveFilePreviewKind("figure.png")).toBe("image");
+    expect(shouldLoadFileAsText("figure.png")).toBe(false);
+    expect(resolveFilePreviewKind("notes.md")).toBe("text");
+    expect(shouldLoadFileAsText("notes.md")).toBe(true);
   });
 });
 

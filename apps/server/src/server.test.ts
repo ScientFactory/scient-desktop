@@ -1377,6 +1377,7 @@ const assertBrowserApiCorsPreflightHeaders = (
   assertBrowserApiCorsResponseHeaders(headers, options);
   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-methods"] ?? null), [
     "GET",
+    "HEAD",
     "OPTIONS",
     "POST",
   ]);
@@ -1385,6 +1386,7 @@ const assertBrowserApiCorsPreflightHeaders = (
     "b3",
     "content-type",
     "dpop",
+    "range",
     "traceparent",
   ]);
 };
@@ -4331,6 +4333,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.headers["access-control-allow-origin"], "*");
       assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-methods"]), [
         "GET",
+        "HEAD",
         "OPTIONS",
         "POST",
       ]);
@@ -4339,6 +4342,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "b3",
         "content-type",
         "dpop",
+        "range",
         "traceparent",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),

@@ -28,6 +28,7 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { parseSingleByteRange } from "./assets/byteRange.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -186,40 +187,97 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
   ),
 );
 
-export const assetRouteLayer = HttpRouter.add(
-  "GET",
-  `${ASSET_ROUTE_PREFIX}/*`,
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
-    }
+export const assetRouteHandler = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return HttpServerResponse.text("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "GET, HEAD" },
+    });
+  }
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) {
+    return HttpServerResponse.text("Bad Request", { status: 400 });
+  }
 
-    const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-    const separatorIndex = suffix.indexOf("/");
-    if (separatorIndex <= 0) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
+  const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+  const separatorIndex = suffix.indexOf("/");
+  if (separatorIndex <= 0) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
 
-    const asset = yield* resolveAsset(
-      suffix.slice(0, separatorIndex),
-      suffix.slice(separatorIndex + 1),
-    );
-    if (!asset) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
-    return yield* HttpServerResponse.file(asset.path, {
-      status: 200,
+  const asset = yield* resolveAsset(
+    suffix.slice(0, separatorIndex),
+    suffix.slice(separatorIndex + 1),
+  );
+  if (!asset) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const info = yield* fileSystem.stat(asset.path).pipe(Effect.orElseSucceed(() => null));
+  if (!info || info.type !== "File") {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+
+  const fileSize = Number(info.size);
+  const fileMtimeMs = Option.match(info.mtime, {
+    onNone: () => null,
+    onSome: (mtime) => mtime.getTime(),
+  });
+  if (
+    asset.revision &&
+    (asset.revision.size !== fileSize ||
+      (asset.revision.mtimeMs !== null && asset.revision.mtimeMs !== fileMtimeMs))
+  ) {
+    return HttpServerResponse.text("Asset changed", { status: 409 });
+  }
+  const etag = `W/"${fileSize}-${fileMtimeMs ?? 0}"`;
+  const headers = {
+    "Accept-Ranges": "bytes",
+    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
+    "Cache-Control": "private, max-age=3600",
+    "Content-Type": Mime.getType(asset.path) ?? "application/octet-stream",
+    ETag: etag,
+    "X-Content-Type-Options": "nosniff",
+  };
+  const rangeHeader = request.headers["range"];
+  const parsedRange =
+    rangeHeader === undefined || !Number.isSafeInteger(fileSize)
+      ? "unsupported"
+      : parseSingleByteRange(rangeHeader, fileSize);
+
+  if (parsedRange === "unsatisfiable") {
+    return HttpServerResponse.empty({
+      status: 416,
       headers: {
-        "Cache-Control": "private, max-age=3600",
-        "X-Content-Type-Options": "nosniff",
+        ...headers,
+        "Content-Range": `bytes */${fileSize}`,
       },
-    }).pipe(
-      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
-    );
-  }),
-);
+    });
+  }
+
+  return yield* HttpServerResponse.file(asset.path, {
+    status: parsedRange === "unsupported" ? 200 : 206,
+    headers:
+      parsedRange === "unsupported"
+        ? headers
+        : {
+            ...headers,
+            "Content-Range": `bytes ${parsedRange.start}-${parsedRange.end}/${fileSize}`,
+          },
+    ...(parsedRange === "unsupported"
+      ? {}
+      : {
+          offset: parsedRange.start,
+          bytesToRead: parsedRange.end - parsedRange.start + 1,
+        }),
+  }).pipe(
+    Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
+  );
+});
+
+export const assetRouteLayer = HttpRouter.add("*", `${ASSET_ROUTE_PREFIX}/*`, assetRouteHandler);
 
 export const staticAndDevRouteLayer = HttpRouter.add(
   "GET",

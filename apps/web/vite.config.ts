@@ -14,6 +14,7 @@ import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { scientPdfAssets } from "./scripts/scientPdfAssets";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -170,6 +171,7 @@ export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      scientPdfAssets(),
       devCompressionPlugin(),
       tanstackRouter(),
       react(),
