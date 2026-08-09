@@ -1,0 +1,20 @@
+:root {
+  /* Fixed-pixel surfaces that do not inherit the interface size preference. */
+  --scient-font-size-file-tree: 14px;
+  --scient-font-size-inline-file-chip: 14px;
+  --scient-font-size-compact-meta: 13px;
+  --scient-font-size-diff-header: 14px;
+}
+
+.scient-chat-inline-chip {
+  font-size: var(--scient-font-size-inline-file-chip);
+}
+
+.scient-file-link-tooltip,
+.scient-compact-meta {
+  font-size: var(--scient-font-size-compact-meta);
+}
+
+.scient-code-text {
+  font-size: var(--font-size-code);
+}
