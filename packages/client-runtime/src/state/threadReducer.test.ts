@@ -305,6 +305,42 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
       }
     });
+
+    it("relocates an open General Chat without replacing its conversation", () => {
+      const generalChat: OrchestrationThread = {
+        ...baseThread,
+        projectId: null,
+        workspaceRoot: "/tmp/general-chat",
+        branch: "general-chat-branch",
+        worktreePath: "/tmp/general-chat-worktree",
+      };
+      const result = applyThreadDetailEvent(generalChat, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-research"),
+          workspaceRoot: null,
+          branch: null,
+          worktreePath: null,
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.id).toBe(generalChat.id);
+        expect(result.thread.projectId).toBe("project-research");
+        expect(result.thread.workspaceRoot).toBeNull();
+        expect(result.thread.branch).toBeNull();
+        expect(result.thread.worktreePath).toBeNull();
+        expect(result.thread.messages).toBe(generalChat.messages);
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

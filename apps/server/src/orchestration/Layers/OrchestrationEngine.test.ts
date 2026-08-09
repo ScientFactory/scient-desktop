@@ -567,6 +567,69 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("durably relocates a projectless General Chat without changing its identity", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const targetProjectId = asProjectId("project-general-chat-target");
+    const threadId = ThreadId.make("thread-general-chat-relocation");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-general-chat-target-create"),
+        projectId: targetProjectId,
+        title: "Research Project",
+        workspaceRoot: "/tmp/general-chat-target",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-general-chat-create"),
+        threadId,
+        projectId: null,
+        workspaceRoot: "/tmp/general-chat-environment",
+        title: "General chat",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: "general-chat-branch",
+        worktreePath: "/tmp/general-chat-worktree",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-general-chat-move"),
+        threadId,
+        moveToProjectId: targetProjectId,
+      }),
+    );
+
+    const snapshot = await system.readModel();
+    const relocated = snapshot.threads.find((thread) => thread.id === threadId);
+    expect(relocated).toMatchObject({
+      id: threadId,
+      projectId: targetProjectId,
+      workspaceRoot: null,
+      branch: null,
+      worktreePath: null,
+      title: "General chat",
+    });
+
+    await system.dispose();
+  });
+
   it("allows authoritative worktree bootstrap to assign a temporary branch", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

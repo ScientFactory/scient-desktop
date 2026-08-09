@@ -630,6 +630,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
+            workspaceRoot: event.payload.workspaceRoot ?? null,
             title: event.payload.title,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
@@ -842,6 +843,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            // SCIENT-FORK:START — keep the durable thread shell/detail
+            // projection aligned with an atomic General Chat relocation.
+            ...(event.payload.projectId !== undefined
+              ? { projectId: event.payload.projectId }
+              : {}),
+            ...(event.payload.workspaceRoot !== undefined
+              ? { workspaceRoot: event.payload.workspaceRoot }
+              : {}),
+            // SCIENT-FORK:END
             updatedAt: event.payload.updatedAt,
           });
           return;

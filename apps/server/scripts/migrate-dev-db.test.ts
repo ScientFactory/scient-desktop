@@ -48,8 +48,8 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       ] as const;
       for (const [threadId, projectId, status, settledAt, monitorJson] of threads) {
         yield* sql`INSERT INTO projection_threads
-          (thread_id, project_id, title, created_at, updated_at, settled_at, monitor_json)
-          VALUES (${threadId}, ${projectId}, ${threadId}, '2026-08-01', '2026-08-01', ${settledAt}, ${monitorJson})`;
+          (thread_id, project_id, title, model_selection_json, created_at, updated_at, settled_at, monitor_json)
+          VALUES (${threadId}, ${projectId}, ${threadId}, '{"provider":"codex","model":"gpt-5.4"}', '2026-08-01', '2026-08-01', ${settledAt}, ${monitorJson})`;
         yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, updated_at)
           VALUES (${threadId}, ${status}, '2026-08-01')`;
         yield* sql`INSERT INTO orchestration_events
