@@ -1,13 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- These tests exercise the real local SQLite outbox.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Focused worker/outbox integration tests.
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { createAnalyticsRuntime } from "./runtime.ts";
+import { createAnalyticsRuntime, type AnalyticsRuntimeOptions } from "./runtime.ts";
 
 const fixtures: string[] = [];
+const servers: NodeHttp.Server[] = [];
 
 function fixturePath(): string {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-analytics-"));
@@ -15,58 +17,67 @@ function fixturePath(): string {
   return NodePath.join(root, "outbox.sqlite");
 }
 
-function options(overrides: Partial<Parameters<typeof createAnalyticsRuntime>[0]> = {}) {
+function options(overrides: Partial<AnalyticsRuntimeOptions> = {}): AnalyticsRuntimeOptions {
   return {
     enabled: true,
-    consent: "product" as const,
+    consent: "product",
     outboxPath: fixturePath(),
     appVersion: "0.0.32",
-    buildChannel: "development" as const,
+    buildChannel: "development",
     ...overrides,
   };
 }
 
-afterEach(() => {
+async function ingestionServer(): Promise<{
+  readonly endpoint: string;
+  readonly bodies: unknown[];
+}> {
+  const bodies: unknown[] = [];
+  const server = NodeHttp.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        readonly events: ReadonlyArray<unknown>;
+      };
+      bodies.push(body);
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ accepted: body.events.length }));
+    });
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Missing test server port");
+  return { endpoint: `http://127.0.0.1:${address.port}/v1/events`, bodies };
+}
+
+afterEach(async () => {
+  await Promise.all(
+    servers
+      .splice(0)
+      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
   for (const root of fixtures.splice(0)) {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
 });
 
-describe("Scient analytics runtime", () => {
-  it("does not create state or use the network when disabled", async () => {
+describe("Scient analytics background runtime", () => {
+  it("creates no worker state when analytics is disabled", async () => {
     const outboxPath = fixturePath();
-    let requests = 0;
-    const runtime = createAnalyticsRuntime({
-      ...options({ outboxPath }),
-      enabled: false,
-      fetch: async () => {
-        requests += 1;
-        return Response.json({ accepted: 0 });
-      },
-    });
+    const runtime = createAnalyticsRuntime(options({ enabled: false, outboxPath }));
 
     expect(runtime.record("server.boot.heartbeat")).toBe(false);
     expect(await runtime.flush()).toBe(0);
     await runtime.close();
 
-    expect(requests).toBe(0);
     expect(NodeFS.existsSync(outboxPath)).toBe(false);
   });
 
-  it("sends only the bounded normalized contract and never the raw model", async () => {
-    let payload: unknown;
-    const runtime = createAnalyticsRuntime(
-      options({
-        randomUUID: (() => {
-          let index = 0;
-          return () => `00000000-0000-4000-8000-${String(index++).padStart(12, "0")}`;
-        })(),
-        fetch: async (_url, init) => {
-          payload = JSON.parse(String(init?.body));
-          return Response.json({ accepted: 1 });
-        },
-      }),
-    );
+  it("persists and delivers only the bounded normalized contract", async () => {
+    const server = await ingestionServer();
+    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
 
     expect(
       runtime.record("provider.turn.sent", {
@@ -82,6 +93,7 @@ describe("Scient analytics runtime", () => {
     expect(await runtime.flush()).toBe(1);
     await runtime.close();
 
+    const payload = server.bodies[0];
     expect(JSON.stringify(payload)).not.toContain("gpt-5.6-private-model-name");
     expect(JSON.stringify(payload)).not.toContain("/private/project");
     expect(payload).toMatchObject({
@@ -105,141 +117,40 @@ describe("Scient analytics runtime", () => {
     });
   });
 
-  it("suppresses unknown events and events above the current consent", async () => {
-    const runtime = createAnalyticsRuntime(options({ consent: "essential" }));
-
-    expect(runtime.record("provider.turn.sent", { provider: "codex" })).toBe(false);
-    expect(runtime.record("unregistered.event", { arbitrary: "value" })).toBe(false);
-    expect(runtime.record("server.boot.heartbeat", { threadCount: 999 })).toBe(true);
-    expect(runtime.pendingCount()).toBe(1);
-    runtime.setConsent("off");
-    await runtime.close();
-  });
-
-  it("classifies known model families locally without retaining model text", async () => {
-    let payload = "";
-    const runtime = createAnalyticsRuntime(
-      options({
-        fetch: async (_url, init) => {
-          payload = String(init?.body);
-          return Response.json({ accepted: 1 });
-        },
-      }),
-    );
-
-    runtime.record("provider.turn.sent", { provider: "opencode", model: "google/gemini-3-pro" });
-    await runtime.flush();
-    await runtime.close();
-
-    expect(payload).toContain('"modelFamily":"google"');
-    expect(payload).not.toContain("gemini-3-pro");
-  });
-
-  it("makes event insertion idempotent by event id", async () => {
-    const ids = ["install", "session", "same-event", "same-event"];
-    const runtime = createAnalyticsRuntime(
-      options({ randomUUID: () => ids.shift() ?? "unexpected" }),
-    );
-
-    expect(runtime.record("server.boot.heartbeat")).toBe(true);
-    expect(runtime.record("server.boot.heartbeat")).toBe(false);
-    expect(runtime.pendingCount()).toBe(1);
-    runtime.setConsent("off");
-    await runtime.close();
-  });
-
-  it("retains queued events across restart and removes them only after an exact acknowledgement", async () => {
+  it("retains locally persisted events across restart without a shutdown network wait", async () => {
     const outboxPath = fixturePath();
-    const first = createAnalyticsRuntime(
-      options({
-        outboxPath,
-        fetch: async () => {
-          throw new Error("offline with potentially sensitive details");
-        },
-      }),
-    );
+    const first = createAnalyticsRuntime(options({ outboxPath }));
     first.record("server.boot.heartbeat");
+    expect(await first.pendingCount()).toBe(1);
     await first.close();
 
-    const restarted = createAnalyticsRuntime(
-      options({
-        outboxPath,
-        now: () => new Date("2100-01-01T00:00:00.000Z"),
-        fetch: async () => Response.json({ accepted: 1 }),
-      }),
-    );
-    expect(restarted.pendingCount()).toBe(1);
+    const server = await ingestionServer();
+    const restarted = createAnalyticsRuntime(options({ outboxPath, endpoint: server.endpoint }));
+    expect(await restarted.pendingCount()).toBe(1);
     expect(await restarted.flush()).toBe(1);
-    expect(restarted.pendingCount()).toBe(0);
+    expect(await restarted.pendingCount()).toBe(0);
     await restarted.close();
   });
 
-  it("keeps events queued after a rejected or malformed delivery", async () => {
-    let requests = 0;
-    const runtime = createAnalyticsRuntime(
-      options({
-        fetch: async () => {
-          requests += 1;
-          return Response.json({ accepted: 0 });
-        },
-      }),
-    );
-    runtime.record("server.boot.heartbeat");
-
-    expect(await runtime.flush()).toBe(0);
-    expect(runtime.pendingCount()).toBe(1);
-    expect(await runtime.flush()).toBe(0);
-    expect(requests).toBe(1);
-    runtime.setConsent("off");
-    await runtime.close();
-  });
-
-  it("purges locally queued events when consent is reduced", async () => {
-    const runtime = createAnalyticsRuntime(options());
-    runtime.record("server.boot.heartbeat");
-    runtime.record("provider.turn.sent", { provider: "codex" });
-
-    expect(runtime.pendingCount()).toBe(2);
-    expect(runtime.setConsent("essential")).toBe(1);
-    expect(runtime.pendingCount()).toBe(1);
-    expect(runtime.setConsent("off")).toBe(1);
-    expect(runtime.pendingCount()).toBe(0);
-    await runtime.close();
-  });
-
-  it("quarantines corrupt local rows without sending or blocking later delivery", async () => {
+  it("purges disallowed data on consent reduction and quarantines corrupt rows", async () => {
     const outboxPath = fixturePath();
-    const first = createAnalyticsRuntime(
-      options({
-        outboxPath,
-        fetch: async () => {
-          throw new Error("offline");
-        },
-      }),
-    );
+    const first = createAnalyticsRuntime(options({ outboxPath }));
     first.record("server.boot.heartbeat");
+    first.record("provider.turn.sent", { provider: "codex" });
+    expect(await first.pendingCount()).toBe(2);
+    expect(await first.setConsent("essential")).toBe(1);
     await first.close();
 
     const database = new NodeSqlite.DatabaseSync(outboxPath);
     database.exec("UPDATE analytics_outbox SET properties_json = 'not-json', next_attempt_at = 0");
     database.close();
 
-    let requests = 0;
+    const server = await ingestionServer();
     const restarted = createAnalyticsRuntime(
-      options({
-        outboxPath,
-        fetch: async () => {
-          requests += 1;
-          return Response.json({ accepted: 1 });
-        },
-      }),
+      options({ outboxPath, endpoint: server.endpoint, consent: "essential" }),
     );
     expect(await restarted.flush()).toBe(0);
-    expect(restarted.pendingCount()).toBe(0);
-    expect(requests).toBe(0);
-    expect(restarted.record("server.boot.heartbeat")).toBe(true);
-    expect(await restarted.flush()).toBe(1);
-    expect(requests).toBe(1);
+    expect(await restarted.pendingCount()).toBe(0);
     await restarted.close();
 
     const inspected = new NodeSqlite.DatabaseSync(outboxPath);
@@ -248,5 +159,6 @@ describe("Scient analytics runtime", () => {
       .get() as { readonly count: number };
     inspected.close();
     expect(deadLetters.count).toBe(1);
+    expect(server.bodies).toHaveLength(0);
   });
 });

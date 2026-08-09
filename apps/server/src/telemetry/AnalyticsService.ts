@@ -58,6 +58,13 @@ function disabledRuntime(outboxPath: string): AnalyticsRuntime {
   });
 }
 
+function packagedAnalyticsWorkerUrl(): URL {
+  const moduleUrl = new URL(import.meta.url);
+  return moduleUrl.pathname.endsWith("/dist/bin.mjs")
+    ? new URL("./analytics-worker.mjs", moduleUrl)
+    : new URL("../../dist/analytics-worker.mjs", moduleUrl);
+}
+
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
@@ -101,6 +108,7 @@ export const make = Effect.gen(function* () {
           outboxPath,
           appVersion: packageJson.version,
           buildChannel: parseBuildChannel(analyticsConfig.buildChannel),
+          workerUrl: packagedAnalyticsWorkerUrl(),
         }),
       catch: () => "analytics-initialization-failed" as const,
     }).pipe(
@@ -114,7 +122,7 @@ export const make = Effect.gen(function* () {
       Effect.tryPromise({
         try: () => activeRuntime.close(),
         catch: () => "analytics-shutdown-failed" as const,
-      }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics shutdown flush failed"))),
+      }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics shutdown cleanup failed"))),
   );
 
   const record: AnalyticsService["Service"]["record"] = (event, properties) =>

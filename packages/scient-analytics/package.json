@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./worker": {
+      "types": "./src/workerRuntime.ts",
+      "import": "./src/workerRuntime.ts"
     }
   },
   "scripts": {

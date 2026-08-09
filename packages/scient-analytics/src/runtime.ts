@@ -1,44 +1,40 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- This package owns Scient's local analytics boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- This package owns Scient's local worker boundary.
 import * as NodeCrypto from "node:crypto";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import {
-  ANALYTICS_SCHEMA_VERSION,
-  ANALYTICS_SOURCE,
-  type AnalyticsBatch,
   type AnalyticsConsent,
-  type AnalyticsEvent,
+  type AnalyticsPriority,
   consentAllows,
   type NormalizationContext,
   normalizeInheritedEvent,
 } from "./contract.ts";
-import { AnalyticsOutbox } from "./outbox.ts";
+import type {
+  AnalyticsEventDraft,
+  AnalyticsWorkerCommand,
+  AnalyticsWorkerResponse,
+} from "./workerProtocol.ts";
 
 const DEFAULT_ENDPOINT = "https://events.scientfactory.com/v1/events";
-const BATCH_SIZE = 50;
-const REQUEST_TIMEOUT_MS = 3_000;
-const MAX_RETRY_MS = 30 * 60 * 1_000;
+const MEMORY_QUEUE_LIMIT = 1_000;
+const WORKER_BATCH_SIZE = 100;
+const MAX_IN_FLIGHT_BATCHES = 2;
+const WRITE_COALESCE_MS = 100;
+const CONTROL_TIMEOUT_MS = 3_500;
+const LOCAL_SHUTDOWN_BUDGET_MS = 300;
 
-class DeliveryFailure extends Error {
-  readonly errorClass: string;
-
-  constructor(errorClass: string) {
-    super(errorClass);
-    this.errorClass = errorClass;
-  }
-}
-
-function deliveryErrorClass(error: unknown): string {
-  if (error instanceof DeliveryFailure) return error.errorClass;
-  if (error instanceof DOMException && error.name === "TimeoutError") return "timeout";
-  return "network";
-}
+const PRIORITY_RANK: Readonly<Record<AnalyticsPriority, number>> = {
+  critical: 0,
+  core: 1,
+  summary: 2,
+};
 
 export interface AnalyticsRuntimeOptions extends NormalizationContext {
   readonly enabled: boolean;
   readonly consent: AnalyticsConsent;
   readonly outboxPath: string;
   readonly endpoint?: string;
-  readonly fetch?: typeof globalThis.fetch;
+  readonly workerUrl?: URL;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
 }
@@ -47,109 +43,270 @@ export interface AnalyticsRuntime {
   readonly enabled: boolean;
   readonly record: (name: string, properties?: Readonly<Record<string, unknown>>) => boolean;
   readonly flush: () => Promise<number>;
-  readonly setConsent: (consent: AnalyticsConsent) => number;
-  readonly pendingCount: () => number;
+  readonly setConsent: (consent: AnalyticsConsent) => Promise<number>;
+  readonly pendingCount: () => Promise<number>;
   readonly close: () => Promise<void>;
 }
 
-export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): AnalyticsRuntime {
-  if (!options.enabled || options.consent === "off") {
-    return {
-      enabled: false,
-      record: () => false,
-      flush: async () => 0,
-      setConsent: () => 0,
-      pendingCount: () => 0,
-      close: async () => undefined,
-    };
-  }
+function disabledRuntime(): AnalyticsRuntime {
+  return {
+    enabled: false,
+    record: () => false,
+    flush: async () => 0,
+    setConsent: async () => 0,
+    pendingCount: async () => 0,
+    close: async () => undefined,
+  };
+}
 
-  const outbox = new AnalyticsOutbox(options.outboxPath);
+function waitForCondition(satisfied: () => boolean, deadline: number): Promise<void> {
+  return new Promise((resolve) => {
+    const poll = () => {
+      if (satisfied() || Date.now() >= deadline) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(poll, 5);
+      timer.unref();
+    };
+    poll();
+  });
+}
+
+export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): AnalyticsRuntime {
+  if (!options.enabled || options.consent === "off") return disabledRuntime();
+
   const now = options.now ?? (() => new Date());
   const randomUUID = options.randomUUID ?? NodeCrypto.randomUUID;
-  const fetch = options.fetch ?? globalThis.fetch;
-  const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
-  let consent: AnalyticsConsent = options.consent;
-  let closed = false;
-
-  let installationId = outbox.readMeta("installation_id");
-  if (!installationId) {
-    installationId = `installation:${randomUUID()}`;
-    outbox.writeMeta("installation_id", installationId);
-  }
   const sessionId = `session:${randomUUID()}`;
+  const worker = new NodeWorkerThreads.Worker(
+    options.workerUrl ?? new URL("./worker-entry.ts", import.meta.url),
+    {
+      workerData: {
+        outboxPath: options.outboxPath,
+        endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
+      },
+    },
+  );
+  worker.unref();
+
+  let consent: AnalyticsConsent = options.consent;
+  let ready = false;
+  let available = true;
+  let closed = false;
+  let writeTimer: ReturnType<typeof setTimeout> | null = null;
+  let nextBatchId = 1;
+  let nextRequestId = 1;
+  const queue: AnalyticsEventDraft[] = [];
+  const inFlight = new Map<number, ReadonlyArray<AnalyticsEventDraft>>();
+  const requests = new Map<
+    number,
+    {
+      readonly resolve: (value: number) => void;
+      readonly timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+
+  const bufferedCount = () =>
+    queue.length + [...inFlight.values()].reduce((count, batch) => count + batch.length, 0);
+
+  const settleRequests = () => {
+    for (const request of requests.values()) {
+      clearTimeout(request.timer);
+      request.resolve(0);
+    }
+    requests.clear();
+  };
+
+  const disable = () => {
+    if (!available) return;
+    available = false;
+    ready = false;
+    if (writeTimer !== null) {
+      clearTimeout(writeTimer);
+      writeTimer = null;
+    }
+    queue.length = 0;
+    inFlight.clear();
+    settleRequests();
+  };
+
+  const post = (command: AnalyticsWorkerCommand): boolean => {
+    if (!available) return false;
+    try {
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node Worker postMessage has no targetOrigin parameter.
+      worker.postMessage(command);
+      return true;
+    } catch {
+      disable();
+      return false;
+    }
+  };
+
+  const drain = () => {
+    if (!ready || !available || closed) return;
+    if (writeTimer !== null) {
+      clearTimeout(writeTimer);
+      writeTimer = null;
+    }
+    while (queue.length > 0 && inFlight.size < MAX_IN_FLIGHT_BATCHES) {
+      const batch = queue.splice(0, WORKER_BATCH_SIZE);
+      const batchId = nextBatchId++;
+      inFlight.set(batchId, batch);
+      if (!post({ type: "enqueue", batchId, events: batch })) {
+        inFlight.delete(batchId);
+        return;
+      }
+    }
+  };
+
+  const scheduleDrain = () => {
+    if (!ready || writeTimer !== null || closed) return;
+    writeTimer = setTimeout(drain, WRITE_COALESCE_MS);
+    writeTimer.unref();
+  };
+
+  const request = (
+    command: (requestId: number) => AnalyticsWorkerCommand,
+    timeoutMs = CONTROL_TIMEOUT_MS,
+  ): Promise<number> => {
+    if (!available) return Promise.resolve(0);
+    const requestId = nextRequestId++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        requests.delete(requestId);
+        resolve(0);
+      }, timeoutMs);
+      timer.unref();
+      requests.set(requestId, { resolve, timer });
+      if (!post(command(requestId))) {
+        clearTimeout(timer);
+        requests.delete(requestId);
+        resolve(0);
+      }
+    });
+  };
+
+  worker.on("message", (response: AnalyticsWorkerResponse) => {
+    switch (response.type) {
+      case "ready":
+        ready = true;
+        drain();
+        return;
+      case "persisted":
+        inFlight.delete(response.batchId);
+        drain();
+        return;
+      case "result": {
+        const pending = requests.get(response.requestId);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        requests.delete(response.requestId);
+        pending.resolve(response.value);
+        return;
+      }
+      case "fatal":
+        disable();
+        return;
+    }
+  });
+  worker.on("error", disable);
+  worker.on("exit", () => {
+    if (!closed) disable();
+  });
+
+  const admit = (event: AnalyticsEventDraft): boolean => {
+    if (queue.length < MEMORY_QUEUE_LIMIT) {
+      queue.push(event);
+      return true;
+    }
+    const incomingRank = PRIORITY_RANK[event.priority];
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const queued = queue[index];
+      if (queued && PRIORITY_RANK[queued.priority] > incomingRank) {
+        queue.splice(index, 1, event);
+        return true;
+      }
+    }
+    return false;
+  };
 
   const record: AnalyticsRuntime["record"] = (name, properties) => {
-    if (closed) return false;
+    if (closed || !available || consent === "off") return false;
     const normalized = normalizeInheritedEvent(name, properties, options);
     if (!normalized || !consentAllows(consent, normalized.privacyLevel)) return false;
-    if (consent === "off") return false;
-    const event: AnalyticsEvent = {
+    const accepted = admit({
       id: randomUUID(),
       name: normalized.name,
-      distinct_id: installationId,
       session_id: sessionId,
       occurred_at: now().toISOString(),
       privacy_level: normalized.privacyLevel,
       consent_level: consent,
       properties: normalized.properties,
-    };
-    return outbox.enqueue(event);
-  };
-
-  const flush: AnalyticsRuntime["flush"] = async () => {
-    if (closed) return 0;
-    const events = outbox.pending(BATCH_SIZE, now().valueOf());
-    if (events.length === 0) return 0;
-    const batch: AnalyticsBatch = {
-      schema_version: ANALYTICS_SCHEMA_VERSION,
-      source: ANALYTICS_SOURCE,
-      events: events.map(({ attemptCount: _attemptCount, ...event }) => event),
-    };
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batch),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      if (!response.ok) throw new DeliveryFailure(`http-${response.status}`);
-      const body = (await response.json().catch(() => {
-        throw new DeliveryFailure("invalid-acknowledgement");
-      })) as { readonly accepted?: unknown };
-      if (body.accepted !== events.length) throw new DeliveryFailure("invalid-acknowledgement");
-      outbox.remove(events.map((event) => event.id));
-      return events.length;
-    } catch (error) {
-      const attempt = Math.max(...events.map((event) => event.attemptCount)) + 1;
-      const retryDelay = Math.min(MAX_RETRY_MS, 5_000 * 2 ** Math.min(attempt - 1, 8));
-      const errorClass = deliveryErrorClass(error);
-      outbox.markFailed(
-        events.map((event) => event.id),
-        errorClass,
-        now().valueOf() + retryDelay,
-      );
-      return 0;
-    }
-  };
-
-  const setConsent: AnalyticsRuntime["setConsent"] = (nextConsent) => {
-    consent = nextConsent;
-    return outbox.purgeAbove(nextConsent);
+      priority: normalized.priority,
+    });
+    if (accepted) scheduleDrain();
+    return accepted;
   };
 
   return {
     enabled: true,
     record,
-    flush,
-    setConsent,
-    pendingCount: () => outbox.size(),
+    flush: async () => {
+      if (closed || !available) return 0;
+      await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+      if (!ready || !available) return 0;
+      drain();
+      return request((requestId) => ({ type: "flush", requestId }));
+    },
+    setConsent: async (nextConsent) => {
+      consent = nextConsent;
+      let purged = 0;
+      for (let index = queue.length - 1; index >= 0; index -= 1) {
+        const event = queue[index];
+        if (event && !consentAllows(nextConsent, event.privacy_level)) {
+          queue.splice(index, 1);
+          purged += 1;
+        }
+      }
+      if (!available) return purged;
+      await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+      if (!ready || !available) return purged;
+      drain();
+      return (
+        purged +
+        (await request((requestId) => ({
+          type: "set-consent",
+          requestId,
+          consent: nextConsent,
+        })))
+      );
+    },
+    pendingCount: async () => {
+      if (closed || !available) return bufferedCount();
+      await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+      if (!ready || !available) return bufferedCount();
+      drain();
+      return queue.length + (await request((requestId) => ({ type: "pending-count", requestId })));
+    },
     close: async () => {
       if (closed) return;
-      await flush();
+      if (writeTimer !== null) {
+        clearTimeout(writeTimer);
+        writeTimer = null;
+      }
+      drain();
+      const deadline = Date.now() + LOCAL_SHUTDOWN_BUDGET_MS;
+      await waitForCondition(() => queue.length === 0 && inFlight.size === 0, deadline);
       closed = true;
-      outbox.close();
+      if (available) {
+        await request(
+          (requestId) => ({ type: "close", requestId }),
+          Math.max(1, deadline - Date.now()),
+        );
+      }
+      disable();
+      await worker.terminate().catch(() => undefined);
     },
   };
 }
