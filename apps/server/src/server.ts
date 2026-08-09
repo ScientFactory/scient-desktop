@@ -435,10 +435,9 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
-  // D4 candidate: keep local diagnostic logs, but do not read provider
-  // identities or deliver PostHog telemetry. Re-enabling delivery requires a
-  // deliberate, separately reviewed product/privacy decision.
-  Layer.provideMerge(AnalyticsService.layerDisabled),
+  // Scient's first-party analytics runtime is disabled by default. Activation
+  // remains a separately reviewed product/privacy decision.
+  Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
