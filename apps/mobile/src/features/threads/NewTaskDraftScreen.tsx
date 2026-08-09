@@ -244,6 +244,11 @@ export function NewTaskDraftScreen(props: {
     }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     if (props.projectless && initialEnvironmentId) {
+      const projectlessKey = `projectless:${initialEnvironmentId}`;
+      if (appliedInitialProjectKeyRef.current === projectlessKey) {
+        return;
+      }
+      appliedInitialProjectKeyRef.current = projectlessKey;
       setProjectless(EnvironmentId.make(initialEnvironmentId));
       return;
     }

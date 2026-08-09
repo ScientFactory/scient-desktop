@@ -97,7 +97,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -3132,16 +3132,9 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  const newThreadTarget = resolveThreadActionProjectRef({
-    activeDraftThread: newThreadContext.activeDraftThread,
-    activeThread: newThreadContext.activeThread ?? undefined,
-    defaultProjectRef: newThreadContext.defaultProjectRef,
-    handleNewThread: newThreadContext.handleNewThread,
-  });
-  const newThreadEnvironmentId = newThreadTarget?.environmentId ?? primaryEnvironmentId;
-  const supportsProjectlessThreads =
-    newThreadEnvironmentId !== null &&
-    serverConfigs.get(newThreadEnvironmentId)?.projectlessThreads === true;
+  const supportsProjectlessThreads = [...serverConfigs.values()].some(
+    (config) => config.projectlessThreads === true,
+  );
 
   // New thread defaults to the project you're in (active thread's project,
   // falling back to the top project). When the environment supports
@@ -3240,7 +3233,7 @@ export default function Sidebar() {
                         type="button"
                         className="relative focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                         onClick={handleNewThreadClick}
-                        disabled={projects.length === 0}
+                        disabled={projects.length === 0 && !supportsProjectlessThreads}
                         aria-label="New thread"
                       />
                     }

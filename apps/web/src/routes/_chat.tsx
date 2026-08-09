@@ -11,7 +11,7 @@ import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -44,16 +44,9 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
-  const contextualTarget = resolveThreadActionProjectRef({
-    activeDraftThread,
-    activeThread: activeThread ?? undefined,
-    defaultProjectRef,
-    handleNewThread,
-  });
-  const newThreadEnvironmentId = contextualTarget?.environmentId ?? primaryEnvironmentId;
-  const supportsProjectlessThreads =
-    newThreadEnvironmentId !== null &&
-    serverConfigs.get(newThreadEnvironmentId)?.projectlessThreads === true;
+  const supportsProjectlessThreads = [...serverConfigs.values()].some(
+    (config) => config.projectlessThreads === true,
+  );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen

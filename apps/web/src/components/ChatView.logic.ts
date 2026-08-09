@@ -51,6 +51,21 @@ export function startNewThreadForProject(
   return true;
 }
 
+export function resolveThreadWorkspaceRoot(input: {
+  readonly worktreePath: string | null | undefined;
+  readonly projectCwd: string | null | undefined;
+  readonly threadWorkspaceRoot: string | null | undefined;
+  readonly environmentCwd?: string | null | undefined;
+}): string | undefined {
+  return (
+    input.worktreePath ??
+    input.projectCwd ??
+    input.threadWorkspaceRoot ??
+    input.environmentCwd ??
+    undefined
+  );
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;

@@ -101,7 +101,7 @@ export function DraftHeroHeadline({
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
   const activeProjectDisplayName =
     activeProjectRef?.projectId === null
-      ? "No project"
+      ? "without a project"
       : (activeProjectGroup?.displayName ?? activeProjectTitle);
   const hasResolvedTarget = activeProjectRef !== null;
   const canChooseProject = projectPickerEntries.length > 0;
@@ -179,7 +179,7 @@ export function DraftHeroHeadline({
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
       {activeProjectRef?.projectId === null ? (
-        <>What should we work on?</>
+        <>What should we work on {projectSelector}?</>
       ) : hasResolvedTarget ? (
         <>What should we build in {projectSelector}?</>
       ) : canChooseProject ? (

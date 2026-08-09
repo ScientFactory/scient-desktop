@@ -687,6 +687,21 @@ function OpenCommandPaletteDialog(props: {
   const supportsProjectlessThreads =
     projectlessEnvironmentId !== null &&
     serverConfigs.get(projectlessEnvironmentId)?.projectlessThreads === true;
+  const projectlessTargets = useMemo(
+    () =>
+      [...serverConfigs.entries()]
+        .filter(([, config]) => config.projectlessThreads === true)
+        .map(([environmentId]) => ({
+          environmentId,
+          environmentLabel: environmentLabelById.get(environmentId) ?? "Environment",
+        }))
+        .sort((left, right) => {
+          if (left.environmentId === primaryEnvironmentId) return -1;
+          if (right.environmentId === primaryEnvironmentId) return 1;
+          return left.environmentLabel.localeCompare(right.environmentLabel);
+        }),
+    [environmentLabelById, primaryEnvironmentId, serverConfigs],
+  );
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
@@ -992,24 +1007,20 @@ function OpenCommandPaletteDialog(props: {
         );
       },
     });
-    const projectlessItems: CommandPaletteActionItem[] =
-      supportsProjectlessThreads && projectlessEnvironmentId !== null
-        ? [
-            {
-              kind: "action",
-              value: `new-thread-in:${projectlessEnvironmentId}:projectless`,
-              searchTerms: ["new thread", "without project", "no project", "chat"],
-              title: "Don't work in a project",
-              icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-              run: async () => {
-                await handleNewThread({
-                  environmentId: projectlessEnvironmentId,
-                  projectId: null,
-                });
-              },
-            },
-          ]
-        : [];
+    const showEnvironmentLabel = projectlessTargets.length > 1;
+    const projectlessItems: CommandPaletteActionItem[] = projectlessTargets.map(
+      ({ environmentId, environmentLabel }) => ({
+        kind: "action",
+        value: `new-thread-in:${environmentId}:projectless`,
+        searchTerms: ["new thread", "without project", "no project", "chat", environmentLabel],
+        title: "Don't work in a project",
+        ...(showEnvironmentLabel ? { description: environmentLabel } : {}),
+        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await handleNewThread({ environmentId, projectId: null });
+        },
+      }),
+    );
 
     return enumerateCommandPaletteItems([...projectItems, ...projectlessItems]);
   }, [
@@ -1017,8 +1028,7 @@ function OpenCommandPaletteDialog(props: {
     handleNewThread,
     pickerProjects,
     projectGroupByTargetKey,
-    projectlessEnvironmentId,
-    supportsProjectlessThreads,
+    projectlessTargets,
   ]);
 
   const allThreadItems = useMemo(
@@ -1430,7 +1440,9 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
 
+  if (projectThreadItems.length > 0) {
     actionItems.push({
       kind: "submenu",
       value: "action:new-thread-in",

@@ -1689,6 +1689,25 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-05-01T00:00:07.000Z',
             '2026-05-01T00:00:08.000Z',
             NULL
+          ),
+          (
+            'thread-orphaned',
+            'project-missing',
+            'Orphaned search',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:09.000Z',
+            '2026-05-01T00:00:10.000Z',
+            NULL,
+            NULL
           )
       `;
 
@@ -1773,6 +1792,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             0,
             '2026-05-01T00:00:16.000Z',
             '2026-05-01T00:00:16.000Z'
+          ),
+          (
+            'message-orphaned',
+            'thread-orphaned',
+            NULL,
+            'user',
+            'Orphaned needle must not be searchable.',
+            0,
+            '2026-05-01T00:00:17.000Z',
+            '2026-05-01T00:00:17.000Z'
           )
       `;
 
@@ -1830,6 +1859,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.deepStrictEqual(
         (yield* snapshotQuery.searchThreads({ query: "hidden needle" })).matches,
+        [],
+      );
+      assert.deepStrictEqual(
+        (yield* snapshotQuery.searchThreads({ query: "orphaned needle" })).matches,
         [],
       );
       yield* sql`

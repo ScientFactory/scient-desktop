@@ -810,7 +810,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ON projects.project_id = threads.project_id
           WHERE threads.deleted_at IS NULL
             AND threads.archived_at IS NULL
-            AND (threads.project_id IS NULL OR projects.deleted_at IS NULL)
+            AND (
+              threads.project_id IS NULL
+              OR (projects.project_id IS NOT NULL AND projects.deleted_at IS NULL)
+            )
             AND messages.is_streaming = 0
             AND (
               messages.role = 'user'
