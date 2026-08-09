@@ -1,7 +1,55 @@
-# Codex
+# Codex in Scient
 
-This guide is for people who want to use more than one Codex account in T3 Code. For Claude, see
-[Claude](./providers-claude.md). For first-time setup, see [Install T3 Code](./install.md).
+Scient keeps installing the Codex tool and connecting a Codex account as two separate, visible
+facts. A saved provider configuration is not treated as a working connection.
+
+## The Easiest Setup Path
+
+If the selected Codex model is not ready, the composer shows the next useful action in place of the
+normal model control. Choose `Set up Codex`, `Sign in to Codex`, or `Finish Codex sign in` there. The
+same guided flow is available from **Settings > Providers**.
+
+The flow:
+
+1. detects a healthy custom, system, or Scient-managed Codex runtime;
+2. offers managed installation only on a release-proven computer target;
+3. shows the source, version, platform, and approximate download size before changing anything;
+4. opens Codex's official browser or device-code sign-in flow; and
+5. asks Codex for fresh account, model, and runtime state before reporting the provider as ready.
+
+Scient never asks for or receives the provider password. Codex continues to own its credentials,
+refresh, expiry, and revocation.
+
+`Sign out on this computer` logs out the configured Codex credential home. It can therefore affect
+the Codex CLI or another app using those same account files; Scient explains that scope beside the
+action.
+
+## Computers And Installations
+
+Scient never silently replaces a healthy custom or system installation. A Scient-managed copy is
+kept in the app's private data, and removing it does not remove a system or custom Codex install.
+
+The current support boundary is intentionally explicit:
+
+| Computer or host                            | What Scient currently promises                                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Local Scient desktop on Apple-silicon macOS | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in                 |
+| Intel Mac                                   | Use and verify a healthy external Codex runtime; managed installation is not release-proven yet |
+| Windows on ARM64 or x64                     | Use and verify a healthy external Codex runtime; managed installation is not release-proven yet |
+| Linux on ARM64 or x64                       | Use and verify a healthy external Codex runtime; managed installation is not release-proven yet |
+| Remote or web-hosted Scient server          | Use the runtime already administered on that server; the client cannot take ownership of it     |
+| Other operating systems or architectures    | No managed Codex promise; Scient explains that the target is unsupported                        |
+
+The application contains target-specific official artifact metadata for Intel Mac, Windows, and
+Linux so those paths can be proven later without redesigning the lifecycle. Merely knowing an
+artifact exists is not enough to expose managed installation. Each operating system, architecture,
+package shape, cancellation path, and recovery path must pass its own clean-machine release proof.
+
+If a managed install, repair, or download fails, the incomplete staging directory is cleaned and
+the previous working copy remains active. A manual rollback button is deliberately not offered
+until Scient has two separately reviewed releases to roll between.
+
+## Why Use More Than One Account?
 
 Common reasons:
 
@@ -22,11 +70,8 @@ CODEX_HOME path: ~/.codex
 Shadow home path: empty
 ```
 
-Log in with Codex normally:
-
-```bash
-codex login
-```
+Use the guided action in the composer or in **Settings > Providers**. If you deliberately use a
+custom or externally managed Codex runtime, the advanced terminal flow remains available.
 
 ## I Want Work And Personal Codex Accounts
 
@@ -41,21 +86,18 @@ Recommended setup:
 
 The idea is:
 
-- both accounts can see the same T3/Codex sessions
+- both accounts can see the same Scient/Codex sessions
 - each account keeps its own login
 - existing threads can continue with either account
 
 ### Set Up The First Account
 
-Log in normally:
-
-```bash
-codex login
-```
+Connect it through Scient's guided Codex flow or log in through your externally managed Codex
+installation.
 
 This is the account used by `~/.codex`.
 
-In T3 Code Settings, name it something obvious:
+In Scient Settings, name it something obvious:
 
 ```text
 Display name: Codex Work
@@ -65,19 +107,20 @@ Shadow home path: empty
 
 ### Set Up The Second Account
 
-Log in with a separate Codex home:
-
-```bash
-mkdir -p ~/.codex_p
-CODEX_HOME=~/.codex_p codex login
-```
-
-In T3 Code Settings, add another Codex provider:
+Add a second Codex provider in Scient, then use the same guided sign-in action for that provider.
+Configure it with a separate shadow home:
 
 ```text
 Display name: Codex Personal
 CODEX_HOME path: ~/.codex
 Shadow home path: ~/.codex_p
+```
+
+The equivalent terminal login remains available as an advanced recovery path:
+
+```bash
+mkdir -p ~/.codex_p
+CODEX_HOME=~/.codex_p codex login
 ```
 
 The important part is that both providers use the same `CODEX_HOME path`, but only the second one
@@ -87,7 +130,7 @@ has a `Shadow home path`.
 
 Open Settings and look at the provider row.
 
-T3 Code shows the authenticated email for providers that report one. Emails are blurred by default;
+Scient shows the authenticated email for providers that report one. Emails are blurred by default;
 click the blurred email to reveal it.
 
 Use display names and accent colors to make accounts easy to tell apart in the model picker.
@@ -114,7 +157,7 @@ Codex Personal  CODEX_HOME path: ~/.codex, Shadow home path: ~/.codex_p
 Those two providers are considered compatible for continuation, so the locked model picker can show
 both.
 
-If you add a third Codex provider with a completely different `CODEX_HOME path`, T3 Code treats it
+If you add a third Codex provider with a completely different `CODEX_HOME path`, Scient treats it
 as a different workspace. It will not be offered for existing threads created under `~/.codex`.
 
 ## If Both Accounts Look The Same

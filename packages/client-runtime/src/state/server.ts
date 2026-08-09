@@ -737,6 +737,54 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    startProviderConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:start-provider-connection",
+      tag: WS_METHODS.serverStartProviderConnection,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
+    cancelProviderConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-provider-connection",
+      tag: WS_METHODS.serverCancelProviderConnection,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
+    disconnectProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:disconnect-provider",
+      tag: WS_METHODS.serverDisconnectProvider,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
+    planProviderRuntime: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:plan-provider-runtime",
+      tag: WS_METHODS.serverPlanProviderRuntime,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
+    startProviderRuntime: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:start-provider-runtime",
+      tag: WS_METHODS.serverStartProviderRuntime,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
+    cancelProviderRuntime: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-provider-runtime",
+      tag: WS_METHODS.serverCancelProviderRuntime,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",

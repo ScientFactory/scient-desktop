@@ -6,6 +6,7 @@ import {
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
+  LogInIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -43,6 +44,10 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import {
+  canManageProviderLifecycle,
+  providerConnectionPresentation,
+} from "../../scient/providerConnection/providerConnectionPresentation";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -349,6 +354,7 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onManageConnection?: (() => void) | undefined;
 }
 
 /**
@@ -393,6 +399,7 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  onManageConnection,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -409,6 +416,18 @@ export function ProviderInstanceCard({
     ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
     : null;
   const summary = rawSummary;
+  const connectionPresentation = providerConnectionPresentation(liveProvider);
+  const showConnectionStatus =
+    liveProvider !== undefined && connectionPresentation.kind !== "unsupported";
+  const connectionBadgeVariant =
+    connectionPresentation.kind === "connected"
+      ? "success"
+      : connectionPresentation.kind === "connecting" || connectionPresentation.kind === "setting-up"
+        ? "info"
+        : connectionPresentation.kind === "not-connected" ||
+            connectionPresentation.kind === "not-installed"
+          ? "warning"
+          : "secondary";
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
@@ -542,6 +561,11 @@ export function ProviderInstanceCard({
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
+        </Badge>
+      ) : null}
+      {showConnectionStatus ? (
+        <Badge variant={connectionBadgeVariant} size="sm">
+          {connectionPresentation.label}
         </Badge>
       ) : null}
     </>
@@ -707,6 +731,37 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {onManageConnection && canManageProviderLifecycle(liveProvider) ? (
+              <Button
+                type="button"
+                size="sm"
+                variant={
+                  connectionPresentation.kind === "not-connected" ||
+                  connectionPresentation.kind === "not-installed"
+                    ? "default"
+                    : "outline"
+                }
+                className="h-7 gap-1.5 px-2.5 text-xs"
+                onClick={onManageConnection}
+              >
+                {connectionPresentation.kind === "connecting" ||
+                connectionPresentation.kind === "setting-up" ? (
+                  <LoaderIcon className="animate-spin" />
+                ) : connectionPresentation.kind === "not-installed" ? (
+                  <DownloadIcon />
+                ) : connectionPresentation.kind === "not-connected" ? (
+                  <LogInIcon />
+                ) : null}
+                {connectionPresentation.kind === "not-installed"
+                  ? "Set up"
+                  : connectionPresentation.kind === "not-connected"
+                    ? "Sign in"
+                    : connectionPresentation.kind === "connecting" ||
+                        connectionPresentation.kind === "setting-up"
+                      ? "Continue"
+                      : "Manage"}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"

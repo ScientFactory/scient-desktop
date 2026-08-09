@@ -71,6 +71,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { ProviderConnectionDialog } from "../../scient/providerConnection/ProviderConnectionDialog";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
@@ -379,6 +380,7 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [connectionInstanceId, setConnectionInstanceId] = useState<ProviderInstanceId | null>(null);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
@@ -567,6 +569,20 @@ export function EnvironmentProviderSettings({
       });
     }
   }
+
+  const connectionProvider =
+    connectionInstanceId === null
+      ? undefined
+      : serverProviders.find((provider) => provider.instanceId === connectionInstanceId);
+  const connectionRow =
+    connectionInstanceId === null
+      ? undefined
+      : rows.find((row) => row.instanceId === connectionInstanceId);
+  const connectionDisplayName = connectionRow
+    ? connectionRow.instance.displayName?.trim() ||
+      getDriverOption(connectionRow.driver)?.label ||
+      String(connectionRow.driver)
+    : null;
 
   const updateProviderInstance = (
     row: InstanceRow,
@@ -832,6 +848,7 @@ export function EnvironmentProviderSettings({
                 instance={row.instance}
                 driverOption={driverOption}
                 liveProvider={liveProvider}
+                onManageConnection={() => setConnectionInstanceId(row.instanceId)}
                 isExpanded={openInstanceDetails[row.instanceId] ?? false}
                 onExpandedChange={(open) =>
                   setOpenInstanceDetails((existing) => ({
@@ -895,6 +912,17 @@ export function EnvironmentProviderSettings({
           environmentId={environmentId}
           environmentLabel={environmentLabel}
           onOpenChange={setIsAddInstanceDialogOpen}
+        />
+      ) : null}
+      {connectionProvider && connectionDisplayName ? (
+        <ProviderConnectionDialog
+          environmentId={environmentId}
+          provider={connectionProvider}
+          displayName={connectionDisplayName}
+          open
+          onOpenChange={(open) => {
+            if (!open) setConnectionInstanceId(null);
+          }}
         />
       ) : null}
     </>

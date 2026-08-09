@@ -84,6 +84,8 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
+import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -379,6 +381,8 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+      const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
+      const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -1445,6 +1449,42 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverStartProviderConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverStartProviderConnection,
+            providerConnectionManager.start(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCancelProviderConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCancelProviderConnection,
+            providerConnectionManager.cancel(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverDisconnectProvider]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverDisconnectProvider,
+            providerConnectionManager.disconnect(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverPlanProviderRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverPlanProviderRuntime,
+            providerRuntimeManager.plan(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverStartProviderRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverStartProviderRuntime,
+            providerRuntimeManager.start(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCancelProviderRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCancelProviderRuntime,
+            providerRuntimeManager.cancel(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpdateServer]: (input) =>
           observeRpcEffect(WS_METHODS.serverUpdateServer, serverSelfUpdate.update(input), {
             "rpc.aggregate": "server",
@@ -2166,6 +2206,8 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
+    const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     return HttpRouter.add(
       "GET",
@@ -2189,6 +2231,18 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(
+                    ProviderConnectionManager.ProviderConnectionManager,
+                    providerConnectionManager,
+                  ),
+                  Layer.succeed(
+                    ProviderRuntimeManager.ProviderRuntimeManager,
+                    providerRuntimeManager,
+                  ),
+                ),
+              ),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(

@@ -20,6 +20,7 @@ import {
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderConnectionSummary } from "./providerLifecycle.ts";
 import { ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -55,6 +56,7 @@ export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
 
 export const ServerProviderAuth = Schema.Struct({
   status: ServerProviderAuthStatus,
+  required: Schema.optional(Schema.Boolean),
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
@@ -194,6 +196,12 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  /**
+   * Optional Scient lifecycle overlay. Installed/authenticated/version truth
+   * remains in the canonical fields above; this only advertises provider-owned
+   * connection methods and their current transient operation.
+   */
+  connection: Schema.optionalKey(ProviderConnectionSummary),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

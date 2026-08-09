@@ -32,6 +32,7 @@
     "@pierre/diffs": "catalog:",
     "@scientfactory/analytics": "workspace:*",
     "@scientfactory/project-init": "workspace:*",
+    "@scientfactory/provider-runtime": "workspace:*",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
     "yaml": "catalog:"
