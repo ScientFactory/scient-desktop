@@ -126,7 +126,7 @@ const ProjectionThreadSearchRequest = Schema.Struct({
 });
 const ProjectionThreadSearchRow = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   source: OrchestrationThreadSearchSource,
   matchText: Schema.String,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
@@ -176,7 +176,7 @@ const ProjectionThreadIdLookupRowSchema = Schema.Struct({
 });
 const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
 });
@@ -186,7 +186,7 @@ const FullThreadDiffContextLookupInput = Schema.Struct({
 });
 const ProjectionFullThreadDiffContextRowSchema = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
   latestCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
@@ -427,6 +427,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -463,6 +464,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -501,6 +503,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -818,11 +821,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           FROM projection_thread_messages AS messages
           INNER JOIN projection_threads AS threads
             ON threads.thread_id = messages.thread_id
-          INNER JOIN projection_projects AS projects
+          LEFT JOIN projection_projects AS projects
             ON projects.project_id = threads.project_id
           WHERE threads.deleted_at IS NULL
             AND threads.archived_at IS NULL
-            AND projects.deleted_at IS NULL
+            AND (
+              threads.project_id IS NULL
+              OR (projects.project_id IS NOT NULL AND projects.deleted_at IS NULL)
+            )
             AND messages.is_streaming = 0
             AND (
               messages.role = 'user'
@@ -924,13 +930,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           threads.thread_id AS "threadId",
           threads.project_id AS "projectId",
-          projects.workspace_root AS "workspaceRoot",
+          COALESCE(threads.workspace_root, projects.workspace_root) AS "workspaceRoot",
           threads.worktree_path AS "worktreePath"
         FROM projection_threads AS threads
-        INNER JOIN projection_projects AS projects
+        LEFT JOIN projection_projects AS projects
           ON projects.project_id = threads.project_id
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
+          AND COALESCE(threads.workspace_root, projects.workspace_root) IS NOT NULL
         LIMIT 1
       `,
   });
@@ -943,6 +950,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -982,6 +990,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          workspace_root AS "workspaceRoot",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -1343,7 +1352,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           threads.thread_id AS "threadId",
           threads.project_id AS "projectId",
-          projects.workspace_root AS "workspaceRoot",
+          COALESCE(threads.workspace_root, projects.workspace_root) AS "workspaceRoot",
           threads.worktree_path AS "worktreePath",
           (
             SELECT MAX(turns.checkpoint_turn_count)
@@ -1359,10 +1368,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             LIMIT 1
           ) AS "toCheckpointRef"
         FROM projection_threads AS threads
-        INNER JOIN projection_projects AS projects
+        LEFT JOIN projection_projects AS projects
           ON projects.project_id = threads.project_id
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
+          AND COALESCE(threads.workspace_root, projects.workspace_root) IS NOT NULL
         LIMIT 1
       `,
   });
@@ -1628,6 +1638,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
                 id: row.threadId,
                 projectId: row.projectId,
+                workspaceRoot: row.workspaceRoot,
                 title: row.title,
                 modelSelection: row.modelSelection,
                 runtimeMode: row.runtimeMode,
@@ -1836,6 +1847,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 threads.push({
                   id: row.threadId,
                   projectId: row.projectId,
+                  workspaceRoot: row.workspaceRoot,
                   title: row.title,
                   modelSelection: row.modelSelection,
                   runtimeMode: row.runtimeMode,
@@ -1985,6 +1997,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     ? Result.succeed({
                         id: row.threadId,
                         projectId: row.projectId,
+                        workspaceRoot: row.workspaceRoot,
                         title: row.title,
                         modelSelection: row.modelSelection,
                         runtimeMode: row.runtimeMode,
@@ -2143,6 +2156,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   (row): OrchestrationThreadShell => ({
                     id: row.threadId,
                     projectId: row.projectId,
+                    workspaceRoot: row.workspaceRoot,
                     title: row.title,
                     modelSelection: row.modelSelection,
                     runtimeMode: row.runtimeMode,
@@ -2431,6 +2445,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       return Option.some({
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        workspaceRoot: threadRow.value.workspaceRoot,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
@@ -2562,6 +2577,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       const thread = {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        workspaceRoot: threadRow.value.workspaceRoot,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,

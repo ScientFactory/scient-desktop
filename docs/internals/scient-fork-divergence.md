@@ -402,6 +402,9 @@ forking and would have increased every future upstream merge.
 - A new worktree fails closed if the historical Git checkpoint is unavailable.
 - Same-workspace mode is honest about sharing current files; only its
   conversation and checkpoint lineage are independent.
+- A General Chat may be forked in the same environment without inventing a
+  project. Its projectless workspace root is preserved on the new thread;
+  separate-worktree mode remains unavailable without a project checkpoint.
 - Every retained attachment gets a new fork-owned ID and verified file copy, so
   deletion or cleanup of the origin cannot invalidate the fork.
 - Provider bootstrap preserves exact message text until the total contract

@@ -236,6 +236,49 @@ const seedOrigin = (checkpointStatus: "ready" | "missing" = "ready") =>
     });
   });
 
+const seedProjectlessOrigin = Effect.gen(function* () {
+  const engine = yield* OrchestrationEngineService;
+  yield* engine.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make("cmd-general-chat-origin"),
+    threadId: ORIGIN,
+    projectId: null,
+    workspaceRoot: process.cwd(),
+    title: "General chat origin",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+    },
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    runtimeMode: "approval-required",
+    branch: null,
+    worktreePath: null,
+    createdAt: CREATED_AT,
+  });
+  yield* engine.dispatch({
+    type: "thread.turn.start",
+    commandId: CommandId.make("cmd-general-chat-turn-start"),
+    threadId: ORIGIN,
+    message: {
+      messageId: MessageId.make("general-chat-user-1"),
+      role: "user",
+      text: "Discuss the result",
+      attachments: [],
+    },
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    runtimeMode: "approval-required",
+    createdAt: CREATED_AT,
+  });
+  yield* engine.dispatch({
+    type: "thread.message.assistant.complete",
+    commandId: CommandId.make("cmd-general-chat-assistant-complete"),
+    threadId: ORIGIN,
+    messageId: SOURCE_ASSISTANT_MESSAGE_ID,
+    turnId: TurnId.make("general-chat-turn-1"),
+    createdAt: CREATED_AT,
+  });
+});
+
 const dispatchFork = (workspaceMode: "local" | "new-worktree", forkCommandId: string) =>
   Effect.gen(function* () {
     const engine = yield* OrchestrationEngineService;
@@ -472,6 +515,36 @@ describe("ScientForkReactor", () => {
           originThreadId: ORIGIN,
         });
         expect(detail.value.forkLineage?.baselineAssistantMessageId).not.toBeNull();
+      }
+    }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
+  });
+
+  it.live("forks a General Chat in its environment without requiring a project", () => {
+    const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* reactor.start();
+      yield* seedProjectlessOrigin;
+
+      const completionFiber = yield* Effect.forkChild(reactor.awaitCompletion(NEW));
+      yield* dispatchFork("local", "cmd-fork-general-chat");
+      yield* Fiber.join(completionFiber);
+      yield* reactor.drain;
+
+      expect(forkBaselineCalls).toHaveLength(0);
+      expect(createWorktreeCalls).toHaveLength(0);
+      expect((yield* readLineageRow(sql))?.status).toBe("ready");
+
+      const detail = yield* snapshotQuery.getThreadDetailById(NEW);
+      expect(Option.isSome(detail)).toBe(true);
+      if (Option.isSome(detail)) {
+        expect(detail.value.projectId).toBeNull();
+        expect(detail.value.workspaceRoot).toBe(process.cwd());
+        expect(detail.value.forkLineage).toMatchObject({ originThreadId: ORIGIN });
       }
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
