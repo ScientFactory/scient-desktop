@@ -111,7 +111,9 @@ from the same source SHA and includes native resource monitors from the matrix.
 
 The release gate dynamically loads the established Scient release-note catalog
 and calls `validateScientReleaseNotesCatalog`; it does not define a second
-schema. The exact version normally requires an approved entry.
+schema. The exact version normally requires an approved entry, and the
+publisher renders that same approved entry as the GitHub release body rather
+than generating a noisy changelog from inherited T3 history.
 `allow_note_free=true` is an explicit product decision, not a missing-work
 fallback.
 

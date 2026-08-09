@@ -41,6 +41,7 @@ jobs:
       source_sha: ${{ steps.meta.outputs.source_sha }}
       source_tree: ${{ steps.meta.outputs.source_tree }}
       publish_release: ${{ steps.meta.outputs.publish_release }}
+      release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
     steps:
       - name: Require release/stable
         shell: bash
@@ -82,6 +83,7 @@ jobs:
             --version "$RELEASE_VERSION"
             --source-sha "$SOURCE_SHA"
             --release-sha "${GITHUB_SHA}"
+            --notes-output "$RUNNER_TEMP/scient-release-notes.md"
           )
           if [[ "$ALLOW_NOTE_FREE" == "true" ]]; then
             args+=(--allow-note-free)
@@ -116,6 +118,7 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
+          set -euo pipefail
           version="$RELEASE_VERSION"
           version="${version#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -123,6 +126,8 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "source_tree=$(git rev-parse "$SOURCE_SHA^{tree}")" >> "$GITHUB_OUTPUT"
           echo "publish_release=$PUBLISH_RELEASE" >> "$GITHUB_OUTPUT"
+          release_notes_base64="$(base64 < "$RUNNER_TEMP/scient-release-notes.md" | tr -d '\n')"
+          echo "release_notes_base64=$release_notes_base64" >> "$GITHUB_OUTPUT"
 
   # Scient cloud is intentionally disabled for the first migration release.
   # Keep T3's proven relay/tracing handoff visible and structurally intact so
@@ -617,13 +622,15 @@ jobs:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          RELEASE_NOTES_BASE64: ${{ needs.preflight.outputs.release_notes_base64 }}
         run: |
           set -euo pipefail
+          printf '%s' "$RELEASE_NOTES_BASE64" | base64 --decode > "$RUNNER_TEMP/scient-release-notes.md"
           gh release create "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
             --title "Scient v$RELEASE_VERSION" \
-            --generate-notes \
+            --notes-file "$RUNNER_TEMP/scient-release-notes.md" \
             --draft \
             --latest=false
 

@@ -11,7 +11,11 @@ import {
   createScientServerPackageJson,
   resolveNpmCompatibleOverrides,
 } from "./package-scient-server.ts";
-import { resolveReleaseNoteSource, runScientReleasePreflight } from "./scient-release-preflight.ts";
+import {
+  renderScientReleaseNotesMarkdown,
+  resolveReleaseNoteSource,
+  runScientReleasePreflight,
+} from "./scient-release-preflight.ts";
 
 describe("Scient release machinery", () => {
   it("pins every release-owned action to an immutable commit", () => {
@@ -72,6 +76,24 @@ describe("Scient release machinery", () => {
           allowNoteFree: true,
         }),
       "catalog is invalid",
+    );
+  });
+
+  it("renders the approved in-app note as the public GitHub release body", () => {
+    assert.equal(
+      renderScientReleaseNotesMarkdown({
+        version: "0.6.0",
+        kicker: "The new Scient foundation",
+        headline: "A faster, clearer Scient",
+        summary: "Scient now runs on its new maintained desktop foundation.",
+        highlights: [
+          {
+            title: "Easier setup",
+            description: "Connect an existing AI subscription from the composer.",
+          },
+        ],
+      }),
+      "# A faster, clearer Scient\n\n**The new Scient foundation**\n\nScient now runs on its new maintained desktop foundation.\n\n## Highlights\n\n- **Easier setup** — Connect an existing AI subscription from the composer.\n",
     );
   });
 
