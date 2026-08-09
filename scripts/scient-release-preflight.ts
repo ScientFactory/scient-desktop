@@ -14,6 +14,18 @@ interface Options {
   readonly releaseSha: string;
   readonly root: string;
   readonly allowNoteFree: boolean;
+  readonly notesOutput?: string;
+}
+
+interface ScientReleaseNoteLike {
+  readonly version: string;
+  readonly kicker: string;
+  readonly headline: string;
+  readonly summary: string;
+  readonly highlights: ReadonlyArray<{
+    readonly title: string;
+    readonly description: string;
+  }>;
 }
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -26,12 +38,16 @@ function requiredValue(args: ReadonlyArray<string>, flag: string): string {
 }
 
 function parseOptions(args: ReadonlyArray<string>): Options {
+  const notesOutput = args.includes("--notes-output")
+    ? NodePath.resolve(requiredValue(args, "--notes-output"))
+    : undefined;
   return {
     version: requiredValue(args, "--version").replace(/^v/u, ""),
     sourceSha: requiredValue(args, "--source-sha").toLowerCase(),
     releaseSha: requiredValue(args, "--release-sha").toLowerCase(),
     root: NodePath.resolve(args.includes("--root") ? requiredValue(args, "--root") : process.cwd()),
     allowNoteFree: args.includes("--allow-note-free"),
+    ...(notesOutput ? { notesOutput } : {}),
   };
 }
 
@@ -47,12 +63,27 @@ function assertExactSha(value: string, label: string): void {
   if (!SHA_PATTERN.test(value)) throw new Error(`${label} must be a full 40-character commit SHA.`);
 }
 
-async function verifyReleaseNote(options: Options): Promise<"catalog" | "explicit-note-free"> {
+export function renderScientReleaseNotesMarkdown(note: ScientReleaseNoteLike): string {
+  const highlights = note.highlights
+    .map((highlight) => `- **${highlight.title.trim()}** — ${highlight.description.trim()}`)
+    .join("\n");
+  return `# ${note.headline.trim()}\n\n**${note.kicker.trim()}**\n\n${note.summary.trim()}\n\n## Highlights\n\n${highlights}\n`;
+}
+
+async function verifyReleaseNote(options: Options): Promise<{
+  readonly source: "catalog" | "explicit-note-free";
+  readonly markdown: string;
+}> {
   const catalogPath = NodePath.join(options.root, "apps/web/src/scient/releaseNotes/catalog.ts");
   const modelPath = NodePath.join(options.root, "apps/web/src/scient/releaseNotes/model.ts");
 
   if (!NodeFS.existsSync(catalogPath) || !NodeFS.existsSync(modelPath)) {
-    if (options.allowNoteFree) return "explicit-note-free";
+    if (options.allowNoteFree) {
+      return {
+        source: "explicit-note-free",
+        markdown: `# Scient v${options.version}\n\nThis release was explicitly approved without a What's New entry.\n`,
+      };
+    }
     throw new Error(
       "The approved Scient release-note catalog is not present. Use --allow-note-free only for an explicit note-free release decision.",
     );
@@ -62,14 +93,21 @@ async function verifyReleaseNote(options: Options): Promise<"catalog" | "explici
     import(NodeURL.pathToFileURL(catalogPath).href),
     import(NodeURL.pathToFileURL(modelPath).href),
   ]);
-  const catalog = SCIENT_RELEASE_NOTES as ReadonlyArray<{ readonly version: string }>;
+  const catalog = SCIENT_RELEASE_NOTES as ReadonlyArray<ScientReleaseNoteLike>;
   const issues = validateScientReleaseNotesCatalog(catalog) as ReadonlyArray<string>;
-  return resolveReleaseNoteSource({
+  const source = resolveReleaseNoteSource({
     catalog,
     issues,
     version: options.version,
     allowNoteFree: options.allowNoteFree,
   });
+  const note = catalog.find((entry) => entry.version === options.version);
+  return source === "catalog" && note
+    ? { source, markdown: renderScientReleaseNotesMarkdown(note) }
+    : {
+        source,
+        markdown: `# Scient v${options.version}\n\nThis release was explicitly approved without a What's New entry.\n`,
+      };
 }
 
 export function resolveReleaseNoteSource(input: {
@@ -99,6 +137,12 @@ export async function runScientReleasePreflight(options: Options): Promise<void>
   assertExactSha(options.sourceSha, "--source-sha");
   assertExactSha(options.releaseSha, "--release-sha");
 
+  if (options.sourceSha !== options.releaseSha) {
+    throw new Error(
+      `release/stable must point at the exact selected main commit ${options.sourceSha}; received ${options.releaseSha}.`,
+    );
+  }
+
   const sourceTree = git(options.root, ["rev-parse", `${options.sourceSha}^{tree}`]);
   const releaseTree = git(options.root, ["rev-parse", `${options.releaseSha}^{tree}`]);
   if (sourceTree !== releaseTree) {
@@ -111,7 +155,13 @@ export async function runScientReleasePreflight(options: Options): Promise<void>
     git(options.root, ["rev-parse", "--verify", `refs/tags/v${options.version}`]);
   } catch {
     // Expected for a new release.
-    const noteSource = await verifyReleaseNote(options);
+    const releaseNote = await verifyReleaseNote(options);
+    if (options.notesOutput) {
+      NodeFS.writeFileSync(options.notesOutput, releaseNote.markdown, {
+        encoding: "utf8",
+        flag: "wx",
+      });
+    }
     process.stdout.write(
       `${JSON.stringify({
         version: options.version,
@@ -120,7 +170,7 @@ export async function runScientReleasePreflight(options: Options): Promise<void>
         sourceTree,
         releaseSha: options.releaseSha,
         releaseTree,
-        noteSource,
+        noteSource: releaseNote.source,
       })}\n`,
     );
     return;

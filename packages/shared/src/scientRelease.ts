@@ -1,4 +1,8 @@
-const EXACT_RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
+const EXACT_RELEASE_VERSION = new RegExp(
+  `^${SEMVER_NUMBER}\\.${SEMVER_NUMBER}\\.${SEMVER_NUMBER}(?:-[0-9A-Za-z.-]+)?$`,
+  "u",
+);
 
 export const SCIENT_DESKTOP_RELEASE_REPOSITORY = "ScientFactory/scient-desktop-next";
 export const SCIENT_SERVER_PACKAGE_NAME = "t3";
