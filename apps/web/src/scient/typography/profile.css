@@ -6,11 +6,11 @@
   --scient-font-size-diff-header: 14px;
 }
 
-.scient-chat-inline-chip {
+.scient-chat-inline-chip,
+.scient-file-link-tooltip {
   font-size: var(--scient-font-size-inline-file-chip);
 }
 
-.scient-file-link-tooltip,
 .scient-compact-meta {
   font-size: var(--scient-font-size-compact-meta);
 }

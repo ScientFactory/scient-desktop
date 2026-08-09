@@ -12,8 +12,8 @@ that use fixed pixels or render inside dependency shadow roots consume the
 tokens in `apps/web/src/scient/typography/profile.css`:
 
 - workspace file names: 14 px;
-- inline chat file links: 14 px;
-- file-link tooltips and compact diff metadata: 13 px; and
+- inline chat file links and their tooltips: 14 px;
+- compact diff metadata: 13 px; and
 - diff and file headers: 14 px.
 
 This is a deliberate product divergence, not a replacement typography system.
