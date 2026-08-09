@@ -99,6 +99,12 @@ export async function runScientReleasePreflight(options: Options): Promise<void>
   assertExactSha(options.sourceSha, "--source-sha");
   assertExactSha(options.releaseSha, "--release-sha");
 
+  if (options.sourceSha !== options.releaseSha) {
+    throw new Error(
+      `release/stable must point at the exact selected main commit ${options.sourceSha}; received ${options.releaseSha}.`,
+    );
+  }
+
   const sourceTree = git(options.root, ["rev-parse", `${options.sourceSha}^{tree}`]);
   const releaseTree = git(options.root, ["rev-parse", `${options.releaseSha}^{tree}`]);
   if (sourceTree !== releaseTree) {

@@ -17,6 +17,8 @@ separate states and must be reported separately.
   repository variable `SCIENT_DESKTOP_RELEASES_ENABLED=true`.
 - Never publish from an arbitrary branch, an unreviewed commit, or a dirty local
   build.
+- Release preflight requires the selected source SHA and the checked-out
+  `release/stable` SHA to be identical, not merely tree-equivalent.
 - Never rerun the full source test suite merely to reproduce evidence already
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
@@ -49,12 +51,18 @@ state, ports, and lifecycle and is never a publication source.
    `allow_note_free=false` unless Yaacov explicitly accepts a note-free release.
 4. Inspect `scient-release-v<version>`. It contains macOS arm64/x64, Linux x64,
    Windows x64, updater manifests, the exact server tarball,
-   `SHA256SUMS.txt`, and `scient-release-handoff.json`.
+   `SHA256SUMS.txt`, and `scient-release-handoff.json`. Assembly fails unless
+   every manifest-referenced payload exists and matches its declared size and
+   SHA-512, every required architecture is present, and no unattested file is
+   included.
 5. Resolve artifact, signing, updater, migration, website, and rollback gates.
    A green build-only run is not a release.
 6. Only after explicit approval, rerun the exact source with
    `publish_release=true`. Publication fails closed if macOS or Windows is
-   unsigned or the repository release gate is disabled.
+   unsigned or the repository release gate is disabled. The workflow stages a
+   draft, downloads it again, verifies every uploaded byte against the assembled
+   release, and only then makes the release public and Latest. Existing tags or
+   releases are never overwritten.
 7. In the legacy repository, run **Mirror new Scient release for legacy
    updaters** first with `publish_mirror=false`, inspect the byte-identical
    proof, then explicitly publish it. The old repository never rebuilds the new
@@ -80,6 +88,13 @@ Windows publication requires Azure Trusted Signing secrets
 
 Build-only proof may produce unsigned artifacts when credentials are absent.
 It labels them unsigned and cannot publish them.
+
+Release jobs expose Apple credentials only to macOS packaging and Azure
+credentials only to Windows packaging. Publication additionally verifies the
+final Windows Authenticode signature and the final macOS app signatures,
+Gatekeeper assessment, and notarization ticket before the signing attestations
+can authorize publication. Release-owned third-party actions and native build
+tooling are pinned to reviewed revisions.
 
 ## Updater and remote-server distribution
 
