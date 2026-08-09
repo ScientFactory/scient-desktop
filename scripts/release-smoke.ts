@@ -27,6 +27,7 @@ const workspaceFiles = [
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/scient-analytics/package.json",
+  "packages/scient-provider-runtime/package.json",
   "packages/scient-project-init/package.json",
   "packages/scient-voice/package.json",
   "packages/shared/package.json",
