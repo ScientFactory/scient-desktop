@@ -1,4 +1,22 @@
+import {
+  isWorkspaceImagePreviewPath,
+  isWorkspacePdfPreviewPath,
+} from "@t3tools/shared/filePreview";
+
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
+
+export type FilePreviewKind = "empty" | "image" | "pdf" | "text";
+
+export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
+  if (path === null) return "empty";
+  if (isWorkspaceImagePreviewPath(path)) return "image";
+  if (isWorkspacePdfPreviewPath(path)) return "pdf";
+  return "text";
+}
+
+export function shouldLoadFileAsText(path: string | null): boolean {
+  return resolveFilePreviewKind(path) === "text";
+}
 
 export function setMarkdownTaskChecked(
   markdown: string,
