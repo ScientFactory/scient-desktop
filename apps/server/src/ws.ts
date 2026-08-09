@@ -85,6 +85,7 @@ import {
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
+import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -2207,6 +2208,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
+    const providerLifecycleCoordinator =
+      yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
     const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     return HttpRouter.add(
@@ -2230,7 +2233,16 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           Effect.provide(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
-              Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                ProviderMaintenanceRunner.layer.pipe(
+                  Layer.provide(
+                    Layer.succeed(
+                      ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
+                      providerLifecycleCoordinator,
+                    ),
+                  ),
+                ),
+              ),
               Layer.provide(
                 Layer.mergeAll(
                   Layer.succeed(

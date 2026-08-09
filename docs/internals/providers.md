@@ -69,11 +69,13 @@ The connection and runtime managers are constructed once per server process and 
 WebSocket client. Closing a dialog or disconnecting one client therefore does not create a second
 operation or make an in-flight provider flow disappear.
 
-One lifecycle reservation serializes connection and runtime mutation for the same provider
-instance. Managed runtime mutation also has a driver-wide reservation because every Codex account
-in one environment resolves to the same app-private Codex runtime. Two Codex accounts cannot
-download, repair, or remove that shared directory concurrently. Separate providers can proceed
-independently.
+One lifecycle coordinator serializes connection, managed-runtime mutation, and inherited T3
+provider maintenance for the same provider instance. Managed runtime mutation and provider-tool
+updates also have a driver-wide reservation because every Codex account in one environment may
+resolve to the same executable. Independent account sign-ins may proceed together, but no sign-in
+can overlap an install, repair, removal, or update of that provider's shared runtime. Separate
+providers can proceed independently; T3's existing update-command lock still serializes package
+manager commands that share an external lock such as `npm-global`.
 
 Operation identities and reviewed-plan revisions reject duplicate starts and stale consent.
 Progress is semantic and coalesced by stage or meaningful download advance; renderer clients do
@@ -99,7 +101,7 @@ The initial managed runtime is OpenAI Codex `0.147.0`, release tag `rust-v0.147.
 artifact has an exact HTTPS URL, allowlisted redirect hosts, byte size, SHA-256 digest, archive
 shape, executable path, and smoke command compiled into the signed application source.
 
-An install or repair:
+An install, update, or repair:
 
 1. opens a unique private staging directory;
 2. downloads with size, overall-time, idle-time, redirect-host, and cancellation bounds;
@@ -110,10 +112,13 @@ An install or repair:
 6. activates the verified directory atomically; and
 7. removes staging data on success, failure, or cancellation.
 
-A failed replacement leaves the previous working managed runtime in place. `Remove` deletes only
-Scient's private Codex runtime root. It never changes a custom path, system package, provider
-credential home, or provider-owned account data. A user-visible manual rollback action is not
-exposed until two distinct managed releases have each passed the required release proof.
+A newly reviewed artifact does not make an older healthy managed copy disappear. Status and launch
+resolution continue to use the atomically activated executable recorded in the private runtime
+state. An update stages and verifies the reviewed replacement, then switches that state only after
+activation. A failed replacement leaves the previous working managed runtime in place. `Remove`
+deletes only Scient's private Codex runtime root. It never changes a custom path, system package,
+provider credential home, or provider-owned account data. A user-visible manual rollback action is
+not exposed until two distinct managed releases have each passed the required release proof.
 
 The app-private store has one owning Scient server process per data directory. The desktop
 single-instance and server lifecycle enforce that deployment invariant; independent server
@@ -143,9 +148,10 @@ Apple-silicon run is not evidence for another row.
 
 Most lifecycle behavior is under `apps/server/src/scient`, `apps/web/src/scient`, and
 `packages/scient-provider-runtime`. The intentional inherited seams are narrow: optional driver
-actions, additive contracts/RPCs, registry overlays, server composition, and small composer and
-Settings entry points. Upstream T3 remains authoritative for provider instances, adapters,
-sessions, model discovery, process ownership, and the surrounding UI. Future T3 refreshes should
+actions, additive contracts/RPCs, registry overlays, one shared reservation around T3's existing
+maintenance runner, server composition, and small composer and Settings entry points. Upstream T3
+remains authoritative for provider instances, adapters, sessions, model discovery, process
+ownership, update commands, provider enablement, and the surrounding UI. Future T3 refreshes should
 preserve those seams and reconcile only the bounded inherited edits rather than porting the
 lifecycle into a parallel host architecture.
 

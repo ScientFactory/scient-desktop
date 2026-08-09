@@ -102,6 +102,37 @@ describe("ManagedCodexRuntime", () => {
     expect((await runtime.status(first)).installed).toBe(true);
   });
 
+  it("keeps launching the active release while a newer reviewed artifact is available", async () => {
+    const { runtime } = await makeRuntime();
+    const first = artifact("1.0.0");
+    const installed = await runtime.install({
+      artifact: first,
+      signal: new AbortController().signal,
+    });
+
+    const status = await runtime.status(artifact("2.0.0"));
+
+    expect(status.installed).toBe(true);
+    expect(status.activeVersion).toBe("1.0.0");
+    expect(status.launchPath).toBe(installed.launchPath);
+  });
+
+  it("does not launch a managed binary recorded for a different computer target", async () => {
+    const { runtime } = await makeRuntime();
+    await runtime.install({
+      artifact: artifact("1.0.0"),
+      signal: new AbortController().signal,
+    });
+
+    const status = await runtime.status({
+      ...artifact("1.0.0"),
+      target: { platform: "darwin", arch: "x64" },
+    });
+
+    expect(status.installed).toBe(false);
+    expect(status.activeVersion).toBeNull();
+  });
+
   it("cleans interrupted staging data and removes only its app-private root", async () => {
     const { root, runtime } = await makeRuntime();
     const staging = NodePath.join(root, "provider-runtimes", "codex", "staging", "abandoned");

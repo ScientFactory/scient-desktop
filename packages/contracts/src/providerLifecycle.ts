@@ -54,7 +54,12 @@ export const ProviderRuntimeSupportTier = Schema.Literals([
 ]);
 export type ProviderRuntimeSupportTier = typeof ProviderRuntimeSupportTier.Type;
 
-export const ProviderManagedRuntimeAction = Schema.Literals(["install", "repair", "remove"]);
+export const ProviderManagedRuntimeAction = Schema.Literals([
+  "install",
+  "update",
+  "repair",
+  "remove",
+]);
 export type ProviderManagedRuntimeAction = typeof ProviderManagedRuntimeAction.Type;
 
 export const ProviderRuntimeOperationStatus = Schema.Literals([

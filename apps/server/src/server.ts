@@ -475,7 +475,7 @@ export const makeRoutesLayer = Layer.mergeAll(
 ).pipe(
   Layer.provide(
     Layer.mergeAll(ProviderConnectionManager.layer, ProviderRuntimeManager.layer).pipe(
-      Layer.provide(ProviderLifecycleCoordinator.layer),
+      Layer.provideMerge(ProviderLifecycleCoordinator.layer),
     ),
   ),
   Layer.provide(PreviewAutomationBroker.layer),

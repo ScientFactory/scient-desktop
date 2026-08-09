@@ -89,6 +89,7 @@ export function resolveCodexManagedRuntimePolicy(input: {
   readonly source: ProviderRuntimeSummary["source"];
   readonly artifact: ManagedRuntimeArtifact | undefined;
   readonly installed: boolean;
+  readonly installedVersion: string | null;
   readonly managedInstallationAllowed: boolean;
 }): {
   readonly supportTier: ProviderRuntimeSummary["supportTier"];
@@ -102,7 +103,9 @@ export function resolveCodexManagedRuntimePolicy(input: {
     : input.source === "missing"
       ? ["install"]
       : input.source === "scient_managed" && input.installed
-        ? ["repair", "remove"]
+        ? input.artifact && input.installedVersion !== input.artifact.version
+          ? ["update", "repair", "remove"]
+          : ["repair", "remove"]
         : [];
   return {
     supportTier:
@@ -117,6 +120,7 @@ export function resolveCodexManagedRuntimePolicy(input: {
 
 export interface CodexManagedRuntimeResolution {
   readonly effectiveBinaryPath: string;
+  readonly usesManagedPath: boolean;
   readonly summary: ProviderRuntimeSummary;
   readonly actions: ProviderManagedRuntimeActions;
 }
@@ -163,10 +167,13 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       source,
       artifact,
       installed: managedInstalled,
+      installedVersion: Option.isSome(managedStatus) ? managedStatus.value.activeVersion : null,
       managedInstallationAllowed: input.managedInstallationAllowed,
     });
     const effectiveBinaryPath = initialPolicy.useManagedPath
-      ? runtime.launchPath(artifact!)
+      ? managedInstalled && Option.isSome(managedStatus)
+        ? managedStatus.value.launchPath
+        : runtime.launchPath(artifact!)
       : input.settings.binaryPath;
 
     const getSummary = Effect.gen(function* () {
@@ -189,6 +196,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         source: latestSource,
         artifact,
         installed: latestManagedInstalled,
+        installedVersion: latest?.activeVersion ?? null,
         managedInstallationAllowed: input.managedInstallationAllowed,
       });
       const message =
@@ -225,7 +233,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
               runtimeError(`The ${action} action is not available for this Codex runtime.`),
             );
           }
-          const isDownload = action === "install" || action === "repair";
+          const isDownload = action === "install" || action === "update" || action === "repair";
           if (isDownload && !artifact) {
             return Effect.fail(
               runtimeError("No reviewed Codex artifact is available for this computer."),
@@ -243,7 +251,9 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
             message:
               action === "remove"
                 ? "Scient will remove only its app-private Codex copy. Custom and system installations are untouched."
-                : `Scient will download, verify, stage, test, and activate Codex ${artifact?.version ?? ""}.`,
+                : action === "update"
+                  ? `Scient will download, verify, test, and activate Codex ${artifact?.version ?? ""}. The current version remains active until then.`
+                  : `Scient will download, verify, stage, test, and activate Codex ${artifact?.version ?? ""}.`,
           });
         }),
       );
@@ -310,6 +320,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
 
     return {
       effectiveBinaryPath,
+      usesManagedPath: initialPolicy.useManagedPath,
       summary,
       actions: { getSummary, plan, run },
     };

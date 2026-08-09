@@ -46,6 +46,7 @@ import { makeCodexConnectionActions } from "../../scient/providerLifecycle/Codex
 import { makeCodexManagedRuntimeResolution } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
@@ -163,10 +164,19 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         binaryPath: managedRuntime.effectiveBinaryPath,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
-      });
+      // T3's package-manager updater remains authoritative for custom and
+      // system Codex installations. A Scient-managed copy must update only
+      // through its reviewed private-artifact pipeline; an npm/global update
+      // would change a different executable while falsely reporting success.
+      const maintenanceCapabilities = managedRuntime.usesManagedPath
+        ? makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          })
+        : yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+            binaryPath: effectiveConfig.binaryPath,
+            env: processEnv,
+          });
 
       // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
       // channels at construction time — their failure modes are all on the

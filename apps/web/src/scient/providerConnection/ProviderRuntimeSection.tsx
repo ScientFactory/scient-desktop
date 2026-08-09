@@ -75,6 +75,8 @@ function actionLabel(action: ProviderManagedRuntimeAction, displayName: string):
   switch (action) {
     case "install":
       return `Install ${displayName}`;
+    case "update":
+      return `Update ${displayName}`;
     case "repair":
       return `Repair ${displayName}`;
     case "remove":

@@ -4,6 +4,7 @@ import type { ManagedRuntimeArtifact } from "@scientfactory/provider-runtime";
 import { resolveCodexManagedRuntimePolicy } from "./CodexManagedRuntimeActions.ts";
 
 const artifact = {
+  version: "2.0.0",
   supportTier: "fully_assisted",
 } as ManagedRuntimeArtifact;
 
@@ -14,6 +15,7 @@ describe("Codex managed runtime policy", () => {
         source: "missing",
         artifact,
         installed: false,
+        installedVersion: null,
         managedInstallationAllowed: true,
       }),
     ).toEqual({
@@ -29,6 +31,7 @@ describe("Codex managed runtime policy", () => {
         source: "missing",
         artifact,
         installed: false,
+        installedVersion: null,
         managedInstallationAllowed: false,
       }),
     ).toEqual({
@@ -44,6 +47,7 @@ describe("Codex managed runtime policy", () => {
         source: "scient_managed",
         artifact,
         installed: true,
+        installedVersion: "2.0.0",
         managedInstallationAllowed: true,
       }).actions,
     ).toEqual(["repair", "remove"]);
@@ -52,6 +56,7 @@ describe("Codex managed runtime policy", () => {
         source: "system",
         artifact,
         installed: false,
+        installedVersion: null,
         managedInstallationAllowed: true,
       }).actions,
     ).toEqual([]);
@@ -60,8 +65,21 @@ describe("Codex managed runtime policy", () => {
         source: "custom",
         artifact,
         installed: false,
+        installedVersion: null,
         managedInstallationAllowed: true,
       }).actions,
     ).toEqual([]);
+  });
+
+  it("offers a verified update while preserving an older managed runtime", () => {
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "scient_managed",
+        artifact,
+        installed: true,
+        installedVersion: "1.0.0",
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual(["update", "repair", "remove"]);
   });
 });

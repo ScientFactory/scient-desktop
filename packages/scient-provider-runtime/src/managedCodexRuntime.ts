@@ -180,7 +180,16 @@ export class ManagedCodexRuntime {
 
   async status(artifact: ManagedRuntimeArtifact): Promise<ManagedCodexRuntimeStatus> {
     const state = await this.readState();
-    const launchPath = this.launchPath(artifact);
+    const activeState =
+      state?.targetKey === managedRuntimeTargetKey(artifact.target) ? state : undefined;
+    // A newly reviewed artifact may be newer than the currently active copy.
+    // Keep reporting (and launching) the last atomically activated executable
+    // until the new artifact has been downloaded, verified, smoke-tested, and
+    // activated. Treating only the catalog version as installed would make a
+    // healthy older copy disappear during an app update.
+    const launchPath = activeState
+      ? NodePath.resolve(this.#root, activeState.executableRelativePath)
+      : this.launchPath(artifact);
     const installed = await NodeFSP.access(launchPath).then(
       () => true,
       () => false,
@@ -188,8 +197,8 @@ export class ManagedCodexRuntime {
     return {
       launchPath,
       installed,
-      activeVersion: state?.activeVersion ?? null,
-      previousVersion: state?.previousVersion ?? null,
+      activeVersion: activeState?.activeVersion ?? null,
+      previousVersion: activeState?.previousVersion ?? null,
     };
   }
 

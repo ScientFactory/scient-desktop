@@ -143,7 +143,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         next.delete(instanceId);
         return [current, next] as const;
       });
-      if (removed) yield* lifecycleCoordinator.release({ instanceId, operationId });
+      if (removed) yield* lifecycleCoordinator.release({ operationId });
       return removed;
     });
 
@@ -203,6 +203,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       const operationId = `runtime-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
       const reserved = yield* lifecycleCoordinator.reserve({
         instanceId: input.instanceId,
+        provider: target.provider,
         reservation: { operationId, kind: "runtime" },
       });
       if (!reserved) {
@@ -223,9 +224,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             message: failure.message,
           }),
         ),
-        Effect.tapError(() =>
-          lifecycleCoordinator.release({ instanceId: input.instanceId, operationId }),
-        ),
+        Effect.tapError(() => lifecycleCoordinator.release({ operationId })),
       );
       const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
       const active: ActiveRuntimeOperation = {
@@ -246,7 +245,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         return [true, next] as const;
       });
       if (!runtimeReserved) {
-        yield* lifecycleCoordinator.release({ instanceId: input.instanceId, operationId });
+        yield* lifecycleCoordinator.release({ operationId });
         return yield* makeError({
           provider: target.provider,
           instanceId: input.instanceId,
@@ -321,7 +320,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                       result._tag === "Success"
                         ? input.action === "remove"
                           ? "Scient's private provider runtime was removed."
-                          : "The provider runtime is installed and verified."
+                          : input.action === "update"
+                            ? "The provider runtime was updated and verified."
+                            : "The provider runtime is installed and verified."
                         : result.failure.message,
                   }),
                 },

@@ -5,15 +5,17 @@ facts. A saved provider configuration is not treated as a working connection.
 
 ## The Easiest Setup Path
 
-If the selected Codex model is not ready, the composer shows the next useful action in place of the
-normal model control. Choose `Set up Codex`, `Sign in to Codex`, or `Finish Codex sign in` there. The
-same guided flow is available from **Settings > Providers**.
+When no provider is ready, the composer shows **Choose your AI** in place of a disabled model
+control. Choose Codex there to install it, sign in, or recover from a failed step without leaving
+the composer. **Settings > Providers** shows the same lifecycle facts and exposes the next direct
+action: **Install**, **Sign in**, **Update**, or **Manage**.
 
 The flow:
 
 1. detects a healthy custom, system, or Scient-managed Codex runtime;
 2. offers managed installation only on a release-proven computer target;
-3. shows the source, version, platform, and approximate download size before changing anything;
+3. starts a private managed installation only after the user explicitly chooses **Install Codex**,
+   using the reviewed artifact selected for that computer;
 4. opens Codex's official browser or device-code sign-in flow; and
 5. asks Codex for fresh account, model, and runtime state before reporting the provider as ready.
 
@@ -48,6 +50,11 @@ package shape, cancellation path, and recovery path must pass its own clean-mach
 If a managed install, repair, or download fails, the incomplete staging directory is cleaned and
 the previous working copy remains active. A manual rollback button is deliberately not offered
 until Scient has two separately reviewed releases to roll between.
+
+When a newer reviewed managed version is available, **Update** downloads and verifies the
+replacement without deactivating the current version. Scient switches versions only after the new
+copy passes its smoke test. Provider-tool updates and provider sign-in are serialized so one cannot
+change shared runtime state underneath the other.
 
 ## Why Use More Than One Account?
 

@@ -122,7 +122,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         return [current, next] as const;
       });
       if (removed) {
-        yield* lifecycleCoordinator.release({ instanceId, operationId });
+        yield* lifecycleCoordinator.release({ operationId });
       }
       return removed;
     });
@@ -177,6 +177,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     const active: ActiveConnection = { operationId, scope, attemptRef, fiberRef };
     const lifecycleReserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
+      provider: target.provider,
       reservation: { operationId, kind: "connection" },
     });
     if (!lifecycleReserved) {
@@ -197,7 +198,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       return [true, next] as const;
     });
     if (!reserved) {
-      yield* lifecycleCoordinator.release({ instanceId: input.instanceId, operationId });
+      yield* lifecycleCoordinator.release({ operationId });
       yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
       return yield* makeError({
         provider: target.provider,
@@ -398,6 +399,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     const operationId = `disconnect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
+      provider: target.provider,
       reservation: { operationId, kind: "connection" },
     });
     if (!reserved) {
@@ -420,11 +422,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           },
         }),
       ),
-      Effect.ensuring(
-        lifecycleCoordinator
-          .release({ instanceId: input.instanceId, operationId })
-          .pipe(Effect.asVoid),
-      ),
+      Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
     );
     if (result._tag === "Failure") {
       return yield* makeError({

@@ -33,7 +33,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
-import { ProviderConnectionComposerAction } from "../../scient/providerConnection/ProviderConnectionComposerAction.tsx";
+import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
@@ -3151,23 +3151,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {selectedProviderNeedsConnection && selectedProviderEntry ? (
-                  <ProviderConnectionComposerAction
+                {selectedProviderNeedsConnection || noProviderAvailable ? (
+                  <ProviderOnboardingPicker
+                    compact={isComposerFooterCompact}
                     environmentId={environmentId}
-                    entry={selectedProviderEntry}
+                    instanceEntries={providerInstanceEntries}
                   />
-                ) : noProviderAvailable ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled
-                    data-chat-provider-unavailable="true"
-                    className="shrink-0 gap-2 px-2 text-secondary-label sm:px-3"
-                  >
-                    <CircleAlertIcon className="size-4" />
-                    No provider available
-                  </Button>
                 ) : (
                   <ProviderModelPicker
                     compact={isComposerFooterCompact}

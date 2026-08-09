@@ -39,6 +39,8 @@ import {
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
+import { CodexInlineSetup } from "./CodexInlineSetup";
+import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction = "browser" | "device" | "cancel" | "disconnect" | null;
 
@@ -62,13 +64,95 @@ function providerFromResult(
   return providers.find((provider) => provider.instanceId === instanceId);
 }
 
-export function ProviderConnectionDialog(props: {
+interface ProviderConnectionDialogProps {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-}) {
+}
+
+export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  return props.provider.driver === "codex" ? (
+    <CodexProviderConnectionDialog key={props.provider.instanceId} {...props} />
+  ) : (
+    <GenericProviderConnectionDialog key={props.provider.instanceId} {...props} />
+  );
+}
+
+function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const isConnected = providerConnectionPresentation(props.provider).kind === "connected";
+
+  const disconnect = async () => {
+    setDisconnecting(true);
+    setDisconnectError(null);
+    try {
+      await controller.disconnect();
+    } catch (error) {
+      setDisconnectError(
+        failureMessage(error, `Scient could not sign out of ${props.displayName}.`),
+      );
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogPopup className="max-w-sm" showCloseButton>
+        <DialogHeader>
+          <DialogTitle>Codex</DialogTitle>
+          <DialogDescription>
+            Connect and manage your existing ChatGPT subscription.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="flex min-h-64 flex-col">
+          <CodexInlineSetup
+            controller={controller}
+            displayName={props.displayName}
+            provider={props.provider}
+          />
+          {disconnectError ? (
+            <div
+              className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"
+              role="alert"
+            >
+              <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+              <span>{disconnectError}</span>
+            </div>
+          ) : null}
+        </DialogPanel>
+        <DialogFooter className="sm:justify-between">
+          {isConnected && props.provider.connection?.canDisconnect ? (
+            <Button
+              className="text-destructive hover:text-destructive"
+              disabled={disconnecting}
+              onClick={() => void disconnect()}
+              type="button"
+              variant="ghost"
+            >
+              {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
+              Sign out on this computer
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   const startConnection = useAtomCommand(serverEnvironment.startProviderConnection, {
     reportFailure: false,
   });
