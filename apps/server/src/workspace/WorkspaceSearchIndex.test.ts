@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - This native integration test owns an isolated filesystem fixture.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   FileFinder,
   type FileItem,
@@ -29,6 +34,58 @@ function fileItem(relativePath: string): FileItem {
     gitStatus: "clean",
   };
 }
+
+function pdfFixture(): Buffer {
+  return Buffer.concat([
+    Buffer.from("%PDF-1.7\n%", "ascii"),
+    Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0a]),
+    Buffer.from("1 0 obj\n<<>>\nendobj\n%%EOF\n", "ascii"),
+  ]);
+}
+
+it.effect("indexes PDFs and directories whose only files are PDFs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const workspaceRoot = yield* Effect.sync(() =>
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "workspace-pdf-index-")),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(workspaceRoot, { recursive: true, force: true })),
+      );
+
+      NodeFS.mkdirSync(NodePath.join(workspaceRoot, "pdf-only"));
+      NodeFS.mkdirSync(NodePath.join(workspaceRoot, "mixed"));
+      NodeFS.writeFileSync(NodePath.join(workspaceRoot, "pdf-only", "paper.pdf"), pdfFixture());
+      NodeFS.writeFileSync(NodePath.join(workspaceRoot, "mixed", "paper.pdf"), pdfFixture());
+      NodeFS.writeFileSync(NodePath.join(workspaceRoot, "mixed", "notes.txt"), "notes\n");
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(workspaceRoot);
+      const listing = yield* searchIndex.list();
+
+      expect(listing.entries).toContainEqual({ kind: "directory", path: "pdf-only" });
+      expect(listing.entries).toContainEqual({ kind: "file", path: "pdf-only/paper.pdf" });
+      expect(listing.entries).toContainEqual({ kind: "file", path: "mixed/paper.pdf" });
+      expect(listing.entries).toContainEqual({ kind: "file", path: "mixed/notes.txt" });
+
+      const pdfSearch = yield* searchIndex.search("paper", 10, "file");
+      expect(pdfSearch.entries).toEqual(
+        expect.arrayContaining([
+          { kind: "file", path: "pdf-only/paper.pdf" },
+          { kind: "file", path: "mixed/paper.pdf" },
+        ]),
+      );
+
+      NodeFS.writeFileSync(NodePath.join(workspaceRoot, "pdf-only", "second.pdf"), pdfFixture());
+      yield* searchIndex.refresh();
+
+      const refreshedListing = yield* searchIndex.list();
+      expect(refreshedListing.entries).toContainEqual({
+        kind: "file",
+        path: "pdf-only/second.pdf",
+      });
+    }),
+  ),
+);
 
 it.effect("filters image searches before applying the result limit", () =>
   Effect.scoped(
