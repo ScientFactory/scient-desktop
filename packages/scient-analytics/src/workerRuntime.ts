@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalFetch:off globalTimers:off -- Dedicated Scient analytics worker.
 import * as NodeCrypto from "node:crypto";
-import type { MessagePort } from "node:worker_threads";
+import type * as NodeWorkerThreads from "node:worker_threads";
 
 import {
   ANALYTICS_SCHEMA_VERSION,
@@ -31,10 +31,11 @@ function deliveryErrorClass(error: unknown): string {
 }
 
 export function startAnalyticsWorker(input: {
-  readonly port: MessagePort;
+  readonly port: NodeWorkerThreads.MessagePort;
   readonly outboxPath: string;
   readonly endpoint: string;
 }): void {
+  // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node MessagePort postMessage has no targetOrigin parameter.
   const post = (response: AnalyticsWorkerResponse) => input.port.postMessage(response);
   let outbox: AnalyticsOutbox;
 

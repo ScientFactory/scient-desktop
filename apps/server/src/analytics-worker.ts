@@ -1,19 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Packaged entry for the Scient analytics worker.
-import { parentPort, workerData } from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import { startAnalyticsWorker } from "@scientfactory/analytics/worker";
 
-if (parentPort === null) {
+if (NodeWorkerThreads.parentPort === null) {
   throw new Error("The Scient analytics worker requires a parent message port.");
 }
 
-const data = workerData as {
+const data = NodeWorkerThreads.workerData as {
   readonly outboxPath: string;
   readonly endpoint: string;
 };
 
 startAnalyticsWorker({
-  port: parentPort,
+  port: NodeWorkerThreads.parentPort,
   outboxPath: data.outboxPath,
   endpoint: data.endpoint,
 });

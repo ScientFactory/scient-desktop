@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Focused worker/outbox integration tests.
 import * as NodeFS from "node:fs";
-import * as NodeHTTP from "node:http";
+import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { createAnalyticsRuntime, type AnalyticsRuntimeOptions } from "./runtime.ts";
 
 const fixtures: string[] = [];
-const servers: NodeHTTP.Server[] = [];
+const servers: NodeHttp.Server[] = [];
 
 function fixturePath(): string {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-analytics-"));
@@ -33,7 +33,7 @@ async function ingestionServer(): Promise<{
   readonly bodies: unknown[];
 }> {
   const bodies: unknown[] = [];
-  const server = NodeHTTP.createServer((request, response) => {
+  const server = NodeHttp.createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {

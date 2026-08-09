@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- This package owns Scient's local worker boundary.
 import * as NodeCrypto from "node:crypto";
-import { Worker } from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import {
   type AnalyticsConsent,
@@ -79,12 +79,15 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   const now = options.now ?? (() => new Date());
   const randomUUID = options.randomUUID ?? NodeCrypto.randomUUID;
   const sessionId = `session:${randomUUID()}`;
-  const worker = new Worker(options.workerUrl ?? new URL("./worker-entry.ts", import.meta.url), {
-    workerData: {
-      outboxPath: options.outboxPath,
-      endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
+  const worker = new NodeWorkerThreads.Worker(
+    options.workerUrl ?? new URL("./worker-entry.ts", import.meta.url),
+    {
+      workerData: {
+        outboxPath: options.outboxPath,
+        endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
+      },
     },
-  });
+  );
   worker.unref();
 
   let consent: AnalyticsConsent = options.consent;
@@ -131,6 +134,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   const post = (command: AnalyticsWorkerCommand): boolean => {
     if (!available) return false;
     try {
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node Worker postMessage has no targetOrigin parameter.
       worker.postMessage(command);
       return true;
     } catch {
