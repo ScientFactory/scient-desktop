@@ -21,7 +21,7 @@ describe("Scient release machinery", () => {
   it("pins every release-owned action to an immutable commit", () => {
     for (const workflowName of ["promote-release.yml", "release.yml"]) {
       const workflow = NodeFS.readFileSync(
-        NodePath.join(process.cwd(), ".github/workflows", workflowName),
+        NodePath.join(import.meta.dirname, "../.github/workflows", workflowName),
         "utf8",
       );
       const uses = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
