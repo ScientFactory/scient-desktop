@@ -80,15 +80,19 @@ manager commands that share an external lock such as `npm-global`.
 Operation identities and reviewed-plan revisions reject duplicate starts and stale consent.
 Progress is semantic and coalesced by stage or meaningful download advance; renderer clients do
 not receive raw process output or every network chunk. Current operations are intentionally
-transient. After restart, the runtime service removes interrupted staging work and derives truth
-again from the filesystem and provider probe instead of restoring a stale wizard page.
+transient. After restart, the runtime service safely reconciles atomic state and derives truth
+again from the filesystem and provider probe instead of restoring a stale wizard page. Abandoned
+staging is removed only when the next serialized runtime mutation begins, so a concurrent status
+refresh cannot delete an active installation.
 
 ### Codex authentication
 
 [`CodexConnectionActions`][codex-connection] uses the structured Codex app-server account API. It
 does not parse terminal text. The browser or device-code URL and short-lived user code may cross
 the RPC boundary; passwords, access tokens, refresh tokens, credential files, and unredacted
-provider output may not. Codex owns credential persistence, refresh, expiry, and revocation.
+provider output may not. Browser login uses Codex's official local success page rather than its
+hosted Codex-app handoff, so a successful Scient login ends with a closeable browser page. Codex
+owns credential persistence, refresh, expiry, and revocation.
 
 The server does not report connection success from a button click. It waits for Codex completion,
 refreshes the provider instance, and derives the next UI state from the resulting runtime, account,

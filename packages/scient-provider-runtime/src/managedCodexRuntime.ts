@@ -204,14 +204,6 @@ export class ManagedCodexRuntime {
 
   async reconcile(artifact?: ManagedRuntimeArtifact): Promise<void> {
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
-    const entries = await NodeFSP.readdir(this.#stagingDir).catch(() => []);
-    await Promise.all(
-      entries.map((entry) =>
-        NodeFSP.rm(NodePath.join(this.#stagingDir, entry), { recursive: true, force: true }).catch(
-          () => undefined,
-        ),
-      ),
-    );
     const rootEntries = await NodeFSP.readdir(this.#root).catch(() => []);
     await Promise.all(
       rootEntries
@@ -231,6 +223,7 @@ export class ManagedCodexRuntime {
       throw new ManagedCodexRuntimeError(artifact.supportMessage);
     }
     await this.reconcile(artifact);
+    await this.#cleanStaging();
     onProgress?.({ stage: "preparing" });
     const stage = await NodeFSP.mkdtemp(NodePath.join(this.#stagingDir, "install-"));
     const archivePath = NodePath.join(stage, artifact.artifactName);
@@ -319,6 +312,17 @@ export class ManagedCodexRuntime {
       flag: "wx",
     });
     await NodeFSP.rename(temporary, this.#statePath);
+  }
+
+  async #cleanStaging(): Promise<void> {
+    const entries = await NodeFSP.readdir(this.#stagingDir).catch(() => []);
+    await Promise.all(
+      entries.map((entry) =>
+        NodeFSP.rm(NodePath.join(this.#stagingDir, entry), { recursive: true, force: true }).catch(
+          () => undefined,
+        ),
+      ),
+    );
   }
 
   async #reconcileReplacement(artifact: ManagedRuntimeArtifact): Promise<void> {

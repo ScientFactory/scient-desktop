@@ -24,8 +24,10 @@ function methodParams(method: ProviderConnectionMethod): CodexSchema.V2LoginAcco
     case "codex_browser":
       return {
         type: "chatgpt",
-        useHostedLoginSuccessPage: true,
-        appBrand: "chatgpt",
+        // Codex's hosted success page is an app handoff for Codex/ChatGPT.
+        // Scient keeps the official local Codex callback page instead, which
+        // confirms completion without trying to open a different application.
+        useHostedLoginSuccessPage: false,
       };
     case "codex_device_code":
       return { type: "chatgptDeviceCode" };

@@ -133,17 +133,38 @@ describe("ManagedCodexRuntime", () => {
     expect(status.activeVersion).toBeNull();
   });
 
-  it("cleans interrupted staging data and removes only its app-private root", async () => {
+  it("does not delete an active staging directory during state reconciliation", async () => {
     const { root, runtime } = await makeRuntime();
     const staging = NodePath.join(root, "provider-runtimes", "codex", "staging", "abandoned");
-    const unrelated = NodePath.join(root, "unrelated.txt");
     await NodeFSP.mkdir(staging, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(staging, "partial"), "partial");
-    await NodeFSP.writeFile(unrelated, "keep");
 
     await runtime.reconcile();
+
+    expect(await NodeFSP.readFile(NodePath.join(staging, "partial"), "utf8")).toBe("partial");
+  });
+
+  it("cleans abandoned staging only when a serialized installation begins", async () => {
+    const { root, runtime } = await makeRuntime();
+    const staging = NodePath.join(root, "provider-runtimes", "codex", "staging", "abandoned");
+    await NodeFSP.mkdir(staging, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(staging, "partial"), "partial");
+
+    await runtime.install({
+      artifact: artifact("1.2.3"),
+      signal: new AbortController().signal,
+    });
+
     await expect(NodeFSP.access(staging)).rejects.toThrow();
+  });
+
+  it("removes only its app-private root", async () => {
+    const { root, runtime } = await makeRuntime();
+    const unrelated = NodePath.join(root, "unrelated.txt");
+    await NodeFSP.writeFile(unrelated, "keep");
+
     await runtime.remove();
+
     expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep");
   });
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "@scientfactory/provider-runtime";
-import { resolveCodexManagedRuntimePolicy } from "./CodexManagedRuntimeActions.ts";
+import {
+  resolveCodexManagedRuntimePolicy,
+  resolveCodexRuntimeSource,
+} from "./CodexManagedRuntimeActions.ts";
 
 const artifact = {
   version: "2.0.0",
@@ -9,6 +12,23 @@ const artifact = {
 } as ManagedRuntimeArtifact;
 
 describe("Codex managed runtime policy", () => {
+  it("reports an unhealthy custom runtime honestly without overriding the configured path", () => {
+    expect(
+      resolveCodexRuntimeSource({
+        hasCustomRuntime: true,
+        configuredRuntimeHealthy: false,
+        managedInstalled: true,
+      }),
+    ).toBe("unknown");
+    expect(
+      resolveCodexRuntimeSource({
+        hasCustomRuntime: true,
+        configuredRuntimeHealthy: true,
+        managedInstalled: false,
+      }),
+    ).toBe("custom");
+  });
+
   it("offers installation only for the proven local-desktop target", () => {
     expect(
       resolveCodexManagedRuntimePolicy({

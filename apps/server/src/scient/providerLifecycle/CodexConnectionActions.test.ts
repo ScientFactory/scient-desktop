@@ -83,8 +83,7 @@ describe("CodexConnectionActions", () => {
           method: "account/login/start",
           params: {
             type: "chatgpt",
-            useHostedLoginSuccessPage: true,
-            appBrand: "chatgpt",
+            useHostedLoginSuccessPage: false,
           },
         });
 

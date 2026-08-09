@@ -16,7 +16,8 @@ The flow:
 2. offers managed installation only on a release-proven computer target;
 3. starts a private managed installation only after the user explicitly chooses **Install Codex**,
    using the reviewed artifact selected for that computer;
-4. opens Codex's official browser or device-code sign-in flow; and
+4. opens Codex's official browser or device-code sign-in flow and lets Codex's local callback page
+   confirm that the browser can be closed; and
 5. asks Codex for fresh account, model, and runtime state before reporting the provider as ready.
 
 Scient never asks for or receives the provider password. Codex continues to own its credentials,
@@ -47,9 +48,10 @@ Linux so those paths can be proven later without redesigning the lifecycle. Mere
 artifact exists is not enough to expose managed installation. Each operating system, architecture,
 package shape, cancellation path, and recovery path must pass its own clean-machine release proof.
 
-If a managed install, repair, or download fails, the incomplete staging directory is cleaned and
-the previous working copy remains active. A manual rollback button is deliberately not offered
-until Scient has two separately reviewed releases to roll between.
+If a managed install, repair, or download fails, that operation cleans its incomplete staging
+directory and the previous working copy remains active. Routine status refreshes never delete an
+active operation's staging directory. A manual rollback button is deliberately not offered until
+Scient has two separately reviewed releases to roll between.
 
 When a newer reviewed managed version is available, **Update** downloads and verifies the
 replacement without deactivating the current version. Scient switches versions only after the new
