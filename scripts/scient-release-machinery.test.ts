@@ -96,6 +96,22 @@ describe("Scient release machinery", () => {
     assert(exposePnpmIndex < packageServerIndex);
   });
 
+  it("installs workspace dependencies before running release assembly scripts", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const assembleJob = workflow.split(/^  assemble:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+    const steps = assembleJob.split(/^ {6}- /mu).slice(1);
+    const setupVpStep = steps.find((step) => step.includes("voidzero-dev/setup-vp@"));
+
+    assert.include(setupVpStep ?? "", "run-install: true");
+
+    const setupVpIndex = assembleJob.indexOf("voidzero-dev/setup-vp@");
+    const firstNodeScriptIndex = assembleJob.indexOf("node scripts/");
+    assert(setupVpIndex >= 0 && setupVpIndex < firstNodeScriptIndex);
+  });
+
   it("requires release/stable to be the exact selected main commit", async () => {
     await expect(
       runScientReleasePreflight({
