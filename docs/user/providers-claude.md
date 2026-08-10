@@ -20,11 +20,10 @@ model picker's provider rail. After Claude confirms the account and reports mode
 Claude's declared default model to the existing composer selection path and closes onboarding. You
 can work immediately or reopen the normal model picker to choose another Claude model.
 
-An approved Scient deployment can offer **Sign in to Claude** for an existing Claude.ai Pro, Max,
-Team, or Enterprise subscription. Until Anthropic has authorized that third-party experience, the
-assisted default is **Sign in with Console** for an Anthropic Console account. Existing API-key,
-Bedrock, Vertex, Foundry, and custom-endpoint setups remain advanced provider configurations rather
-than being rewritten by the guided account flow.
+**Sign in to Claude** uses Claude Code's official sign-in flow for an existing Claude.ai Pro, Max,
+Team, or Enterprise subscription. **Use Anthropic Console** remains available as an alternative for
+an Anthropic Console account. Existing API-key, Bedrock, Vertex, Foundry, and custom-endpoint setups
+remain advanced provider configurations rather than being rewritten by the guided account flow.
 
 Most browser sign-ins return to Claude automatically. If the browser itself displays a one-time
 code, expand **Browser showed a code?** and paste it into the compact recovery field. This is an occasional fallback for
@@ -82,14 +81,13 @@ Common reasons:
 
 Use the default provider.
 
-The guided Scient flow is recommended. The equivalent Console recovery command is:
+The guided Scient flow is recommended. The equivalent Claude subscription recovery command is:
 
 ```bash
-claude auth login --console
+claude auth login --claudeai
 ```
 
-For a deployment authorized to offer Claude.ai subscription login, use
-`claude auth login --claudeai` instead.
+Use `claude auth login --console` instead when you deliberately want an Anthropic Console account.
 
 In Scient Settings, your Claude provider can stay like this:
 
@@ -118,10 +116,10 @@ default config dir           work account
 
 ### Set Up The First Account
 
-Log in with the account method your deployment offers. For Console:
+Log in with the first Claude subscription:
 
 ```bash
-claude auth login --console
+claude auth login --claudeai
 ```
 
 In Scient Settings:
@@ -138,11 +136,10 @@ Log in with a separate config directory:
 
 ```bash
 mkdir -p ~/.claude_personal_home
-CLAUDE_CONFIG_DIR=~/.claude_personal_home claude auth login --console
+CLAUDE_CONFIG_DIR=~/.claude_personal_home claude auth login --claudeai
 ```
 
-Use `--claudeai` instead of `--console` only in a deployment authorized for Claude.ai subscription
-login.
+Use `--console` instead of `--claudeai` when that provider should use an Anthropic Console account.
 
 Use `CLAUDE_CONFIG_DIR`, not `HOME`. Setting `HOME` writes the login to
 `~/.claude_personal_home/.claude`, which is not where Scient looks.
