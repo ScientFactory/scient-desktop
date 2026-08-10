@@ -36,6 +36,23 @@ describe("Scient release machinery", () => {
     }
   });
 
+  it("keeps unsigned Windows publication an explicit exception", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    assert.include(workflow, "allow_unsigned_windows:");
+    assert.include(
+      workflow,
+      "allow_unsigned_windows is only valid for an explicitly publishing run.",
+    );
+    assert.include(
+      workflow,
+      "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true.",
+    );
+    assert.include(workflow, "Publication requires signed macOS artifacts:");
+  });
+
   it("requires release/stable to be the exact selected main commit", async () => {
     await expect(
       runScientReleasePreflight({
