@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   assertPinnedWhisperServerSource,
+  resolveArchiveExtractionPlan,
   resolvePrebuiltArtifact,
   runtimeExecutableName,
   WHISPER_CPP_COMMIT,
@@ -44,5 +45,47 @@ describe("stage-whisper-runtime", () => {
     expect(runtimeExecutableName("mac")).toBe("whisper-server");
     expect(runtimeExecutableName("linux")).toBe("whisper-server");
     expect(runtimeExecutableName("win")).toBe("whisper-server.exe");
+  });
+
+  it("uses Windows-safe extraction for local tarballs and zip prebuilts", () => {
+    const sourcePlan = resolveArchiveExtractionPlan(
+      String.raw`C:\\runner\\whisper.cpp.tar.gz`,
+      String.raw`C:\\runner\\source`,
+      "win32",
+    );
+    expect(sourcePlan.command).toBe("tar");
+    expect(sourcePlan.args).toEqual([
+      "--force-local",
+      "-xzf",
+      String.raw`C:\\runner\\whisper.cpp.tar.gz`,
+      "-C",
+      String.raw`C:\\runner\\source`,
+    ]);
+
+    const prebuiltPlan = resolveArchiveExtractionPlan(
+      String.raw`C:\\runner\\whisper-bin-x64.zip`,
+      String.raw`C:\\runner\\prebuilt`,
+      "win32",
+    );
+    expect(prebuiltPlan.command).toBe("powershell.exe");
+    expect(prebuiltPlan.args).toContain(
+      "Expand-Archive -LiteralPath $env:SCIENT_WHISPER_ARCHIVE -DestinationPath $env:SCIENT_WHISPER_DESTINATION -Force",
+    );
+    expect(prebuiltPlan.env).toEqual({
+      SCIENT_WHISPER_ARCHIVE: String.raw`C:\\runner\\whisper-bin-x64.zip`,
+      SCIENT_WHISPER_DESTINATION: String.raw`C:\\runner\\prebuilt`,
+    });
+  });
+
+  it("keeps POSIX archive extraction on tar", () => {
+    const plan = resolveArchiveExtractionPlan(
+      "/tmp/whisper-bin-x64.zip",
+      "/tmp/prebuilt",
+      "darwin",
+    );
+    expect(plan).toEqual({
+      args: ["-xf", "/tmp/whisper-bin-x64.zip", "-C", "/tmp/prebuilt"],
+      command: "tar",
+    });
   });
 });
