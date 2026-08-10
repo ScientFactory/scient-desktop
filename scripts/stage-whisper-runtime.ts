@@ -58,10 +58,16 @@ interface StageOptions {
   readonly verbose: boolean;
 }
 
-function run(command: string, args: readonly string[], options: { readonly cwd?: string } = {}) {
+interface RunOptions {
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+function run(command: string, args: readonly string[], options: RunOptions = {}) {
   return new Promise<void>((resolvePromise, reject) => {
     const child = NodeChildProcess.spawn(command, [...args], {
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.env ? { env: options.env } : {}),
       shell: false,
       stdio: "inherit",
     });
@@ -145,8 +151,75 @@ export function runtimeExecutableName(platform: WhisperRuntimePlatform): string 
   return platform === "win" ? "whisper-server.exe" : "whisper-server";
 }
 
+type ArchiveFormat = "tar.gz" | "zip";
+type ArchiveHostPlatform = "win32" | "darwin" | "linux";
+
+interface ArchiveExtractionPlan {
+  readonly args: readonly string[];
+  readonly command: string;
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+function archiveFormat(fileName: string): ArchiveFormat {
+  if (fileName.endsWith(".tar.gz")) return "tar.gz";
+  if (fileName.endsWith(".zip")) return "zip";
+  throw new Error(`Unsupported whisper runtime archive: ${fileName}`);
+}
+
+export function resolveArchiveExtractionPlan(
+  archive: string,
+  destination: string,
+  hostPlatform: ArchiveHostPlatform,
+): ArchiveExtractionPlan {
+  const format = archiveFormat(archive);
+  if (format === "zip" && hostPlatform === "win32") {
+    return {
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Expand-Archive -LiteralPath $env:SCIENT_WHISPER_ARCHIVE -DestinationPath $env:SCIENT_WHISPER_DESTINATION -Force",
+      ],
+      command: "powershell.exe",
+      env: {
+        SCIENT_WHISPER_ARCHIVE: archive,
+        SCIENT_WHISPER_DESTINATION: destination,
+      },
+    };
+  }
+
+  return {
+    args: [
+      ...(hostPlatform === "win32" ? ["--force-local"] : []),
+      ...(format === "tar.gz" ? ["-xzf"] : ["-xf"]),
+      archive,
+      "-C",
+      destination,
+    ],
+    command: "tar",
+  };
+}
+
+async function extractArchive(
+  archive: string,
+  destination: string,
+  hostPlatform: ArchiveHostPlatform = process.platform === "win32"
+    ? "win32"
+    : process.platform === "darwin"
+      ? "darwin"
+      : "linux",
+): Promise<void> {
+  const plan = resolveArchiveExtractionPlan(archive, destination, hostPlatform);
+  if (plan.env) {
+    await run(plan.command, plan.args, { env: { ...process.env, ...plan.env } });
+    return;
+  }
+  await run(plan.command, plan.args);
+}
+
 async function extractSource(archive: string, workspace: string): Promise<string> {
-  await run("tar", ["-xzf", archive, "-C", workspace]);
+  await extractArchive(archive, workspace);
   const sourceDirectory = NodePath.join(workspace, `whisper.cpp-${WHISPER_CPP_COMMIT}`);
   const serverSource = await NodeFSP.readFile(
     NodePath.join(sourceDirectory, "examples/server/server.cpp"),
@@ -205,7 +278,7 @@ async function stagePrebuiltRuntime(
 ): Promise<void> {
   const extracted = NodePath.join(workspace, "prebuilt");
   await NodeFSP.mkdir(extracted);
-  await run("tar", ["-xf", archive, "-C", extracted]);
+  await extractArchive(archive, extracted);
   if (platform === "win") {
     const releaseDirectory = NodePath.join(extracted, "Release");
     for (const file of await NodeFSP.readdir(releaseDirectory)) {
