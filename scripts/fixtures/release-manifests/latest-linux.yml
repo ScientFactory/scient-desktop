@@ -1,0 +1,9 @@
+version: 0.6.0
+files:
+  - url: Scient-0.6.0-x86_64.AppImage
+    sha512: KVkPnBEhhj4rbhU284BiO0LHEPTR6mHcyZsAtkbhBvhZf2/2YHrpSL0FwBjemIE2LYSOlEh7d3EKmhOwi+PmtA==
+    size: 182244256
+    blockMapSize: 189364
+path: Scient-0.6.0-x86_64.AppImage
+sha512: KVkPnBEhhj4rbhU284BiO0LHEPTR6mHcyZsAtkbhBvhZf2/2YHrpSL0FwBjemIE2LYSOlEh7d3EKmhOwi+PmtA==
+releaseDate: "2026-08-10T14:44:56.504Z"

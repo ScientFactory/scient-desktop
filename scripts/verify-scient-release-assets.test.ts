@@ -16,7 +16,11 @@ function writeManifest(
   root: string,
   name: string,
   version: string,
-  entries: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+  entries: ReadonlyArray<{
+    readonly name: string;
+    readonly value: string;
+    readonly extras?: Readonly<Record<string, string | number | boolean>>;
+  }>,
 ): void {
   const lines = [`version: '${version}'`, "files:"];
   for (const entry of entries) {
@@ -24,6 +28,9 @@ function writeManifest(
     lines.push(`  - url: ${entry.name}`);
     lines.push(`    sha512: ${sha512(entry.value)}`);
     lines.push(`    size: ${Buffer.byteLength(entry.value)}`);
+    for (const [key, value] of Object.entries(entry.extras ?? {})) {
+      lines.push(`    ${key}: ${value}`);
+    }
   }
   lines.push(`path: ${entries[0]?.name ?? "missing"}`);
   lines.push(`sha512: ${entries[0] ? sha512(entries[0].value) : "missing"}`);
@@ -42,11 +49,26 @@ function createValidFixture(): string {
   ]);
   writeManifest(root, "latest.yml", version, [
     { name: `Scient-${version}-x64.exe`, value: "windows" },
-    { name: `Scient-${version}-x64.exe.blockmap`, value: "windows-blockmap" },
   ]);
+  NodeFS.writeFileSync(
+    NodePath.join(root, `Scient-${version}-x64.exe.blockmap`),
+    "windows-blockmap",
+  );
   writeManifest(root, "latest-linux.yml", version, [
-    { name: `Scient-${version}-x64.AppImage`, value: "linux" },
+    {
+      name: `Scient-${version}-x86_64.AppImage`,
+      value: "linux",
+      extras: { blockMapSize: 8 },
+    },
   ]);
+  for (const name of [
+    `Scient-${version}-arm64.dmg.blockmap`,
+    `Scient-${version}-arm64.zip.blockmap`,
+    `Scient-${version}-x64.dmg.blockmap`,
+    `Scient-${version}-x64.zip.blockmap`,
+  ]) {
+    NodeFS.writeFileSync(NodePath.join(root, name), "blockmap");
+  }
   NodeFS.writeFileSync(NodePath.join(root, `scient-server-${version}.tgz`), "server");
   return root;
 }
@@ -88,6 +110,25 @@ describe("Scient release asset verification", () => {
       assert.throws(
         () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "00.6.0"]),
         "canonical x.y.z",
+      );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unattested blockmap and unexpected ordinary files", () => {
+    const root = createValidFixture();
+    try {
+      NodeFS.writeFileSync(NodePath.join(root, "stray.blockmap"), "stray");
+      assert.throws(
+        () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]),
+        "unattested blockmap",
+      );
+      NodeFS.rmSync(NodePath.join(root, "stray.blockmap"));
+      NodeFS.writeFileSync(NodePath.join(root, "builder-debug.yml"), "internal");
+      assert.throws(
+        () => verifyScientReleaseAssets(["--assets-dir", root, "--version", "0.6.0"]),
+        "unexpected or unattested files",
       );
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
