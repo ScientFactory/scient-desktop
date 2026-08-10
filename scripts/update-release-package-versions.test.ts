@@ -13,6 +13,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
+  InvalidReleasePackageVersionError,
   ReleaseGitHubOutputConfigurationError,
   ReleaseGitHubOutputWriteError,
   ReleasePackageManifestError,
@@ -108,6 +109,30 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
     }),
   );
 
+  it.effect("rejects invalid versions before modifying package manifests", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-invalid-",
+      });
+
+      yield* writePackageJsonFixtures(baseDir, "1.2.3");
+
+      for (const version of ["", " ", " 1.2.3", "00.6.0"]) {
+        const error = yield* updateReleasePackageVersions(version, { rootDir: baseDir }).pipe(
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, InvalidReleasePackageVersionError);
+        assert.equal(error.version, version);
+        assert.deepStrictEqual(
+          Array.from((yield* readReleaseVersions(baseDir)).values()),
+          releasePackageFiles.map(() => "1.2.3"),
+        );
+      }
+    }),
+  );
+
   it.effect("preserves manifest read context and the filesystem cause", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -145,6 +170,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
         rootDir: baseDir,
       }).pipe(Effect.flip);
 
+      assert.instanceOf(error, ReleasePackageManifestError);
       assert.equal(error.operation, "decode");
       assert.equal(error.filePath, filePath);
       assert.isTrue(Schema.isSchemaError(error.cause));
@@ -168,6 +194,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
         rootDir: baseDir,
       }).pipe(Effect.flip, Effect.ensuring(fs.chmod(filePath, 0o600).pipe(Effect.orDie)));
 
+      assert.instanceOf(error, ReleasePackageManifestError);
       assert.equal(error.operation, "write");
       assert.equal(error.filePath, filePath);
       assert.instanceOf(error.cause, PlatformError.PlatformError);

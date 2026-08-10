@@ -5,6 +5,7 @@ import * as NodeModule from "node:module";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
+import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -210,6 +211,58 @@ export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<U
     return `Unsupported host platform '${this.hostPlatform}'.`;
   }
 }
+
+export class InvalidDesktopBuildVersionError extends Schema.TaggedErrorClass<InvalidDesktopBuildVersionError>()(
+  "InvalidDesktopBuildVersionError",
+  {
+    version: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Invalid desktop build version '${this.version}'.`;
+  }
+}
+
+export class DesktopBuildPackageVersionMismatchError extends Schema.TaggedErrorClass<DesktopBuildPackageVersionMismatchError>()(
+  "DesktopBuildPackageVersionMismatchError",
+  {
+    manifestPath: Schema.String,
+    expectedVersion: Schema.String,
+    actualVersion: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${this.manifestPath} has version '${this.actualVersion}'; expected '${this.expectedVersion}'.`;
+  }
+}
+
+export const validateDesktopBuildPackageVersions = Effect.fn("validateDesktopBuildPackageVersions")(
+  function* (input: {
+    readonly buildVersion: string;
+    readonly serverVersion: string;
+    readonly desktopVersion: string;
+  }) {
+    if (
+      !isExactScientReleaseVersion(input.buildVersion) ||
+      input.buildVersion !== input.buildVersion.trim()
+    ) {
+      return yield* new InvalidDesktopBuildVersionError({ version: input.buildVersion });
+    }
+
+    for (const [manifestPath, actualVersion] of [
+      ["apps/server/package.json", input.serverVersion],
+      ["apps/desktop/package.json", input.desktopVersion],
+    ] as const) {
+      if (actualVersion !== input.buildVersion) {
+        return yield* new DesktopBuildPackageVersionMismatchError({
+          manifestPath,
+          expectedVersion: input.buildVersion,
+          actualVersion,
+        });
+      }
+    }
+  },
+);
 
 export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildArchitectureError>()(
   "UnsupportedDesktopBuildArchitectureError",
@@ -1753,6 +1806,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
+  const appVersion = options.version ?? serverPackageJson.version;
+  yield* validateDesktopBuildPackageVersions({
+    buildVersion: appVersion,
+    serverVersion: serverPackageJson.version,
+    desktopVersion: desktopPackageJson.version,
+  });
+
   const electronVersion = desktopPackageJson.dependencies.electron;
 
   const serverDependencies = serverPackageJson.dependencies;
@@ -1791,7 +1851,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       }),
   });
 
-  const appVersion = options.version ?? serverPackageJson.version;
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
