@@ -5,6 +5,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { APP_BASE_NAME } from "../../branding";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
 import { ScientSymbol } from "../ScientSymbol";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -116,6 +117,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
 
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
+      <ScientReleaseNotes />
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
