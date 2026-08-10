@@ -52,6 +52,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 
 - [Scient local dev app](./operations/local-dev-app.md)
 - [Release](./operations/release.md)
+- [v0.6.0 migration rehearsal](./operations/v060-migration-rehearsal.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
