@@ -112,6 +112,19 @@ describe("Scient release machinery", () => {
     assert(setupVpIndex >= 0 && setupVpIndex < firstNodeScriptIndex);
   });
 
+  it("copies only updater manifests and removes internal builder metadata", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    assert.include(workflow, "release/latest*.yml");
+    assert.include(workflow, "rm -f release-assets/builder-debug.yml");
+    assert(
+      workflow.indexOf("rm -f release-assets/builder-debug.yml") <
+        workflow.indexOf("node scripts/verify-scient-release-assets.ts"),
+    );
+  });
+
   it("requires release/stable to be the exact selected main commit", async () => {
     await expect(
       runScientReleasePreflight({

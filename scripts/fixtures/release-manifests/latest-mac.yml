@@ -1,0 +1,11 @@
+version: 0.6.0
+files:
+  - url: Scient-0.6.0-arm64.zip
+    sha512: eOs/ehlnL3PRDNPmBcEjZToaBvXtenfiuNoCvH1rCcxtwWLTp17kprTTa5WNWllzHGH17Wk8RM+d1a5x+FQoXA==
+    size: 150104586
+  - url: Scient-0.6.0-arm64.dmg
+    sha512: Hv8hPlyj8wrN79Y7mvYkYV41MQ37ZDmsYfmSZVyPzhk8LzNprT3n56Eu/6CKMFkmDV/fUqcMvobNspPAjzAp4w==
+    size: 156193698
+path: Scient-0.6.0-arm64.zip
+sha512: eOs/ehlnL3PRDNPmBcEjZToaBvXtenfiuNoCvH1rCcxtwWLTp17kprTTa5WNWllzHGH17Wk8RM+d1a5x+FQoXA==
+releaseDate: "2026-08-10T14:52:14.793Z"

@@ -1,11 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import { createScientReleaseHandoff } from "./create-scient-release-handoff.ts";
+import { verifyScientReleaseAssets } from "./verify-scient-release-assets.ts";
 
 const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
@@ -187,6 +190,81 @@ function assertMissing(path: string, message: string): void {
   if (NodeFS.existsSync(path)) {
     throw new Error(message);
   }
+}
+
+function writeVerifiedManifest(
+  root: string,
+  name: string,
+  version: string,
+  entries: ReadonlyArray<{
+    readonly name: string;
+    readonly value: string;
+    readonly blockMapSize?: number;
+  }>,
+): void {
+  const lines = [`version: '${version}'`, "files:"];
+  for (const entry of entries) {
+    NodeFS.writeFileSync(NodePath.join(root, entry.name), entry.value);
+    lines.push(`  - url: ${entry.name}`);
+    lines.push(
+      `    sha512: ${NodeCrypto.createHash("sha512").update(entry.value).digest("base64")}`,
+    );
+    lines.push(`    size: ${Buffer.byteLength(entry.value)}`);
+    if (entry.blockMapSize !== undefined) lines.push(`    blockMapSize: ${entry.blockMapSize}`);
+  }
+  lines.push(`path: ${entries[0]?.name ?? "missing"}`);
+  lines.push(
+    `sha512: ${entries[0] ? NodeCrypto.createHash("sha512").update(entries[0].value).digest("base64") : "missing"}`,
+  );
+  lines.push("releaseDate: '2026-08-10T00:00:00.000Z'", "");
+  NodeFS.writeFileSync(NodePath.join(root, name), lines.join("\n"));
+}
+
+function verifyCompleteReleaseFixture(root: string): void {
+  const assets = NodePath.join(root, "verified-release-assets");
+  NodeFS.mkdirSync(assets, { recursive: true });
+  const version = "9.9.9";
+  writeVerifiedManifest(assets, "latest-mac.yml", version, [
+    { name: `Scient-${version}-arm64.dmg`, value: "arm-dmg" },
+    { name: `Scient-${version}-arm64.zip`, value: "arm-zip" },
+    { name: `Scient-${version}-x64.dmg`, value: "x64-dmg" },
+    { name: `Scient-${version}-x64.zip`, value: "x64-zip" },
+  ]);
+  writeVerifiedManifest(assets, "latest.yml", version, [
+    { name: `Scient-${version}-x64.exe`, value: "windows" },
+  ]);
+  writeVerifiedManifest(assets, "latest-linux.yml", version, [
+    { name: `Scient-${version}-x86_64.AppImage`, value: "linux", blockMapSize: 5 },
+  ]);
+  for (const name of [
+    `Scient-${version}-arm64.dmg.blockmap`,
+    `Scient-${version}-arm64.zip.blockmap`,
+    `Scient-${version}-x64.dmg.blockmap`,
+    `Scient-${version}-x64.zip.blockmap`,
+    `Scient-${version}-x64.exe.blockmap`,
+  ]) {
+    NodeFS.writeFileSync(NodePath.join(assets, name), "blockmap");
+  }
+  NodeFS.writeFileSync(NodePath.join(assets, `scient-server-${version}.tgz`), "server");
+
+  const result = verifyScientReleaseAssets(["--assets-dir", assets, "--version", version]);
+  if (result.assets.length !== 15) {
+    throw new Error(`Expected 15 verified release assets, received ${result.assets.length}.`);
+  }
+  const handoff = NodePath.join(assets, "scient-release-handoff.json");
+  createScientReleaseHandoff([
+    "--assets-dir",
+    assets,
+    "--version",
+    version,
+    "--source-sha",
+    "a".repeat(40),
+    "--source-tree",
+    "b".repeat(40),
+    "--output",
+    handoff,
+  ]);
+  assertExists(handoff, "Release smoke did not create the release handoff.");
 }
 
 const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-release-smoke-"));
@@ -410,6 +488,7 @@ try {
     winDebugX64Path,
     "Windows release smoke unexpectedly removed the x64 builder debug fixture.",
   );
+  verifyCompleteReleaseFixture(tempRoot);
 
   Effect.runSync(Console.log("Release smoke checks passed."));
 } finally {

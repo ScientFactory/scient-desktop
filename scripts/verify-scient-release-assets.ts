@@ -24,8 +24,8 @@ function requiredValue(args: ReadonlyArray<string>, flag: string): string {
 }
 
 function assertRegularNonemptyFile(path: string, label: string): NodeFS.Stats {
-  if (!NodeFS.existsSync(path)) throw new Error(`Missing ${label}: ${NodePath.basename(path)}.`);
-  const stat = NodeFS.lstatSync(path);
+  const stat = NodeFS.lstatSync(path, { throwIfNoEntry: false });
+  if (!stat) throw new Error(`Missing ${label}: ${NodePath.basename(path)}.`);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0) {
     throw new Error(`${label} must be a non-empty regular file: ${NodePath.basename(path)}.`);
   }
@@ -33,7 +33,19 @@ function assertRegularNonemptyFile(path: string, label: string): NodeFS.Stats {
 }
 
 function sha512(path: string): string {
-  return NodeCrypto.createHash("sha512").update(NodeFS.readFileSync(path)).digest("base64");
+  const hash = NodeCrypto.createHash("sha512");
+  const file = NodeFS.openSync(path, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = NodeFS.readSync(file, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    NodeFS.closeSync(file);
+  }
+  return hash.digest("base64");
 }
 
 export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
@@ -68,7 +80,7 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
     {
       name: "latest-linux.yml",
       label: "Linux",
-      requiredPayloads: [`Scient-${version}-x64.AppImage`],
+      requiredPayloads: [`Scient-${version}-x86_64.AppImage`],
     },
   ];
 
@@ -117,6 +129,15 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
   allowed.add(serverName);
 
   const actual = NodeFS.readdirSync(assetsDir).toSorted();
+  for (const name of actual) {
+    if (!name.endsWith(".blockmap")) continue;
+    const payloadName = name.slice(0, -".blockmap".length);
+    if (!allowed.has(payloadName)) {
+      throw new Error(`Release assembly contains unattested blockmap: ${name}.`);
+    }
+    assertRegularNonemptyFile(NodePath.join(assetsDir, name), "update blockmap");
+    allowed.add(name);
+  }
   const unexpected = actual.filter((name) => !allowed.has(name));
   if (unexpected.length > 0) {
     throw new Error(
