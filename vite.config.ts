@@ -30,6 +30,7 @@ export default defineConfig({
       ".repos/**",
       ".plans",
       ".alchemy",
+      ".github/workflows/**",
       "dist",
       "dist-electron",
       "node_modules",
