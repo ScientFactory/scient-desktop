@@ -25,7 +25,7 @@ const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   slashCommands: [],
   skills: [],
   connection: {
-    methods: ["claude_console"],
+    methods: ["claude_subscription", "claude_console"],
     canDisconnect: false,
     operation: null,
   },
@@ -92,24 +92,24 @@ describe("ClaudeInlineSetup", () => {
     expect(markup).not.toContain("Private and removable.");
   });
 
-  it("shows the Console flow by default and the subscription flow only when offered", () => {
-    const consoleMarkup = render(provider());
-    expect(consoleMarkup).toContain("Connect your Anthropic Console account.");
-    expect(consoleMarkup).toContain("Sign in with Console");
-    expect(consoleMarkup).toContain("Scient never sees your password.");
+  it("shows subscription login by default and preserves the Console fallback", () => {
+    const subscriptionMarkup = render(provider());
+    expect(subscriptionMarkup).toContain("Sign in with your existing Claude subscription.");
+    expect(subscriptionMarkup).toContain("Sign in to Claude");
+    expect(subscriptionMarkup).toContain("Use Anthropic Console");
+    expect(subscriptionMarkup).toContain("Scient never sees your password.");
 
-    const subscriptionMarkup = render(
+    const consoleMarkup = render(
       provider({
         connection: {
-          methods: ["claude_console", "claude_subscription"],
+          methods: ["claude_console"],
           canDisconnect: false,
           operation: null,
         },
       }),
     );
-    expect(subscriptionMarkup).toContain("Sign in with your existing Claude subscription.");
-    expect(subscriptionMarkup).toContain("Sign in to Claude");
-    expect(subscriptionMarkup).toContain("Use Anthropic Console");
+    expect(consoleMarkup).toContain("Connect your Anthropic Console account.");
+    expect(consoleMarkup).toContain("Sign in with Console");
   });
 
   it("keeps fallback-code recovery available while Claude verifies the account", () => {

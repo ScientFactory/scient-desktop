@@ -70,11 +70,6 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 
-function environmentValue(environment: NodeJS.ProcessEnv, key: string): string | undefined {
-  const value = environment[key]?.trim();
-  return value ? value : undefined;
-}
-
 /**
  * Account changes invalidate Claude's per-instance initialization cache before
  * the connection manager refreshes the authoritative provider snapshot.
@@ -96,15 +91,12 @@ export function invalidateClaudeCapabilitiesAfterAccountChange(
   };
 }
 
-/** Expose only account flows the configured provider can consume and Scient is authorized to ship. */
+/** Expose the official Claude Code account flows that the configured provider can consume. */
 export function assistedClaudeConnectionMethods(
   providerEnvironment: NodeJS.ProcessEnv,
-  deploymentEnvironment: NodeJS.ProcessEnv = process.env,
 ): ReadonlyArray<ProviderConnectionMethod> {
   if (hasExternalClaudeAccountConfiguration(providerEnvironment)) return [];
-  const subscriptionApproved =
-    environmentValue(deploymentEnvironment, "SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED") === "1";
-  return subscriptionApproved ? ["claude_subscription", "claude_console"] : ["claude_console"];
+  return ["claude_subscription", "claude_console"];
 }
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
@@ -203,7 +195,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const effectiveProcessEnv = managedRuntime.usesManagedPath
         ? { ...processEnv, DISABLE_UPDATES: "1" }
         : processEnv;
-      const connectionMethods = assistedClaudeConnectionMethods(effectiveProcessEnv, process.env);
+      const connectionMethods = assistedClaudeConnectionMethods(effectiveProcessEnv);
       const maintenanceCapabilities = managedRuntime.usesManagedPath
         ? makeManualOnlyProviderMaintenanceCapabilities({
             provider: DRIVER_KIND,

@@ -103,17 +103,11 @@ snapshot.
 
 [`ClaudeConnectionActions`][claude-connection] supervises Claude Code's official `auth login`
 process. It does not replace T3's Claude Agent SDK adapter, session transport, permissions, or model
-execution. Anthropic Console authentication is the default assisted method. Claude.ai subscription
-authentication is exposed only when the deployment has documented Anthropic authorization and sets
-`SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED=1`; the switch is consumed by Scient and is removed from
-the Claude child-process environment. Configured API keys, custom endpoints, and Bedrock, Vertex,
-or Foundry backends keep their existing provider-specific setup and do not receive an irrelevant
-interactive account flow.
-
-This gate follows [Anthropic's current third-party integration policy][claude-legal]. It preserves
-the intended subscription experience in approved deployments without silently shipping it where
-Anthropic has not authorized it. Both account methods are still executed by Claude Code itself;
-Scient never receives the provider password or becomes the credential owner.
+execution. Claude.ai subscription authentication is the default assisted method, with Anthropic
+Console authentication available as an alternative. Both account methods are executed by Claude
+Code itself; Scient never receives the provider password or becomes the credential owner. Configured
+API keys, custom endpoints, and Bedrock, Vertex, or Foundry backends keep their existing
+provider-specific setup and do not receive an irrelevant interactive account flow.
 
 Claude normally completes its local browser callback automatically. When Claude's browser page
 instead displays a one-time code, the UI may send that transient value to the stdin of the matching
@@ -275,7 +269,6 @@ when a request opens (approval) or user input is requested, via
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
 [codex-connection]: ../../apps/server/src/scient/providerLifecycle/CodexConnectionActions.ts
 [claude-connection]: ../../apps/server/src/scient/providerLifecycle/ClaudeConnectionActions.ts
-[claude-legal]: https://code.claude.com/docs/en/legal-and-compliance
 [runtime-package]: ../../packages/scient-provider-runtime/
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts

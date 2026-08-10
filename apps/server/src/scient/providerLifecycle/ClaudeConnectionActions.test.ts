@@ -112,7 +112,6 @@ describe("ClaudeConnectionActions", () => {
       ANTHROPIC_BASE_URL: "https://gateway.example",
       CLAUDE_CODE_OAUTH_TOKEN: "secret",
       CLAUDE_CODE_USE_BEDROCK: "1",
-      SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED: "1",
       UNRELATED_SECRET_TOKEN: "secret",
     });
 
@@ -133,7 +132,6 @@ describe("ClaudeConnectionActions", () => {
     assert.strictEqual(environment.ANTHROPIC_BASE_URL, undefined);
     assert.strictEqual(environment.CLAUDE_CODE_OAUTH_TOKEN, undefined);
     assert.strictEqual(environment.CLAUDE_CODE_USE_BEDROCK, undefined);
-    assert.strictEqual(environment.SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED, undefined);
     assert.strictEqual(environment.UNRELATED_SECRET_TOKEN, undefined);
   });
 

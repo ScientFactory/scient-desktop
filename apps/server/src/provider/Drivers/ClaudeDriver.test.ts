@@ -9,46 +9,22 @@ import {
 } from "./ClaudeDriver.ts";
 
 describe("ClaudeDriver assisted account boundary", () => {
-  it("keeps Console available while subscription login awaits deployment authorization", () => {
-    expect(assistedClaudeConnectionMethods({}, {})).toEqual(["claude_console"]);
-    expect(
-      assistedClaudeConnectionMethods({}, { SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED: "1" }),
-    ).toEqual(["claude_subscription", "claude_console"]);
-    expect(
-      assistedClaudeConnectionMethods(
-        {
-          // Provider-instance variables are user configuration and cannot
-          // grant deployment-level authorization.
-          SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED: "1",
-        },
-        {},
-      ),
-    ).toEqual(["claude_console"]);
-    expect(assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_BEDROCK: "false" }, {})).toEqual([
+  it("offers subscription login first with Console as the fallback", () => {
+    expect(assistedClaudeConnectionMethods({})).toEqual(["claude_subscription", "claude_console"]);
+    expect(assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_BEDROCK: "false" })).toEqual([
+      "claude_subscription",
       "claude_console",
     ]);
   });
 
   it("does not offer account actions that cannot configure an external backend", () => {
-    const approvedDeployment = { SCIENT_CLAUDE_SUBSCRIPTION_AUTH_APPROVED: "1" };
-    expect(
-      assistedClaudeConnectionMethods({ ANTHROPIC_API_KEY: "configured" }, approvedDeployment),
-    ).toEqual([]);
-    expect(
-      assistedClaudeConnectionMethods(
-        { ANTHROPIC_BASE_URL: "https://example.com" },
-        approvedDeployment,
-      ),
-    ).toEqual([]);
-    expect(
-      assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_BEDROCK: "1" }, approvedDeployment),
-    ).toEqual([]);
-    expect(
-      assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_VERTEX: "true" }, approvedDeployment),
-    ).toEqual([]);
-    expect(
-      assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_FOUNDRY: "yes" }, approvedDeployment),
-    ).toEqual([]);
+    expect(assistedClaudeConnectionMethods({ ANTHROPIC_API_KEY: "configured" })).toEqual([]);
+    expect(assistedClaudeConnectionMethods({ ANTHROPIC_BASE_URL: "https://example.com" })).toEqual(
+      [],
+    );
+    expect(assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
+    expect(assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_VERTEX: "true" })).toEqual([]);
+    expect(assistedClaudeConnectionMethods({ CLAUDE_CODE_USE_FOUNDRY: "yes" })).toEqual([]);
   });
 
   it.effect("invalidates cached account capabilities after successful sign-in and sign-out", () =>
