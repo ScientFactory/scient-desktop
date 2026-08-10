@@ -1436,9 +1436,10 @@ function validateBundledClientAssets(clientDir: string) {
   });
 }
 
-export function resolveDesktopRuntimeDependencies(
+function resolveStagedRuntimeDependencies(
   dependencies: Record<string, string> | undefined,
   catalog: Record<string, string>,
+  workspacePackage: string,
 ): Record<string, string> {
   if (!dependencies || Object.keys(dependencies).length === 0) {
     return {};
@@ -1451,7 +1452,21 @@ export function resolveDesktopRuntimeDependencies(
     ),
   );
 
-  return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
+  return resolveCatalogDependencies(runtimeDependencies, catalog, workspacePackage);
+}
+
+export function resolveDesktopRuntimeDependencies(
+  dependencies: Record<string, string> | undefined,
+  catalog: Record<string, string>,
+): Record<string, string> {
+  return resolveStagedRuntimeDependencies(dependencies, catalog, "apps/desktop");
+}
+
+export function resolveServerRuntimeDependencies(
+  dependencies: Record<string, string> | undefined,
+  catalog: Record<string, string>,
+): Record<string, string> {
+  return resolveStagedRuntimeDependencies(dependencies, catalog, "apps/server");
 }
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
@@ -1758,7 +1773,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
 
   const resolvedServerDependencies = yield* Effect.try({
-    try: () => resolveCatalogDependencies(serverDependencies, workspaceCatalog, "apps/server"),
+    try: () => resolveServerRuntimeDependencies(serverDependencies, workspaceCatalog),
     catch: (cause) =>
       new DesktopBuildDependencyResolutionError({
         kind: "server-production",
