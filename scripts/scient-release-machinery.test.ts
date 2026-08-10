@@ -74,6 +74,28 @@ describe("Scient release machinery", () => {
     }
   });
 
+  it("exposes Vite+'s pinned pnpm before packaging the remote server", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const serverAssetJob =
+      workflow.split(/^  build_server_asset:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+
+    assert.include(
+      serverAssetJob,
+      'vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"',
+    );
+    assert.include(serverAssetJob, 'echo "$vp_pnpm_bin" >> "$GITHUB_PATH"');
+    assert.include(serverAssetJob, '"$vp_pnpm_bin/pnpm" --version');
+
+    const setupVpIndex = serverAssetJob.indexOf("voidzero-dev/setup-vp@");
+    const exposePnpmIndex = serverAssetJob.indexOf("- name: Expose pnpm");
+    const packageServerIndex = serverAssetJob.indexOf("node scripts/package-scient-server.ts");
+    assert(setupVpIndex >= 0 && setupVpIndex < exposePnpmIndex);
+    assert(exposePnpmIndex < packageServerIndex);
+  });
+
   it("requires release/stable to be the exact selected main commit", async () => {
     await expect(
       runScientReleasePreflight({
