@@ -21,6 +21,11 @@ on:
         required: true
         default: false
         type: boolean
+      allow_unsigned_windows:
+        description: "Explicitly permit an unsigned Windows installer for this release"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -41,6 +46,7 @@ jobs:
       source_sha: ${{ steps.meta.outputs.source_sha }}
       source_tree: ${{ steps.meta.outputs.source_tree }}
       publish_release: ${{ steps.meta.outputs.publish_release }}
+      allow_unsigned_windows: ${{ steps.meta.outputs.allow_unsigned_windows }}
       release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
     steps:
       - name: Require release/stable
@@ -117,8 +123,13 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ inputs.allow_unsigned_windows }}
         run: |
           set -euo pipefail
+          if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" && "$PUBLISH_RELEASE" != "true" ]]; then
+            echo "allow_unsigned_windows is only valid for an explicitly publishing run." >&2
+            exit 1
+          fi
           version="$RELEASE_VERSION"
           version="${version#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -126,6 +137,7 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "source_tree=$(git rev-parse "$SOURCE_SHA^{tree}")" >> "$GITHUB_OUTPUT"
           echo "publish_release=$PUBLISH_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "allow_unsigned_windows=$ALLOW_UNSIGNED_WINDOWS" >> "$GITHUB_OUTPUT"
           release_notes_base64="$(base64 < "$RUNNER_TEMP/scient-release-notes.md" | tr -d '\n')"
           echo "release_notes_base64=$release_notes_base64" >> "$GITHUB_OUTPUT"
 
@@ -307,6 +319,7 @@ jobs:
         shell: pwsh
         env:
           PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -323,7 +336,9 @@ jobs:
           )
           $complete = -not ($required | Where-Object { [string]::IsNullOrWhiteSpace($_) })
           if (-not $complete) {
-            if ($env:PUBLISH_RELEASE -eq "true") { throw "Windows signing is required for publication." }
+            if ($env:PUBLISH_RELEASE -eq "true" -and $env:ALLOW_UNSIGNED_WINDOWS -ne "true") {
+              throw "Windows signing is required for publication unless allow_unsigned_windows is explicitly enabled."
+            }
             "SCIENT_WINDOWS_SIGNING_READY=false" >> $env:GITHUB_ENV
             exit 0
           }
@@ -339,6 +354,7 @@ jobs:
           RELEASE_TARGET: ${{ matrix.target }}
           RELEASE_ARCH: ${{ matrix.arch }}
           PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ScientFactory/scient-desktop-next
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.CSC_KEY_PASSWORD || '' }}
@@ -538,17 +554,26 @@ jobs:
             node scripts/merge-update-manifests.ts --platform mac "$arm64" "$x64"
             rm "$x64"
           done
-      - name: Require signed publication inputs
+      - name: Require signed macOS and explicitly approved Windows publication
         if: needs.preflight.outputs.publish_release == 'true'
         shell: bash
+        env:
+          ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
         run: |
           set -euo pipefail
-          for attestation in release-assets/signing-mac-arm64.json release-assets/signing-mac-x64.json release-assets/signing-win-x64.json; do
+          for attestation in release-assets/signing-mac-arm64.json release-assets/signing-mac-x64.json; do
             jq -e '.signed == true' "$attestation" >/dev/null || {
-              echo "Publication requires signed native artifacts: $attestation" >&2
+              echo "Publication requires signed macOS artifacts: $attestation" >&2
               exit 1
             }
           done
+          if ! jq -e '.signed == true' release-assets/signing-win-x64.json >/dev/null; then
+            if [[ "$ALLOW_UNSIGNED_WINDOWS" != "true" ]]; then
+              echo "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true." >&2
+              exit 1
+            fi
+            echo "WARNING: publishing an unsigned Windows installer by explicit release approval."
+          fi
       - name: Remove internal signing attestations
         run: rm release-assets/signing-*.json
       - name: Verify complete updater and server artifact set
@@ -622,10 +647,17 @@ jobs:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
           RELEASE_NOTES_BASE64: ${{ needs.preflight.outputs.release_notes_base64 }}
         run: |
           set -euo pipefail
           printf '%s' "$RELEASE_NOTES_BASE64" | base64 --decode > "$RUNNER_TEMP/scient-release-notes.md"
+          if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" ]]; then
+            cat >> "$RUNNER_TEMP/scient-release-notes.md" <<'NOTICE'
+
+> **Windows note:** This release includes an unsigned Windows installer. Windows may show an Unknown Publisher or SmartScreen warning. macOS artifacts remain Developer ID signed and notarized.
+NOTICE
+          fi
           gh release create "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \

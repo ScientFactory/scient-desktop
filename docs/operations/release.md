@@ -58,11 +58,14 @@ state, ports, and lifecycle and is never a publication source.
 5. Resolve artifact, signing, updater, migration, website, and rollback gates.
    A green build-only run is not a release.
 6. Only after explicit approval, rerun the exact source with
-   `publish_release=true`. Publication fails closed if macOS or Windows is
-   unsigned or the repository release gate is disabled. The workflow stages a
-   draft, downloads it again, verifies every uploaded byte against the assembled
-   release, and only then makes the release public and Latest. Existing tags or
-   releases are never overwritten.
+   `publish_release=true`. Publication fails closed if macOS is unsigned or the
+   repository release gate is disabled. Windows is also required to be signed
+   unless the operator explicitly sets `allow_unsigned_windows=true`; that
+   exception is recorded in the release body and may trigger an Unknown
+   Publisher or SmartScreen warning. The workflow stages a draft, downloads it
+   again, verifies every uploaded byte against the assembled release, and only
+   then makes the release public and Latest. Existing tags or releases are never
+   overwritten.
 7. In the legacy repository, run **Mirror new Scient release for legacy
    updaters** first with `publish_mirror=false`, inspect the byte-identical
    proof, then explicitly publish it. The old repository never rebuilds the new
@@ -80,14 +83,16 @@ entitlement or require its provisioning profile. If Scient later enables that
 cloud capability, the profile and relying-party domains become a separate
 explicit release requirement.
 
-Windows publication requires Azure Trusted Signing secrets
+Normal Windows publication requires Azure Trusted Signing secrets
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
 `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`,
 `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`, and
 `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`.
 
 Build-only proof may produce unsigned artifacts when credentials are absent.
-It labels them unsigned and cannot publish them.
+It labels them unsigned and cannot publish them unless the explicit
+`allow_unsigned_windows=true` publication exception is selected. That exception
+applies only to Windows; macOS signing and notarization remain mandatory.
 
 Release jobs expose Apple credentials only to macOS packaging and Azure
 credentials only to Windows packaging. Publication additionally verifies the
