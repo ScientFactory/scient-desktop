@@ -655,8 +655,8 @@ jobs:
           if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" ]]; then
             cat >> "$RUNNER_TEMP/scient-release-notes.md" <<'NOTICE'
 
-> **Windows note:** This release includes an unsigned Windows installer. Windows may show an Unknown Publisher or SmartScreen warning. macOS artifacts remain Developer ID signed and notarized.
-NOTICE
+          > **Windows note:** This release includes an unsigned Windows installer. Windows may show an Unknown Publisher or SmartScreen warning. macOS artifacts remain Developer ID signed and notarized.
+          NOTICE
           fi
           gh release create "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
