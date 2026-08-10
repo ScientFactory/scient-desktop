@@ -38,6 +38,7 @@ import { previewEnvironment } from "~/state/preview";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { SCIENT_DEFAULT_RENDER_MARKDOWN } from "~/scient/fileOpening/fileOpeningPolicy";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
@@ -80,6 +81,7 @@ interface FilePreviewPanelProps {
   revealLine: number | null;
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
+  onOpenFileSource: (relativePath: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
@@ -776,6 +778,7 @@ export default function FilePreviewPanel({
   revealLine,
   revealRequestId,
   onOpenFile,
+  onOpenFileSource,
   onPendingChange,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
@@ -804,7 +807,7 @@ export default function FilePreviewPanel({
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
-    false,
+    SCIENT_DEFAULT_RENDER_MARKDOWN,
     Schema.Boolean,
   );
   // Paired with the path on purpose: each file surface counts its reveals from
@@ -1107,6 +1110,7 @@ export default function FilePreviewPanel({
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
+              onOpenFileSource={onOpenFileSource}
             />
           </aside>
         ) : null}
