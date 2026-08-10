@@ -124,6 +124,11 @@ fallback.
 
 ## Required manual acceptance before first cutover
 
+The exact non-destructive old-app-to-new-app rehearsal is documented in the
+[v0.6.0 migration rehearsal](./v060-migration-rehearsal.md). It must be run
+with temporary homes before publication; it does not authorize copying the
+old SQLite database.
+
 - macOS Apple Silicon and Intel install, launch, sign, notarize, and update;
 - Windows x64 install, SmartScreen/signature, launch, and update;
 - Linux AppImage launch and update behavior;
