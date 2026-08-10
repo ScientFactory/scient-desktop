@@ -10,7 +10,19 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+
+export class InvalidReleasePackageVersionError extends Schema.TaggedErrorClass<InvalidReleasePackageVersionError>()(
+  "InvalidReleasePackageVersionError",
+  {
+    version: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Invalid release package version '${this.version}'.`;
+  }
+}
 
 export class ReleasePackageManifestError extends Schema.TaggedErrorClass<ReleasePackageManifestError>()(
   "ReleasePackageManifestError",
@@ -66,6 +78,10 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
   version: string,
   options: UpdateReleasePackageVersionsOptions = {},
 ) {
+  if (!isExactScientReleaseVersion(version) || version !== version.trim()) {
+    return yield* new InvalidReleasePackageVersionError({ version });
+  }
+
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const rootDir = path.resolve(options.rootDir ?? process.cwd());

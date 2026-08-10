@@ -280,6 +280,7 @@ jobs:
           cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align staged package versions
+        shell: bash
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
@@ -493,6 +494,7 @@ jobs:
           cache: true
           run-install: true
       - name: Align package versions and build server
+        shell: bash
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |

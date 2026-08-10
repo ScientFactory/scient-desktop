@@ -53,6 +53,27 @@ describe("Scient release machinery", () => {
     assert.include(workflow, "Publication requires signed macOS artifacts:");
   });
 
+  it("pins Bash for every package-version alignment step", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+
+    // Split into step blocks so the assertion covers every step that stamps
+    // package versions, not just one named step. On the Windows matrix leg the
+    // default shell is PowerShell, where "$RELEASE_VERSION" expands empty and
+    // silently stamps blank versions; each such step must declare shell: bash.
+    const stampingSteps = workflow
+      .split(/^ {6}- name: /mu)
+      .slice(1)
+      .filter((step) => step.includes("update-release-package-versions.ts"));
+
+    assert.equal(stampingSteps.length, 2);
+    for (const step of stampingSteps) {
+      assert.match(step, /^[^\n]*\n\s+shell: bash\n/u);
+    }
+  });
+
   it("requires release/stable to be the exact selected main commit", async () => {
     await expect(
       runScientReleasePreflight({

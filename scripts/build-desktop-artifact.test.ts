@@ -13,12 +13,14 @@ import {
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
+  DesktopBuildPackageVersionMismatchError,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
+  InvalidDesktopBuildVersionError,
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
@@ -43,6 +45,7 @@ import {
   resolvePackageManagerUserAgent,
   stageLinuxIconSize,
   STAGE_INSTALL_ARGS,
+  validateDesktopBuildPackageVersions,
   WINDOWS_ASAR_UNPACK,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
@@ -114,6 +117,53 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopWebAssetBrand("0.0.17"), "production");
     assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
   });
+
+  it.effect("accepts matching stable and nightly package versions", () =>
+    Effect.gen(function* () {
+      for (const version of ["0.6.0", "0.6.1-nightly.20260810.42"]) {
+        yield* validateDesktopBuildPackageVersions({
+          buildVersion: version,
+          serverVersion: version,
+          desktopVersion: version,
+        });
+      }
+    }),
+  );
+
+  it.effect("rejects invalid or mismatched package versions before packaging", () =>
+    Effect.gen(function* () {
+      const invalid = yield* validateDesktopBuildPackageVersions({
+        buildVersion: "",
+        serverVersion: "",
+        desktopVersion: "",
+      }).pipe(Effect.flip);
+      assert.instanceOf(invalid, InvalidDesktopBuildVersionError);
+
+      for (const mismatch of [
+        {
+          manifestPath: "apps/server/package.json",
+          serverVersion: "",
+          desktopVersion: "0.6.0",
+        },
+        {
+          manifestPath: "apps/desktop/package.json",
+          serverVersion: "0.6.0",
+          desktopVersion: "",
+        },
+      ] as const) {
+        const error = yield* validateDesktopBuildPackageVersions({
+          buildVersion: "0.6.0",
+          serverVersion: mismatch.serverVersion,
+          desktopVersion: mismatch.desktopVersion,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopBuildPackageVersionMismatchError);
+        assert.equal(error.manifestPath, mismatch.manifestPath);
+        assert.equal(error.expectedVersion, "0.6.0");
+        assert.equal(error.actualVersion, "");
+      }
+    }),
+  );
 
   it.effect("resolves GitHub desktop publish config from Effect config", () =>
     Effect.gen(function* () {
