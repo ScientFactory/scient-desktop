@@ -243,14 +243,11 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   color: var(--code-foreground) !important;
 }
 
-[data-diffs-header][data-diffs-header] {
-  font-size: var(--scient-font-size-diff-header, 14px) !important;
+[data-diffs-header] {
+  font-size: var(--scient-font-size-diff-header, 14px);
 }
 
-:is([data-separator="line-info"], [data-separator="line-info-basic"])
-  [data-separator-content][data-separator-content],
-[data-diffs-header][data-diffs-header] [data-additions-count],
-[data-diffs-header][data-diffs-header] [data-deletions-count] {
-  font-size: var(--scient-font-size-compact-meta, 13px) !important;
+[data-separator] {
+  font-size: var(--scient-font-size-compact-meta, 13px);
 }
 `;
