@@ -21,14 +21,13 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-foundation-refresh-20260811-78f462c4.md`](docs/internals/t3-foundation-refresh-20260811-78f462c4.md)
+[`docs/internals/t3-upstream-sync-20260811-65b005f1.md`](docs/internals/t3-upstream-sync-20260811-65b005f1.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `78f462c4e18c8ea5e5037dc916389a3b72246025` into the refresh
-branch, preserving the complete 18-commit T3 range from the previously
-integrated tip `0d38866dcf63d133b2ed732bbb303dc533b5934f`. The newer observed
-T3 `main` tip remains outside this bounded phase. Later observed T3 tips never
-move `integrationBase` by themselves; it advances only after the exact ancestry
-and verification gate are complete.
+checkpoint `65b005f1e4bfccb6a404b3b1e5bfa363d534ac2a` into the refresh
+branch, preserving the complete two-commit T3 range from the previously
+integrated tip `f5fce74169a5629f701aeb8c4535cab6f7bd3c92`. Later observed T3
+tips never move `integrationBase` by themselves; it advances only after the
+exact ancestry and verification gate are complete.
 
 ## Receiving T3 updates
 
@@ -82,8 +81,23 @@ breadcrumb, confirmation, accessibility, theme, mobile, and security changes;
 combined SVG sandboxing with Scient's range-capable asset/PDF seam; and kept
 General Chat, local voice, and dropped-file bridges intact. Scient intentionally
 did not activate T3's automatic mobile store/OTA workflow or its advisory
-fingerprint-label workflow. The newer pull-request center and later nightly
-commits remain a separate bounded phase.
+fingerprint-label workflow. At that checkpoint, the newer pull-request center
+and later nightly commits remained a separate bounded phase.
+
+The 2026-08-11 phase-two integration then received the pull-request center and
+the rest of official T3 through `f5fce74169a5629f701aeb8c4535cab6f7bd3c92`.
+It preserved General Chat file/PDF behavior, project-only PR/worktree guards,
+Scient provider and release policy, and the shared General Chat sidebar row.
+The merge reached owned `main` as `5fe83b7adddc6294ae733029d6a0ef2739171649`
+and passed post-merge CI plus manual macOS UI acceptance.
+
+The follow-up sync through `65b005f1` adds Shift-click creation in the current
+project and Copy Thread ID. Of six upstream-touched paths, three overlapped
+Scient changes, two merged automatically, and only `Sidebar.tsx` conflicted.
+That conflict represented a real product distinction: one project is still a
+multi-target choice when General Chat is available. The exception is isolated
+in the Scient-owned General Chat module while T3's new helper remains
+upstream-shaped.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable

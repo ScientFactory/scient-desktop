@@ -29,7 +29,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -161,6 +161,7 @@ import {
   ScientGeneralChatSection,
 } from "./scient-general-chat/ScientGeneralChatSection";
 import { ScientGeneralChatPinnedList } from "./scient-general-chat/ScientGeneralChatPinnedList";
+import { shouldCreateScientThreadInCurrentProject } from "./scient-general-chat/newThreadTarget";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -1658,6 +1659,24 @@ export default function Sidebar() {
       );
     },
   });
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
+    onCopy: ({ threadId }) => {
+      toastManager.add({
+        type: "success",
+        title: "Thread ID copied",
+        description: threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
@@ -3104,6 +3123,9 @@ export default function Sidebar() {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
             }
             return;
+          case "copy-thread-id":
+            copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -3146,6 +3168,7 @@ export default function Sidebar() {
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
+      copyThreadIdToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
@@ -3232,38 +3255,47 @@ export default function Sidebar() {
     (config) => config.projectlessThreads === true,
   );
 
-  // New thread defaults to the project you're in (active thread's project,
-  // falling back to the top project). When the environment supports
-  // projectless threads, the target picker remains useful even with one
-  // project because it also offers "Don't work in a project".
-  const handleNewThreadClick = useCallback(() => {
-    if (
-      !shouldOpenNewThreadTargetPicker({
-        legacySidebarEnabled: false,
-        projectGroupCount: projectGroups.length,
-        supportsProjectlessThreads,
-      })
-    ) {
+  // A plain click uses the same target-picker rule as chat.new. Shift+click
+  // keeps upstream's direct-create behavior when a current project exists.
+  const opensNewThreadTargetPicker = shouldOpenNewThreadTargetPicker({
+    legacySidebarEnabled: false,
+    projectGroupCount: projectGroups.length,
+    supportsProjectlessThreads,
+  });
+  const handleNewThreadClick = useCallback(
+    (event?: ReactMouseEvent) => {
+      if (
+        shouldCreateScientThreadInCurrentProject({
+          shiftKey: event?.shiftKey ?? false,
+          projectGroupCount: projectGroups.length,
+          supportsProjectlessThreads,
+        })
+      ) {
+        if (isMobile) setOpenMobile(false);
+        void startNewThreadFromContext({
+          activeDraftThread: newThreadContext.activeDraftThread,
+          activeThread: newThreadContext.activeThread ?? undefined,
+          defaultProjectRef: newThreadContext.defaultProjectRef,
+          handleNewThread: newThreadContext.handleNewThread,
+        });
+        return;
+      }
       if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-      return;
-    }
-    if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile, supportsProjectlessThreads]);
+      openCommandPalette({ open: "new-thread-in" });
+    },
+    [isMobile, newThreadContext, projectGroups.length, setOpenMobile, supportsProjectlessThreads],
+  );
 
-  // The button mirrors chat.new: both route through the target picker whenever
-  // there is more than one project or projectless threads are available.
-  // chat.newLocal always creates directly, so it is only a correct label when
-  // chat.new is unbound.
+  // chat.newLocal is a valid fallback label only when both commands create
+  // directly. When the picker is available, it is advertised separately as
+  // the shortcut twin of Shift+click.
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    shortcutLabelForCommand(keybindings, "chat.newLocal");
+    (!opensNewThreadTargetPicker
+      ? shortcutLabelForCommand(keybindings, "chat.newLocal")
+      : undefined);
+  const showNewThreadInProjectHint = opensNewThreadTargetPicker && projectGroups.length > 0;
+  const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
 
   const renderThreadRow = (
     thread: EnvironmentThreadShell,
@@ -3412,9 +3444,25 @@ export default function Sidebar() {
                     />
                   </TooltipTrigger>
                   <TooltipPopup side="right">
-                    {newThreadShortcutLabel
-                      ? `New thread (${newThreadShortcutLabel})`
-                      : "New thread"}
+                    {showNewThreadInProjectHint ? (
+                      <span className="flex flex-col gap-0.5">
+                        <span>
+                          {newThreadShortcutLabel
+                            ? `New thread (${newThreadShortcutLabel})`
+                            : "New thread"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          New thread in current project: Shift+click
+                          {newThreadInProjectShortcutLabel
+                            ? ` (${newThreadInProjectShortcutLabel})`
+                            : ""}
+                        </span>
+                      </span>
+                    ) : newThreadShortcutLabel ? (
+                      `New thread (${newThreadShortcutLabel})`
+                    ) : (
+                      "New thread"
+                    )}
                   </TooltipPopup>
                 </Tooltip>
               </div>
