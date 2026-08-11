@@ -2,11 +2,8 @@ import { ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
-import { APP_BASE_NAME } from "../../branding";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
-import { ScientSymbol } from "../ScientSymbol";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -25,6 +22,10 @@ import {
 } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+
+import { APP_BASE_NAME } from "../../branding";
+import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
+import { ScientSymbol } from "../ScientSymbol";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,

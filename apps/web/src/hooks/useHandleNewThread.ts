@@ -10,12 +10,14 @@ import { useCallback, useMemo } from "react";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
-  projectlessDraftKey,
-  type DraftThreadTargetRef,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import {
+  projectlessDraftKey,
+  type DraftThreadTargetRef,
+} from "../scient/generalChat/projectlessDraftTarget";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {

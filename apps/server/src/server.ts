@@ -20,14 +20,10 @@ import {
 } from "./http.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
-import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
-import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
-import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
@@ -119,11 +115,18 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import { forkParked, ServerActivation } from "./serverActivation.ts";
+
+// Scient-owned server extensions stay grouped at the downstream boundary so
+// upstream route and service imports can continue to follow their native layout.
+import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
+import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
+import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
+import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -460,9 +463,9 @@ export const makeRoutesLayer = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
-      Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(scientProjectHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
+      Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -473,16 +476,16 @@ export const makeRoutesLayer = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
-  Layer.provide(
-    Layer.mergeAll(ProviderConnectionManager.layer, ProviderRuntimeManager.layer).pipe(
-      Layer.provideMerge(ProviderLifecycleCoordinator.layer),
-    ),
-  ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
+  Layer.provide(
+    Layer.mergeAll(ProviderConnectionManager.layer, ProviderRuntimeManager.layer).pipe(
+      Layer.provideMerge(ProviderLifecycleCoordinator.layer),
+    ),
+  ),
 );
 
 export const makeServerLayer = Layer.unwrap(

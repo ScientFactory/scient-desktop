@@ -262,6 +262,28 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps file surfaces when an environment workspace is available", () => {
+    useRightPanelStore.getState().openFile(refA, "paper.pdf");
+    useRightPanelStore.getState().open(refA, "agents");
+
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, true);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "agents",
+      surfaces: [
+        {
+          id: "file:paper.pdf",
+          kind: "file",
+          relativePath: "paper.pdf",
+          revealLine: null,
+          revealRequestId: 1,
+        },
+        { id: "agents", kind: "agents" },
+      ],
+    });
+  });
+
   it("close hides the panel without clearing its selected surface", () => {
     useRightPanelStore.getState().open(refA, "agents");
     useRightPanelStore.getState().close(refA);

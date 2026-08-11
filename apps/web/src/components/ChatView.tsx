@@ -317,9 +317,9 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
-  startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+import { startNewThreadForTarget } from "../scient/generalChat/projectlessDraftTarget";
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -1703,7 +1703,7 @@ function ChatViewContent(props: ChatViewProps) {
     : null;
   const activeProject = useProject(activeProjectRef);
   const handleNewThreadInActiveProject = useCallback(() => {
-    startNewThreadForProject(activeThreadTargetRef, handleNewThread);
+    startNewThreadForTarget(activeThreadTargetRef, handleNewThread);
   }, [activeThreadTargetRef, handleNewThread]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
@@ -1755,8 +1755,10 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
-    useRightPanelStore.getState().reconcileFileSurfaces(activeThreadRef, activeProject !== null);
-  }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
+    useRightPanelStore
+      .getState()
+      .reconcileFileSurfaces(activeThreadRef, activeWorkspaceKeyRoot !== undefined);
+  }, [activeEnvironmentBootstrapComplete, activeThreadRef, activeWorkspaceKeyRoot]);
 
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
@@ -3341,19 +3343,19 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen?.();
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
   const addFilesSurface = useCallback(() => {
-    if (!activeThreadRef || !activeProject) return;
+    if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
-  }, [activeProject, activeThreadRef]);
+  }, [activeThreadRef, activeWorkspaceRoot]);
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
   const openFileSourceSurface = useCallback(
     (relativePath: string) => {
-      if (!activeThreadRef || !activeProject) return;
+      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
-    [activeProject, activeThreadRef],
+    [activeThreadRef, activeWorkspaceRoot],
   );
   const openFileSurface = useScientFileOpening({
     threadRef: activeThreadRef,

@@ -517,56 +517,6 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
-export class EnvironmentScientProjectHttpApi extends HttpApiGroup.make("scientProject")
-  .add(
-    HttpApiEndpoint.post("inspect", "/api/scient/projects/inspect", {
-      headers: OptionalBearerHeaders,
-      payload: ScientProjectInspectRequest,
-      success: ScientProjectInspection,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("initialize", "/api/scient/projects/initialize", {
-      headers: OptionalBearerHeaders,
-      payload: ScientProjectInitializeRequest,
-      success: ScientProjectInitializationResult,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
-
-export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
-  .add(
-    HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
-      headers: OptionalBearerHeaders,
-      success: ScientAnalyticsStatus,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("preferences", "/api/scient/analytics/preferences", {
-      headers: OptionalBearerHeaders,
-      payload: ScientAnalyticsPreferenceUpdate,
-      success: ScientAnalyticsStatus,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("record", "/api/scient/analytics/events", {
-      headers: OptionalBearerHeaders,
-      payload: ScientAnalyticsUiEvent,
-      success: ScientAnalyticsRecordResult,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("deleteData", "/api/scient/analytics/delete", {
-      headers: OptionalBearerHeaders,
-      success: ScientAnalyticsDeletionResult,
-      error: EnvironmentHttpCommonError,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
-
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -628,10 +578,63 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+// Scient-owned HTTP groups are appended after the inherited environment API
+// groups so upstream can add new first-party groups without editing the same
+// class-definition or composition seams.
+export class EnvironmentScientProjectHttpApi extends HttpApiGroup.make("scientProject")
+  .add(
+    HttpApiEndpoint.post("inspect", "/api/scient/projects/inspect", {
+      headers: OptionalBearerHeaders,
+      payload: ScientProjectInspectRequest,
+      success: ScientProjectInspection,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("initialize", "/api/scient/projects/initialize", {
+      headers: OptionalBearerHeaders,
+      payload: ScientProjectInitializeRequest,
+      success: ScientProjectInitializationResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
+  .add(
+    HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
+      headers: OptionalBearerHeaders,
+      success: ScientAnalyticsStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preferences", "/api/scient/analytics/preferences", {
+      headers: OptionalBearerHeaders,
+      payload: ScientAnalyticsPreferenceUpdate,
+      success: ScientAnalyticsStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("record", "/api/scient/analytics/events", {
+      headers: OptionalBearerHeaders,
+      payload: ScientAnalyticsUiEvent,
+      success: ScientAnalyticsRecordResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("deleteData", "/api/scient/analytics/delete", {
+      headers: OptionalBearerHeaders,
+      success: ScientAnalyticsDeletionResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentConnectHttpApi)
   .add(EnvironmentScientProjectHttpApi)
-  .add(EnvironmentScientAnalyticsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentScientAnalyticsHttpApi) {}
