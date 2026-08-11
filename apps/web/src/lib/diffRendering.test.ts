@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  DIFF_SURFACE_THEME_UNSAFE_CSS,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
 } from "./diffRendering";
+
+describe("DIFF_SURFACE_THEME_UNSAFE_CSS", () => {
+  it("keeps Scient typography stronger than inherited per-view defaults", () => {
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain("[data-diffs-header][data-diffs-header]");
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain(
+      "[data-separator-content][data-separator-content]",
+    );
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain("--scient-font-size-diff-header");
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain("--scient-font-size-compact-meta");
+  });
+});
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
