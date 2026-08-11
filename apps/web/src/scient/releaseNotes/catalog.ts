@@ -9,6 +9,40 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.1",
+    publishedAt: "2026-08-12",
+    kicker: "Pull requests, General Chat improvements, and reliability fixes",
+    headline: "Scient 0.6.1",
+    summary:
+      "This release adds pull-request tools and improves General Chat, Codex sign-in, themes, and platform reliability.",
+    highlights: [
+      {
+        id: "pull-requests",
+        title: "Pull requests",
+        description:
+          "Browse and manage pull requests from GitHub, GitLab, Bitbucket, and Azure DevOps. View code and timelines, submit reviews, and create local checkouts.",
+      },
+      {
+        id: "general-chat-improvements",
+        title: "General Chat improvements",
+        description:
+          "General Chat now has direct creation controls, persistent sidebar state, better workspace tools, and safer movement into a project.",
+      },
+      {
+        id: "codex-setup-and-sign-in",
+        title: "Codex setup and sign-in",
+        description:
+          "Improved runtime selection, sign-in confirmation, diagnostics, and recovery when multiple Codex installations are available.",
+      },
+      {
+        id: "other-improvements",
+        title: "Other improvements",
+        description:
+          "Includes voice-dictation fixes, theme and sidebar refinements, clearer usage information, and additional mobile, terminal, Git, and Windows fixes.",
+      },
+    ],
+  },
+  {
     version: "0.6.0",
     publishedAt: "2026-08-10",
     kicker: "A stronger foundation for scientific work",
