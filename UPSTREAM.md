@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260811-ac4780f4.md`](docs/internals/t3-upstream-sync-20260811-ac4780f4.md)
+[`docs/internals/t3-upstream-sync-20260811-2db08457f.md`](docs/internals/t3-upstream-sync-20260811-2db08457f.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `ac4780f451f98c10d5b518f2bfa3d035b46645df` into the refresh
-branch, preserving the complete four-commit T3 range from the previously
-integrated tip `65b005f1e4bfccb6a404b3b1e5bfa363d534ac2a`. Later observed T3
+checkpoint `2db08457f2f4eaaa713a067b2ea480ca2b583025` into the refresh
+branch, preserving the complete nine-commit T3 range from the previously
+integrated tip `ac4780f451f98c10d5b518f2bfa3d035b46645df`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -108,6 +108,14 @@ Scient retained its disabled mobile-publication job and newer FFF search
 dependency while adopting the rest of the upstream files. A focused upstream
 typography test used the default value as its supposed changed value; Scient
 corrected that characterization from 18 to 19 without altering product logic.
+
+The follow-up sync through `2db08457f` receives theme-aware stage tokens and
+OKLCH palettes, PR/Usage sidebar Back buttons, durable thread-error dismiss,
+dropdown stacking above toasts, Windows drive-root and Azure DevOps SSH path
+fixes, and clearer git action icons. Of 32 upstream paths, 12 overlapped
+Scient work and five conflicted. Scient kept its minimal stage branding,
+typography profile, and sidebar identity mounts while adopting the upstream
+theme pipeline and footer navigation behavior.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable

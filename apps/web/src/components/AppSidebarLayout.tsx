@@ -19,7 +19,10 @@ import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
+import {
+  resolveSidebarStageFocusRingOffsetClass,
+  useSidebarStageBackdropVariant,
+} from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
 import {
   resolveInitialThreadSidebarWidth,
@@ -103,9 +106,16 @@ function SidebarControl() {
             <SidebarTrigger
               className={cn(
                 "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "sidebar-stage-trigger",
+                isSidebarVisible &&
+                  stageBackdropVariant && [
+                    "sidebar-stage-trigger",
+                    resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
+                  ],
               )}
               aria-label="Toggle main sidebar"
+              data-stage-variant={
+                isSidebarVisible && stageBackdropVariant ? stageBackdropVariant : undefined
+              }
             />
           }
         />

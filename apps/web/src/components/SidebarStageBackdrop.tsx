@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { CSSProperties } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -18,6 +19,14 @@ export function resolveSidebarStageBackdropVariant(
   if (normalized === "nightly") return "nightly";
   if (normalized === "dev") return "dev";
   return null;
+}
+
+export function resolveSidebarStageFocusRingOffsetClass(
+  variant: SidebarStageBackdropVariant,
+): string {
+  return variant === "nightly"
+    ? "focus-visible:ring-offset-(--stage-night-bottom)"
+    : "focus-visible:ring-offset-(--stage-art-bottom)";
 }
 
 export function resolveEnvironmentIdentificationPillLabel(
@@ -63,6 +72,27 @@ export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackd
   return <ScientStageArt compact variant={variant} />;
 }
 
+type ScientStageStyle = CSSProperties & {
+  readonly [key: `--scient-stage-${string}`]: string;
+};
+
+const SCIENT_STAGE_STYLES: Readonly<Record<SidebarStageBackdropVariant, ScientStageStyle>> = {
+  dev: {
+    "--scient-stage-top": "var(--stage-art-top)",
+    "--scient-stage-mid": "var(--stage-art-mid)",
+    "--scient-stage-bottom": "var(--stage-art-bottom)",
+    "--scient-stage-highlight": "var(--stage-art-highlight)",
+    "--scient-stage-secondary": "var(--stage-art-secondary)",
+  },
+  nightly: {
+    "--scient-stage-top": "var(--stage-night-top)",
+    "--scient-stage-mid": "var(--stage-night-mid)",
+    "--scient-stage-bottom": "var(--stage-night-bottom)",
+    "--scient-stage-highlight": "var(--stage-night-highlight)",
+    "--scient-stage-secondary": "var(--stage-night-secondary)",
+  },
+};
+
 function ScientStageArt({
   compact = false,
   variant,
@@ -77,6 +107,7 @@ function ScientStageArt({
         variant === "nightly" ? "scient-stage-art-nightly" : "scient-stage-art-dev",
       )}
       data-scient-stage={variant}
+      style={SCIENT_STAGE_STYLES[variant]}
     >
       {compact ? null : (
         <ScientSymbol className="scient-stage-watermark absolute -right-2 -top-6 size-28" />
