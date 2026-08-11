@@ -5,13 +5,13 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ServerProvider,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
-import type { DraftThreadTargetRef } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -42,8 +42,8 @@ export function hasEnvironmentReconnectWarningGraceElapsed(
 }
 
 export function startNewThreadForProject(
-  projectRef: DraftThreadTargetRef | null,
-  handleNewThread: (projectRef: DraftThreadTargetRef) => Promise<void>,
+  projectRef: ScopedProjectRef | null,
+  handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,
 ): boolean {
   if (projectRef === null) return false;
   void handleNewThread(projectRef);

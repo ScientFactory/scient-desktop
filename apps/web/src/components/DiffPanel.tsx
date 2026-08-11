@@ -158,7 +158,7 @@ const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   border-bottom-color: transparent !important;
   align-items: center !important;
   font-family: var(--font-sans) !important;
-  font-size: var(--scient-font-size-diff-header, 14px) !important;
+  font-size: 12px !important;
   line-height: 1 !important;
   min-height: 32px !important;
   padding-block: 6px !important;
@@ -188,7 +188,7 @@ const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   background-color: transparent !important;
   color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
   font-family: var(--font-sans) !important;
-  font-size: var(--scient-font-size-compact-meta, 13px) !important;
+  font-size: 11px !important;
   text-decoration: none !important;
 }
 
@@ -267,7 +267,7 @@ const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 [data-diffs-header] [data-additions-count],
 [data-diffs-header] [data-deletions-count] {
   font-family: var(--font-mono) !important;
-  font-size: var(--scient-font-size-compact-meta, 13px) !important;
+  font-size: 11px !important;
   font-variant-numeric: tabular-nums;
   line-height: 1 !important;
 }

@@ -68,6 +68,11 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  RelayClientInstallFailedError,
+  RelayClientInstallProgressEventSchema,
+  RelayClientStatusSchema,
+} from "./relayClient.ts";
+import {
   ProviderConnectionCancelInput,
   ProviderConnectionDisconnectInput,
   ProviderConnectionError,
@@ -78,11 +83,6 @@ import {
   ProviderRuntimePlanInput,
   ProviderRuntimeStartInput,
 } from "./providerLifecycle.ts";
-import {
-  RelayClientInstallFailedError,
-  RelayClientInstallProgressEventSchema,
-  RelayClientStatusSchema,
-} from "./relayClient.ts";
 import {
   ProjectListEntriesError,
   ProjectListEntriesInput,
