@@ -26,9 +26,30 @@ const ARM_DELAY_MS = 250;
 interface VoiceControllerOptions {
   readonly client: VoiceTranscriptionClient | null;
   readonly onTranscript: (text: string) => void;
-  readonly onSetDraft?: (text: string) => void;
-  readonly getDraft?: () => string;
   readonly onRequestSubmit?: () => void;
+}
+
+interface VoiceCompletionCallbacks {
+  readonly onTranscript: (text: string) => void;
+  readonly onRequestSubmit: (() => void) | undefined;
+}
+
+interface VoiceCompletionCallbacksRef {
+  current: VoiceCompletionCallbacks;
+}
+
+export function routeCompletedVoiceTranscription(
+  callbacksRef: VoiceCompletionCallbacksRef,
+  text: string,
+  send: boolean,
+  scheduleSubmit: (callback: () => void) => void = (callback) => {
+    requestAnimationFrame(callback);
+  },
+): void {
+  callbacksRef.current.onTranscript(text);
+  if (send && callbacksRef.current.onRequestSubmit) {
+    scheduleSubmit(() => callbacksRef.current.onRequestSubmit?.());
+  }
 }
 
 export interface ScientVoiceController {
@@ -87,13 +108,6 @@ export function describeTranscriptionError(error: unknown): string {
   return TRANSCRIPTION_FAILED_MESSAGE;
 }
 
-export function composeDraft(base: string, addition: string): string {
-  const trimmedBase = base.replace(/\s+$/u, "");
-  const trimmedAddition = addition.trim();
-  if (trimmedAddition.length === 0) return base;
-  return trimmedBase.length > 0 ? `${trimmedBase}\n${trimmedAddition}` : trimmedAddition;
-}
-
 function percent(progress: VoiceModelDownloadProgress | null): number {
   if (!progress || progress.totalBytes <= 0) return 0;
   return Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
@@ -102,8 +116,6 @@ function percent(progress: VoiceModelDownloadProgress | null): number {
 export function useScientVoiceController({
   client,
   onTranscript,
-  onSetDraft,
-  getDraft,
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
   const recordAnalytics = useRecordScientAnalytics();
@@ -114,8 +126,12 @@ export function useScientVoiceController({
   const phaseRef = useRef<VoicePhase>("idle");
   const operationRef = useRef(0);
   const recordingStartedAtRef = useRef(0);
-  const baseDraftRef = useRef("");
   const autoStopRef = useRef<(clip: VoiceWavClip | null) => void>(() => undefined);
+  const completionCallbacksRef = useRef<VoiceCompletionCallbacks>({
+    onTranscript,
+    onRequestSubmit,
+  });
+  completionCallbacksRef.current = { onTranscript, onRequestSubmit };
 
   const setPhase = useCallback((next: VoicePhase) => {
     phaseRef.current = next;
@@ -133,18 +149,6 @@ export function useScientVoiceController({
     errorKind: recorderErrorKind,
     levels: recorderLevels,
   } = recorder;
-
-  const applyTranscript = useCallback(
-    (text: string) => {
-      const currentDraft = getDraft?.() ?? "";
-      if (onSetDraft && currentDraft === baseDraftRef.current) {
-        onSetDraft(composeDraft(baseDraftRef.current, text));
-      } else {
-        onTranscript(text);
-      }
-    },
-    [getDraft, onSetDraft, onTranscript],
-  );
 
   const transcribe = useCallback(
     async (clip: VoiceWavClip | null, send: boolean, operation: number): Promise<void> => {
@@ -180,7 +184,7 @@ export function useScientVoiceController({
           });
           return;
         }
-        applyTranscript(text);
+        routeCompletedVoiceTranscription(completionCallbacksRef, text, send);
         recordAnalytics({
           name: "voice.transcription.completed",
           properties: {
@@ -189,7 +193,6 @@ export function useScientVoiceController({
             audioDurationMs: clip.durationMs,
           },
         });
-        if (send && onRequestSubmit) requestAnimationFrame(onRequestSubmit);
       } catch (error) {
         if (operation !== operationRef.current) return;
         setPhase("idle");
@@ -200,14 +203,13 @@ export function useScientVoiceController({
         });
       }
     },
-    [applyTranscript, client, onRequestSubmit, recordAnalytics, setPhase],
+    [client, recordAnalytics, setPhase],
   );
 
   const beginRecording = useCallback(async (): Promise<void> => {
     const operation = (operationRef.current += 1);
     setErrorMessage(null);
     setElapsedMs(0);
-    baseDraftRef.current = getDraft?.() ?? "";
     setPhase("requesting-permission");
     const started = await startRecording();
     if (operation !== operationRef.current) {
@@ -217,7 +219,7 @@ export function useScientVoiceController({
     if (!started) return;
     recordingStartedAtRef.current = performance.now();
     setPhase("recording");
-  }, [cancelRecording, getDraft, setPhase, startRecording]);
+  }, [cancelRecording, setPhase, startRecording]);
 
   const activate = useCallback(async (): Promise<void> => {
     if (!client) return;
