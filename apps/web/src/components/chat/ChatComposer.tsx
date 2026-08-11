@@ -33,6 +33,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
+import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
 import {
   ProviderLifecycleSetupSurface,
   ProviderOnboardingPicker,
@@ -1397,7 +1398,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      const pendingInputEnded = lastSyncedPendingInputRef.current !== null;
       lastSyncedPendingInputRef.current = null;
+      if (!pendingInputEnded) return;
+
+      // Pending answers temporarily borrow the shared editor ref. Return it to
+      // the durable composer draft before the next normal send reads the ref.
+      promptRef.current = prompt;
+      const nextCursor = collapseExpandedComposerCursor(prompt, prompt.length);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        detectComposerTrigger(prompt, expandCollapsedComposerCursor(prompt, nextCursor)),
+      );
+      setComposerHighlightedItemId(null);
       return;
     }
 
@@ -1431,6 +1444,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
+    prompt,
     promptRef,
   ]);
 
@@ -3242,14 +3256,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 <ScientVoiceComposerControl
                   onTranscript={(text) => {
-                    insertComposerTextAtEnd(text, { ensureLeadingBoundary: true });
+                    applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
                   }}
-                  onSetDraft={(text) => {
-                    promptRef.current = text;
-                    setPrompt(text);
-                  }}
-                  getDraft={() => promptRef.current}
-                  onRequestSubmit={() => submitComposer()}
+                  {...(pendingUserInputs.length === 0
+                    ? { onRequestSubmit: () => submitComposer() }
+                    : {})}
                   disabled={projectSelectionRequired}
                 />
                 <ComposerFooterPrimaryActions

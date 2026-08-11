@@ -27,7 +27,6 @@ import { getVoiceBridge } from "./voiceClient.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 
 export {
-  composeDraft,
   describeTranscriptionError,
   describeVoiceRecorderError,
   formatVoiceTimer,
@@ -36,8 +35,6 @@ export {
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;
   readonly onTranscript: (text: string) => void;
-  readonly onSetDraft?: (text: string) => void;
-  readonly getDraft?: () => string;
   readonly onRequestSubmit?: () => void;
   readonly className?: string;
 }
@@ -87,8 +84,6 @@ function VoiceErrorText({ message }: { readonly message: string }): ReactNode {
 export function ScientVoiceComposerControl({
   disabled = false,
   onTranscript,
-  onSetDraft,
-  getDraft,
   onRequestSubmit,
   className,
 }: ScientVoiceComposerControlProps): ReactNode {
@@ -96,8 +91,6 @@ export function ScientVoiceComposerControl({
   const controller = useScientVoiceController({
     client,
     onTranscript,
-    ...(onSetDraft ? { onSetDraft } : {}),
-    ...(getDraft ? { getDraft } : {}),
     ...(onRequestSubmit ? { onRequestSubmit } : {}),
   });
 
@@ -152,21 +145,23 @@ export function ScientVoiceComposerControl({
                   </TooltipTrigger>
                   <TooltipPopup>Transcribe and insert (Enter)</TooltipPopup>
                 </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label="Transcribe and send"
-                        onClick={() => void controller.stop(true)}
-                        size="icon-sm"
-                        className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-                      />
-                    }
-                  >
-                    <ArrowUpIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup>Transcribe and send</TooltipPopup>
-                </Tooltip>
+                {onRequestSubmit ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          aria-label="Transcribe and send"
+                          onClick={() => void controller.stop(true)}
+                          size="icon-sm"
+                          className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+                        />
+                      }
+                    >
+                      <ArrowUpIcon />
+                    </TooltipTrigger>
+                    <TooltipPopup>Transcribe and send</TooltipPopup>
+                  </Tooltip>
+                ) : null}
               </div>
             </TooltipProvider>
           </>
