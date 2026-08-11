@@ -1,7 +1,5 @@
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 import { LegendList } from "@legendapp/list/react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -28,6 +26,10 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import {
+  scientThreadGroupEnvironmentId,
+  type ScientThreadGroupContext,
+} from "../scient-general-chat/threadGroupContext";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
   createNativeMailSearchToolbarItem,
@@ -45,7 +47,7 @@ type ArchivedThreadListItem =
       readonly kind: "project";
       readonly key: string;
       readonly environmentLabel: string | null;
-      readonly project: EnvironmentProject;
+      readonly context: ScientThreadGroupContext;
     }
   | {
       readonly kind: "thread";
@@ -362,22 +364,29 @@ function ArchivedThreadsHeader(props: {
 
 function ProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
-  readonly project: EnvironmentProject;
+  readonly context: ScientThreadGroupContext;
 }) {
+  const iconColor = useThemeColor("--color-icon-muted");
+  const title =
+    props.context.kind === "project" ? props.context.project.title : SCIENT_GENERAL_CHAT_LABEL;
   return (
     <View className="flex-row items-center gap-2.5 px-1 pb-2">
-      <ProjectFavicon
-        environmentId={props.project.environmentId}
-        faviconPath={props.project.faviconPath}
-        projectTitle={props.project.title}
-        size={18}
-        workspaceRoot={props.project.workspaceRoot}
-      />
+      {props.context.kind === "project" ? (
+        <ProjectFavicon
+          environmentId={props.context.project.environmentId}
+          faviconPath={props.context.project.faviconPath}
+          projectTitle={props.context.project.title}
+          size={18}
+          workspaceRoot={props.context.project.workspaceRoot}
+        />
+      ) : (
+        <SymbolView name="text.bubble" size={18} tintColor={iconColor} type="monochrome" />
+      )}
       <Text
         className="flex-1 text-xs font-t3-medium tracking-[0.5px] uppercase text-foreground-muted"
         numberOfLines={1}
       >
-        {props.project.title}
+        {title}
       </Text>
       {props.environmentLabel ? (
         <Text className="max-w-[42%] text-2xs text-foreground-tertiary" numberOfLines={1}>
@@ -524,12 +533,13 @@ export function ArchivedThreadsScreen(props: {
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
     const items: ArchivedThreadListItem[] = [];
     for (const group of props.groups) {
-      const environmentLabel = environmentLabelsById.get(group.project.environmentId) ?? null;
+      const environmentId = scientThreadGroupEnvironmentId(group.context);
+      const environmentLabel = environmentLabelsById.get(environmentId) ?? null;
       items.push({
         kind: "project",
         key: `${group.key}:project`,
         environmentLabel,
-        project: group.project,
+        context: group.context,
       });
 
       group.threads.forEach((thread, index) => {
@@ -563,7 +573,7 @@ export function ArchivedThreadsScreen(props: {
       if (item.kind === "project") {
         return (
           <View className="pt-4">
-            <ProjectGroupLabel environmentLabel={item.environmentLabel} project={item.project} />
+            <ProjectGroupLabel environmentLabel={item.environmentLabel} context={item.context} />
           </View>
         );
       }

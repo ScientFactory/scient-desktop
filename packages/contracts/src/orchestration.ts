@@ -39,6 +39,7 @@ export const ORCHESTRATION_WS_METHODS = {
 // projection just before the authoritative stopped session.
 export const GENERAL_CHAT_MOVE_SESSION_STOP_PENDING =
   "SCIENT_GENERAL_CHAT_MOVE_SESSION_STOP_PENDING";
+export const GENERAL_CHAT_MOVE_TERMINALS_OPEN = "SCIENT_GENERAL_CHAT_MOVE_TERMINALS_OPEN";
 // SCIENT-FORK:END
 
 export const ProviderApprovalPolicy = Schema.Literals([

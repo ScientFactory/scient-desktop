@@ -3,6 +3,7 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -20,13 +21,13 @@ import type {
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
-import { ProjectId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import type { ScientThreadGroupContext } from "../scient-general-chat/threadGroupContext";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
@@ -148,7 +149,7 @@ const RECENT_THREAD_FALLBACK_COUNT = 3;
 export interface HomeThreadGroup {
   readonly key: string;
   readonly title: string;
-  readonly representative: EnvironmentProject;
+  readonly context: ScientThreadGroupContext;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   /** Full sorted thread history for the group (revealed when expanded / searching). */
@@ -160,14 +161,15 @@ export interface HomeThreadGroup {
    * groups (same repo on several machines) this is the member that owns the
    * group's most recent thread — the machine the user last worked on — rather
    * than the arbitrary first member; the draft's computer picker covers
-   * switching from there. Null only for synthetic pending-project groups,
-   * whose single "project" is a placeholder built from queued-task metadata.
+   * switching from there. Null for General Chat and synthetic pending-project
+   * groups because neither owns a real destination project.
    */
   readonly newThreadTarget: EnvironmentProject | null;
 }
 
 interface MutableHomeThreadGroup {
   readonly key: string;
+  readonly context: ScientThreadGroupContext;
   readonly projects: EnvironmentProject[];
   readonly pendingTasks: PendingNewTask[];
   readonly threads: EnvironmentThreadShell[];
@@ -224,6 +226,7 @@ export function buildHomeThreadGroups(input: {
     groupTitleByKey.set(scope.key, scope.title);
     groups.set(scope.key, {
       key: scope.key,
+      context: { kind: "project", project: scope.representative },
       projects: [...scope.projects],
       pendingTasks: [],
       threads: [],
@@ -252,22 +255,21 @@ export function buildHomeThreadGroups(input: {
       // standalone group from the metadata snapshotted at enqueue time.
       groupKey = `pending-project:${physicalKey}`;
       groupKeyByProjectKey.set(physicalKey, groupKey);
+      const pendingTaskProject: EnvironmentProject = {
+        environmentId: pendingTask.message.environmentId,
+        id: pendingTask.creation.projectId,
+        title: pendingTask.creation.projectTitle ?? "Unknown project",
+        workspaceRoot: pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: pendingTask.message.createdAt,
+        updatedAt: pendingTask.message.createdAt,
+      };
       groups.set(groupKey, {
         key: groupKey,
-        projects: [
-          {
-            environmentId: pendingTask.message.environmentId,
-            id: pendingTask.creation.projectId,
-            title: pendingTask.creation.projectTitle ?? "Unknown project",
-            workspaceRoot:
-              pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
-            repositoryIdentity: null,
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: pendingTask.message.createdAt,
-            updatedAt: pendingTask.message.createdAt,
-          },
-        ],
+        context: { kind: "project", project: pendingTaskProject },
+        projects: [pendingTaskProject],
         pendingTasks: [],
         threads: [],
       });
@@ -286,22 +288,15 @@ export function buildHomeThreadGroups(input: {
     if (thread.projectId === null) {
       const groupKey = `projectless:${thread.environmentId}`;
       if (!groups.has(groupKey)) {
-        groupTitleByKey.set(groupKey, "No project");
+        groupTitleByKey.set(groupKey, SCIENT_GENERAL_CHAT_LABEL);
         groups.set(groupKey, {
           key: groupKey,
-          projects: [
-            {
-              environmentId: thread.environmentId,
-              id: ProjectId.make(`projectless-${thread.environmentId}`),
-              title: "No project",
-              workspaceRoot: thread.workspaceRoot ?? "",
-              repositoryIdentity: null,
-              defaultModelSelection: null,
-              scripts: [],
-              createdAt: thread.createdAt,
-              updatedAt: thread.updatedAt,
-            },
-          ],
+          context: {
+            kind: "general-chat",
+            environmentId: thread.environmentId,
+            workspaceRoot: thread.workspaceRoot ?? "",
+          },
+          projects: [],
           pendingTasks: [],
           threads: [],
         });
@@ -321,14 +316,18 @@ export function buildHomeThreadGroups(input: {
   const result: HomeThreadGroup[] = [];
 
   for (const group of groups.values()) {
-    const representative = group.projects[0];
-    if (!representative || (group.threads.length === 0 && group.pendingTasks.length === 0)) {
+    if (group.threads.length === 0 && group.pendingTasks.length === 0) {
       continue;
     }
 
     const title =
-      groupTitleByKey.get(group.key) ??
-      deriveProjectGroupLabel({ representative, members: group.projects });
+      group.context.kind === "general-chat"
+        ? SCIENT_GENERAL_CHAT_LABEL
+        : (groupTitleByKey.get(group.key) ??
+          deriveProjectGroupLabel({
+            representative: group.context.project,
+            members: group.projects,
+          }));
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||
@@ -386,15 +385,16 @@ export function buildHomeThreadGroups(input: {
     result.push({
       key: group.key,
       title,
-      representative,
+      context: group.context,
       projects: group.projects,
       pendingTasks: matchingPendingTasks,
       threads: sortedThreads,
       recentThreads,
       newThreadTarget:
-        group.key.startsWith("pending-project:") || group.key.startsWith("projectless:")
+        group.key.startsWith("pending-project:") || group.context.kind === "general-chat"
           ? null
-          : (lastActiveProject ?? representative),
+          : (lastActiveProject ??
+            (group.context.kind === "project" ? group.context.project : null)),
     });
   }
 

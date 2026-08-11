@@ -3,6 +3,7 @@ import {
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -234,7 +235,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 
   return visibleThreads.map((thread) => {
     const projectTitle =
-      thread.projectId === null ? "No project" : input.projectTitleById.get(thread.projectId);
+      thread.projectId === null
+        ? SCIENT_GENERAL_CHAT_LABEL
+        : input.projectTitleById.get(thread.projectId);
     const descriptionParts: string[] = [];
 
     if (projectTitle) {

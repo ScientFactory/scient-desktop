@@ -30,11 +30,16 @@ the existing breadcrumb typography and one icon-only menu control.
 3. Search results containing both general and project conversations.
 4. New unsent general-chat draft, sent chat, active response, stopped chat,
    snoozed chat, settled chat, and pinned chat.
-5. Move menu with no projects, one project, and several projects.
-6. Successful relocation: the row disappears from General Chat and appears
+5. Plain `+` creation with one environment and the picker fallback with several.
+6. Move action in the chat header, plus the second action in an open inline
+   panel and responsive sheet; test no projects, one project, and several.
+7. Browser, files, PDFs, agents, bottom terminal, and panel terminal work;
+   Diff, PR, Git, checkpoint, revert, script, and worktree controls do not.
+8. Moving with an open terminal is refused with a clear close-terminal message.
+9. Successful relocation: the row disappears from General Chat and appears
    under the selected project without changing the open conversation.
-7. Narrow and expanded sidebar widths, light and dark appearance, and keyboard
-   focus visibility.
+10. Narrow and expanded sidebar widths, light and dark appearance, and keyboard
+    focus visibility.
 
 No final visual-acceptance claim is made until the isolated Electron candidate
 has been inspected in these states.

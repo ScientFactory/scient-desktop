@@ -7,17 +7,13 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  ChevronDownIcon,
-  FolderInputIcon,
-  LoaderCircleIcon,
-  MessageSquareIcon,
-} from "lucide-react";
+import { ChevronDownIcon, MessageSquareIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -30,7 +26,6 @@ import {
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
@@ -43,6 +38,7 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ScientGeneralChatMoveMenu } from "../scient-general-chat/ScientGeneralChatMoveMenu";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -276,7 +272,7 @@ export const ChatHeader = memo(function ChatHeader({
             <WorkspaceBreadcrumbItem>
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <MessageSquareIcon aria-hidden className="size-3.5" />
-                <span className="max-w-40 truncate">General chat</span>
+                <span className="max-w-40 truncate">{SCIENT_GENERAL_CHAT_LABEL}</span>
               </span>
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
@@ -340,41 +336,13 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       >
         {isGeneralChat && isServerThread ? (
-          <Tooltip>
-            <Menu>
-              <TooltipTrigger
-                render={
-                  <MenuTrigger
-                    disabled={generalChatMoveDisabledReason !== null || isMovingGeneralChat}
-                    aria-label="Move chat to project"
-                    className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-icon-muted transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                  />
-                }
-              >
-                {isMovingGeneralChat ? (
-                  <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
-                ) : (
-                  <FolderInputIcon aria-hidden className="size-4" />
-                )}
-              </TooltipTrigger>
-              <MenuPopup align="end">
-                {generalChatMoveTargets.map((project) => (
-                  <MenuItem key={project.id} onClick={() => onMoveGeneralChatToProject(project.id)}>
-                    <ProjectFavicon
-                      environmentId={activeThreadEnvironmentId}
-                      cwd={project.workspaceRoot}
-                      faviconPath={project.faviconPath}
-                      className="size-4"
-                    />
-                    <span className="max-w-64 truncate">{project.title}</span>
-                  </MenuItem>
-                ))}
-              </MenuPopup>
-            </Menu>
-            <TooltipPopup side="top">
-              {generalChatMoveDisabledReason ?? "Move chat to project"}
-            </TooltipPopup>
-          </Tooltip>
+          <ScientGeneralChatMoveMenu
+            environmentId={activeThreadEnvironmentId}
+            targets={generalChatMoveTargets}
+            isMoving={isMovingGeneralChat}
+            disabledReason={generalChatMoveDisabledReason}
+            onMove={onMoveGeneralChatToProject}
+          />
         ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl

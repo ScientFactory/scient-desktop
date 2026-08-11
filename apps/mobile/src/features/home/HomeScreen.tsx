@@ -7,6 +7,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
@@ -790,7 +791,7 @@ export function HomeScreen(props: HomeScreenProps) {
           }
           projectTitle={
             thread.projectId === null
-              ? "No project"
+              ? SCIENT_GENERAL_CHAT_LABEL
               : v2ProjectTitleByProjectKey.get(
                   scopedProjectKey(thread.environmentId, thread.projectId),
                 )
@@ -936,7 +937,7 @@ export function HomeScreen(props: HomeScreenProps) {
               // so the quick new-thread button is single-real-project only.
               newThreadTarget={item.group.newThreadTarget}
               onNewThread={props.onNewThreadInProject}
-              project={item.group.representative}
+              context={item.group.context}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
             />

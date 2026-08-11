@@ -21,6 +21,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
+import type { ScientThreadGroupContext } from "../scient-general-chat/threadGroupContext";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -76,7 +77,7 @@ function PullRequestIcon(props: { readonly size: number; readonly color: string 
 
 export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: {
   readonly variant: ThreadListVariant;
-  readonly project: EnvironmentProject;
+  readonly context: ScientThreadGroupContext;
   readonly title: string;
   readonly threadCount: number;
   readonly collapsed: boolean;
@@ -125,21 +126,34 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-        accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
+        accessibilityHint={
+          props.collapsed
+            ? `Expands ${props.context.kind === "project" ? "the project" : "General chat"}`
+            : `Collapses ${props.context.kind === "project" ? "the project" : "General chat"}`
+        }
         className={
           compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
         }
         hitSlop={{ ...verticalHitSlop, left: compact ? 20 : 12 }}
         onPress={handleToggle}
       >
-        <ProjectFavicon
-          environmentId={props.project.environmentId}
-          faviconPath={props.project.faviconPath}
-          open={!props.collapsed}
-          size={compact ? 22 : 18}
-          projectTitle={props.project.title}
-          workspaceRoot={props.project.workspaceRoot}
-        />
+        {props.context.kind === "project" ? (
+          <ProjectFavicon
+            environmentId={props.context.project.environmentId}
+            faviconPath={props.context.project.faviconPath}
+            open={!props.collapsed}
+            size={compact ? 22 : 18}
+            projectTitle={props.context.project.title}
+            workspaceRoot={props.context.project.workspaceRoot}
+          />
+        ) : (
+          <SymbolView
+            name="text.bubble"
+            size={compact ? 22 : 18}
+            tintColor={iconMutedColor}
+            type="monochrome"
+          />
+        )}
         <Text
           className={
             compact

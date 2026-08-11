@@ -14,6 +14,16 @@ layer("041_ProjectlessThreads", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* runMigrations({ toMigrationInclusive: 40 });
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at
+        ) VALUES (
+          'thread-before-041', 'project-before-041', 'Existing project thread',
+          '{"instanceId":"codex","model":"gpt-5"}', 'full-access',
+          'default', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        )
+      `;
       yield* runMigrations({ toMigrationInclusive: 41 });
 
       const columns = yield* sql<{
@@ -54,6 +64,45 @@ layer("041_ProjectlessThreads", (it) => {
       ]) {
         assert.ok(indexNames.has(expectedIndex), `missing ${expectedIndex}`);
       }
+
+      const preserved = yield* sql<{
+        readonly projectId: string | null;
+        readonly title: string;
+        readonly workspaceRoot: string | null;
+      }>`
+        SELECT project_id AS projectId, title, workspace_root AS workspaceRoot
+        FROM projection_threads
+        WHERE thread_id = 'thread-before-041'
+      `;
+      assert.deepEqual(preserved, [
+        {
+          projectId: "project-before-041",
+          title: "Existing project thread",
+          workspaceRoot: null,
+        },
+      ]);
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, workspace_root, title, model_selection_json,
+          runtime_mode, interaction_mode, created_at, updated_at
+        ) VALUES (
+          'thread-general-chat', NULL, '/tmp/environment-workspace', 'General chat',
+          '{"instanceId":"codex","model":"gpt-5"}', 'full-access',
+          'default', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
+        )
+      `;
+      const generalChat = yield* sql<{
+        readonly projectId: string | null;
+        readonly workspaceRoot: string | null;
+      }>`
+        SELECT project_id AS projectId, workspace_root AS workspaceRoot
+        FROM projection_threads
+        WHERE thread_id = 'thread-general-chat'
+      `;
+      assert.deepEqual(generalChat, [
+        { projectId: null, workspaceRoot: "/tmp/environment-workspace" },
+      ]);
     }),
   );
 });

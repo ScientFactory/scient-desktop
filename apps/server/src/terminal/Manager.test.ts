@@ -296,6 +296,18 @@ it.layer(
     }),
   );
 
+  it.effect("reports only live PTYs as running thread sessions", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      expect(yield* manager.hasRunningSessionsForThread("thread-1")).toBe(false);
+      yield* manager.open(openInput());
+      expect(yield* manager.hasRunningSessionsForThread("thread-1")).toBe(true);
+      expect(yield* manager.hasRunningSessionsForThread("another-thread")).toBe(false);
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* manager.hasRunningSessionsForThread("thread-1")).toBe(false);
+    }),
+  );
+
   it.effect("attaches to running sessions without restarting them", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

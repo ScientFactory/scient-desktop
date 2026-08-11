@@ -124,25 +124,25 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
-General Chat presents T3's projectless-thread capability through a
-Scient-owned navigation and relocation seam. The separate sidebar section and
-move controller live under `apps/web/src/components/scient-general-chat/`;
-inherited sidebar and header changes are narrow mounts. Conversation history
-continues to use the ordinary T3 thread model. Moving a General Chat into a
-project is one additive metadata command guarded by the server's stopped-
-session and no-work-in-flight invariants; it preserves the thread ID and clears
-projectless workspace metadata. The current foundation includes the real Git
-history of pending T3 projectless-thread PR `pingdotgg/t3code#5822`; reconcile
-that dependency with official upstream before publication if its final merged
-history changes. Three narrow compatibility corrections sit above that imported
-history: event decoding accepts the explicit `undefined` emitted by the
-backward-compatible event union, and the dev-database fixture now supplies the
-non-null model selection required by the PR's recreated thread table. The
-thread checkpoint-context lookup now also resolves a projectless thread's own
-environment root instead of requiring an inner join to a project; Scient's
-existing fork worker needs that generic context to fork a General Chat. Keep
-those corrections when refreshing the pending PR, or drop them only after the
-official version contains equivalent fixes.
+General Chat is a Scient-owned product and compatibility boundary. Its
+capability authority, product policy, naming, workspace routing, navigation,
+mobile behavior, and relocation controllers live under explicit Scient
+modules; inherited files retain only shared thread-engine support and narrow
+mounts. Conversation history continues to use the ordinary thread model.
+
+The repository contains literal history from the then-open T3 projectless-
+thread PR `pingdotgg/t3code#5822`, but that commit is provenance for adopted
+code, not a runtime or update dependency. Scient does not refresh from open PR
+heads. Only an official T3 `main` merge enters through the bounded upstream
+process, where equivalent generic primitives may replace adopted compatibility
+patches without changing Scient's product contract. See
+[Scient General Chat](docs/internals/scient-general-chat.md).
+
+The exact #5822 snapshot and import merge are frozen as a historical exception
+in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
+workflow rejects new non-official merge parents, while
+`scient-general-chat-seams.json` keeps raw projectless decisions and inherited
+mounts explicit for future upstream reconciliation.
 
 Local voice dictation is isolated under `packages/scient-voice`,
 `apps/web/src/scient/voice`, and `apps/desktop/src/app/DesktopVoice.ts`. The

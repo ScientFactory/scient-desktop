@@ -1,0 +1,37 @@
+name: Scient Upstream Provenance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify upstream provenance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout owned history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch official T3 main
+        run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream-verification/main
+
+      - name: Verify provenance and General Chat seams
+        env:
+          VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          ALLOW_OWNED_HEAD_MERGE: ${{ github.event_name == 'push' && 'true' || 'false' }}
+        run: |
+          node scripts/verify-upstream-provenance.mjs \
+            --base "$VERIFY_BASE" \
+            --head "$VERIFY_HEAD" \
+            --allow-owned-head-merge "$ALLOW_OWNED_HEAD_MERGE" \
+            --official-ref refs/remotes/upstream-verification/main
+          node scripts/verify-scient-general-chat-seams.mjs
