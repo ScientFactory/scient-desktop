@@ -4,12 +4,14 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ProviderConnectionOperation,
   ProviderConnectionSubmitAuthorizationCodeInput,
+  ProviderRuntimeSummary,
 } from "./providerLifecycle.ts";
 
 const decodeAuthorizationCode = Schema.decodeUnknownSync(
   ProviderConnectionSubmitAuthorizationCodeInput,
 );
 const decodeConnectionOperation = Schema.decodeUnknownSync(ProviderConnectionOperation);
+const decodeRuntimeSummary = Schema.decodeUnknownSync(ProviderRuntimeSummary);
 
 describe("ProviderConnectionSubmitAuthorizationCodeInput", () => {
   it("accepts a bounded one-time provider code", () => {
@@ -47,5 +49,54 @@ describe("ProviderConnectionOperation", () => {
     });
 
     expect(decoded.authorizationUrlKind).toBe("manual_fallback");
+  });
+});
+
+describe("ProviderRuntimeSummary", () => {
+  const summary = {
+    source: "system",
+    supportTier: "fully_assisted",
+    target: "darwin-arm64",
+    actions: ["install"],
+    managedVersion: null,
+    previousManagedVersion: null,
+    operation: null,
+    message: "Scient is using the system Codex runtime.",
+  } as const;
+
+  it("keeps runtime diagnostics optional for older servers and cached snapshots", () => {
+    expect(decodeRuntimeSummary(summary)).not.toHaveProperty("diagnostics");
+  });
+
+  it("decodes display-only runtime diagnostics without credential fields", () => {
+    expect(
+      decodeRuntimeSummary({
+        ...summary,
+        diagnostics: {
+          executable: "/opt/homebrew/bin/codex",
+          version: "0.147.0",
+          homePath: "/srv/scient/codex-home",
+          backend: "macOS native",
+          credential: "must-not-cross-the-wire",
+        },
+      }).diagnostics,
+    ).toEqual({
+      executable: "/opt/homebrew/bin/codex",
+      version: "0.147.0",
+      homePath: "/srv/scient/codex-home",
+      backend: "macOS native",
+    });
+    expect(
+      decodeRuntimeSummary({
+        ...summary,
+        diagnostics: {
+          executable: "codex",
+          version: null,
+          homePath: null,
+          backend: "macOS native",
+          credential: "must-not-cross-the-wire",
+        },
+      }).diagnostics,
+    ).not.toHaveProperty("credential");
   });
 });

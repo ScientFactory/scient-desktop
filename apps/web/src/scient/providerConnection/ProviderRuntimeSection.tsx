@@ -25,6 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
+import { CodexRuntimeDiagnosticsDetails } from "./CodexRuntimeDiagnostics";
 import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
@@ -359,7 +360,7 @@ export function ProviderRuntimeSection(props: {
           </p>
           {runtime.managedVersion ? (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Version {runtime.managedVersion}
+              Private version {runtime.managedVersion}
             </p>
           ) : null}
         </div>
@@ -389,10 +390,17 @@ export function ProviderRuntimeSection(props: {
               ) : (
                 <WrenchIcon />
               )}
-              {action === "install" ? "Review setup" : actionLabel(action, props.displayName)}
+              {action === "install"
+                ? props.provider.driver === "codex" && runtime.source === "system"
+                  ? "Use Scient-managed Codex"
+                  : "Review setup"
+                : actionLabel(action, props.displayName)}
             </Button>
           ))}
         </div>
+      ) : null}
+      {props.provider.driver === "codex" ? (
+        <CodexRuntimeDiagnosticsDetails provider={props.provider} />
       ) : null}
     </div>
   );

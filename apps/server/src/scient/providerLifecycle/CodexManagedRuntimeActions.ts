@@ -9,20 +9,21 @@ import {
 import type {
   CodexSettings,
   ProviderManagedRuntimeAction,
+  ProviderRuntimeDiagnostics,
   ProviderRuntimeSummary,
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as Ref from "effect/Ref";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import { resolveCodexLaunchArgs } from "../../provider/Layers/codexLaunchArgs.ts";
+import { openCodexAppServerConnection } from "../../provider/Layers/CodexProvider.ts";
 import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
@@ -60,29 +61,43 @@ function mapProgress(progress: ManagedCodexRuntimeProgress): ProviderManagedRunt
   };
 }
 
-const hasHealthyCodex = Effect.fn("CodexManagedRuntime.hasHealthyCodex")(function* (
-  binaryPath: string,
-  environment: NodeJS.ProcessEnv,
+function runtimeBackendLabel(platform: string): string {
+  if (platform === "win32") return "Windows native";
+  if (platform === "darwin") return "macOS native";
+  return "Linux native";
+}
+
+/**
+ * Prefer a Codex binary only when it can speak the app-server protocol used
+ * for assisted login. `--version` alone is not enough: PATH shims and older
+ * builds can report a version while failing OAuth / account RPCs.
+ */
+const hasCapableCodex = Effect.fn("CodexManagedRuntime.hasCapableCodex")(function* (
+  input: {
+    readonly binaryPath: string;
+    readonly homePath: string;
+    readonly launchArgs: string;
+    readonly cwd: string;
+    readonly environment: NodeJS.ProcessEnv;
+  },
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ) {
-  const resolved = yield* resolveSpawnCommand(binaryPath, ["--version"], {
-    env: environment,
-    extendEnv: true,
-  });
-  const result = yield* spawnAndCollect(
-    binaryPath,
-    ChildProcess.make(resolved.command, resolved.args, {
-      env: environment,
-      extendEnv: true,
-      shell: resolved.shell,
-    }),
+  const homePath = input.homePath.trim();
+  return yield* Effect.scoped(
+    openCodexAppServerConnection({
+      binaryPath: input.binaryPath,
+      ...(homePath.length > 0 ? { homePath } : {}),
+      launchArgs: resolveCodexLaunchArgs(input.launchArgs, input.environment),
+      cwd: input.cwd,
+      environment: input.environment,
+    }).pipe(
+      Effect.flatMap(({ client }) => client.request("account/read", {})),
+      Effect.as(true),
+    ),
   ).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Effect.timeoutOption("5 seconds"),
-    Effect.result,
-  );
-  return (
-    result._tag === "Success" && Option.isSome(result.success) && result.success.value.code === 0
+    Effect.timeout("8 seconds"),
+    Effect.orElseSucceed(() => false),
   );
 });
 
@@ -90,10 +105,48 @@ export function resolveCodexRuntimeSource(input: {
   readonly hasCustomRuntime: boolean;
   readonly configuredRuntimeHealthy: boolean;
   readonly managedInstalled: boolean;
+  readonly managedRuntimeHealthy: boolean;
 }): ProviderRuntimeSummary["source"] {
-  if (input.hasCustomRuntime) return input.configuredRuntimeHealthy ? "custom" : "unknown";
+  if (input.hasCustomRuntime) {
+    return input.configuredRuntimeHealthy ? "custom" : "unknown";
+  }
+  // Installing the private runtime is the user's durable selection. Prefer it
+  // while it is capability-healthy, without maintaining a second preference
+  // file that can drift from the atomic managed-runtime state. If it is
+  // unhealthy, use a healthy PATH runtime while preserving the repair action;
+  // if neither runtime is healthy, retain the private copy as the repair target.
+  if (input.managedInstalled && (input.managedRuntimeHealthy || !input.configuredRuntimeHealthy)) {
+    return "scient_managed";
+  }
   if (input.configuredRuntimeHealthy) return "system";
-  return input.managedInstalled ? "scient_managed" : "missing";
+  return "missing";
+}
+
+export function resolveCodexRuntimeHomePath(input: {
+  readonly effectiveHomePath: string | undefined;
+  readonly configuredHomePath: string;
+}): string {
+  const effective = input.effectiveHomePath?.trim() ?? "";
+  return effective.length > 0 ? effective : input.configuredHomePath.trim();
+}
+
+/**
+ * Probing the configured PATH/custom binary spawns a Codex app-server, so it
+ * is skipped whenever an already-installed managed runtime has passed the
+ * same capability probe and will therefore win selection.
+ */
+export function shouldSkipConfiguredCodexProbe(input: {
+  readonly hasCustomRuntime: boolean;
+  readonly managedRuntimeHealthy: boolean;
+}): boolean {
+  return !input.hasCustomRuntime && input.managedRuntimeHealthy;
+}
+
+export function shouldProbeManagedCodexRuntime(input: {
+  readonly hasCustomRuntime: boolean;
+  readonly managedInstalled: boolean;
+}): boolean {
+  return input.managedInstalled && !input.hasCustomRuntime;
 }
 
 export function resolveCodexManagedRuntimePolicy(input: {
@@ -113,11 +166,15 @@ export function resolveCodexManagedRuntimePolicy(input: {
     ? []
     : input.source === "missing"
       ? ["install"]
-      : input.source === "scient_managed" && input.installed
-        ? input.artifact && input.installedVersion !== input.artifact.version
-          ? ["update", "repair", "remove"]
-          : ["repair", "remove"]
-        : [];
+      : input.source === "system" && !input.installed
+        ? ["install"]
+        : input.source === "system" && input.installed
+          ? ["repair", "remove"]
+          : input.source === "scient_managed" && input.installed
+            ? input.artifact && input.installedVersion !== input.artifact.version
+              ? ["update", "repair", "remove"]
+              : ["repair", "remove"]
+            : [];
   return {
     supportTier:
       input.artifact?.supportTier === "fully_assisted" && !input.managedInstallationAllowed
@@ -125,7 +182,8 @@ export function resolveCodexManagedRuntimePolicy(input: {
         : (input.artifact?.supportTier ?? "unsupported"),
     actions,
     useManagedPath:
-      input.source === "scient_managed" || (input.source === "missing" && fullyAssisted),
+      input.source === "scient_managed" ||
+      (input.source === "missing" && input.artifact !== undefined && fullyAssisted),
   };
 }
 
@@ -140,6 +198,8 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
   function* (input: {
     readonly settings: CodexSettings;
     readonly baseDir: string;
+    readonly cwd: string;
+    readonly effectiveHomePath?: string | undefined;
     readonly environment: NodeJS.ProcessEnv;
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly managedInstallationAllowed: boolean;
@@ -155,11 +215,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       catch: (cause) => runtimeError("Scient could not reconcile managed Codex state.", cause),
     }).pipe(Effect.ignore);
     const hasCustomRuntime = input.settings.binaryPath !== DEFAULT_CODEX_BINARY;
-    const configuredRuntimeHealthy = yield* hasHealthyCodex(
-      input.settings.binaryPath,
-      input.environment,
-      input.spawner,
-    ).pipe(Effect.catchCause(() => Effect.succeed(false)));
+    const configuredBinaryPath = input.settings.binaryPath;
     const managedStatus = artifact
       ? yield* Effect.tryPromise({
           try: () => runtime.status(artifact),
@@ -167,10 +223,81 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         }).pipe(Effect.option)
       : Option.none();
     const managedInstalled = Option.isSome(managedStatus) && managedStatus.value.installed;
+    const runtimeHomePath = resolveCodexRuntimeHomePath({
+      effectiveHomePath: input.effectiveHomePath,
+      configuredHomePath: input.settings.homePath,
+    });
+    const probeRuntime = (binaryPath: string) =>
+      hasCapableCodex(
+        {
+          binaryPath,
+          // Probe exactly the home binding the provider will launch with. In
+          // account-overlay configurations this is the materialized shadow home,
+          // not the shared configured home.
+          homePath: runtimeHomePath,
+          launchArgs: input.settings.launchArgs,
+          cwd: input.cwd,
+          environment: input.environment,
+        },
+        input.spawner,
+      ).pipe(Effect.catchCause(() => Effect.succeed(false)));
+    const shouldProbeManagedRuntime = shouldProbeManagedCodexRuntime({
+      hasCustomRuntime,
+      managedInstalled,
+    });
+    const initialManagedRuntimeHealthy =
+      shouldProbeManagedRuntime && Option.isSome(managedStatus)
+        ? yield* probeRuntime(managedStatus.value.launchPath)
+        : false;
+    const managedHealthCache = yield* Ref.make<{
+      readonly launchPath: string;
+      readonly healthy: boolean;
+    } | null>(
+      shouldProbeManagedRuntime && Option.isSome(managedStatus)
+        ? {
+            launchPath: managedStatus.value.launchPath,
+            healthy: initialManagedRuntimeHealthy,
+          }
+        : null,
+    );
+    const managedRuntimeHealth = Effect.fn("CodexManagedRuntime.managedRuntimeHealth")(function* (
+      status: { readonly installed: boolean; readonly launchPath: string } | undefined,
+    ) {
+      if (!status?.installed) return false;
+      const cached = yield* Ref.get(managedHealthCache);
+      if (cached?.launchPath === status.launchPath) return cached.healthy;
+      const healthy = yield* probeRuntime(status.launchPath);
+      yield* Ref.set(managedHealthCache, { launchPath: status.launchPath, healthy });
+      return healthy;
+    });
+    const probeConfiguredRuntime = probeRuntime(configuredBinaryPath);
+    // Probe the configured PATH/custom binary whenever selection might still
+    // choose it. Skip when the installed managed runtime has already passed
+    // the capability probe and will win selection.
+    const skipConfiguredProbe = shouldSkipConfiguredCodexProbe({
+      hasCustomRuntime,
+      managedRuntimeHealthy: initialManagedRuntimeHealthy,
+    });
+    const configuredRuntimeHealthy = skipConfiguredProbe ? false : yield* probeConfiguredRuntime;
+    // Runtime actions change install state after this resolution is built, so
+    // getSummary re-derives selection. The probe result is cached: a summary
+    // that suddenly needs configured health after remove probes once instead
+    // of starting another app-server on every read.
+    const configuredHealthCache = yield* Ref.make<boolean | null>(
+      skipConfiguredProbe ? null : configuredRuntimeHealthy,
+    );
+    const configuredHealth = Effect.gen(function* () {
+      const cached = yield* Ref.get(configuredHealthCache);
+      if (cached !== null) return cached;
+      const probed = yield* probeConfiguredRuntime;
+      yield* Ref.set(configuredHealthCache, probed);
+      return probed;
+    });
     const source = resolveCodexRuntimeSource({
       hasCustomRuntime,
       configuredRuntimeHealthy,
       managedInstalled,
+      managedRuntimeHealthy: initialManagedRuntimeHealthy,
     });
     const initialPolicy = resolveCodexManagedRuntimePolicy({
       source,
@@ -183,7 +310,20 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       ? managedInstalled && Option.isSome(managedStatus)
         ? managedStatus.value.launchPath
         : runtime.launchPath(artifact!)
-      : input.settings.binaryPath;
+      : configuredBinaryPath;
+
+    const diagnosticsHomePath = runtimeHomePath.length > 0 ? runtimeHomePath : null;
+
+    const buildDiagnostics = (input_: {
+      readonly source: ProviderRuntimeSummary["source"];
+      readonly executable: string;
+      readonly managedVersion: string | null;
+    }): ProviderRuntimeDiagnostics => ({
+      executable: input_.executable,
+      version: input_.source === "scient_managed" ? input_.managedVersion : null,
+      homePath: diagnosticsHomePath,
+      backend: runtimeBackendLabel(platform),
+    });
 
     const getSummary = Effect.gen(function* () {
       const latest = artifact
@@ -194,10 +334,23 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
           })
         : undefined;
       const latestManagedInstalled = latest?.installed ?? false;
+      const latestManagedRuntimeHealthy = shouldProbeManagedCodexRuntime({
+        hasCustomRuntime,
+        managedInstalled: latestManagedInstalled,
+      })
+        ? yield* managedRuntimeHealth(latest)
+        : false;
+      const latestConfiguredHealthy = shouldSkipConfiguredCodexProbe({
+        hasCustomRuntime,
+        managedRuntimeHealthy: latestManagedRuntimeHealthy,
+      })
+        ? false
+        : yield* configuredHealth;
       const latestSource = resolveCodexRuntimeSource({
         hasCustomRuntime,
-        configuredRuntimeHealthy,
+        configuredRuntimeHealthy: latestConfiguredHealthy,
         managedInstalled: latestManagedInstalled,
+        managedRuntimeHealthy: latestManagedRuntimeHealthy,
       });
       const policy = resolveCodexManagedRuntimePolicy({
         source: latestSource,
@@ -206,13 +359,27 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         installedVersion: latest?.activeVersion ?? null,
         managedInstallationAllowed: input.managedInstallationAllowed,
       });
+      const latestExecutable = policy.useManagedPath
+        ? latestManagedInstalled && latest
+          ? latest.launchPath
+          : artifact
+            ? runtime.launchPath(artifact)
+            : configuredBinaryPath
+        : configuredBinaryPath;
+      const managedVersion = latestManagedInstalled
+        ? (latest?.activeVersion ?? artifact?.version ?? null)
+        : null;
       const message =
         latestSource === "custom"
           ? "Scient is preserving the custom Codex runtime configured for this account."
           : latestSource === "system"
-            ? "Scient is using the healthy Codex runtime already installed on this computer."
+            ? latestManagedInstalled
+              ? "Scient is using healthy PATH Codex because the private copy failed its app-server capability check. Repair or remove the private copy when convenient."
+              : "Scient is using the healthy Codex runtime already installed on this computer."
             : latestSource === "scient_managed"
-              ? "Scient is using an app-private, verified Codex runtime."
+              ? latestManagedRuntimeHealthy
+                ? "Scient is using an app-private, verified Codex runtime."
+                : "Scient selected its app-private Codex runtime, but the app-server capability check failed. Repair the private runtime before signing in."
               : hasCustomRuntime
                 ? "Scient could not launch the custom Codex runtime configured for this account. Update or clear the custom path in advanced provider settings."
                 : artifact
@@ -225,12 +392,15 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         supportTier: policy.supportTier,
         target: targetLabel,
         actions: [...policy.actions],
-        managedVersion: latestManagedInstalled
-          ? (latest?.activeVersion ?? artifact?.version ?? null)
-          : null,
+        managedVersion,
         previousManagedVersion: latest?.previousVersion ?? null,
         operation: null,
         message,
+        diagnostics: buildDiagnostics({
+          source: latestSource,
+          executable: latestExecutable,
+          managedVersion,
+        }),
       } satisfies ProviderRuntimeSummary;
     });
 
@@ -262,7 +432,11 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
                 ? "Scient will remove only its app-private Codex copy. Custom and system installations are untouched."
                 : action === "update"
                   ? `Scient will download, verify, test, and activate Codex ${artifact?.version ?? ""}. The current version remains active until then.`
-                  : `Scient will download, verify, stage, test, and activate Codex ${artifact?.version ?? ""}.`,
+                  : action === "repair" && summary.source === "system"
+                    ? `Scient will replace the unhealthy private Codex copy with verified Codex ${artifact?.version ?? ""} and use it after verification. The working system installation is untouched.`
+                    : action === "install" && summary.source === "system"
+                      ? `Scient will install private Codex ${artifact?.version ?? ""} beside the system installation. Codex accounts in this environment that use the default runtime will use the verified private copy; custom paths remain unchanged.`
+                      : `Scient will download, verify, stage, test, and activate Codex ${artifact?.version ?? ""}.`,
           });
         }),
       );
@@ -287,6 +461,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
             catch: (cause) =>
               runtimeError("Scient could not remove its private Codex runtime.", cause),
           });
+          yield* Ref.set(managedHealthCache, null);
           return;
         }
         if (!artifact) return yield* runtimeError("No reviewed Codex artifact is available.");
@@ -312,6 +487,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
           catch: (cause) =>
             runtimeError("Scient could not install the private Codex runtime.", cause),
         });
+        yield* Ref.set(managedHealthCache, null);
       });
 
     const summary = yield* getSummary.pipe(
@@ -324,6 +500,11 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         previousManagedVersion: null,
         operation: null,
         message: "Scient could not inspect managed Codex runtime state.",
+        diagnostics: buildDiagnostics({
+          source: "unknown",
+          executable: configuredBinaryPath,
+          managedVersion: null,
+        }),
       })),
     );
 

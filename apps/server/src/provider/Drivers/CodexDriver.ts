@@ -147,6 +147,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const managedRuntime = yield* makeCodexManagedRuntimeResolution({
         settings: config,
         baseDir: serverConfig.baseDir,
+        cwd: serverConfig.cwd,
+        effectiveHomePath: homeLayout.effectiveHomePath,
         environment: processEnv,
         spawner,
         managedInstallationAllowed: serverConfig.mode === "desktop",
