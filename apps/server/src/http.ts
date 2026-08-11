@@ -48,6 +48,17 @@ const DESKTOP_RENDERER_ORIGINS = [
   `${SCIENT_NEXT_IDENTITY.productionScheme}://app`,
   `${SCIENT_NEXT_IDENTITY.developmentScheme}://app`,
 ];
+const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+
+export function assetResponseHeaders(filePath: string): Record<string, string> {
+  return {
+    "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+    ...(filePath.toLowerCase().endsWith(".svg")
+      ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
+      : {}),
+  };
+}
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });
@@ -236,10 +247,9 @@ export const assetRouteHandler = Effect.gen(function* () {
   const headers = {
     "Accept-Ranges": "bytes",
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
-    "Cache-Control": "private, max-age=3600",
     "Content-Type": Mime.getType(asset.path) ?? "application/octet-stream",
     ETag: etag,
-    "X-Content-Type-Options": "nosniff",
+    ...assetResponseHeaders(asset.path),
   };
   const rangeHeader = request.headers["range"];
   const parsedRange =
