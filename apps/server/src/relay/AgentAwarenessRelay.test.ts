@@ -284,6 +284,19 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       state: null,
       reason: "project-not-found",
     });
+
+    expect(
+      AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot({
+        environmentId,
+        threadId,
+        thread: Option.some({ ...thread, projectId: null, hasPendingApprovals: true }),
+        project: Option.none(),
+      }),
+    ).toMatchObject({
+      projectId: null,
+      state: { projectTitle: "General chat" },
+      reason: "snapshot",
+    });
   });
 
   it("selects only active shell snapshot threads for startup catch-up", () => {

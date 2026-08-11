@@ -14,6 +14,7 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { normalizeScientThreadCreateTarget } from "../scient/generalChat/Policy.ts";
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -103,8 +104,10 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     if (canonicalCommand.type === "thread.create") {
       return {
         ...canonicalCommand,
-        workspaceRoot: canonicalCommand.projectId === null ? serverConfig.cwd : null,
-        ...(canonicalCommand.projectId === null ? { branch: null, worktreePath: null } : {}),
+        ...normalizeScientThreadCreateTarget({
+          projectId: canonicalCommand.projectId,
+          environmentWorkspaceRoot: serverConfig.cwd,
+        }),
       } satisfies OrchestrationCommand;
     }
 
@@ -192,10 +195,10 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           ...bootstrap,
           createThread: {
             ...bootstrap.createThread,
-            workspaceRoot: bootstrap.createThread.projectId === null ? serverConfig.cwd : null,
-            ...(bootstrap.createThread.projectId === null
-              ? { branch: null, worktreePath: null }
-              : {}),
+            ...normalizeScientThreadCreateTarget({
+              projectId: bootstrap.createThread.projectId,
+              environmentWorkspaceRoot: serverConfig.cwd,
+            }),
           },
         }
       : bootstrap;

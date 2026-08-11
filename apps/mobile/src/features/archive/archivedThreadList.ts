@@ -1,21 +1,22 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 import {
   scopeProject,
   scopeThreadShell,
-  type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { ProjectId, type EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import type { ScientThreadGroupContext } from "../scient-general-chat/threadGroupContext";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
 export interface ArchivedThreadGroup {
   readonly key: string;
-  readonly project: EnvironmentProject;
+  readonly context: ScientThreadGroupContext;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
@@ -81,7 +82,7 @@ export function buildArchivedThreadGroups(input: {
       const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
       groups.push({
         key: scopedProjectKey(project.environmentId, project.id),
-        project,
+        context: { kind: "project", project },
         threads: Arr.sort(
           matchingThreads,
           Order.mapInput(
@@ -97,26 +98,19 @@ export function buildArchivedThreadGroups(input: {
     }
     const matchingProjectlessThreads =
       query.length === 0 ||
-      matchesQuery("No project", query) ||
+      matchesQuery(SCIENT_GENERAL_CHAT_LABEL, query) ||
       matchesQuery(environmentLabel, query)
         ? projectlessThreads
         : projectlessThreads.filter((thread) => matchesQuery(thread.title, query));
     const firstProjectlessThread = matchingProjectlessThreads[0];
     if (firstProjectlessThread) {
-      const project = {
-        environmentId: entry.environmentId,
-        id: ProjectId.make(`projectless-${entry.environmentId}`),
-        title: "No project",
-        workspaceRoot: firstProjectlessThread.workspaceRoot ?? "",
-        repositoryIdentity: null,
-        defaultModelSelection: null,
-        scripts: [],
-        createdAt: firstProjectlessThread.createdAt,
-        updatedAt: firstProjectlessThread.updatedAt,
-      } satisfies EnvironmentProject;
       groups.push({
         key: `projectless:${entry.environmentId}`,
-        project,
+        context: {
+          kind: "general-chat",
+          environmentId: entry.environmentId,
+          workspaceRoot: firstProjectlessThread.workspaceRoot ?? "",
+        },
         threads: Arr.sort(
           matchingProjectlessThreads,
           Order.mapInput(
@@ -143,7 +137,10 @@ export function buildArchivedThreadGroups(input: {
       Order.Struct({ timestamp: timestampOrder, title: Order.String, key: Order.String }),
       (group: ArchivedThreadGroup) => ({
         timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : 0,
-        title: group.project.title,
+        title:
+          group.context.kind === "project"
+            ? group.context.project.title
+            : SCIENT_GENERAL_CHAT_LABEL,
         key: group.key,
       }),
     ),

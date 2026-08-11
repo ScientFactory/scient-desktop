@@ -21,6 +21,7 @@ import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
+import { validateGeneralChatCreation } from "../scient-general-chat/generalChatCreationValidation";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -53,9 +54,10 @@ export function useCreateProjectThread() {
             branch: input.branch,
             initialMessageText,
           })
-        : initialMessageText.length === 0
-          ? new Error("Enter a task before starting the thread.")
-          : null;
+        : validateGeneralChatCreation({
+            environmentId: input.environmentId,
+            initialMessageText,
+          });
       if (validationError !== null) {
         setPendingConnectionError(validationError.message);
         return AsyncResult.failure(Cause.fail(validationError));

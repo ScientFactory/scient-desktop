@@ -2,6 +2,10 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import {
+  SCIENT_GENERAL_CHAT_LABEL,
+  supportsScientGeneralChat,
+} from "@t3tools/client-runtime/scient/general-chat";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -106,8 +110,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
-  const projectlessEnvironment = environments.find(
-    (environment) => serverConfigs.get(environment.environmentId)?.projectlessThreads === true,
+  const projectlessEnvironment = environments.find((environment) =>
+    supportsScientGeneralChat(serverConfigs.get(environment.environmentId)),
   );
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
@@ -149,7 +153,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       screen: "NewTaskDraft",
       params: {
         environmentId: projectlessEnvironment.environmentId,
-        title: "No project",
+        title: SCIENT_GENERAL_CHAT_LABEL,
         projectless: "true",
       },
     });
@@ -263,7 +267,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         {!incomingShare && projectlessEnvironment ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Don't work in a project"
+            accessibilityLabel={SCIENT_GENERAL_CHAT_LABEL}
             onPress={selectProjectless}
             className="flex-row items-center gap-3 rounded-[24px] bg-card px-4 py-3.5 active:opacity-70"
           >
@@ -272,7 +276,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             </View>
             <View className="min-w-0 flex-1">
               <Text className="text-base leading-snug font-t3-bold">
-                Don&apos;t work in a project
+                {SCIENT_GENERAL_CHAT_LABEL}
               </Text>
               <Text className="text-xs leading-snug text-foreground-muted">
                 Start in {projectlessEnvironment.label}

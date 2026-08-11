@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { supportsScientGeneralChat } from "@t3tools/client-runtime/scient/general-chat";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -86,7 +87,7 @@ function IndexDraftLanding() {
   return (
     <NoProjectsHero
       onStartWithoutProject={
-        primaryEnvironmentId && serverConfigs.get(primaryEnvironmentId)?.projectlessThreads === true
+        primaryEnvironmentId && supportsScientGeneralChat(serverConfigs.get(primaryEnvironmentId))
           ? async () => {
               await handleNewThread(
                 { environmentId: primaryEnvironmentId, projectId: null },

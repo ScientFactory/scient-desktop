@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -55,6 +56,7 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  TerminalWorkspaceResolutionError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -87,6 +89,9 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import { SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES } from "./scient/generalChat/ServerCapability.ts";
+import { ensureScientGeneralChatMoveHasNoRunningTerminals } from "./scient/generalChat/MoveCoordinator.ts";
+import { validateScientGeneralChatTerminalOpen } from "./scient/generalChat/TerminalPolicy.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -379,6 +384,7 @@ const makeWsRpcLayer = (
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
+      const path = yield* Path.Path;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1019,7 +1025,7 @@ const makeWsRpcLayer = (
           environment,
           auth,
           cwd: config.cwd,
-          projectlessThreads: true,
+          ...SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES,
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -1049,12 +1055,46 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const authorizeScientTerminalWorkspace = Effect.fn(
+        "ScientGeneralChat.authorizeTerminalWorkspace",
+      )(function* (input: {
+        readonly threadId: string;
+        readonly cwd?: string | undefined;
+        readonly worktreePath?: string | null | undefined;
+        readonly env?: Readonly<Record<string, string>> | undefined;
+      }) {
+        const thread = yield* projectionSnapshotQuery
+          .getThreadShellById(ThreadId.make(input.threadId))
+          .pipe(
+            Effect.mapError(
+              (cause) => new TerminalWorkspaceResolutionError({ threadId: input.threadId, cause }),
+            ),
+          );
+        if (Option.isNone(thread)) {
+          return yield* new TerminalWorkspaceResolutionError({
+            threadId: input.threadId,
+            cause: new Error("Thread does not exist"),
+          });
+        }
+        const terminalRejection = validateScientGeneralChatTerminalOpen({
+          thread: thread.value,
+          request: input,
+          environmentWorkspaceRoot: config.cwd,
+          resolvePath: path.resolve,
+        });
+        if (terminalRejection !== null) return yield* terminalRejection;
+      });
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
+              yield* ensureScientGeneralChatMoveHasNoRunningTerminals({
+                command: normalizedCommand,
+                hasRunningSessionsForThread: terminalManager.hasRunningSessionsForThread,
+              });
               // Archive and settle both mean "done with this thread", so a
               // live provider session must not keep running background work
               // (PR monitors, dev servers, subagent fleets) after either
@@ -2089,16 +2129,25 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            Effect.gen(function* () {
+              yield* authorizeScientTerminalWorkspace(input);
+              return yield* terminalManager.open(input);
+            }),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalAttach]: (input) =>
-          observeRpcStream(
+          observeRpcStreamEffect(
             WS_METHODS.terminalAttach,
-            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
+            authorizeScientTerminalWorkspace(input).pipe(
+              Effect.as(
+                Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+                  Effect.acquireRelease(
+                    terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                    (unsubscribe) => Effect.sync(unsubscribe),
+                  ),
+                ),
               ),
             ),
             { "rpc.aggregate": "terminal" },
@@ -2116,9 +2165,13 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            authorizeScientTerminalWorkspace(input).pipe(
+              Effect.flatMap(() => terminalManager.restart(input)),
+            ),
+            { "rpc.aggregate": "terminal" },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",

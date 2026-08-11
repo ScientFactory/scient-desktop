@@ -120,7 +120,10 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0]?.project.environmentId).toBe(environmentId);
+    expect(result[0]?.context).toMatchObject({
+      kind: "project",
+      project: { environmentId },
+    });
     expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-1"]);
   });
 
@@ -142,5 +145,31 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(result).toEqual([]);
+  });
+
+  it("groups archived General Chats without inventing a project identity", () => {
+    const generalChat = makeThread({
+      id: ThreadId.make("thread-general-chat"),
+      projectId: null,
+      title: "Archived notes",
+      workspaceRoot: "/workspaces/general-chat",
+    });
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([], [generalChat])],
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery: "general chat",
+      sortOrder: "newest",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      context: {
+        kind: "general-chat",
+        environmentId,
+        workspaceRoot: "/workspaces/general-chat",
+      },
+    });
   });
 });

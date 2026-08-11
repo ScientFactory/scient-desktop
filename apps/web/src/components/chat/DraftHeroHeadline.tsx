@@ -1,6 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { FolderPlusIcon, XIcon } from "lucide-react";
+import {
+  SCIENT_GENERAL_CHAT_LABEL,
+  supportsScientGeneralChat,
+} from "@t3tools/client-runtime/scient/general-chat";
+import { FolderPlusIcon, MessageCircleIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
@@ -101,7 +105,7 @@ export function DraftHeroHeadline({
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
   const activeProjectDisplayName =
     activeProjectRef?.projectId === null
-      ? "without a project"
+      ? SCIENT_GENERAL_CHAT_LABEL
       : (activeProjectGroup?.displayName ?? activeProjectTitle);
   const hasResolvedProject =
     activeProjectRef?.projectId != null &&
@@ -111,7 +115,7 @@ export function DraftHeroHeadline({
     activeProjectRef?.environmentId ?? primaryEnvironmentId;
   const canCreateProjectlessThread =
     projectlessEnvironmentId !== null &&
-    serverConfigs.get(projectlessEnvironmentId)?.projectlessThreads === true;
+    supportsScientGeneralChat(serverConfigs.get(projectlessEnvironmentId));
   const shouldShowProjectMenu = projectlessEnvironmentId !== null;
 
   const projectSelector = shouldShowProjectMenu ? (
@@ -162,8 +166,8 @@ export function DraftHeroHeadline({
               );
             }}
           >
-            <XIcon />
-            Don&apos;t work in a project
+            <MessageCircleIcon />
+            {SCIENT_GENERAL_CHAT_LABEL}
           </MenuItem>
         ) : null}
       </MenuPopup>

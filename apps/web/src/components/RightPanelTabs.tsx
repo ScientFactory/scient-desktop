@@ -81,7 +81,7 @@ export interface PullRequestTabStatus {
 
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the Scient desktop app.",
-  terminal: "Terminal surfaces are only available from a project thread.",
+  terminal: "Terminal surfaces are unavailable because this thread has no workspace.",
   files: "Files are only available when a workspace is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",

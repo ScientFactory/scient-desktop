@@ -266,6 +266,31 @@ export class TerminalCwdStatError extends Schema.TaggedErrorClass<TerminalCwdSta
   }
 }
 
+export class TerminalWorkspaceMismatchError extends Schema.TaggedErrorClass<TerminalWorkspaceMismatchError>()(
+  "TerminalWorkspaceMismatchError",
+  {
+    threadId: Schema.String,
+    requestedCwd: Schema.String,
+    expectedCwd: Schema.String,
+  },
+) {
+  override get message() {
+    return `Terminal cwd must match the General Chat workspace: ${this.expectedCwd}`;
+  }
+}
+
+export class TerminalWorkspaceResolutionError extends Schema.TaggedErrorClass<TerminalWorkspaceResolutionError>()(
+  "TerminalWorkspaceResolutionError",
+  {
+    threadId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message() {
+    return `Could not resolve the authoritative terminal workspace for thread: ${this.threadId}`;
+  }
+}
+
 export const TerminalCwdError = Schema.Union([
   TerminalCwdNotFoundError,
   TerminalCwdNotDirectoryError,
@@ -343,6 +368,8 @@ export class TerminalResizeError extends Schema.TaggedErrorClass<TerminalResizeE
 
 export const TerminalError = Schema.Union([
   TerminalCwdError,
+  TerminalWorkspaceMismatchError,
+  TerminalWorkspaceResolutionError,
   TerminalHistoryError,
   TerminalSessionLookupError,
   TerminalNotRunningError,

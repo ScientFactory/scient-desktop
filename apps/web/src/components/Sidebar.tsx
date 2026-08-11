@@ -156,12 +156,21 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import {
-  SCIENT_GENERAL_CHAT_DEFAULT_EXPANDED,
   ScientGeneralChatIcon,
   ScientGeneralChatSection,
 } from "./scient-general-chat/ScientGeneralChatSection";
 import { ScientGeneralChatPinnedList } from "./scient-general-chat/ScientGeneralChatPinnedList";
 import { shouldCreateScientThreadInCurrentProject } from "./scient-general-chat/newThreadTarget";
+import { useScientGeneralChatDisclosure } from "./scient-general-chat/useScientGeneralChatDisclosure";
+import {
+  buildScientGeneralChatSidebarModel,
+  isScientSidebarThreadVisible,
+} from "../scient/generalChat/sidebarModel";
+import {
+  resolveScientGeneralChatCreationEnvironment,
+  SCIENT_GENERAL_CHAT_LABEL,
+  supportsScientGeneralChat,
+} from "../scient/generalChat/policy";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -1911,15 +1920,11 @@ export default function Sidebar() {
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const {
-    pinnedThreads,
+    sortedPinnedThreads,
     reorderablePinnedKeys,
-    activeThreads,
-    snoozedThreads,
-    settledThreads,
-    generalPinnedThreads,
-    generalActiveThreads,
-    generalSnoozedThreads,
-    generalSettledThreads,
+    sortedActiveThreads,
+    sortedSnoozedThreads,
+    sortedSettledThreads,
     allSnoozedThreads,
     snoozeNow,
   } = useMemo(() => {
@@ -1930,12 +1935,14 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (thread.projectId === null ||
+    const visible = threads.filter((thread) =>
+      isScientSidebarThreadVisible({
+        archivedAt: thread.archivedAt,
+        projectId: thread.projectId,
+        projectMatchesScope:
           scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+      }),
     );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -1989,7 +1996,7 @@ export default function Sidebar() {
     );
     const sortedSettled = sortSettledThreadsForSidebar(settled);
     return {
-      pinnedThreads: sortedPinned.filter((thread) => thread.projectId !== null),
+      sortedPinnedThreads: sortedPinned,
       reorderablePinnedKeys: new Set(
         pinned
           .filter(
@@ -1999,14 +2006,10 @@ export default function Sidebar() {
           )
           .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       ),
-      activeThreads: sortedActive.filter((thread) => thread.projectId !== null),
+      sortedActiveThreads: sortedActive,
       // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: sortedSnoozed.filter((thread) => thread.projectId !== null),
-      settledThreads: sortedSettled.filter((thread) => thread.projectId !== null),
-      generalPinnedThreads: sortedPinned.filter((thread) => thread.projectId === null),
-      generalActiveThreads: sortedActive.filter((thread) => thread.projectId === null),
-      generalSnoozedThreads: sortedSnoozed.filter((thread) => thread.projectId === null),
-      generalSettledThreads: sortedSettled.filter((thread) => thread.projectId === null),
+      sortedSnoozedThreads: sortedSnoozed,
+      sortedSettledThreads: sortedSettled,
       allSnoozedThreads: sortedSnoozed,
       snoozeNow: preciseNow,
     };
@@ -2021,32 +2024,49 @@ export default function Sidebar() {
   ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
-  const [generalChatExpanded, setGeneralChatExpanded] = useState(
-    SCIENT_GENERAL_CHAT_DEFAULT_EXPANDED,
-  );
-  const toggleGeneralChat = useCallback(() => setGeneralChatExpanded((value) => !value), []);
-  const generalChatThreads = useMemo(
-    () => [
-      ...generalPinnedThreads,
-      ...generalActiveThreads,
-      ...generalSnoozedThreads,
-      ...generalSettledThreads,
+  const {
+    pinnedThreads,
+    activeThreads,
+    snoozedThreads,
+    settledThreads,
+    generalPinnedThreads,
+    generalActiveThreads,
+    generalSnoozedThreads,
+    generalSettledThreads,
+    generalChatThreads,
+    activeGeneralChatKey,
+    searchableThreads,
+  } = useMemo(
+    () =>
+      buildScientGeneralChatSidebarModel({
+        shelves: {
+          pinned: sortedPinnedThreads,
+          active: sortedActiveThreads,
+          snoozed: sortedSnoozedThreads,
+          settled: sortedSettledThreads,
+        },
+        activeDraft:
+          routeTarget?.kind === "draft" && routeDraftThread !== null
+            ? { draftId: routeTarget.draftId, projectId: routeDraftThread.projectId }
+            : null,
+        routeThreadKey,
+        getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      }),
+    [
+      routeDraftThread,
+      routeTarget,
+      routeThreadKey,
+      sortedActiveThreads,
+      sortedPinnedThreads,
+      sortedSettledThreads,
+      sortedSnoozedThreads,
     ],
-    [generalActiveThreads, generalPinnedThreads, generalSettledThreads, generalSnoozedThreads],
   );
+  const { expanded: generalChatExpanded, toggle: toggleGeneralChat } =
+    useScientGeneralChatDisclosure(activeGeneralChatKey);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
-  const searchableThreads = useMemo(
-    () => [
-      ...generalChatThreads,
-      ...pinnedThreads,
-      ...activeThreads,
-      ...snoozedThreads,
-      ...settledThreads,
-    ],
-    [activeThreads, generalChatThreads, pinnedThreads, settledThreads, snoozedThreads],
-  );
   const threadSearchResults = useMemo(
     () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
     [searchableThreads, threadSearchQuery],
@@ -3251,9 +3271,41 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  const supportsProjectlessThreads = [...serverConfigs.values()].some(
-    (config) => config.projectlessThreads === true,
+  const generalChatCapableEnvironmentIds = useMemo(
+    () =>
+      [...serverConfigs.entries()].flatMap(([environmentId, config]) =>
+        supportsScientGeneralChat(config) ? [environmentId] : [],
+      ),
+    [serverConfigs],
   );
+  const supportsProjectlessThreads = generalChatCapableEnvironmentIds.length > 0;
+  const generalChatCreationEnvironmentId = resolveScientGeneralChatCreationEnvironment({
+    activeEnvironmentId:
+      newThreadContext.activeDraftThread?.environmentId ??
+      newThreadContext.activeThread?.environmentId ??
+      null,
+    primaryEnvironmentId,
+    capableEnvironmentIds: generalChatCapableEnvironmentIds,
+  });
+  const handleNewGeneralChat = useCallback(() => {
+    if (generalChatCreationEnvironmentId === null) {
+      if (generalChatCapableEnvironmentIds.length > 1) {
+        openCommandPalette({ open: "new-thread-in" });
+      }
+      return;
+    }
+    if (isMobile) setOpenMobile(false);
+    void newThreadContext.handleNewThread({
+      environmentId: generalChatCreationEnvironmentId,
+      projectId: null,
+    });
+  }, [
+    generalChatCapableEnvironmentIds.length,
+    generalChatCreationEnvironmentId,
+    isMobile,
+    newThreadContext.handleNewThread,
+    setOpenMobile,
+  ]);
 
   // A plain click uses the same target-picker rule as chat.new. Shift+click
   // keeps upstream's direct-create behavior when a current project exists.
@@ -3343,7 +3395,7 @@ export default function Sidebar() {
         }
         projectTitle={
           thread.projectId === null
-            ? "General chat"
+            ? SCIENT_GENERAL_CHAT_LABEL
             : (projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null)
         }
         providerEntryByInstanceId={providerEntryByInstanceId}
@@ -3472,6 +3524,7 @@ export default function Sidebar() {
                 expanded={generalChatExpanded}
                 itemCount={generalChatThreads.length}
                 onToggle={toggleGeneralChat}
+                onCreate={handleNewGeneralChat}
               >
                 <SidebarDraftBlock
                   projectDisplayNameByKey={projectDisplayNameByKey}
@@ -3650,7 +3703,7 @@ export default function Sidebar() {
                         }
                         projectTitle={
                           thread.projectId === null
-                            ? "General chat"
+                            ? SCIENT_GENERAL_CHAT_LABEL
                             : (projectDisplayNameByKey.get(
                                 `${thread.environmentId}:${thread.projectId}`,
                               ) ?? null)

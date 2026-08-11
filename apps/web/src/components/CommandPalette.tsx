@@ -102,6 +102,11 @@ import {
 } from "../wslPaths";
 import { recordScientAnalytics } from "../scient/analytics/client";
 import {
+  SCIENT_GENERAL_CHAT_LABEL,
+  shouldAssignScientGeneralChatNewThreadShortcut,
+  supportsScientGeneralChat,
+} from "../scient/generalChat/policy";
+import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
   buildProjectActionItems,
@@ -710,11 +715,11 @@ function OpenCommandPaletteDialog(props: {
   const projectlessEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
   const supportsProjectlessThreads =
     projectlessEnvironmentId !== null &&
-    serverConfigs.get(projectlessEnvironmentId)?.projectlessThreads === true;
+    supportsScientGeneralChat(serverConfigs.get(projectlessEnvironmentId));
   const projectlessTargets = useMemo(
     () =>
       [...serverConfigs.entries()]
-        .filter(([, config]) => config.projectlessThreads === true)
+        .filter(([, config]) => supportsScientGeneralChat(config))
         .map(([environmentId]) => ({
           environmentId,
           environmentLabel: environmentLabelById.get(environmentId) ?? "Environment",
@@ -1045,7 +1050,7 @@ function OpenCommandPaletteDialog(props: {
           "chat",
           environmentLabel,
         ],
-        title: "General chat",
+        title: SCIENT_GENERAL_CHAT_LABEL,
         description: showEnvironmentLabel ? environmentLabel : "Chat without a project",
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         run: async () => {
@@ -1450,33 +1455,33 @@ function OpenCommandPaletteDialog(props: {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
-  if (projects.length > 0) {
-    const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+  const activeProjectTitle =
+    projects.length > 0
+      ? (projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
+        (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null))
+      : null;
 
-    if (activeProjectTitle) {
-      actionItems.push({
-        kind: "action",
-        value: "action:new-thread",
-        searchTerms: ["new thread", "chat", "create", "draft"],
-        title: (
-          <>
-            New thread in <span className="font-semibold">{activeProjectTitle}</span>
-          </>
-        ),
-        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-        shortcutCommand: "chat.new",
-        run: async () => {
-          await startNewThreadFromContext({
-            activeDraftThread,
-            activeThread: activeThread ?? undefined,
-            defaultProjectRef,
-            handleNewThread,
-          });
-        },
-      });
-    }
+  if (activeProjectTitle !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-thread",
+      searchTerms: ["new thread", "chat", "create", "draft"],
+      title: (
+        <>
+          New thread in <span className="font-semibold">{activeProjectTitle}</span>
+        </>
+      ),
+      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.new",
+      run: async () => {
+        await startNewThreadFromContext({
+          activeDraftThread,
+          activeThread: activeThread ?? undefined,
+          defaultProjectRef,
+          handleNewThread,
+        });
+      },
+    });
   }
 
   if (projectThreadItems.length > 0) {
@@ -1496,9 +1501,14 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:new-thread-without-project",
       searchTerms: ["new thread", "without project", "no project", "chat"],
-      title: "General chat",
+      title: SCIENT_GENERAL_CHAT_LABEL,
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-      ...(projects.length === 0 ? { shortcutCommand: "chat.new" as const } : {}),
+      ...(shouldAssignScientGeneralChatNewThreadShortcut({
+        hasGeneralChatTarget: true,
+        hasProjectShortcutTarget: activeProjectTitle !== null,
+      })
+        ? { shortcutCommand: "chat.new" as const }
+        : {}),
       run: async () => {
         await handleNewThread({ environmentId: projectlessEnvironmentId, projectId: null });
       },

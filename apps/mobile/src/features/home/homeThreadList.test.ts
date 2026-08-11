@@ -486,10 +486,9 @@ describe("buildHomeThreadGroups", () => {
       projectGroupingMode: "separate",
     });
 
-    expect(groups.map((group) => group.representative.id)).toEqual([
-      "project-newer",
-      "project-older",
-    ]);
+    expect(
+      groups.map((group) => (group.context.kind === "project" ? group.context.project.id : null)),
+    ).toEqual(["project-newer", "project-older"]);
     expect(groups[1]?.threads.map((thread) => thread.id)).toEqual(["new-created", "old-created"]);
   });
 
@@ -520,7 +519,10 @@ describe("buildHomeThreadGroups", () => {
     const groups = buildGroups(projects, threads, { environmentId: remoteEnvironmentId });
 
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.representative.environmentId).toBe(remoteEnvironmentId);
+    expect(groups[0]?.context).toMatchObject({
+      kind: "project",
+      project: { environmentId: remoteEnvironmentId },
+    });
     expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
@@ -742,5 +744,30 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.projects).toHaveLength(2);
     expect(groups[0]?.newThreadTarget?.environmentId).toBe(desktopEnv);
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
+  });
+
+  it("represents General Chat as an environment workspace, never a fake project", () => {
+    const environmentId = EnvironmentId.make("environment-general-chat");
+    const thread = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-general-chat"),
+      projectId: null,
+      title: "Plan the week",
+      workspaceRoot: "/workspaces/general-chat",
+    });
+
+    const groups = buildGroups([], [thread]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      title: "General chat",
+      context: {
+        kind: "general-chat",
+        environmentId,
+        workspaceRoot: "/workspaces/general-chat",
+      },
+      projects: [],
+      newThreadTarget: null,
+    });
   });
 });

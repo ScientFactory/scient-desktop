@@ -1026,7 +1026,7 @@ function ThreadNavigationSidebarPane(
               // placeholder shell rather than a real project.
               newThreadTarget={item.group.newThreadTarget}
               onNewThread={props.onNewThreadInProject}
-              project={item.group.representative}
+              context={item.group.context}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
             />

@@ -757,6 +757,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(TerminalManager.TerminalManager)({
+          hasRunningSessionsForThread: () => Effect.succeed(false),
           ...options?.layers?.terminalManager,
         }),
       ),
@@ -6983,6 +6984,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("rejects moving a General Chat while a terminal is running", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-general-chat-terminal-open");
+      let dispatched = false;
+
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            hasRunningSessionsForThread: (candidateThreadId) =>
+              Effect.succeed(candidateThreadId === threadId),
+          },
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatched = true;
+                return { sequence: 1 };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.meta.update",
+            commandId: CommandId.make("cmd-move-general-chat-terminal-open"),
+            threadId,
+            moveToProjectId: ProjectId.make("project-destination"),
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "Close every terminal");
+      assert.equal(dispatched, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("checks session status before archiving removes the thread from active lookups", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-archive-precheck");
@@ -8071,6 +8112,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(makeDefaultOrchestrationThreadShell({ id: ThreadId.make("thread-1") })),
+              ),
+          },
           terminalManager: {
             open: () => Effect.succeed(snapshot),
             write: () => Effect.void,
@@ -8146,6 +8193,102 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("authorizes General Chat terminals only at the authoritative workspace", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-general-chat-terminal");
+      const openedCwds: string[] = [];
+      const snapshot = {
+        threadId,
+        terminalId: "default",
+        cwd: "/tmp/general-chat-workspace",
+        worktreePath: null,
+        status: "running" as const,
+        pid: 1234,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: "Primary",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(
+                  makeDefaultOrchestrationThreadShell({
+                    id: threadId,
+                    projectId: null,
+                    workspaceRoot: "/tmp/general-chat-workspace",
+                  }),
+                ),
+              ),
+          },
+          terminalManager: {
+            open: (input) =>
+              Effect.sync(() => {
+                openedCwds.push(input.cwd);
+                return snapshot;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const opened = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalOpen]({
+            threadId,
+            terminalId: "default",
+            cwd: "/tmp/general-chat-workspace",
+          }),
+        ),
+      );
+      assert.equal(opened.cwd, "/tmp/general-chat-workspace");
+
+      const rejected = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalOpen]({
+            threadId,
+            terminalId: "other",
+            cwd: "/tmp/other-workspace",
+          }),
+        ).pipe(Effect.result),
+      );
+      assertTrue(rejected._tag === "Failure");
+      assertTrue(rejected.failure._tag === "TerminalWorkspaceMismatchError");
+
+      const rejectedAttach = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalAttach]({
+            threadId,
+            terminalId: "attached-elsewhere",
+            cwd: "/tmp/other-workspace",
+            restartIfNotRunning: true,
+          }).pipe(Stream.runHead),
+        ).pipe(Effect.result),
+      );
+      assertTrue(rejectedAttach._tag === "Failure");
+      assertTrue(rejectedAttach.failure._tag === "TerminalWorkspaceMismatchError");
+
+      const rejectedRestart = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalRestart]({
+            threadId,
+            terminalId: "default",
+            cwd: "/tmp/other-workspace",
+            cols: 120,
+            rows: 40,
+          }),
+        ).pipe(Effect.result),
+      );
+      assertTrue(rejectedRestart._tag === "Failure");
+      assertTrue(rejectedRestart.failure._tag === "TerminalWorkspaceMismatchError");
+      assert.deepEqual(openedCwds, ["/tmp/general-chat-workspace"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -108,6 +108,8 @@ import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
+import { nextScientGeneralChatRenameKey } from "./scient-general-chat/renameState";
+import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
@@ -2925,6 +2927,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   }, []);
   const commitProjectlessThreadRename = useCallback(
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
+      const threadKey = scopedThreadKey(threadRef);
       const trimmed = newTitle.trim();
       if (trimmed.length === 0) {
         toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
@@ -2944,8 +2947,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           );
         }
       }
-      setRenamingThreadKey(null);
-      renamingInputRef.current = null;
+      setRenamingThreadKey((current) => {
+        const next = nextScientGeneralChatRenameKey(current, threadKey);
+        if (next === null) renamingInputRef.current = null;
+        return next;
+      });
     },
     [updateThreadMetadata],
   );
@@ -3211,7 +3217,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           return (
             <div key={group.environmentId} className="mt-2">
               <div className="px-2 py-1 text-xs font-medium text-sidebar-muted-foreground/80">
-                No project · {group.environmentLabel}
+                {SCIENT_GENERAL_CHAT_LABEL} · {group.environmentLabel}
               </div>
               <SidebarMenu ref={attachThreadListAutoAnimateRef}>
                 {renderedThreads.map((thread) => {

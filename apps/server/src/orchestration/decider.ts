@@ -1,6 +1,5 @@
 import {
   EventId,
-  GENERAL_CHAT_MOVE_SESSION_STOP_PENDING,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -26,6 +25,7 @@ import { projectEvent } from "./projector.ts";
 import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
 import { forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
+import { validateScientGeneralChatMove } from "../scient/generalChat/Policy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -833,37 +833,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               command,
               projectId: command.moveToProjectId,
             });
-      if (moveTarget !== undefined && moveTarget.deletedAt !== null) {
+      const moveRejection =
+        moveTarget === undefined
+          ? null
+          : validateScientGeneralChatMove({
+              thread,
+              target: moveTarget,
+              hasQueuedTurnStart: threadHasQueuedTurnStart(thread, occurredAt),
+            });
+      if (moveRejection !== null) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `Project '${moveTarget.id}' is deleted and cannot receive a General Chat.`,
-        });
-      }
-      if (moveTarget !== undefined && thread.projectId !== null) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Thread '${thread.id}' already belongs to a project and cannot be relocated again.`,
-        });
-      }
-      if (
-        moveTarget !== undefined &&
-        thread.projectId === null &&
-        thread.session !== null &&
-        thread.session.status !== "stopped"
-      ) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `${GENERAL_CHAT_MOVE_SESSION_STOP_PENDING}: Thread '${thread.id}' provider session must be stopped before relocation.`,
-        });
-      }
-      if (
-        moveTarget !== undefined &&
-        thread.projectId === null &&
-        (thread.latestTurn?.state === "running" || threadHasQueuedTurnStart(thread, occurredAt))
-      ) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Thread '${thread.id}' still has work in flight and cannot be relocated.`,
+          detail: moveRejection.detail,
         });
       }
       // SCIENT-FORK:END

@@ -57,6 +57,7 @@ const makeTerminalManagerLayer = (
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),
     close: () => Effect.void,
+    hasRunningSessionsForThread: () => Effect.succeed(false),
     subscribe: () => Effect.succeed(() => undefined),
     subscribeMetadata: () => Effect.succeed(() => undefined),
   });
