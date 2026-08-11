@@ -78,6 +78,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
   onMoveGeneralChatToProject: (projectId: ProjectId) => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -136,6 +137,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  onOpenPullRequest,
   onNewThreadInProject,
   onMoveGeneralChatToProject,
   onRunProjectScript,
@@ -398,6 +400,7 @@ export const ChatHeader = memo(function ChatHeader({
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+            onOpenPullRequest={onOpenPullRequest}
             {...(draftId ? { draftId } : {})}
           />
         )}

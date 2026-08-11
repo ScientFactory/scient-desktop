@@ -87,11 +87,12 @@ function IndexDraftLanding() {
     <NoProjectsHero
       onStartWithoutProject={
         primaryEnvironmentId && serverConfigs.get(primaryEnvironmentId)?.projectlessThreads === true
-          ? () =>
-              handleNewThread(
+          ? async () => {
+              await handleNewThread(
                 { environmentId: primaryEnvironmentId, projectId: null },
                 { replace: true },
-              )
+              );
+            }
           : null
       }
     />
