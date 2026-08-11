@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260811-65b005f1.md`](docs/internals/t3-upstream-sync-20260811-65b005f1.md)
+[`docs/internals/t3-upstream-sync-20260811-ac4780f4.md`](docs/internals/t3-upstream-sync-20260811-ac4780f4.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `65b005f1e4bfccb6a404b3b1e5bfa363d534ac2a` into the refresh
-branch, preserving the complete two-commit T3 range from the previously
-integrated tip `f5fce74169a5629f701aeb8c4535cab6f7bd3c92`. Later observed T3
+checkpoint `ac4780f451f98c10d5b518f2bfa3d035b46645df` into the refresh
+branch, preserving the complete four-commit T3 range from the previously
+integrated tip `65b005f1e4bfccb6a404b3b1e5bfa363d534ac2a`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -98,6 +98,16 @@ That conflict represented a real product distinction: one project is still a
 multi-target choice when General Chat is available. The exception is isolated
 in the Scient-owned General Chat module while T3's new helper remains
 upstream-shaped.
+
+The subsequent sync through `ac4780f4` receives T3's mobile composer and
+interaction stabilization, hourly past-24-hour usage view, guarded App Store
+version handling, and typography-reset correction. Seven of 58 upstream paths
+overlapped Scient work; four merged automatically, including the General Chat
+mobile mount. The three conflicts were existing release/dependency-policy seams:
+Scient retained its disabled mobile-publication job and newer FFF search
+dependency while adopting the rest of the upstream files. A focused upstream
+typography test used the default value as its supposed changed value; Scient
+corrected that characterization from 18 to 19 without altering product logic.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
