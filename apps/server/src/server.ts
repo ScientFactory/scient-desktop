@@ -463,9 +463,9 @@ export const makeRoutesLayer = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
+      Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(scientProjectHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
-      Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -476,16 +476,16 @@ export const makeRoutesLayer = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
-  Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(ServerSelfUpdate.layer),
-  Layer.provide(commandReadinessLayer),
-  Layer.provide(browserApiCorsLayer),
-  Layer.provide(httpCompressionLayer),
   Layer.provide(
     Layer.mergeAll(ProviderConnectionManager.layer, ProviderRuntimeManager.layer).pipe(
       Layer.provideMerge(ProviderLifecycleCoordinator.layer),
     ),
   ),
+  Layer.provide(PreviewAutomationBroker.layer),
+  Layer.provide(ServerSelfUpdate.layer),
+  Layer.provide(commandReadinessLayer),
+  Layer.provide(browserApiCorsLayer),
+  Layer.provide(httpCompressionLayer),
 );
 
 export const makeServerLayer = Layer.unwrap(

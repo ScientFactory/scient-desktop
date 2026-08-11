@@ -635,6 +635,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
-  .add(EnvironmentConnectHttpApi)
   .add(EnvironmentScientProjectHttpApi)
-  .add(EnvironmentScientAnalyticsHttpApi) {}
+  .add(EnvironmentScientAnalyticsHttpApi)
+  .add(EnvironmentConnectHttpApi) {}
