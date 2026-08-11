@@ -44,7 +44,6 @@ import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
-import { SCIENT_DIFF_PANEL_TYPOGRAPHY_UNSAFE_CSS } from "../scient/typography/diffPanelTypography";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
@@ -87,7 +86,7 @@ interface CollapsedDiffFilesState {
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
-const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}${SCIENT_DIFF_PANEL_TYPOGRAPHY_UNSAFE_CSS}
+const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 :is(
   [data-line],
   [data-line-annotation],
