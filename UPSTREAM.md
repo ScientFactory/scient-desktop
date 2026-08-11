@@ -21,13 +21,14 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-foundation-refresh-20260809-1a003e38.md`](docs/internals/t3-foundation-refresh-20260809-1a003e38.md)
-and in `upstream-state.json`. The latest refresh merged the exact fetched
-`upstream/main` tip `1a003e383ac6b10258b8100c2617d938c4f06c69` into the
-refresh branch, preserving the full T3 range from the previous integrated tip
-`89ee692bf0436505d008c1d70215e70836eba4e2`. Later observed T3 tips never move
-`integrationBase` by themselves; it advances only after the exact ancestry and
-verification gate are complete.
+[`docs/internals/t3-foundation-refresh-20260811-78f462c4.md`](docs/internals/t3-foundation-refresh-20260811-78f462c4.md)
+and in `upstream-state.json`. The latest refresh merged the exact official
+checkpoint `78f462c4e18c8ea5e5037dc916389a3b72246025` into the refresh
+branch, preserving the complete 18-commit T3 range from the previously
+integrated tip `0d38866dcf63d133b2ed732bbb303dc533b5934f`. The newer observed
+T3 `main` tip remains outside this bounded phase. Later observed T3 tips never
+move `integrationBase` by themselves; it advances only after the exact ancestry
+and verification gate are complete.
 
 ## Receiving T3 updates
 
@@ -74,6 +75,15 @@ copy command, and kept the new hosted-web preview deployment disabled. A new
 user-facing project-setting description was relabeled from `T3 Code` to
 `Scient`; the compatible `t3.json` contract and official ancestry remain
 unchanged.
+
+The 2026-08-11 phase-one refresh received the stable `v0.0.33` line plus its
+immediate release-preparation commit. It adopted the ordinary settings,
+breadcrumb, confirmation, accessibility, theme, mobile, and security changes;
+combined SVG sandboxing with Scient's range-capable asset/PDF seam; and kept
+General Chat, local voice, and dropped-file bridges intact. Scient intentionally
+did not activate T3's automatic mobile store/OTA workflow or its advisory
+fingerprint-label workflow. The newer pull-request center and later nightly
+commits remain a separate bounded phase.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
