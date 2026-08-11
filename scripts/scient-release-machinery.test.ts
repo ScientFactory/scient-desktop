@@ -18,6 +18,72 @@ import {
 } from "./scient-release-preflight.ts";
 
 describe("Scient release machinery", () => {
+  it("keeps stable releases manual-only and globally serialized", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+
+    assert.match(workflow, /^on:\n  workflow_dispatch:\n/mu);
+    assert.notMatch(workflow, /^  push:\n/mu);
+    assert.notMatch(workflow, /^  schedule:\n/mu);
+    assert.include(workflow, "group: scient-stable-release");
+    assert.include(workflow, "cancel-in-progress: false");
+  });
+
+  it("fails duplicate release identities before builds and again before publication", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const preflight = workflow.split(/^  preflight:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+    const publish = workflow.split(/^  publish:\n/mu)[1] ?? "";
+
+    assert.include(preflight, 'gh release view "$release_tag"');
+    assert.include(preflight, '"refs/tags/$release_tag"');
+    assert.include(publish, 'gh release view "$RELEASE_TAG"');
+    assert.include(publish, '"refs/tags/$RELEASE_TAG"');
+    assert(
+      workflow.indexOf("Refuse an existing tag or release before builds") <
+        workflow.indexOf("build_desktop:"),
+    );
+  });
+
+  it("publishes the same retained candidate only after production approval", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const assemble = workflow.split(/^  assemble:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+    const publish = workflow.split(/^  publish:\n/mu)[1] ?? "";
+
+    assert.include(assemble, "name: Upload immutable release candidate");
+    assert.include(assemble, "retention-days: 30");
+    assert.include(assemble, "artifact-digest");
+    assert.include(assemble, "artifact-id");
+    assert.include(assemble, "artifact-url");
+    assert.include(assemble, 'echo "- Artifact: \\`$ARTIFACT_NAME\\`"');
+    assert.include(publish, "environment: production");
+    assert.include(publish, "actions: read");
+    assert.include(publish, "name: scient-release-v${{ needs.preflight.outputs.version }}");
+    assert.include(publish, "Verify accepted candidate identity and checksums");
+    assert.include(publish, ".workflow_run.id == $run_id");
+    assert.include(publish, "sha256sum --check SHA256SUMS.txt");
+    assert.include(publish, "Stage, verify, and publish the immutable release");
+  });
+
+  it("cancels superseded CI while retaining desktop validation", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/ci.yml"),
+      "utf8",
+    );
+
+    assert.include(workflow, "group: ci-${{ github.ref }}");
+    assert.include(workflow, "cancel-in-progress: true");
+    assert.include(workflow, "vp run build:desktop");
+    assert.include(workflow, "Verify preload bundle output");
+  });
+
   it("pins every release-owned action to an immutable commit", () => {
     for (const workflowName of ["promote-release.yml", "release.yml"]) {
       const workflow = NodeFS.readFileSync(
