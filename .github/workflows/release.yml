@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       publish_release:
-        description: "Create the GitHub release (false is a build-only proof)"
+        description: "Build a publishable candidate and request production approval"
         required: true
         default: false
         type: boolean
@@ -54,6 +54,25 @@ jobs:
         run: |
           if [[ "${GITHUB_REF_NAME}" != "release/stable" ]]; then
             echo "Run this workflow from release/stable, not ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
+
+      - name: Refuse an existing tag or release before builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_VERSION#v}"
+          release_tag="v$version"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $release_tag already exists; refusing to rebuild it." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$release_tag" >/dev/null 2>&1; then
+            echo "Tag $release_tag already exists; refusing to rebuild or repurpose it." >&2
             exit 1
           fi
 
@@ -539,6 +558,10 @@ jobs:
     needs: [preflight, build_desktop, build_server_asset]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      artifact_digest: ${{ steps.release_candidate.outputs.artifact-digest }}
+      artifact_id: ${{ steps.release_candidate.outputs.artifact-id }}
+      artifact_url: ${{ steps.release_candidate.outputs.artifact-url }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -612,12 +635,45 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --source-tree "$SOURCE_TREE" \
             --output "release-assets/scient-release-handoff.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - id: release_candidate
+        name: Upload immutable release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}
           path: release-assets/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+      - name: Record release candidate handoff
+        shell: bash
+        env:
+          ARTIFACT_DIGEST: ${{ steps.release_candidate.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.release_candidate.outputs.artifact-id }}
+          ARTIFACT_NAME: scient-release-v${{ needs.preflight.outputs.version }}
+          ARTIFACT_URL: ${{ steps.release_candidate.outputs.artifact-url }}
+          PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
+        run: |
+          {
+            echo "## Immutable release candidate"
+            echo
+            echo "- Run: [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+            echo "- Tag: \`$RELEASE_TAG\`"
+            echo "- Source commit: \`$SOURCE_SHA\`"
+            echo "- Source tree: \`$SOURCE_TREE\`"
+            echo "- Artifact: \`$ARTIFACT_NAME\`"
+            echo "- Artifact ID: \`$ARTIFACT_ID\`"
+            echo "- Artifact digest: \`$ARTIFACT_DIGEST\`"
+            echo "- Artifact URL: $ARTIFACT_URL"
+            echo
+            if [[ "$PUBLISH_RELEASE" == "true" ]]; then
+              echo "Download and accept this exact candidate before approving the pending production deployment."
+              echo "Approval publishes this run's assembled artifact without rebuilding it."
+            else
+              echo "This is a non-publishing rehearsal. It cannot be promoted by rerunning publication against rebuilt artifacts."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish GitHub release
@@ -627,6 +683,7 @@ jobs:
     timeout-minutes: 10
     environment: production
     permissions:
+      actions: read
       contents: write
     steps:
       - name: Require explicit repository release gate
@@ -641,6 +698,38 @@ jobs:
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}
           path: release-assets
+      - name: Verify accepted candidate identity and checksums
+        shell: bash
+        env:
+          EXPECTED_ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}
+          EXPECTED_ARTIFACT_ID: ${{ needs.assemble.outputs.artifact_id }}
+          EXPECTED_SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          EXPECTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
+          EXPECTED_TAG: ${{ needs.preflight.outputs.tag }}
+          EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_metadata="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID")"
+          jq -e \
+            --arg digest "$EXPECTED_ARTIFACT_DIGEST" \
+            --argjson artifact_id "$EXPECTED_ARTIFACT_ID" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            '.id == $artifact_id and .digest == $digest and .expired == false and .workflow_run.id == $run_id' \
+            <<<"$artifact_metadata" >/dev/null
+          jq -e \
+            --arg commit "$EXPECTED_SOURCE_SHA" \
+            --arg tag "$EXPECTED_TAG" \
+            --arg tree "$EXPECTED_SOURCE_TREE" \
+            --arg version "$EXPECTED_VERSION" \
+            '.schemaVersion == 1 and .product == "Scient" and .version == $version and .tag == $tag and .source.repository == "ScientFactory/scient-desktop-next" and .source.commit == $commit and .source.tree == $tree' \
+            release-assets/scient-release-handoff.json >/dev/null
+          (cd release-assets && sha256sum --check SHA256SUMS.txt)
+          jq -r '.assets[] | "\(.sha256)  \(.name)"' \
+            release-assets/scient-release-handoff.json \
+            > "$RUNNER_TEMP/handoff-sha256.txt"
+          diff -u release-assets/SHA256SUMS.txt "$RUNNER_TEMP/handoff-sha256.txt"
       - name: Refuse to overwrite an existing tag or release
         shell: bash
         env:

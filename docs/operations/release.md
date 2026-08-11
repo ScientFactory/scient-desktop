@@ -47,25 +47,34 @@ state, ports, and lifecycle and is never a publication source.
    fails unless the SHA is current `origin/main`, has successful CI, and can
    fast-forward `release/stable`.
 3. Manually run **Scient stable release** from `release/stable` with the exact
-   version and promoted SHA. Keep `publish_release=false` for proof and
-   `allow_note_free=false` unless Yaacov explicitly accepts a note-free release.
-4. Inspect `scient-release-v<version>`. It contains macOS arm64/x64, Linux x64,
+   version and promoted SHA. For a real release candidate, select
+   `publish_release=true`; this builds and assembles the candidate but does not
+   publish it until the protected `production` job is separately approved. Use
+   `publish_release=false` only for a non-publishing machinery rehearsal, not as
+   the candidate for a later rebuilt publication. Keep `allow_note_free=false`
+   unless Yaacov explicitly accepts a note-free release.
+4. Wait for assembly, then inspect the `scient-release-v<version>` artifact from
+   that same pending workflow run. It contains macOS arm64/x64, Linux x64,
    Windows x64, updater manifests, the exact server tarball,
    `SHA256SUMS.txt`, and `scient-release-handoff.json`. Assembly fails unless
    every manifest-referenced payload exists and matches its declared size and
    SHA-512, every required architecture is present, and no unattested file is
-   included.
-5. Resolve artifact, signing, updater, migration, website, and rollback gates.
-   A green build-only run is not a release.
-6. Only after explicit approval, rerun the exact source with
-   `publish_release=true`. Publication fails closed if macOS is unsigned or the
-   repository release gate is disabled. Windows is also required to be signed
-   unless the operator explicitly sets `allow_unsigned_windows=true`; that
-   exception is recorded in the release body and may trigger an Unknown
-   Publisher or SmartScreen warning. The workflow stages a draft, downloads it
-   again, verifies every uploaded byte against the assembled release, and only
-   then makes the release public and Latest. Existing tags or releases are never
-   overwritten.
+   included. Record the run ID, artifact ID, and artifact digest shown in its
+   summary.
+5. Resolve artifact, signing, installed-app, updater, migration, website, and
+   rollback gates against that exact candidate. Reject the pending production
+   deployment if any gate fails; fix the source and build a new candidate rather
+   than approving or rebuilding the rejected bytes.
+6. Only after explicit acceptance, approve the pending `production` deployment
+   in the same workflow run. Publication fails closed if macOS is unsigned or
+   the repository release gate is disabled. Windows is also required to be
+   signed unless the operator explicitly set `allow_unsigned_windows=true` when
+   creating the candidate; that exception is recorded in the release body and
+   may trigger an Unknown Publisher or SmartScreen warning. The workflow
+   publishes the already accepted assembled artifact, downloads the draft again,
+   verifies every uploaded byte, and only then makes the release public and
+   Latest. Existing tags or releases are never rebuilt, overwritten, or
+   repurposed.
 7. In the legacy repository, run **Mirror new Scient release for legacy
    updaters** first with `publish_mirror=false`, inspect the byte-identical
    proof, then explicitly publish it. The old repository never rebuilds the new
