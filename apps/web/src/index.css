@@ -620,7 +620,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-art-line: oklch(0.940582 0.032921 299.076);
   }
 
-
   .workspace-topbar {
     display: flex;
     height: var(--workspace-topbar-height);

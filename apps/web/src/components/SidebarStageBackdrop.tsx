@@ -20,7 +20,6 @@ export function resolveSidebarStageBackdropVariant(
   return null;
 }
 
-
 export function resolveSidebarStageFocusRingOffsetClass(
   variant: SidebarStageBackdropVariant,
 ): string {

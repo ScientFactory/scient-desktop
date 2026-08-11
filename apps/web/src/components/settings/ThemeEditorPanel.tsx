@@ -831,7 +831,6 @@ export function ThemeEditorPanel({
     </div>
   );
 
-
   const renderColorsHeader = () => (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3">
       <div>
