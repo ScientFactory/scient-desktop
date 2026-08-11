@@ -131,7 +131,7 @@ function installPlan() {
 }
 
 describe("ProviderRuntimeManager", () => {
-  it.effect("publishes progress and completion around one reviewed managed install", () =>
+  it.effect("publishes one managed install and reloads every instance of the driver", () =>
     Effect.gen(function* () {
       const installed = yield* Ref.make(false);
       const actions: ProviderManagedRuntimeActions = {
@@ -157,7 +157,14 @@ describe("ProviderRuntimeManager", () => {
             totalBytes: 100,
           }).pipe(Effect.andThen(Ref.set(installed, true))),
       };
-      const { manager, providersRef, reloadCountRef } = yield* makeHarness(actions);
+      const secondProvider: ServerProvider = {
+        ...provider,
+        instanceId: SECOND_INSTANCE,
+      };
+      const { manager, providersRef, reloadCountRef } = yield* makeHarness(actions, [
+        provider,
+        secondProvider,
+      ]);
       const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
       assert.strictEqual(planned.catalogRevision, "reviewed:1");
       yield* manager.start({
@@ -173,7 +180,9 @@ describe("ProviderRuntimeManager", () => {
       const runtime = completed[0]?.connection?.runtime;
       assert.strictEqual(runtime?.source, "scient_managed");
       assert.strictEqual(runtime?.managedVersion, "0.147.0");
-      assert.strictEqual(yield* Ref.get(reloadCountRef), 1);
+      assert.strictEqual(completed[1]?.connection?.runtime?.source, "scient_managed");
+      assert.strictEqual(completed[1]?.connection?.runtime?.managedVersion, "0.147.0");
+      assert.strictEqual(yield* Ref.get(reloadCountRef), 2);
     }),
   );
 

@@ -104,6 +104,18 @@ export const ProviderRuntimeOperation = Schema.Struct({
 });
 export type ProviderRuntimeOperation = typeof ProviderRuntimeOperation.Type;
 
+/**
+ * Scient-owned launch diagnostics for assisted recovery. Never includes
+ * credentials; executable/home are display-only coordinates.
+ */
+export const ProviderRuntimeDiagnostics = Schema.Struct({
+  executable: TrimmedNonEmptyString,
+  version: Schema.NullOr(TrimmedNonEmptyString),
+  homePath: Schema.NullOr(TrimmedNonEmptyString),
+  backend: TrimmedNonEmptyString,
+});
+export type ProviderRuntimeDiagnostics = typeof ProviderRuntimeDiagnostics.Type;
+
 export const ProviderRuntimeSummary = Schema.Struct({
   source: ProviderRuntimeSource,
   supportTier: ProviderRuntimeSupportTier,
@@ -113,6 +125,7 @@ export const ProviderRuntimeSummary = Schema.Struct({
   previousManagedVersion: Schema.NullOr(TrimmedNonEmptyString),
   operation: Schema.NullOr(ProviderRuntimeOperation),
   message: TrimmedNonEmptyString,
+  diagnostics: Schema.optionalKey(ProviderRuntimeDiagnostics),
 });
 export type ProviderRuntimeSummary = typeof ProviderRuntimeSummary.Type;
 

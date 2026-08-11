@@ -18,6 +18,7 @@ import {
   startReviewedCodexRuntimeAction,
   updateCodexRuntime,
 } from "./codexLifecycleActions";
+import { CodexRuntimeDiagnosticsDetails } from "./CodexRuntimeDiagnostics";
 import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -312,7 +313,7 @@ export function CodexInlineSetup(props: {
           {verifying ? "Checking your account" : "Finish signing in"}
         </h2>
         <p className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed">
-          {verifying ? "Finding your available models…" : "Complete sign-in in your browser."}
+          {verifying ? "Confirming sign-in with Codex…" : "Complete sign-in in your browser."}
         </p>
         {!verifying && activeConnectionOperation?.authorizationUrl ? (
           <Button
@@ -391,6 +392,18 @@ export function CodexInlineSetup(props: {
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+  const canInstallManaged = runtime?.actions.includes("install") ?? false;
+  const useManaged = async () => {
+    setLocalError(null);
+    setPendingAction("install");
+    try {
+      await startReviewedCodexRuntimeAction(props.controller, "install");
+    } catch (error) {
+      setLocalError(failureMessage(error, "Scient could not switch to managed Codex."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
   return (
     <SetupFrame>
       {signInError ? (
@@ -421,6 +434,13 @@ export function CodexInlineSetup(props: {
           Opens in your browser. Scient never sees your password.
         </p>
       ) : null}
+      <div className="mt-3 flex w-full justify-center">
+        <CodexRuntimeDiagnosticsDetails
+          managedActionBusy={pendingAction !== null}
+          onUseManaged={canInstallManaged ? () => void useManaged() : undefined}
+          provider={props.provider}
+        />
+      </div>
     </SetupFrame>
   );
 }

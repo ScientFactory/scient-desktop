@@ -1,4 +1,5 @@
 import type { CodexSettings, ProviderConnectionMethod } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
@@ -12,6 +13,10 @@ import {
 } from "../../provider/Layers/CodexProvider.ts";
 import { type ProviderConnectionActions } from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+
+const LOGIN_ACCOUNT_VERIFY_TIMEOUT = Duration.seconds(20);
+const LOGIN_ACCOUNT_POLL_INTERVAL = Duration.millis(500);
+const FRESH_PROCESS_VERIFY_TIMEOUT = Duration.seconds(20);
 
 const connectionError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -48,6 +53,55 @@ const waitForLogin = Effect.fn("CodexConnectionActions.waitForLogin")(function* 
   }
 });
 
+function isAuthenticatedAccount(account: {
+  readonly account?: unknown;
+  readonly requiresOpenaiAuth: boolean;
+}): boolean {
+  return Boolean(account.account) || !account.requiresOpenaiAuth;
+}
+
+/**
+ * Retry account/read until Codex reports an authenticated account or the
+ * bounded timeout elapses. `account/updated` only wakes the loop early —
+ * authenticated account/read remains the success condition.
+ */
+const waitForAuthenticatedAccount = Effect.fn("CodexConnectionActions.waitForAuthenticatedAccount")(
+  function* (client: CodexAppServerConnection["client"], accountUpdated: Queue.Queue<void>) {
+    const readAccount = client
+      .request("account/read", { refreshToken: true })
+      .pipe(
+        Effect.mapError((cause) =>
+          connectionError("Codex signed in, but Scient could not verify the account.", cause),
+        ),
+      );
+
+    const poll = Effect.gen(function* () {
+      while (true) {
+        const account = yield* readAccount;
+        if (isAuthenticatedAccount(account)) return account;
+        yield* Effect.raceAll([
+          Queue.take(accountUpdated).pipe(Effect.asVoid),
+          Effect.sleep(LOGIN_ACCOUNT_POLL_INTERVAL),
+        ]);
+      }
+    });
+
+    // Only the timeout is re-labeled; a failing account/read keeps its own
+    // message instead of being reported as "not ready in time".
+    return yield* poll.pipe(
+      Effect.timeoutOrElse({
+        duration: LOGIN_ACCOUNT_VERIFY_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            connectionError(
+              "Codex reported sign-in completion, but the account was not ready in time.",
+            ),
+          ),
+      }),
+    );
+  },
+);
+
 /**
  * Codex-owned auth implementation. Scient starts and observes the official
  * app-server flow; Codex persists and refreshes its own credentials.
@@ -63,10 +117,14 @@ export function makeCodexConnectionActionsFromOpen(
           return yield* connectionError("Codex does not support this sign-in method.");
         }
         const { client } = yield* open;
-        const notifications =
+        const completedNotifications =
           yield* Queue.unbounded<CodexSchema.V2AccountLoginCompletedNotification>();
+        const accountUpdated = yield* Queue.unbounded<void>();
         yield* client.handleServerNotification("account/login/completed", (notification) =>
-          Queue.offer(notifications, notification).pipe(Effect.asVoid),
+          Queue.offer(completedNotifications, notification).pipe(Effect.asVoid),
+        );
+        yield* client.handleServerNotification("account/updated", () =>
+          Queue.offer(accountUpdated, void 0).pipe(Effect.asVoid),
         );
         const response = yield* client
           .request("account/login/start", methodParams(method))
@@ -83,22 +141,57 @@ export function makeCodexConnectionActionsFromOpen(
 
         const loginId = response.loginId;
         const waitForCompletion = Effect.gen(function* () {
-          const completed = yield* waitForLogin(notifications, loginId);
+          const completed = yield* waitForLogin(completedNotifications, loginId);
           if (!completed.success) {
             return yield* connectionError(completed.error ?? "Codex sign in was not completed.");
           }
-          const account = yield* client
-            .request("account/read", { refreshToken: true })
-            .pipe(
+          yield* waitForAuthenticatedAccount(client, accountUpdated);
+          // Fresh-process verification: notifications and the login process are
+          // wake-ups only. A new app-server must also observe the account.
+          // Retry briefly — OS credential stores can lag the in-process read.
+          const verifyFreshProcess = Effect.scoped(
+            open.pipe(
               Effect.mapError((cause) =>
-                connectionError("Codex signed in, but Scient could not verify the account.", cause),
+                connectionError(
+                  "Codex signed in, but Scient could not start a fresh Codex process to confirm the account.",
+                  cause,
+                ),
               ),
-            );
-          if (!account.account && account.requiresOpenaiAuth) {
-            return yield* connectionError(
-              "Codex did not report an authenticated account after sign in.",
-            );
-          }
+              Effect.flatMap(({ client: freshClient }) => {
+                const readFresh = freshClient
+                  .request("account/read", { refreshToken: true })
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      connectionError(
+                        "Codex signed in, but Scient could not confirm the account in a fresh Codex process.",
+                        cause,
+                      ),
+                    ),
+                  );
+                return Effect.gen(function* () {
+                  while (true) {
+                    const account = yield* readFresh;
+                    if (isAuthenticatedAccount(account)) return;
+                    yield* Effect.sleep(LOGIN_ACCOUNT_POLL_INTERVAL);
+                  }
+                });
+              }),
+            ),
+          );
+          // Bound fresh process startup and account propagation together.
+          // Only the timeout is re-labeled; open/read failures keep the more
+          // specific messages above.
+          yield* verifyFreshProcess.pipe(
+            Effect.timeoutOrElse({
+              duration: FRESH_PROCESS_VERIFY_TIMEOUT,
+              orElse: () =>
+                Effect.fail(
+                  connectionError(
+                    "Codex signed in, but a fresh Codex process did not observe the account in time.",
+                  ),
+                ),
+            }),
+          );
         });
 
         const cancel = client.request("account/login/cancel", { loginId }).pipe(
