@@ -13,7 +13,9 @@ import { usePrimaryEnvironment } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
+  resolveSidebarStageFocusRingOffsetClass,
   SidebarStageBackdrop,
+  type SidebarStageBackdropVariant,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
@@ -58,10 +60,18 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
       <SidebarTrigger
-        className={cn("relative z-10 md:hidden", backdropVariant && "sidebar-stage-trigger")}
+        className={cn(
+          "relative z-10 md:hidden",
+          backdropVariant && [
+            "sidebar-stage-trigger",
+            resolveSidebarStageFocusRingOffsetClass(backdropVariant),
+          ],
+        )}
+        data-stage-variant={backdropVariant ?? undefined}
       />
       <SidebarBrand
         onBackdrop={backdropVariant !== null}
+        stageVariant={backdropVariant}
         stageLabel={backdropVariant ? stageLabel : null}
       />
       {pillLabel ? (
@@ -80,9 +90,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
 function SidebarBrand({
   onBackdrop,
+  stageVariant,
   stageLabel,
 }: {
   readonly onBackdrop: boolean;
+  readonly stageVariant: SidebarStageBackdropVariant | null;
   readonly stageLabel: string | null;
 }) {
   return (
@@ -92,6 +104,7 @@ function SidebarBrand({
         "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
         onBackdrop ? "sidebar-brand-on-stage" : "text-foreground",
       )}
+      data-stage-variant={stageVariant ?? undefined}
       to="/"
     >
       <ScientSymbol className="size-4" />

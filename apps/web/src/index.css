@@ -360,8 +360,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  /* Scient stage branding stays deliberately quiet. The fade preserves the
-     sidebar hierarchy while Dev and Nightly use the same product palette. */
+  /* Scient owns the restrained stage composition while the inherited stage
+     token contract supplies reviewed colors for each built-in theme. */
   .sidebar-stage-backdrop {
     --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
     mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
@@ -389,103 +389,64 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background:
       radial-gradient(
         18rem 7rem at 82% -30%,
-        color-mix(in srgb, var(--scient-slate) 20%, transparent),
+        color-mix(in oklch, var(--scient-stage-highlight) 28%, transparent),
         transparent 72%
       ),
       radial-gradient(
         14rem 6rem at 14% 10%,
-        color-mix(in srgb, var(--scient-burgundy) 10%, transparent),
+        color-mix(in oklch, var(--scient-stage-secondary) 24%, transparent),
         transparent 76%
       ),
-      var(--scient-warm-white);
-  }
-
-  .scient-stage-art-nightly {
-    background:
-      radial-gradient(
-        18rem 7rem at 82% -30%,
-        color-mix(in srgb, var(--scient-burgundy) 20%, transparent),
-        transparent 72%
-      ),
-      radial-gradient(
-        14rem 6rem at 14% 10%,
-        color-mix(in srgb, var(--scient-slate) 12%, transparent),
-        transparent 76%
-      ),
-      var(--scient-warm-white);
+      linear-gradient(
+        135deg,
+        var(--scient-stage-top) 0%,
+        var(--scient-stage-mid) 52%,
+        var(--scient-stage-bottom) 100%
+      );
   }
 
   .scient-stage-watermark {
     opacity: 0.07;
   }
 
-  .sidebar-brand-on-stage {
-    color: var(--scient-burgundy);
+  .sidebar-brand-on-stage[data-stage-variant="dev"] {
+    color: var(--stage-art-line);
+  }
+
+  .sidebar-brand-on-stage[data-stage-variant="nightly"] {
+    color: var(--stage-night-line);
   }
 
   .sidebar-brand-stage-label {
-    color: color-mix(in srgb, var(--scient-slate) 78%, transparent);
+    opacity: 0.78;
+  }
+
+  .sidebar-stage-trigger[data-stage-variant="dev"] {
+    --scient-stage-control-highlight: var(--stage-art-highlight);
+    --scient-stage-control-line: var(--stage-art-line);
+  }
+
+  .sidebar-stage-trigger[data-stage-variant="nightly"] {
+    --scient-stage-control-highlight: var(--stage-night-highlight);
+    --scient-stage-control-line: var(--stage-night-line);
   }
 
   .sidebar-stage-trigger {
-    --tw-ring-offset-color: var(--scient-warm-white);
+    --tw-ring-color: var(--scient-stage-control-line);
+    color: var(--scient-stage-control-line);
   }
 
   .sidebar-stage-trigger:is(:hover, [data-pressed]) {
-    background: color-mix(in srgb, var(--scient-slate) 10%, transparent);
-  }
-
-  .sidebar-stage-trigger:focus-visible {
-    --tw-ring-color: color-mix(in srgb, var(--scient-slate) 68%, transparent);
+    background: color-mix(in oklch, var(--scient-stage-control-highlight) 18%, transparent);
   }
 
   .sidebar-stage-trigger svg {
-    stroke: var(--scient-slate) !important;
+    stroke: var(--scient-stage-control-line) !important;
     opacity: 1 !important;
-  }
-
-  .dark .scient-stage-art,
-  .dark .scient-stage-art-nightly {
-    background:
-      radial-gradient(
-        18rem 7rem at 82% -30%,
-        color-mix(in srgb, var(--scient-slate) 28%, transparent),
-        transparent 72%
-      ),
-      radial-gradient(
-        14rem 6rem at 14% 10%,
-        color-mix(in srgb, var(--scient-burgundy) 34%, transparent),
-        transparent 76%
-      ),
-      #1b1819;
   }
 
   .dark .scient-stage-watermark {
     opacity: 0.12;
-  }
-
-  .dark .sidebar-brand-on-stage {
-    color: var(--scient-warm-white);
-  }
-
-  .dark .sidebar-brand-stage-label {
-    color: color-mix(in srgb, var(--scient-warm-white) 64%, transparent);
-  }
-
-  .dark .sidebar-stage-trigger {
-    --tw-ring-offset-color: #1b1819;
-  }
-
-  .dark .sidebar-stage-trigger:is(:hover, [data-pressed]) {
-    background: color-mix(in srgb, var(--scient-warm-white) 10%, transparent);
-  }
-
-  .dark .sidebar-stage-trigger:focus-visible {
-    --tw-ring-color: color-mix(in srgb, var(--scient-warm-white) 72%, transparent);
-  }
-
-  .dark .sidebar-stage-trigger svg {
-    stroke: color-mix(in srgb, var(--scient-warm-white) 86%, transparent) !important;
   }
 
   /* Each maintainer palette gives the same line art its own material: rose

@@ -44,6 +44,16 @@ describe("SidebarStageBackdrop", () => {
 
       expect(markup.match(new RegExp(`data-scient-stage="${variant}"`, "g"))?.length).toBe(2);
       expect(markup).toContain("scient-stage-watermark");
+      expect(markup).toContain(
+        variant === "nightly"
+          ? "--scient-stage-top:var(--stage-night-top)"
+          : "--scient-stage-top:var(--stage-art-top)",
+      );
+      expect(markup).toContain(
+        variant === "nightly"
+          ? "--scient-stage-bottom:var(--stage-night-bottom)"
+          : "--scient-stage-bottom:var(--stage-art-bottom)",
+      );
       expect(markup).not.toContain("stage-blueprint");
       expect(markup).not.toContain("T3");
     },
