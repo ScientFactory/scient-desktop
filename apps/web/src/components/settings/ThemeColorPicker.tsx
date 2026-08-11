@@ -47,6 +47,16 @@ function themePickerAlphaSuffix(value: string): string {
   return alpha === "ff" ? "" : alpha;
 }
 
+export function resolveThemePickerHexCommit(
+  nextValue: string,
+  currentValue: string,
+): string | null {
+  // The popover edits RGB only. Keep transparency attached to the theme color,
+  // just as the plane, hue, and RGB controls do.
+  if (!/^#[0-9a-f]{6}$/i.test(nextValue)) return null;
+  return `${nextValue.toLowerCase()}${themePickerAlphaSuffix(currentValue)}`;
+}
+
 function normalizeThemePickerColor(value: string): string {
   return (themeColorToHex(value) ?? "#000000").slice(0, 7);
 }
@@ -273,11 +283,12 @@ function ThemeColorPickerPanel({
 
   const handleHexChange = (nextValue: string) => {
     setHexDraft(nextValue);
-    if (!/^#[0-9a-f]{6}$/i.test(nextValue)) return;
+    const nextColor = resolveThemePickerHexCommit(nextValue, value);
+    if (nextColor === null) return;
     const nextHsv = themeHexToHsv(nextValue);
     setHsv(nextHsv);
     setRgbDraft(themeRgbValue(nextValue));
-    onChange(nextValue.toLowerCase());
+    onChange(nextColor);
   };
 
   const handleRgbChange = (nextValue: string) => {

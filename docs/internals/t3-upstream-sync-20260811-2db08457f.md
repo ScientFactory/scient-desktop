@@ -79,16 +79,23 @@ Local verification on the exact merge parents completed:
 - frozen-lockfile installation
 - 105 focused theme/stage/shared/path/source-control/composer/error-banner tests
 - 48 focused stage/theme correction tests
+- 3 focused theme-picker alpha-preservation tests
 - `pnpm --filter @t3tools/web typecheck`
 - `pnpm --filter @t3tools/web build`
 - `pnpm exec vp fmt --check`
 - `pnpm exec vp lint --report-unused-disable-directives`
 - `pnpm run typecheck` (suggestions only; no errors)
+- `pnpm test` (all 18 tasks; 2,609 passing server tests and seven expected skips)
+- `pnpm build`
+- `pnpm test:desktop-smoke`
+- `pnpm release:smoke`
 - `pnpm brand:check`
+- `pnpm icons:check`
+- `pnpm lint:mobile` (native Swift/Kotlin linters unavailable locally and skipped)
 - `git diff --check`
 
-Hosted CI, full monorepo test/build, and manual UI acceptance remain PR gates
-and are not represented as complete by this record.
+Hosted CI on the corrected head and manual UI acceptance remain PR gates and
+are not represented as complete by this record.
 
 ## Publication boundary
 
