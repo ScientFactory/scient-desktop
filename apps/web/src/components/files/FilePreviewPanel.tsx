@@ -863,7 +863,7 @@ export default function FilePreviewPanel({
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
   const pdfSource = useMemo(
     () =>
-      absolutePath && relativePath
+      isPdf && absolutePath && relativePath
         ? workspacePdfSource({
             absolutePath,
             environmentId,
@@ -871,7 +871,7 @@ export default function FilePreviewPanel({
             threadId: threadRef.threadId,
           })
         : null,
-    [absolutePath, environmentId, relativePath, threadRef.threadId],
+    [absolutePath, environmentId, isPdf, relativePath, threadRef.threadId],
   );
   const breadcrumbs = useMemo(
     () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
