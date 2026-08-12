@@ -19,6 +19,7 @@ Scient release authority.
 - [Starting a project](./user/projects.md)
 - [File previews](./user/file-previews.md)
 - [Reading PDFs](./user/pdf-reader.md)
+- [Sources and Zotero import](./user/sources.md)
 - [Background service (Linux)](./user/background-service.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)
 
@@ -44,6 +45,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Scient project initialization](./internals/scient-project-initialization.md)
+- [Scient Sources foundation](./internals/scient-sources.md)
 - [Scient PDF export and rendering implementation plan](./internals/scient-pdf-export-rendering-plan.md)
 - [D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
@@ -53,6 +55,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
+- [Scient UX Lab](./development/scient-ux-lab.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)

@@ -211,6 +211,31 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps only the recognized Scient sources surface during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "scient:sources",
+            surfaces: [
+              { id: "scient:sources", kind: "scient", module: "sources" },
+              { id: "scient:unknown", kind: "scient", module: "unknown" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "scient:sources",
+          surfaces: [{ id: "scient:sources", kind: "scient", module: "sources" }],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -248,6 +273,17 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "files",
       surfaces: [{ id: "files", kind: "files" }],
+    });
+  });
+
+  it("keeps Sources as one generic Scient-owned module surface", () => {
+    useRightPanelStore.getState().openScient(refA, "sources");
+    useRightPanelStore.getState().openScient(refA, "sources");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "scient:sources",
+      surfaces: [{ id: "scient:sources", kind: "scient", module: "sources" }],
     });
   });
 

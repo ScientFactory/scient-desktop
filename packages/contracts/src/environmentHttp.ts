@@ -55,6 +55,20 @@ import {
   ScientProjectInitializationResult,
 } from "./scientProject.ts";
 import {
+  ScientSourceImportOperation,
+  ScientSourcesAdvanceImportRequest,
+  ScientSourcesBeginImportRequest,
+  ScientSourcesCancelImportRequest,
+  ScientSourcesOverviewResult,
+  ScientSourcesOverviewRequest,
+  ScientSourcesPreflightRequest,
+  ScientSourcesPreflightResult,
+  ZoteroConnectionStatus,
+  ZoteroLibraryPage,
+  ZoteroLibraryRequest,
+  ZoteroStatusRequest,
+} from "./scientSources.ts";
+import {
   ScientAnalyticsDeletionResult,
   ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
@@ -105,6 +119,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_dispatch_failed",
   "scient_project_inspection_failed",
   "scient_project_initialization_failed",
+  "scient_sources_operation_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
   "internal_error",
@@ -621,6 +636,64 @@ export class EnvironmentScientProjectHttpApi extends HttpApiGroup.make("scientPr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSources")
+  .add(
+    HttpApiEndpoint.post("overview", "/api/scient/sources/overview", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcesOverviewRequest,
+      success: ScientSourcesOverviewResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("zoteroStatus", "/api/scient/sources/zotero/status", {
+      headers: OptionalBearerHeaders,
+      payload: ZoteroStatusRequest,
+      success: ZoteroConnectionStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("zoteroLibrary", "/api/scient/sources/zotero/library", {
+      headers: OptionalBearerHeaders,
+      payload: ZoteroLibraryRequest,
+      success: ZoteroLibraryPage,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preflight", "/api/scient/sources/import/preflight", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcesPreflightRequest,
+      success: ScientSourcesPreflightResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("beginImport", "/api/scient/sources/import/begin", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcesBeginImportRequest,
+      success: ScientSourceImportOperation,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("advanceImport", "/api/scient/sources/import/advance", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcesAdvanceImportRequest,
+      success: ScientSourceImportOperation,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelImport", "/api/scient/sources/import/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcesCancelImportRequest,
+      success: ScientSourceImportOperation,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
   .add(
     HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
@@ -659,5 +732,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentScientProjectHttpApi)
+  .add(EnvironmentScientSourcesHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

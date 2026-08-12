@@ -110,13 +110,14 @@ describe("Scient General Chat policy", () => {
     ).toBe(true);
     expect(isScientGeneralChatRightPanelKindAllowed("diff")).toBe(false);
     expect(isScientGeneralChatRightPanelKindAllowed("pull-request")).toBe(false);
+    expect(isScientGeneralChatRightPanelKindAllowed("scient")).toBe(false);
   });
 
   it("closes workspace-bound surfaces after moving but preserves browser and agents", () => {
     expect(
-      ["file", "files", "terminal", "diff", "pull-request"].every((kind) =>
+      ["file", "files", "terminal", "diff", "pull-request", "scient"].every((kind) =>
         shouldCloseSurfaceAfterScientGeneralChatMove(
-          kind as "file" | "files" | "terminal" | "diff" | "pull-request",
+          kind as "file" | "files" | "terminal" | "diff" | "pull-request" | "scient",
         ),
       ),
     ).toBe(true);

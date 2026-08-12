@@ -1,0 +1,84 @@
+import type {
+  ScientSourceCandidate,
+  ScientSourceMetadataDiagnostic,
+  ScientSourceRecord,
+  ScientSourceType,
+} from "./model.ts";
+
+const ZOTERO_TYPE_MAP: Readonly<Record<string, ScientSourceType>> = {
+  journalArticle: "article",
+  magazineArticle: "article",
+  newspaperArticle: "article",
+  preprint: "preprint",
+  book: "book",
+  bookSection: "book-chapter",
+  conferencePaper: "conference-paper",
+  thesis: "thesis",
+  report: "report",
+  dataset: "dataset",
+  webpage: "web",
+  blogPost: "web",
+  forumPost: "web",
+};
+
+export function scientSourceTypeFromZotero(itemType: string): ScientSourceType {
+  return ZOTERO_TYPE_MAP[itemType] ?? "other";
+}
+
+function normalized(value: string | null): string {
+  return value?.trim().toLocaleLowerCase().replace(/\s+/gu, " ") ?? "";
+}
+
+export function sourceMetadataKey(
+  source: ScientSourceCandidate | ScientSourceRecord,
+): string | null {
+  const leadCreator = source.creators.at(0);
+  const creator =
+    leadCreator?.familyName ?? leadCreator?.literalName ?? leadCreator?.givenName ?? "";
+  const title = normalized(source.title);
+  const normalizedCreator = normalized(creator);
+  if (!title || !normalizedCreator || source.issuedYear === null) return null;
+  return [title, normalizedCreator, source.issuedYear].join("|");
+}
+
+export function sourceMetadataDiagnostics(
+  source: ScientSourceCandidate | ScientSourceRecord,
+): ReadonlyArray<ScientSourceMetadataDiagnostic> {
+  const diagnostics: ScientSourceMetadataDiagnostic[] = [];
+  if (!source.title?.trim()) {
+    diagnostics.push({ field: "title", severity: "warning", message: "Title is missing." });
+  }
+  if (source.creators.length === 0) {
+    diagnostics.push({ field: "creators", severity: "warning", message: "Creator is missing." });
+  }
+  if (source.issuedYear === null) {
+    diagnostics.push({
+      field: "issuedYear",
+      severity: "info",
+      message: "Publication year is missing.",
+    });
+  }
+  if (source.identifiers.length === 0) {
+    diagnostics.push({
+      field: "identifiers",
+      severity: "info",
+      message: "No persistent identifier was supplied.",
+    });
+  }
+  return diagnostics;
+}
+
+export function normalizePersistentIdentifier(scheme: string, value: string): string {
+  const normalizedScheme = scheme.trim().toLocaleLowerCase();
+  let normalizedValue = value.trim().toLocaleLowerCase();
+  if (normalizedScheme === "doi") {
+    normalizedValue = normalizedValue
+      .replace(/^https?:\/\/(?:dx\.)?doi\.org\//u, "")
+      .replace(/^doi:\s*/u, "");
+  } else if (normalizedScheme === "isbn" || normalizedScheme === "issn") {
+    normalizedValue = normalizedValue.replace(/[\s-]+/gu, "");
+  } else if (normalizedScheme === "pmid") {
+    normalizedValue = normalizedValue.replace(/^pmid:\s*/u, "").replace(/\s+/gu, "");
+  }
+  return `${normalizedScheme}:${normalizedValue}`;
+}

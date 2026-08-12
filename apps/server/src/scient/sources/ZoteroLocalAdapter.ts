@@ -1,0 +1,366 @@
+// @effect-diagnostics nodeBuiltinImport:off -- This is the fixed-loopback Zotero transport boundary.
+import * as NodeHttp from "node:http";
+import * as NodeURL from "node:url";
+
+import {
+  scientSourceTypeFromZotero,
+  type ScientSourceCandidate,
+  type ScientSourceCreator,
+  type ScientSourceFieldProvenance,
+  type ScientSourceIdentifier,
+  type ZoteroConnectionStatus,
+  type ZoteroLibraryPage,
+} from "@scientfactory/scient-sources";
+import * as Schema from "effect/Schema";
+
+const ZOTERO_HOST = "127.0.0.1";
+const ZOTERO_PORT = 23_119;
+const ZOTERO_API_VERSION = 3;
+const REQUEST_TIMEOUT_MS = 4_000;
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_PAGE_SIZE = 100;
+const ITEM_KEY_PATTERN = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/u;
+
+const ZoteroRawCreator = Schema.Struct({
+  creatorType: Schema.optionalKey(Schema.String),
+  firstName: Schema.optionalKey(Schema.String),
+  lastName: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+});
+
+const ZoteroRawItemData = Schema.Struct({
+  key: Schema.String,
+  version: Schema.Int,
+  itemType: Schema.String,
+  title: Schema.optionalKey(Schema.String),
+  creators: Schema.optionalKey(Schema.Array(ZoteroRawCreator)),
+  date: Schema.optionalKey(Schema.String),
+  DOI: Schema.optionalKey(Schema.String),
+  ISBN: Schema.optionalKey(Schema.String),
+  ISSN: Schema.optionalKey(Schema.String),
+  PMID: Schema.optionalKey(Schema.String),
+  abstractNote: Schema.optionalKey(Schema.String),
+  publicationTitle: Schema.optionalKey(Schema.String),
+  bookTitle: Schema.optionalKey(Schema.String),
+  proceedingsTitle: Schema.optionalKey(Schema.String),
+  publisher: Schema.optionalKey(Schema.String),
+  volume: Schema.optionalKey(Schema.String),
+  issue: Schema.optionalKey(Schema.String),
+  pages: Schema.optionalKey(Schema.String),
+  language: Schema.optionalKey(Schema.String),
+  url: Schema.optionalKey(Schema.String),
+  tags: Schema.optionalKey(Schema.Array(Schema.Struct({ tag: Schema.String }))),
+  contentType: Schema.optionalKey(Schema.String),
+  filename: Schema.optionalKey(Schema.String),
+  linkMode: Schema.optionalKey(Schema.String),
+});
+
+const ZoteroRawItem = Schema.Struct({
+  key: Schema.String,
+  version: Schema.Int,
+  library: Schema.Struct({
+    type: Schema.String,
+    id: Schema.Union([Schema.String, Schema.Number]),
+  }),
+  data: ZoteroRawItemData,
+});
+
+const ZoteroRawItems = Schema.Array(ZoteroRawItem);
+const decodeZoteroRawItem = Schema.decodeUnknownSync(ZoteroRawItem);
+const decodeZoteroRawItems = Schema.decodeUnknownSync(ZoteroRawItems);
+type ZoteroRawItem = typeof ZoteroRawItem.Type;
+
+interface LocalResponse {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+  readonly body: string;
+}
+
+function localRequest(path: string): Promise<LocalResponse> {
+  if (!path.startsWith("/api/")) throw new Error("Zotero path must remain under the local API.");
+  return new Promise((resolve, reject) => {
+    const request = NodeHttp.request(
+      {
+        host: ZOTERO_HOST,
+        port: ZOTERO_PORT,
+        method: "GET",
+        path,
+        headers: {
+          Accept: "application/json",
+          "Zotero-API-Version": String(ZOTERO_API_VERSION),
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        response.on("data", (chunk: Buffer) => {
+          bytes += chunk.byteLength;
+          if (bytes > MAX_RESPONSE_BYTES) {
+            request.destroy(new Error("Zotero returned more data than Scient can safely accept."));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          const headers: Record<string, string | undefined> = {};
+          for (const [name, value] of Object.entries(response.headers)) {
+            headers[name.toLocaleLowerCase()] = Array.isArray(value) ? value[0] : value;
+          }
+          resolve({
+            status: response.statusCode ?? 0,
+            headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      },
+    );
+    request.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error("Timed out while contacting Zotero."));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function text(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function creator(raw: typeof ZoteroRawCreator.Type): ScientSourceCreator | null {
+  const givenName = text(raw.firstName);
+  const familyName = text(raw.lastName);
+  const literalName = text(raw.name);
+  if (!givenName && !familyName && !literalName) return null;
+  return {
+    creatorType: text(raw.creatorType) ?? "author",
+    givenName,
+    familyName,
+    literalName,
+  };
+}
+
+function publicationYear(date: string | undefined): number | null {
+  const match = date?.match(/(?:^|\D)(1[5-9]\d{2}|20\d{2}|21\d{2})(?:\D|$)/u);
+  return match?.[1] ? Number.parseInt(match[1], 10) : null;
+}
+
+function identifiers(data: ZoteroRawItem["data"]): ReadonlyArray<ScientSourceIdentifier> {
+  return [
+    ["doi", data.DOI],
+    ["isbn", data.ISBN],
+    ["issn", data.ISSN],
+    ["pmid", data.PMID],
+  ].flatMap(([scheme, value]) => {
+    const normalized = text(value);
+    return normalized && scheme ? [{ scheme, value: normalized }] : [];
+  });
+}
+
+function provenance(data: ZoteroRawItem["data"]): ReadonlyArray<ScientSourceFieldProvenance> {
+  const containerField = data.publicationTitle
+    ? "publicationTitle"
+    : data.bookTitle
+      ? "bookTitle"
+      : data.proceedingsTitle
+        ? "proceedingsTitle"
+        : null;
+  const fields: ReadonlyArray<readonly [string, string, boolean]> = [
+    ["title", "title", text(data.title) !== null],
+    ["creators", "creators", (data.creators ?? []).length > 0],
+    ["issuedRaw", "date", text(data.date) !== null],
+    ["abstract", "abstractNote", text(data.abstractNote) !== null],
+    ["publisher", "publisher", text(data.publisher) !== null],
+    ["volume", "volume", text(data.volume) !== null],
+    ["issue", "issue", text(data.issue) !== null],
+    ["pages", "pages", text(data.pages) !== null],
+    ["language", "language", text(data.language) !== null],
+    ["url", "url", text(data.url) !== null],
+    ["tags", "tags", (data.tags ?? []).some((tag) => tag.tag.trim().length > 0)],
+    ["identifiers.doi", "DOI", text(data.DOI) !== null],
+    ["identifiers.isbn", "ISBN", text(data.ISBN) !== null],
+    ["identifiers.issn", "ISSN", text(data.ISSN) !== null],
+    ["identifiers.pmid", "PMID", text(data.PMID) !== null],
+  ];
+  const result = fields
+    .filter(([, , present]) => present)
+    .map(([field, sourceField]) => ({ field, origin: "zotero" as const, sourceField }));
+  if (containerField) {
+    result.push({ field: "containerTitle", origin: "zotero", sourceField: containerField });
+  }
+  return result;
+}
+
+export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate {
+  const data = raw.data;
+  return {
+    type: scientSourceTypeFromZotero(data.itemType),
+    title: text(data.title),
+    creators: (data.creators ?? []).flatMap((value) => {
+      const normalized = creator(value);
+      return normalized ? [normalized] : [];
+    }),
+    issuedRaw: text(data.date),
+    issuedYear: publicationYear(data.date),
+    identifiers: identifiers(data),
+    abstract: text(data.abstractNote),
+    containerTitle: text(data.publicationTitle ?? data.bookTitle ?? data.proceedingsTitle),
+    publisher: text(data.publisher),
+    volume: text(data.volume),
+    issue: text(data.issue),
+    pages: text(data.pages),
+    language: text(data.language),
+    url: text(data.url),
+    tags: (data.tags ?? []).map((tag) => tag.tag.trim()).filter(Boolean),
+    externalReference: {
+      system: "zotero",
+      libraryId: String(raw.library.id),
+      itemKey: raw.key,
+      itemVersion: raw.version,
+      rawItemType: data.itemType,
+    },
+    fieldProvenance: provenance(data),
+    pdfAvailable: false,
+    pdfFileName: null,
+  };
+}
+
+function decodeItems(body: string): ReadonlyArray<ZoteroRawItem> {
+  const value: unknown = JSON.parse(body);
+  return decodeZoteroRawItems(value);
+}
+
+function assertReady(response: LocalResponse): void {
+  if (response.status === 403) throw new Error("ZOTERO_ACCESS_DISABLED");
+  if (response.status === 501) throw new Error("ZOTERO_INCOMPATIBLE");
+  if (response.status !== 200) throw new Error(`Zotero returned HTTP ${response.status}.`);
+  const version = Number.parseInt(response.headers["zotero-api-version"] ?? "", 10);
+  if (version !== ZOTERO_API_VERSION) throw new Error("ZOTERO_INCOMPATIBLE");
+}
+
+export async function inspectZoteroConnection(): Promise<ZoteroConnectionStatus> {
+  let response: LocalResponse;
+  try {
+    response = await localRequest("/api/");
+  } catch {
+    return {
+      state: "unreachable",
+      apiVersion: null,
+      message: "Scient can’t reach Zotero. Open Zotero and check again, or get Zotero.",
+    };
+  }
+  const version = Number.parseInt(response.headers["zotero-api-version"] ?? "", 10);
+  if (response.status === 403) {
+    return {
+      state: "access-disabled",
+      apiVersion: Number.isFinite(version) ? version : null,
+      message: "Allow other applications to communicate with Zotero, then check again.",
+    };
+  }
+  if (response.status === 501 || (Number.isFinite(version) && version !== ZOTERO_API_VERSION)) {
+    return {
+      state: "incompatible",
+      apiVersion: Number.isFinite(version) ? version : null,
+      message: "This Zotero local API version is not compatible with Scient.",
+    };
+  }
+  if (response.status !== 200 || !Number.isFinite(version)) {
+    return {
+      state: "malformed",
+      apiVersion: null,
+      message: "Zotero responded, but Scient could not validate the local API.",
+    };
+  }
+  return { state: "ready", apiVersion: version, message: "Zotero is ready for local import." };
+}
+
+export async function listZoteroLibrary(input: {
+  readonly query: string;
+  readonly start: number;
+  readonly limit: number;
+}): Promise<ZoteroLibraryPage> {
+  const start = Math.max(0, Math.trunc(input.start));
+  const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(input.limit)));
+  const parameters = new URLSearchParams({
+    format: "json",
+    itemType: "-attachment",
+    limit: String(limit),
+    start: String(start),
+    sort: "dateModified",
+    direction: "desc",
+  });
+  const query = input.query.trim();
+  if (query) parameters.set("q", query);
+  const response = await localRequest(`/api/users/0/items/top?${parameters.toString()}`);
+  assertReady(response);
+  const rawItems = decodeItems(response.body);
+  const items = rawItems
+    .filter((item) => item.data.itemType !== "note" && item.data.itemType !== "annotation")
+    .map(zoteroItemToCandidate);
+  const reportedTotal = Number.parseInt(
+    response.headers["total-results"] ?? String(items.length),
+    10,
+  );
+  const total = Number.isFinite(reportedTotal) && reportedTotal >= 0 ? reportedTotal : items.length;
+  return {
+    items,
+    start,
+    nextStart: start + rawItems.length,
+    total,
+    hasMore: start + rawItems.length < total,
+  };
+}
+
+async function readZoteroItemWithChildren(itemKey: string): Promise<{
+  readonly item: ZoteroRawItem;
+  readonly children: ReadonlyArray<ZoteroRawItem>;
+}> {
+  if (!ITEM_KEY_PATTERN.test(itemKey)) throw new Error("The Zotero item key is invalid.");
+  const [itemResponse, childrenResponse] = await Promise.all([
+    localRequest(`/api/users/0/items/${itemKey}?format=json`),
+    localRequest(`/api/users/0/items/${itemKey}/children?format=json`),
+  ]);
+  assertReady(itemResponse);
+  assertReady(childrenResponse);
+  const value: unknown = JSON.parse(itemResponse.body);
+  const item = decodeZoteroRawItem(value);
+  const children = decodeItems(childrenResponse.body);
+  return { item, children };
+}
+
+function firstPdf(children: ReadonlyArray<ZoteroRawItem>): ZoteroRawItem | undefined {
+  return children.find(
+    (child) =>
+      child.data.itemType === "attachment" &&
+      child.data.contentType?.toLocaleLowerCase() === "application/pdf",
+  );
+}
+
+export async function getZoteroItem(itemKey: string): Promise<ScientSourceCandidate> {
+  const { item, children } = await readZoteroItemWithChildren(itemKey);
+  const pdf = firstPdf(children);
+  return {
+    ...zoteroItemToCandidate(item),
+    pdfAvailable: pdf !== undefined,
+    pdfFileName: pdf ? text(pdf.data.filename) : null,
+  };
+}
+
+export async function getZoteroImportMaterial(itemKey: string): Promise<{
+  readonly candidate: ScientSourceCandidate;
+  readonly pdfPath: string | null;
+}> {
+  const { item, children } = await readZoteroItemWithChildren(itemKey);
+  const pdf = firstPdf(children);
+  const candidate: ScientSourceCandidate = {
+    ...zoteroItemToCandidate(item),
+    pdfAvailable: pdf !== undefined,
+    pdfFileName: pdf ? text(pdf.data.filename) : null,
+  };
+  if (!pdf) return { candidate, pdfPath: null };
+  const response = await localRequest(`/api/users/0/items/${pdf.key}/file/view/url`);
+  assertReady(response);
+  const url = new URL(response.body.trim());
+  if (url.protocol !== "file:") throw new Error("Zotero returned a non-local attachment URL.");
+  return { candidate, pdfPath: NodeURL.fileURLToPath(url) };
+}
