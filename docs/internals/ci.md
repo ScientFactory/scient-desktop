@@ -2,8 +2,22 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs four jobs on pull requests and
-pushes to `main`:
+CI separates documentation-only validation from the full product suite. A change is
+documentation-only when every changed path is either under `docs/` or is a Markdown file. Those
+changes run the lightweight [`documentation.yml`](../../.github/workflows/documentation.yml)
+workflow instead of the full suite, both on pull requests and after merge to `main`. It checks:
+
+- whitespace errors in the change;
+- formatting of changed Markdown files;
+- existence of changed Markdown files' local link targets; and
+- the local-link checker's own Node test suite.
+
+External links and in-document anchors are outside this fast check. A mixed documentation and code
+change still runs the full suite, and changes to the documentation workflow or its checker run both
+workflows.
+
+For all non-documentation-only changes, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
+runs four jobs on pull requests and pushes to `main`:
 
 - **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
