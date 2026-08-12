@@ -2,10 +2,13 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import { executionOutputContentParts } from "@scientfactory/execution";
+import { initializeScientProject } from "@scientfactory/project-init";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   AuthAccessTokenType,
+  AnalysisSourceRevision,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
@@ -56,6 +59,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -4824,6 +4828,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         contents: "export const answer = 42;\n",
         byteLength: 26,
         truncated: false,
+        revision: `sha256:${NodeCrypto.createHash("sha256")
+          .update("export const answer = 42;\n")
+          .digest("hex")}`,
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
@@ -5052,6 +5059,311 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("runs a project-owned MATLAB file through the analysis RPC and streams output", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-rpc-project-",
+      });
+      const runtimeDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-rpc-runtime-",
+      });
+      const matlabExecutable = path.join(runtimeDir, "matlab");
+      const sourcePath = path.join(workspaceDir, "analysis.m");
+      yield* Effect.promise(() =>
+        initializeScientProject({ root: workspaceDir, title: "MATLAB RPC Test" }),
+      );
+      yield* fs.writeFileString(sourcePath, "disp('scient-analysis-ok');\n");
+      yield* fs.writeFileString(
+        matlabExecutable,
+        [
+          "#!/usr/bin/env node",
+          "const fs = require('node:fs');",
+          "const source = process.env.SCIENT_MATLAB_ENTRYPOINT;",
+          "if (!source || !fs.readFileSync(source, 'utf8').includes('scient-analysis-ok')) process.exit(2);",
+          "console.log('stdout:scient-analysis-ok');",
+          "console.error('stderr:diagnostic');",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.chmod(matlabExecutable, 0o755);
+
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const terminalRun = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+              cwd: workspaceDir,
+              runtimeKind: "matlab",
+              executablePath: matlabExecutable,
+            });
+            assert.equal(inspection.runtimes[0]?.availability, "available");
+            const source = yield* client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "analysis.m",
+            });
+            const started = yield* client[WS_METHODS.analysisStartRun]({
+              cwd: workspaceDir,
+              relativePath: "analysis.m",
+              sourceRevision: AnalysisSourceRevision.make(source.revision),
+              runtimeId: inspection.runtimes[0]!.id,
+            });
+            const events = yield* client[WS_METHODS.subscribeAnalysisRuns]({
+              cwd: workspaceDir,
+              relativePath: "analysis.m",
+            }).pipe(
+              Stream.filterMap((event) =>
+                event._tag === "run-updated" && event.run.receipt.runId === started.receipt.runId
+                  ? Result.succeed(event.run)
+                  : Result.failVoid,
+              ),
+              Stream.takeUntil((run) =>
+                ["succeeded", "failed", "cancelled", "lost"].includes(run.receipt.status),
+              ),
+              Stream.runCollect,
+              Effect.timeoutOrElse({
+                duration: "10 seconds",
+                orElse: () => Effect.die(new Error("Timed out waiting for MATLAB run output.")),
+              }),
+            );
+            const terminal = events.at(-1)!;
+            const listed = yield* client[WS_METHODS.analysisListRuns]({
+              cwd: workspaceDir,
+              relativePath: "analysis.m",
+            });
+            assert.isFalse("output" in listed.runs[0]!.receipt);
+            assert.equal(terminal.receipt.status, "succeeded");
+            return yield* client[WS_METHODS.analysisGetRun]({
+              cwd: workspaceDir,
+              runId: started.receipt.runId,
+            });
+          }),
+        ),
+      );
+
+      assert.equal(terminalRun.receipt.status, "succeeded");
+      assert.equal(terminalRun.receipt.exitCode, 0);
+      const outputHash = NodeCrypto.createHash("sha256");
+      for (const part of executionOutputContentParts(terminalRun.receipt.output)) {
+        outputHash.update(part, "utf8");
+      }
+      assert.equal(terminalRun.receipt.outputContentHash, `sha256:${outputHash.digest("hex")}`);
+      const output = terminalRun.receipt.output.map((chunk) => chunk.text).join("");
+      assert.include(output, "stdout:scient-analysis-ok");
+      assert.include(output, "stderr:diagnostic");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("refuses to run a MATLAB source revision that changed after it was opened", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-stale-source-",
+      });
+      const runtimeDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-stale-runtime-",
+      });
+      const matlabExecutable = path.join(runtimeDir, "matlab");
+      yield* Effect.promise(() => initializeScientProject({ root: workspaceDir }));
+      yield* fs.writeFileString(path.join(workspaceDir, "analysis.m"), "answer = 1;\n");
+      yield* fs.writeFileString(matlabExecutable, "#!/usr/bin/env node\nprocess.exit(0);\n");
+      yield* fs.chmod(matlabExecutable, 0o755);
+
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+              cwd: workspaceDir,
+              runtimeKind: "matlab",
+              executablePath: matlabExecutable,
+            });
+            const opened = yield* client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "analysis.m",
+            });
+            yield* fs.writeFileString(path.join(workspaceDir, "analysis.m"), "answer = 2;\n");
+            return yield* client[WS_METHODS.analysisStartRun]({
+              cwd: workspaceDir,
+              relativePath: "analysis.m",
+              sourceRevision: AnalysisSourceRevision.make(opened.revision),
+              runtimeId: inspection.runtimes[0]!.id,
+            }).pipe(Effect.result);
+          }),
+        ),
+      );
+
+      assert.isTrue(result._tag === "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "AnalysisOperationError");
+        if (result.failure._tag === "AnalysisOperationError") {
+          assert.equal(result.failure.reason, "source-changed");
+        }
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("bounds persisted and streamed MATLAB output without losing terminal state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-bounded-output-project-",
+      });
+      const runtimeDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-bounded-output-runtime-",
+      });
+      const matlabExecutable = path.join(runtimeDir, "matlab");
+      yield* Effect.promise(() => initializeScientProject({ root: workspaceDir }));
+      yield* fs.writeFileString(path.join(workspaceDir, "verbose.m"), "disp('verbose');\n");
+      yield* fs.writeFileString(
+        matlabExecutable,
+        "#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(5 * 1024 * 1024));\n",
+      );
+      yield* fs.chmod(matlabExecutable, 0o755);
+
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const completed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+              cwd: workspaceDir,
+              runtimeKind: "matlab",
+              executablePath: matlabExecutable,
+            });
+            const source = yield* client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "verbose.m",
+            });
+            const started = yield* client[WS_METHODS.analysisStartRun]({
+              cwd: workspaceDir,
+              relativePath: "verbose.m",
+              sourceRevision: AnalysisSourceRevision.make(source.revision),
+              runtimeId: inspection.runtimes[0]!.id,
+            });
+            yield* client[WS_METHODS.subscribeAnalysisRuns]({
+              cwd: workspaceDir,
+              relativePath: "verbose.m",
+            }).pipe(
+              Stream.filter(
+                (event) =>
+                  event._tag === "run-updated" &&
+                  event.run.receipt.runId === started.receipt.runId &&
+                  ["succeeded", "failed", "cancelled", "lost"].includes(event.run.receipt.status),
+              ),
+              Stream.runHead,
+              Effect.timeoutOrElse({
+                duration: "10 seconds",
+                orElse: () => Effect.die(new Error("Timed out waiting for bounded MATLAB output.")),
+              }),
+            );
+            return yield* client[WS_METHODS.analysisGetRun]({
+              cwd: workspaceDir,
+              runId: started.receipt.runId,
+            });
+          }),
+        ),
+      );
+
+      assert.equal(completed.receipt.status, "succeeded");
+      assert.equal(completed.receipt.outputByteLength, 4 * 1024 * 1024);
+      assert.isTrue(completed.receipt.outputTruncated);
+      assert.include(
+        completed.receipt.output.map((chunk) => chunk.text).join(""),
+        "Output was truncated at the 4194304-byte limit.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("cancels a MATLAB run even when Stop races process startup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-cancel-project-",
+      });
+      const runtimeDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-matlab-cancel-runtime-",
+      });
+      const matlabExecutable = path.join(runtimeDir, "matlab");
+      yield* Effect.promise(() => initializeScientProject({ root: workspaceDir }));
+      yield* fs.writeFileString(path.join(workspaceDir, "slow.m"), "pause(60);\n");
+      yield* fs.writeFileString(
+        matlabExecutable,
+        "#!/usr/bin/env node\nconsole.log('runtime-started');\nsetInterval(() => {}, 1000);\n",
+      );
+      yield* fs.chmod(matlabExecutable, 0o755);
+
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const terminalRun = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+              cwd: workspaceDir,
+              runtimeKind: "matlab",
+              executablePath: matlabExecutable,
+            });
+            const source = yield* client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "slow.m",
+            });
+            const started = yield* client[WS_METHODS.analysisStartRun]({
+              cwd: workspaceDir,
+              relativePath: "slow.m",
+              sourceRevision: AnalysisSourceRevision.make(source.revision),
+              runtimeId: inspection.runtimes[0]!.id,
+            });
+            const duplicate = yield* client[WS_METHODS.analysisStartRun]({
+              cwd: workspaceDir,
+              relativePath: "slow.m",
+              sourceRevision: AnalysisSourceRevision.make(source.revision),
+              runtimeId: inspection.runtimes[0]!.id,
+            }).pipe(Effect.result);
+            assert.equal(duplicate._tag, "Failure");
+            if (duplicate._tag === "Failure") {
+              assert.equal(duplicate.failure._tag, "AnalysisOperationError");
+              if (duplicate.failure._tag === "AnalysisOperationError") {
+                assert.equal(duplicate.failure.reason, "run-already-active");
+              }
+            }
+            yield* client[WS_METHODS.analysisCancelRun]({
+              cwd: workspaceDir,
+              runId: started.receipt.runId,
+            });
+            const events = yield* client[WS_METHODS.subscribeAnalysisRuns]({
+              cwd: workspaceDir,
+              relativePath: "slow.m",
+            }).pipe(
+              Stream.filterMap((event) =>
+                event._tag === "run-updated" && event.run.receipt.runId === started.receipt.runId
+                  ? Result.succeed(event.run)
+                  : Result.failVoid,
+              ),
+              Stream.takeUntil((run) =>
+                ["succeeded", "failed", "cancelled", "lost"].includes(run.receipt.status),
+              ),
+              Stream.runCollect,
+              Effect.timeoutOrElse({
+                duration: "10 seconds",
+                orElse: () => Effect.die(new Error("Timed out waiting for MATLAB cancellation.")),
+              }),
+            );
+            return events.at(-1)!;
+          }),
+        ),
+      );
+
+      assert.equal(terminalRun.receipt.status, "cancelled");
+      assert.isTrue(terminalRun.receipt.cancellationRequested);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("creates a missing workspace root during websocket project.create dispatch", () =>

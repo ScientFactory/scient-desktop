@@ -93,6 +93,7 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES } from "./scient/generalChat/ServerCapability.ts";
 import { ensureScientGeneralChatMoveHasNoRunningTerminals } from "./scient/generalChat/MoveCoordinator.ts";
 import { validateScientGeneralChatTerminalOpen } from "./scient/generalChat/TerminalPolicy.ts";
@@ -250,6 +251,7 @@ function projectFileFailureContext(
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  readonly currentRevision?: string;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
@@ -271,6 +273,12 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceFileRevisionConflictError":
+      return {
+        failure: "revision_conflict",
+        resolvedPath: error.resolvedPath,
+        currentRevision: error.currentRevision,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -402,6 +410,7 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const analysis = yield* AnalysisService.AnalysisService;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
@@ -1920,6 +1929,34 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.analysisInspectRuntimes]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisInspectRuntimes, analysis.inspectRuntimes(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisConfigureRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisConfigureRuntime, analysis.configureRuntime(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisStartRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisStartRun, analysis.startRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisCancelRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisCancelRun, analysis.cancelRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisListRuns]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisListRuns, analysis.listRuns(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisGetRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisGetRun, analysis.getRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.subscribeAnalysisRuns]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.subscribeAnalysisRuns, analysis.subscribeRuns(input), {
+            "rpc.aggregate": "analysis",
+          }),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
@@ -2429,6 +2466,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const analysis = yield* AnalysisService.AnalysisService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2476,6 +2514,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

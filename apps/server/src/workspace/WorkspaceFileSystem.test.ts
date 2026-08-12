@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -69,6 +70,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "export const answer = 42;\n",
           byteLength: 26,
           truncated: false,
+          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
         });
       }),
     );
@@ -227,7 +229,10 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .readFileString(path.join(cwd, "plans/effect-rpc.md"))
           .pipe(Effect.orDie);
 
-        expect(result).toEqual({ relativePath: "plans/effect-rpc.md" });
+        expect(result).toEqual({
+          relativePath: "plans/effect-rpc.md",
+          revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        });
         expect(saved).toBe("# Plan\n");
       }),
     );
@@ -282,6 +287,141 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("refuses to overwrite a file that changed after it was opened", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "analysis.m" });
+
+        yield* fileSystem.writeFileString(path.join(cwd, "analysis.m"), "answer = 2;\n");
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "analysis.m",
+            contents: "answer = 3;\n",
+            expectedRevision: opened.revision,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(error).toMatchObject({ relativePath: "analysis.m" });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "analysis.m"))).toBe(
+          "answer = 2;\n",
+        );
+      }),
+    );
+
+    it.effect("returns the revision produced by a conditional atomic write", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "analysis.m" });
+
+        const written = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "analysis.m",
+          contents: "answer = 2;\n",
+          expectedRevision: opened.revision,
+        });
+        const reread = yield* workspaceFileSystem.readFile({ cwd, relativePath: "analysis.m" });
+
+        expect(written.revision).toBe(reread.revision);
+        expect(reread.contents).toBe("answer = 2;\n");
+      }),
+    );
+
+    it.effect("allows only one concurrent write against the same source revision", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "analysis.m" });
+
+        const results = yield* Effect.all(
+          [
+            workspaceFileSystem
+              .writeFile({
+                cwd,
+                relativePath: "analysis.m",
+                contents: "answer = 2;\n",
+                expectedRevision: opened.revision,
+              })
+              .pipe(Effect.result),
+            workspaceFileSystem
+              .writeFile({
+                cwd,
+                relativePath: "analysis.m",
+                contents: "answer = 3;\n",
+                expectedRevision: opened.revision,
+              })
+              .pipe(Effect.result),
+          ],
+          { concurrency: 2 },
+        );
+
+        expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+        const failure = results.find((result) => result._tag === "Failure");
+        expect(failure?._tag).toBe("Failure");
+        if (failure?._tag === "Failure") {
+          expect(failure.failure).toBeInstanceOf(
+            WorkspaceFileSystem.WorkspaceFileRevisionConflictError,
+          );
+        }
+      }),
+    );
+
+    it.effect("preserves executable permissions when atomically replacing a source file", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const sourcePath = path.join(cwd, "analysis.m");
+        yield* writeTextFile(cwd, "analysis.m", "answer = 1;\n");
+        yield* fileSystem.chmod(sourcePath, 0o755);
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "analysis.m" });
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "analysis.m",
+          contents: "answer = 2;\n",
+          expectedRevision: opened.revision,
+        });
+
+        expect((yield* fileSystem.stat(sourcePath)).mode & 0o777).toBe(0o755);
+      }),
+    );
+
+    it.effect("preserves in-project symlinks when conditionally saving their target", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const targetPath = path.join(cwd, "src", "analysis.m");
+        const linkPath = path.join(cwd, "analysis.m");
+        yield* writeTextFile(cwd, "src/analysis.m", "answer = 1;\n");
+        yield* fileSystem.symlink(targetPath, linkPath);
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "analysis.m" });
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "analysis.m",
+          contents: "answer = 2;\n",
+          expectedRevision: opened.revision,
+        });
+
+        expect(yield* fileSystem.readLink(linkPath)).toBe(targetPath);
+        expect(yield* fileSystem.readFileString(targetPath)).toBe("answer = 2;\n");
       }),
     );
   });

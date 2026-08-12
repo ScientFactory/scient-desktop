@@ -27,7 +27,9 @@ describe("FileSaveCoordinator", () => {
     const onConfirmed = vi.fn();
     const coordinator = new FileSaveCoordinator({
       debounceMs: 500,
+      initialRevision: "revision-1",
       persist,
+      revisionFromResult: () => "revision-2",
       onPendingChange,
       onConfirmed,
     });
@@ -40,8 +42,8 @@ describe("FileSaveCoordinator", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(persist).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith("latest");
-    expect(onConfirmed).toHaveBeenCalledWith("latest");
+    expect(persist).toHaveBeenCalledWith("latest", "revision-1");
+    expect(onConfirmed).toHaveBeenCalledWith("latest", undefined);
     expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
   });
 
@@ -55,7 +57,9 @@ describe("FileSaveCoordinator", () => {
     const onPendingChange = vi.fn();
     const coordinator = new FileSaveCoordinator({
       debounceMs: 500,
+      initialRevision: "revision-1",
       persist,
+      revisionFromResult: () => "revision-2",
       onPendingChange,
       onConfirmed: vi.fn(),
     });
@@ -69,7 +73,7 @@ describe("FileSaveCoordinator", () => {
     firstWrite.resolve(AsyncResult.success(undefined));
     await vi.runAllTimersAsync();
     expect(persist).toHaveBeenCalledTimes(2);
-    expect(persist).toHaveBeenLastCalledWith("latest");
+    expect(persist).toHaveBeenLastCalledWith("latest", "revision-2");
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
   });
 
@@ -78,10 +82,12 @@ describe("FileSaveCoordinator", () => {
     const onPendingChange = vi.fn();
     const coordinator = new FileSaveCoordinator({
       debounceMs: 500,
+      initialRevision: "revision-1",
       persist: vi
         .fn()
         .mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("write failed")))),
       onPendingChange,
+      revisionFromResult: () => "revision-2",
       onConfirmed: vi.fn(),
     });
 
@@ -90,5 +96,28 @@ describe("FileSaveCoordinator", () => {
     await Promise.resolve();
     expect(onPendingChange).toHaveBeenCalledWith(true);
     expect(onPendingChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("adopts external revisions only while there is no pending local edit", async () => {
+    vi.useFakeTimers();
+    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      initialRevision: "revision-1",
+      persist,
+      revisionFromResult: () => "revision-4",
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.syncConfirmedFileRevision("revision-2");
+    coordinator.change("local edit");
+    coordinator.syncConfirmedFileRevision("revision-3");
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(persist).toHaveBeenCalledWith("local edit", "revision-2");
+    coordinator.dispose();
+    await vi.runAllTimersAsync();
+    expect(persist).toHaveBeenCalledOnce();
   });
 });

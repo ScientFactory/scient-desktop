@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   ProjectListEntriesResult,
@@ -12,7 +13,6 @@ import { useCallback } from "react";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(
@@ -49,14 +49,26 @@ export function setProjectFileQueryData(
   cwd: string,
   relativePath: string,
   contents: string,
+  revision?: string,
 ): void {
-  appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), {
+  const optimisticAtom = optimisticFileAtom(environmentId, cwd, relativePath);
+  const currentRevision =
+    revision ??
+    appAtomRegistry.get(optimisticAtom)?.data.revision ??
+    Option.getOrUndefined(
+      AsyncResult.value(
+        appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
+      ),
+    )?.revision;
+  if (!currentRevision) return;
+  appAtomRegistry.set(optimisticAtom, {
     confirmedAgainst: undefined,
     data: {
       relativePath,
       contents,
       byteLength: new TextEncoder().encode(contents).byteLength,
       truncated: false,
+      revision: currentRevision,
     },
   });
 }
@@ -74,6 +86,7 @@ export function confirmProjectFileQueryData(
   cwd: string,
   relativePath: string,
   contents: string,
+  revision: string,
 ): boolean {
   const atom = optimisticFileAtom(environmentId, cwd, relativePath);
   const optimisticFile = appAtomRegistry.get(atom);
@@ -82,6 +95,7 @@ export function confirmProjectFileQueryData(
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
   const confirmed = {
     ...optimisticFile,
+    data: { ...optimisticFile.data, revision },
     confirmedAgainst: appAtomRegistry.get(queryAtom),
   };
   appAtomRegistry.set(atom, confirmed);

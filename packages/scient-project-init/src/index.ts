@@ -43,11 +43,13 @@ export interface ScientProjectInitializationResult extends ScientProjectInspecti
   readonly preserved: ReadonlyArray<string>;
 }
 
-interface ProjectIdentity {
+export interface ScientProjectIdentity {
   readonly projectId: string;
   readonly formatVersion: 1;
   readonly createdAt: string;
 }
+
+type ProjectIdentity = ScientProjectIdentity;
 
 interface TransactionFileEntry {
   readonly path: string;
@@ -321,6 +323,18 @@ async function inspectResolvedRoot(root: string): Promise<ScientProjectInspectio
 
 export async function inspectScientProject(root: string): Promise<ScientProjectInspection> {
   return inspectResolvedRoot(await validateRoot(root, false));
+}
+
+/** Read the durable identity without initializing or repairing an ordinary folder. */
+export async function readScientProjectIdentity(
+  root: string,
+): Promise<ScientProjectIdentity | null> {
+  const resolvedRoot = await validateRoot(root, false);
+  const identityPath = NodePath.join(resolvedRoot, SCIENT_IDENTITY_FILE);
+  const snapshot = await snapshotPath(identityPath);
+  if (snapshot.kind === "missing") return null;
+  if (snapshot.kind !== "file" || snapshot.size > MAX_IDENTITY_BYTES) return null;
+  return parseIdentity(await readBoundedFile(identityPath, MAX_IDENTITY_BYTES));
 }
 
 async function writeMissingFile(
