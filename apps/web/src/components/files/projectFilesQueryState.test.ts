@@ -25,8 +25,15 @@ describe("project files queries", () => {
       contents: '{"nodeVersion":"20"}',
       byteLength: 20,
       truncated: false,
+      revision: "revision-1",
     } satisfies ProjectReadFileResult;
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}');
+    setProjectFileQueryData(
+      environmentId,
+      "/repo",
+      "convex.json",
+      '{"nodeVersion":"220"}',
+      initial.revision,
+    );
     setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}');
 
     expect(getOptimisticProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
@@ -34,7 +41,13 @@ describe("project files queries", () => {
     );
 
     expect(
-      confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}'),
+      confirmProjectFileQueryData(
+        environmentId,
+        "/repo",
+        "convex.json",
+        '{"nodeVersion":"220"}',
+        "revision-2",
+      ),
     ).toBe(false);
 
     expect(resolveProjectFileQueryData(environmentId, "/repo", "convex.json", initial)).toEqual({
@@ -42,10 +55,17 @@ describe("project files queries", () => {
       contents: '{"nodeVersion":"22"}',
       byteLength: 20,
       truncated: false,
+      revision: "revision-1",
     });
 
     expect(
-      confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}'),
+      confirmProjectFileQueryData(
+        environmentId,
+        "/repo",
+        "convex.json",
+        '{"nodeVersion":"22"}',
+        "revision-2",
+      ),
     ).toBe(true);
   });
 });

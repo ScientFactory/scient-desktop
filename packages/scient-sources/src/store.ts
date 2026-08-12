@@ -166,6 +166,9 @@ async function sourceStorePaths(root: string): Promise<{
   readonly staging: string;
 }> {
   const identity = await readScientProjectIdentity(root);
+  if (identity === null) {
+    throw new Error("This folder is not an initialized Scient project.");
+  }
   const resolvedRoot = await NodeFSP.realpath(root);
   return {
     root: resolvedRoot,

@@ -197,6 +197,20 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  AnalysisCancelRunInput,
+  AnalysisConfigureRuntimeInput,
+  AnalysisGetRunInput,
+  AnalysisInspectRuntimesInput,
+  AnalysisListRunsInput,
+  AnalysisListRunsResult,
+  AnalysisOperationError,
+  AnalysisRunSnapshot,
+  AnalysisRunStreamEvent,
+  AnalysisRuntimeInspection,
+  AnalysisStartRunInput,
+  AnalysisSubscribeRunsInput,
+} from "./scientAnalysis.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -208,6 +222,14 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+
+  // Scient-owned scientific analysis runtime methods
+  analysisInspectRuntimes: "analysis.inspectRuntimes",
+  analysisConfigureRuntime: "analysis.configureRuntime",
+  analysisStartRun: "analysis.startRun",
+  analysisCancelRun: "analysis.cancelRun",
+  analysisListRuns: "analysis.listRuns",
+  analysisGetRun: "analysis.getRun",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -321,6 +343,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeAnalysisRuns: "subscribeAnalysisRuns",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -681,6 +704,51 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+const AnalysisRpcError = Schema.Union([AnalysisOperationError, EnvironmentAuthorizationError]);
+
+export const WsAnalysisInspectRuntimesRpc = Rpc.make(WS_METHODS.analysisInspectRuntimes, {
+  payload: AnalysisInspectRuntimesInput,
+  success: AnalysisRuntimeInspection,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisConfigureRuntimeRpc = Rpc.make(WS_METHODS.analysisConfigureRuntime, {
+  payload: AnalysisConfigureRuntimeInput,
+  success: AnalysisRuntimeInspection,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisStartRunRpc = Rpc.make(WS_METHODS.analysisStartRun, {
+  payload: AnalysisStartRunInput,
+  success: AnalysisRunSnapshot,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisCancelRunRpc = Rpc.make(WS_METHODS.analysisCancelRun, {
+  payload: AnalysisCancelRunInput,
+  success: AnalysisRunSnapshot,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisListRunsRpc = Rpc.make(WS_METHODS.analysisListRuns, {
+  payload: AnalysisListRunsInput,
+  success: AnalysisListRunsResult,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisGetRunRpc = Rpc.make(WS_METHODS.analysisGetRun, {
+  payload: AnalysisGetRunInput,
+  success: AnalysisRunSnapshot,
+  error: AnalysisRpcError,
+});
+
+export const WsSubscribeAnalysisRunsRpc = Rpc.make(WS_METHODS.subscribeAnalysisRuns, {
+  payload: AnalysisSubscribeRunsInput,
+  success: AnalysisRunStreamEvent,
+  error: AnalysisRpcError,
+  stream: true,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -1067,6 +1135,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsAnalysisInspectRuntimesRpc,
+  WsAnalysisConfigureRuntimeRpc,
+  WsAnalysisStartRunRpc,
+  WsAnalysisCancelRunRpc,
+  WsAnalysisListRunsRpc,
+  WsAnalysisGetRunRpc,
+  WsSubscribeAnalysisRunsRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,

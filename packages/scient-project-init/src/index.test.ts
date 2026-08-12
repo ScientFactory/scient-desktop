@@ -119,6 +119,8 @@ describe("Scient project initialization", () => {
 
     const identity = await readScientProjectIdentity(root);
 
+    expect(identity).not.toBeNull();
+    if (identity === null) throw new Error("Expected an initialized Scient project identity.");
     expect(identity.formatVersion).toBe(1);
     expect(identity.projectId).toMatch(/^[0-9a-f-]{36}$/u);
   });
@@ -126,9 +128,7 @@ describe("Scient project initialization", () => {
   it("does not expose identity for an ordinary folder", async () => {
     const root = await fixture();
 
-    await expect(readScientProjectIdentity(root)).rejects.toThrow(
-      "This folder is not an initialized Scient project.",
-    );
+    await expect(readScientProjectIdentity(root)).resolves.toBeNull();
   });
 
   it("refuses to replace an invalid existing identity", async () => {

@@ -129,6 +129,9 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as LocalAnalysisStore from "./scient/analysis/LocalAnalysisStore.ts";
+import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
@@ -471,6 +474,11 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
   Layer.provide(VcsProcess.layer),
 );
 
+const AnalysisServiceLive = AnalysisService.layer.pipe(
+  Layer.provide(LocalAnalysisStore.layer),
+  Layer.provide(LocalExecutionProcess.layer),
+);
+
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -499,6 +507,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
+  Layer.provide(AnalysisServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),
