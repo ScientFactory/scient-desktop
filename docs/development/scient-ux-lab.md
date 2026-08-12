@@ -53,8 +53,8 @@ private data are used.
 Run from this branch's isolated worktree:
 
 ```bash
-mkdir -p "$PWD/.scient-next/ux-lab/userdata/analysis"
-node -e 'const fs=require("node:fs");const path=require("node:path");const runtime=path.resolve("apps/server/ux-lab-fixtures/matlab/fake-runtime/matlab");fs.chmodSync(runtime,0o755);fs.writeFileSync(".scient-next/ux-lab/userdata/analysis/runtime-settings.json",JSON.stringify({version:1,executablePaths:{matlab:runtime}},null,2)+"\n")'
+mkdir -p "$PWD/.scient-next/ux-lab/scient-next-dev/analysis"
+node -e 'const fs=require("node:fs");const path=require("node:path");const runtime=path.resolve("apps/server/ux-lab-fixtures/matlab/fake-runtime/matlab");fs.chmodSync(runtime,0o755);fs.writeFileSync(".scient-next/ux-lab/scient-next-dev/analysis/runtime-settings.json",JSON.stringify({version:1,executablePaths:{matlab:runtime}},null,2)+"\n")'
 
 VITE_SCIENT_UX_LAB=1 \
 T3CODE_PORT_OFFSET=531 \
