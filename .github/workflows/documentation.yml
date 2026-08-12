@@ -1,0 +1,78 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/documentation.yml"
+      - "scripts/check-markdown-links.mjs"
+      - "scripts/check-markdown-links.node-tests.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/documentation.yml"
+      - "scripts/check-markdown-links.mjs"
+      - "scripts/check-markdown-links.node-tests.mjs"
+
+concurrency:
+  group: documentation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: false
+
+      - name: Check documentation
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            START_SHA="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          elif git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            START_SHA="$BASE_SHA"
+          else
+            START_SHA="$HEAD_SHA^"
+          fi
+
+          git diff --check "$START_SHA" "$HEAD_SHA"
+
+          markdown_files=()
+          while IFS= read -r -d '' file; do
+            if [[ "$file" == *.md ]]; then
+              markdown_files+=("$file")
+            fi
+          done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**")
+
+          if (( ${#markdown_files[@]} > 0 )); then
+            vp fmt --check "${markdown_files[@]}"
+            node scripts/check-markdown-links.mjs "${markdown_files[@]}"
+          fi
+
+      - name: Test documentation checker
+        run: node --test scripts/check-markdown-links.node-tests.mjs
