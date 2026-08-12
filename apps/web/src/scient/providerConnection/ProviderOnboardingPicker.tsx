@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -10,6 +11,12 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popov
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "~/lib/utils";
 import { CodexInlineSetup } from "./CodexInlineSetup";
+import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
+import {
+  PROVIDER_LAB_ENABLED,
+  providerLabStateAtom,
+  switchActiveProvider,
+} from "./lab/providerLabState";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
@@ -228,6 +235,12 @@ export function ProviderOnboardingPicker(props: {
                     environmentId={props.environmentId}
                     provider={selectedEntry.snapshot}
                   />
+                ) : selectedDefinition.value === "claudeAgent" && PROVIDER_LAB_ENABLED ? (
+                  <ClaudeSetupWithController
+                    displayName={selectedEntry.displayName}
+                    environmentId={props.environmentId}
+                    provider={selectedEntry.snapshot}
+                  />
                 ) : (
                   <ProviderSetupDetail
                     displayName={selectedDefinition.label}
@@ -274,11 +287,68 @@ function CodexSetupWithController(props: {
   readonly provider: ProviderInstanceEntry["snapshot"];
   readonly displayName: string;
 }) {
+  const labState = useAtomValue(providerLabStateAtom);
+  const setLabState = useAtomSet(providerLabStateAtom);
+  useEffect(() => {
+    if (!PROVIDER_LAB_ENABLED || labState.driver === "codex") return;
+    setLabState(
+      switchActiveProvider(labState, "codex", "Selected Codex in the simulated provider lab."),
+    );
+  }, [labState.driver, labState.events, labState.target, setLabState]);
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
     provider: props.provider,
   });
   return <CodexInlineSetup {...props} controller={controller} />;
+}
+
+function ClaudeSetupWithController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ProviderInstanceEntry["snapshot"];
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  return <ClaudeInlineSetup {...props} controller={controller} />;
+}
+
+/**
+ * Setup surface embedded in the normal model picker once at least one AI is
+ * already usable. The lab keeps the production seam while substituting only
+ * Claude's synthetic lifecycle controller.
+ */
+export function ProviderLifecycleSetupSurface(props: {
+  readonly environmentId: EnvironmentId;
+  readonly entry: ProviderInstanceEntry;
+}) {
+  const navigate = useNavigate();
+  if (props.entry.driverKind === "codex") {
+    return (
+      <CodexSetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  if (props.entry.driverKind === "claudeAgent" && PROVIDER_LAB_ENABLED) {
+    return (
+      <ClaudeSetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  return (
+    <ProviderSetupDetail
+      displayName={props.entry.displayName}
+      status={statusLabel(props.entry)}
+      onManage={() => void navigate({ to: "/settings/providers" })}
+    />
+  );
 }
 
 function RailButton(props: {

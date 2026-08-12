@@ -21,6 +21,10 @@ import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation
 export interface ProviderLifecycleController {
   readonly startConnection: (method: ProviderConnectionMethod) => Promise<ServerProvider>;
   readonly cancelConnection: (operationId: string) => Promise<ServerProvider>;
+  readonly submitAuthorizationCode: (
+    operationId: string,
+    authorizationCode: string,
+  ) => Promise<ServerProvider>;
   readonly disconnect: () => Promise<ServerProvider>;
   readonly openAuthorizationPage: (url: string) => Promise<void>;
   readonly planRuntime: (action: ProviderManagedRuntimeAction) => Promise<ProviderRuntimePlan>;
@@ -104,6 +108,10 @@ export function useProviderLifecycleController(input: {
     [cancelProviderConnection, input.environmentId, instanceId],
   );
 
+  const submitAuthorizationCode = useCallback(async () => {
+    throw new Error("Provider authorization-code submission is only available in this lab build.");
+  }, []);
+
   const disconnect = useCallback(async () => {
     const result = await disconnectProvider({
       environmentId: input.environmentId,
@@ -172,6 +180,7 @@ export function useProviderLifecycleController(input: {
     () => ({
       startConnection,
       cancelConnection,
+      submitAuthorizationCode,
       disconnect,
       openAuthorizationPage,
       planRuntime,
@@ -187,6 +196,7 @@ export function useProviderLifecycleController(input: {
       planRuntime,
       startConnection,
       startRuntime,
+      submitAuthorizationCode,
       updateExternalRuntime,
     ],
   );

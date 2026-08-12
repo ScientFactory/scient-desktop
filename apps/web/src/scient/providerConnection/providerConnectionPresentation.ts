@@ -67,9 +67,13 @@ export function preferredProviderConnectionMethod(
   const methods = provider.connection?.methods ?? [];
   return methods.includes("codex_browser")
     ? "codex_browser"
-    : methods.includes("codex_device_code")
-      ? "codex_device_code"
-      : undefined;
+    : methods.includes("claude_subscription")
+      ? "claude_subscription"
+      : methods.includes("codex_device_code")
+        ? "codex_device_code"
+        : methods.includes("claude_console")
+          ? "claude_console"
+          : undefined;
 }
 
 export function isSafeProviderAuthorizationUrl(value: string): boolean {

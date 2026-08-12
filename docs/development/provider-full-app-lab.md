@@ -1,14 +1,29 @@
 # Provider full-app lab
 
-Status: local development experiment. This is not product or release behavior.
+Status: preserved development experiment. This is not product or release
+behavior, and this branch is not a current-main integration candidate.
 
 This lab runs the normal Scient application while replacing only the web client's provider status stream and provider-lifecycle actions with synthetic state. Projects, drafts, Settings, the composer, and the model picker remain the real application surfaces. The lab never inspects provider homes, credentials, PATH, or the stable Scient app, and its lifecycle controller never runs a real installation or sign-in action.
 
-## Checkout
+## Authority and checkout
 
-- Worktree: `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-desktop-next-provider-full-app-lab-refreshed-20260809`
 - Branch: `experiment/provider-full-app-lab-refreshed-20260809`
 - Provider implementation base: `fc63f10e40a3bacd80b2a529551de2bf0dcb2d47`
+
+The branch is a reproducible collaboration and preservation checkpoint. It
+contains an older snapshot of production provider UI plus later synthetic
+Codex and Claude scenarios. It must not be merged or described as current
+product behavior without first rebuilding the lab boundary from current
+`origin/main` and reconciling every production-component difference.
+
+Use an isolated worktree rather than changing an existing checkout:
+
+```sh
+git fetch origin
+git worktree add ../scient-desktop-next-ux-lab \
+  origin/experiment/provider-full-app-lab-refreshed-20260809
+cd ../scient-desktop-next-ux-lab
+```
 
 ## Run in isolation
 
@@ -24,7 +39,12 @@ With offset `531`, the web app is `http://localhost:6264` and its isolated serve
 
 The floating **Provider simulation** control changes the simulated computer, jumps to a provider state, injects the next failure, or resets the lab. Install and sign-in operations advance automatically so the primary flow can be tried like a real product flow; **Advance** remains available for explicitly loaded in-progress states. Reset and cancellation clear scheduled synthetic work so an old operation cannot change a newly selected state.
 
-Only Codex is synthesized because it is the provider with an implemented assisted lifecycle in this branch. The lab deliberately does not invent equivalent Claude, Cursor, Grok, or OpenCode flows. The lab imports the production provider UI and replaces only provider snapshots and lifecycle actions at the application boundary, so visual changes cannot drift into a second implementation unnoticed.
+Codex and Claude are synthesized. Cursor, Grok, OpenCode, and other providers
+remain visible only through the inherited product surfaces; the lab does not
+invent assisted lifecycle behavior for them. The lab imports the captured
+provider UI and replaces only provider snapshots and lifecycle actions at the
+application boundary, so the simulation does not need a second visual
+implementation.
 
 ## Fresh-provider visual experiment
 
@@ -41,3 +61,52 @@ The Codex path stays inside the picker instead of opening a second confirmation 
 5. Installation and sign-in failures remain in the same surface with a focused retry action. Repair, removal, and advanced troubleshooting remain outside this compact first-run flow.
 
 This is a visual and interaction prototype backed by synthetic lifecycle state. It performs no real download, installation, browser authorization, credential access, or provider request. Managed updates follow the same reviewed `plan -> start -> verify -> activate` action shape as production; the simulator advances those states without touching a runtime.
+
+## Preserved change inventory
+
+The preservation checkpoint contains four deliberately distinct groups:
+
+1. **Reusable simulator infrastructure** - the environment gate, synthetic
+   provider snapshots, deterministic transitions, controller substitution,
+   scenario controls, and their focused tests.
+2. **Captured provider experience** - Codex and Claude inline setup surfaces,
+   lifecycle presentation, model-picker setup selection, and the associated
+   contracts and action helpers as they existed in this experiment.
+3. **Regression coverage** - focused tests for provider switching, retained
+   ready providers, authorization-code fallback, updates, failures, and model
+   picker availability.
+4. **Historical design QA** - `design-qa.md`, which records the exact source
+   snapshot and manual states inspected on 2026-08-09. It is evidence about
+   that snapshot only, not current acceptance evidence.
+
+No screenshots, credentials, provider homes, installed runtimes, databases,
+or generated local state belong in the preserved branch.
+
+## Maintained Scient UX Lab direction
+
+The reusable successor should be rebuilt from current `origin/main` and remain
+inside this repository. A separate repository would duplicate production
+components and drift from the app it is meant to simulate.
+
+The smallest maintainable boundary is:
+
+```text
+apps/web/src/scient/uxLab/
+├── ProviderLabHost.tsx
+├── providerScenarios.ts
+├── providerScenarios.test.ts
+└── ProviderLabControls.tsx
+```
+
+Production components should receive only narrow, provider-neutral seams where
+the lab needs to inject synthetic snapshots or actions. All simulation state,
+scenario transitions, controls, fixtures, and explanatory copy stay under the
+development-only `scient/uxLab` boundary. Normal and release builds keep the
+lab disabled; enabling it requires the explicit `VITE_SCIENT_UX_LAB=1` flag
+and an isolated home directory.
+
+The maintained lab should initially prove provider onboarding across macOS,
+Windows, and Linux, including fresh, installing, signing in, ready, updating,
+failed, cancelled, repair, and removal states. Additional Scient journeys may
+be added only when they reuse real product components and synthetic state at a
+similarly narrow boundary.

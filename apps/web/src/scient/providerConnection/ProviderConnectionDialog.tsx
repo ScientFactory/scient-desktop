@@ -8,6 +8,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   CheckCircle2Icon,
   CopyIcon,
@@ -40,6 +41,12 @@ import {
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
 import { CodexInlineSetup } from "./CodexInlineSetup";
+import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
+import {
+  PROVIDER_LAB_ENABLED,
+  providerLabStateAtom,
+  switchActiveProvider,
+} from "./lab/providerLabState";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction = "browser" | "device" | "cancel" | "disconnect" | null;
@@ -73,14 +80,17 @@ interface ProviderConnectionDialogProps {
 }
 
 export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
-  return props.provider.driver === "codex" ? (
-    <CodexProviderConnectionDialog key={props.provider.instanceId} {...props} />
+  return props.provider.driver === "codex" ||
+    (PROVIDER_LAB_ENABLED && props.provider.driver === "claudeAgent") ? (
+    <AssistedProviderConnectionDialog key={props.provider.instanceId} {...props} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...props} />
   );
 }
 
-function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+function AssistedProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  const labState = useAtomValue(providerLabStateAtom);
+  const setLabState = useAtomSet(providerLabStateAtom);
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
     provider: props.provider,
@@ -88,6 +98,20 @@ function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const isConnected = providerConnectionPresentation(props.provider).kind === "connected";
+  const isClaudeLab = PROVIDER_LAB_ENABLED && props.provider.driver === "claudeAgent";
+
+  useEffect(() => {
+    if (!PROVIDER_LAB_ENABLED) return;
+    const driver = props.provider.driver === "claudeAgent" ? "claudeAgent" : "codex";
+    if (labState.driver === driver) return;
+    setLabState(
+      switchActiveProvider(
+        labState,
+        driver,
+        `Selected ${driver === "codex" ? "Codex" : "Claude"} in the simulated provider lab.`,
+      ),
+    );
+  }, [labState.driver, labState.events, labState.target, props.provider.driver, setLabState]);
 
   const disconnect = async () => {
     setDisconnecting(true);
@@ -107,17 +131,27 @@ function CodexProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-sm" showCloseButton>
         <DialogHeader>
-          <DialogTitle>Codex</DialogTitle>
+          <DialogTitle>{isClaudeLab ? "Claude" : "Codex"}</DialogTitle>
           <DialogDescription>
-            Connect and manage your existing ChatGPT subscription.
+            {isClaudeLab
+              ? "Connect and manage your Claude account."
+              : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="flex min-h-64 flex-col">
-          <CodexInlineSetup
-            controller={controller}
-            displayName={props.displayName}
-            provider={props.provider}
-          />
+          {isClaudeLab ? (
+            <ClaudeInlineSetup
+              controller={controller}
+              displayName={props.displayName}
+              provider={props.provider}
+            />
+          ) : (
+            <CodexInlineSetup
+              controller={controller}
+              displayName={props.displayName}
+              provider={props.provider}
+            />
+          )}
           {disconnectError ? (
             <div
               className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"

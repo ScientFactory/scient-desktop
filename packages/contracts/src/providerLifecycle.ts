@@ -9,7 +9,12 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * Credentials never cross this contract. A method only identifies an
  * official provider flow that the server is allowed to start.
  */
-export const ProviderConnectionMethod = Schema.Literals(["codex_browser", "codex_device_code"]);
+export const ProviderConnectionMethod = Schema.Literals([
+  "codex_browser",
+  "codex_device_code",
+  "claude_subscription",
+  "claude_console",
+]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
 
 export const ProviderConnectionOperationStatus = Schema.Literals([

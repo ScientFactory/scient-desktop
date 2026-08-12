@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  activeClaude,
   activeCodex,
+  activeProvider,
   makeProviderLabState,
   nextProviderLabState,
   providersForSnapshot,
+  setActiveProviderSnapshot,
+  switchActiveProvider,
 } from "./providerLabState";
 
 describe("provider full-app lab state", () => {
@@ -19,6 +23,39 @@ describe("provider full-app lab state", () => {
   it("projects the selected computer into the real runtime contract", () => {
     const [codex] = providersForSnapshot("nothing-installed", "win32-x64");
     expect(codex?.connection?.runtime?.target).toBe("win32-x64");
+  });
+
+  it("models Claude without reading an account or replacing the Codex simulation", () => {
+    const state = makeProviderLabState("installed-signed-out", "linux-x64", "claudeAgent");
+    expect(state.providers).toHaveLength(2);
+    expect(activeProvider(state).driver).toBe("claudeAgent");
+    expect(activeClaude(state).installed).toBe(true);
+    expect(activeClaude(state).connection?.runtime?.target).toBe("linux-x64");
+    expect(activeCodex(state).installed).toBe(false);
+  });
+
+  it("advances the Claude browser handoff through verification to a ready model", () => {
+    const waiting = makeProviderLabState("authorization-code", "darwin-arm64", "claudeAgent");
+    const verifying = nextProviderLabState(waiting);
+    expect(activeClaude(verifying!).connection?.operation?.status).toBe("verifying");
+    const connected = nextProviderLabState(verifying!);
+    expect(activeClaude(connected!).auth.status).toBe("authenticated");
+    expect(activeClaude(connected!).models[0]?.slug).toBe("claude-sonnet-4-6");
+  });
+
+  it("keeps a ready provider available while another provider is configured", () => {
+    const codexReady = makeProviderLabState("connected", "darwin-arm64", "codex");
+    const claudeSelected = switchActiveProvider(codexReady, "claudeAgent", "Selected Claude.");
+    const claudeInstalled = setActiveProviderSnapshot(
+      claudeSelected,
+      "installed-signed-out",
+      "Installed Claude.",
+    );
+
+    expect(activeCodex(claudeInstalled).status).toBe("ready");
+    expect(activeCodex(claudeInstalled).models[0]?.slug).toBe("gpt-5.4");
+    expect(activeClaude(claudeInstalled).installed).toBe(true);
+    expect(activeClaude(claudeInstalled).auth.status).toBe("unauthenticated");
   });
 
   it("advances connection state without contacting a provider", () => {

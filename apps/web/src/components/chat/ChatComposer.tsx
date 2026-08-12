@@ -33,7 +33,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
-import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
+import {
+  ProviderLifecycleSetupSurface,
+  ProviderOnboardingPicker,
+} from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
@@ -869,6 +872,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
+  );
+  const isProviderSetupAvailable = useCallback(
+    (entry: ProviderInstanceEntry) => entry.enabled && entry.isAvailable,
+    [],
+  );
+  const renderProviderSetup = useCallback(
+    (entry: ProviderInstanceEntry) => (
+      <ProviderLifecycleSetupSurface environmentId={environmentId} entry={entry} />
+    ),
+    [environmentId],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -3180,6 +3193,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       setIsComposerModelPickerOpen(open);
                     }}
                     getModelDisabledReason={getModelDisabledReason}
+                    isProviderSetupAvailable={isProviderSetupAvailable}
+                    renderProviderSetup={renderProviderSetup}
                     onInstanceModelChange={onProviderModelSelect}
                   />
                 )}

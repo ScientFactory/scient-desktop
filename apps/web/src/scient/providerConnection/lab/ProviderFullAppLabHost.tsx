@@ -10,16 +10,18 @@ import {
 } from "../ProviderLifecycleController";
 import {
   PROVIDER_LAB_ENABLED,
-  activeCodex,
-  codexProvider,
+  activeProvider,
   connectionOperation,
   makeProviderLabState,
   nextProviderLabState,
   providerLabStateAtom,
-  replaceCodex,
+  replaceActiveProvider,
   runtimeOperation,
   runtimePlan,
+  setActiveProviderSnapshot,
+  switchActiveProvider,
   type ProviderLabFailure,
+  type ProviderLabDriver,
   type ProviderLabSnapshot,
   type ProviderLabState,
   type ProviderLabTarget,
@@ -30,6 +32,8 @@ const snapshots: ReadonlyArray<{ readonly value: ProviderLabSnapshot; readonly l
   { value: "installed-signed-out", label: "Installed, signed out" },
   { value: "browser-sign-in", label: "Browser sign-in" },
   { value: "device-code", label: "Device code" },
+  { value: "authorization-code", label: "One-time code" },
+  { value: "authorization-code-expired", label: "Expired one-time code" },
   { value: "verifying", label: "Verifying" },
   { value: "connected", label: "Connected" },
   { value: "update-available", label: "Update available" },
@@ -93,13 +97,13 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
     () => ({
       planRuntime: async (action) => {
         consumeFailure("runtime", "The simulated setup plan could not be prepared.");
-        return runtimePlan(action, stateRef.current.target);
+        return runtimePlan(action, stateRef.current.target, stateRef.current.driver);
       },
       startRuntime: async (plan: ProviderRuntimePlan) => {
         consumeFailure("runtime", "The simulated runtime operation failed before activation.");
         const generation = ++automationGenerationRef.current;
         const current = stateRef.current;
-        const provider = activeCodex(current);
+        const provider = activeProvider(current);
         const status = plan.action === "remove" ? "removing" : "downloading";
         const nextProvider: ServerProvider = {
           ...provider,
@@ -115,7 +119,11 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
             },
           },
         };
-        const next = replaceCodex(current, nextProvider, `Started simulated ${plan.action}.`);
+        const next = replaceActiveProvider(
+          current,
+          nextProvider,
+          `Started simulated ${plan.action}.`,
+        );
         commit({ ...next, snapshot: plan.action === "update" ? "updating" : next.snapshot });
         scheduleAutomaticAdvance(generation, plan.action === "remove" ? 1 : 5);
         return nextProvider;
@@ -123,7 +131,7 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
       cancelRuntime: async () => {
         cancelAutomation();
         const current = stateRef.current;
-        const provider = activeCodex(current);
+        const provider = activeProvider(current);
         const nextProvider: ServerProvider = {
           ...provider,
           connection: {
@@ -138,14 +146,16 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
             },
           },
         };
-        commit(replaceCodex(current, nextProvider, "Cancelled simulated runtime operation."));
+        commit(
+          replaceActiveProvider(current, nextProvider, "Cancelled simulated runtime operation."),
+        );
         return nextProvider;
       },
       startConnection: async (method) => {
         consumeFailure("connection", "The simulated provider rejected the sign-in request.");
         const generation = ++automationGenerationRef.current;
         const current = stateRef.current;
-        const provider = activeCodex(current);
+        const provider = activeProvider(current);
         const nextProvider: ServerProvider = {
           ...provider,
           connection: {
@@ -157,44 +167,69 @@ function ControllerHost({ children }: { readonly children: ReactNode }) {
           },
         };
         commit({
-          ...replaceCodex(current, nextProvider, "Started simulated provider sign in."),
+          ...replaceActiveProvider(current, nextProvider, "Started simulated provider sign in."),
           snapshot: method === "codex_device_code" ? "device-code" : "browser-sign-in",
         });
-        scheduleAutomaticAdvance(generation, 2);
+        if (current.driver === "codex") scheduleAutomaticAdvance(generation, 2);
         return nextProvider;
       },
       cancelConnection: async () => {
         cancelAutomation();
         const current = stateRef.current;
-        const provider = activeCodex(current);
+        const provider = activeProvider(current);
         const nextProvider: ServerProvider = {
           ...provider,
-          connection: { ...provider.connection!, operation: connectionOperation("cancelled") },
+          connection: {
+            ...provider.connection!,
+            operation: connectionOperation(
+              "cancelled",
+              provider.connection?.operation?.method ??
+                (current.driver === "claudeAgent" ? "claude_subscription" : "codex_browser"),
+            ),
+          },
         };
         commit({
-          ...replaceCodex(current, nextProvider, "Cancelled simulated provider sign in."),
+          ...replaceActiveProvider(current, nextProvider, "Cancelled simulated provider sign in."),
           snapshot: "installed-signed-out",
         });
         return nextProvider;
+      },
+      submitAuthorizationCode: async () => {
+        cancelAutomation();
+        const current = stateRef.current;
+        const verifying = setActiveProviderSnapshot(
+          current,
+          "verifying",
+          "Returned the simulated one-time code to Claude.",
+        );
+        commit(verifying);
+        const generation = ++automationGenerationRef.current;
+        scheduleAutomaticAdvance(generation, 1);
+        return activeProvider(verifying);
       },
       disconnect: async () => {
         consumeFailure("disconnect", "The simulated provider could not sign out.");
         cancelAutomation();
         const current = stateRef.current;
-        const nextProvider = codexProvider("installed-signed-out", current.target);
-        commit(replaceCodex(current, nextProvider, "Signed out of the simulated account."));
-        return nextProvider;
+        const next = setActiveProviderSnapshot(
+          current,
+          "installed-signed-out",
+          "Signed out of the simulated account.",
+        );
+        commit(next);
+        return activeProvider(next);
       },
       updateExternalRuntime: async () => {
         const generation = ++automationGenerationRef.current;
         const current = stateRef.current;
-        const next = {
-          ...makeProviderLabState("updating", current.target),
-          events: ["Started simulated external Codex update.", ...current.events].slice(0, 6),
-        };
+        const next = setActiveProviderSnapshot(
+          current,
+          "updating",
+          `Started simulated external ${current.driver === "codex" ? "Codex" : "Claude"} update.`,
+        );
         commit(next);
         scheduleAutomaticAdvance(generation, 5);
-        return activeCodex(next);
+        return activeProvider(next);
       },
       openAuthorizationPage: async () => {
         const current = stateRef.current;
@@ -224,20 +259,25 @@ function ProviderLabControls(props: {
 }) {
   const [open, setOpen] = useState(true);
   const changeSnapshot = (snapshot: ProviderLabSnapshot) =>
-    props.setState({
-      ...makeProviderLabState(snapshot, props.state.target),
-      events: [`Loaded ${snapshot}.`, ...props.state.events].slice(0, 6),
-    });
+    props.setState(setActiveProviderSnapshot(props.state, snapshot, `Loaded ${snapshot}.`));
+  const changeDriver = (driver: ProviderLabDriver) =>
+    props.setState(
+      switchActiveProvider(
+        props.state,
+        driver,
+        `Changed simulated provider to ${driver === "codex" ? "Codex" : "Claude"}.`,
+      ),
+    );
   const changeTarget = (target: ProviderLabTarget) =>
     props.setState({
-      ...makeProviderLabState("nothing-installed", target),
+      ...makeProviderLabState("nothing-installed", target, props.state.driver),
       events: [`Changed simulated computer to ${target}.`, ...props.state.events].slice(0, 6),
     });
   const advance = () => {
     const next = nextProviderLabState(props.state);
     if (next) props.setState(next);
   };
-  const currentRuntimeOperation = activeCodex(props.state).connection?.runtime?.operation;
+  const currentRuntimeOperation = activeProvider(props.state).connection?.runtime?.operation;
   const runtimeInProgress =
     currentRuntimeOperation !== null &&
     currentRuntimeOperation !== undefined &&
@@ -273,6 +313,17 @@ function ProviderLabControls(props: {
       </div>
       <div className="mt-3 grid gap-3">
         <label className="grid gap-1 text-xs font-medium">
+          Provider
+          <select
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={props.state.driver}
+            onChange={(event) => changeDriver(event.target.value as ProviderLabDriver)}
+          >
+            <option value="codex">Codex</option>
+            <option value="claudeAgent">Claude</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-xs font-medium">
           Computer
           <select
             className="h-9 rounded-md border bg-background px-2 text-sm"
@@ -296,11 +347,18 @@ function ProviderLabControls(props: {
                 Runtime in progress
               </option>
             ) : null}
-            {snapshots.map((snapshot) => (
-              <option key={snapshot.value} value={snapshot.value}>
-                {snapshot.label}
-              </option>
-            ))}
+            {snapshots
+              .filter((snapshot) =>
+                props.state.driver === "codex"
+                  ? snapshot.value !== "authorization-code" &&
+                    snapshot.value !== "authorization-code-expired"
+                  : snapshot.value !== "device-code",
+              )
+              .map((snapshot) => (
+                <option key={snapshot.value} value={snapshot.value}>
+                  {snapshot.label}
+                </option>
+              ))}
           </select>
         </label>
         <label className="grid gap-1 text-xs font-medium">

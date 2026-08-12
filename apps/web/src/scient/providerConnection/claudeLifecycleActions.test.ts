@@ -6,23 +6,23 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { startCodexBrowserSignIn, updateCodexRuntime } from "./codexLifecycleActions";
+import { startClaudeSignIn, updateClaudeRuntime } from "./claudeLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-const INSTANCE_ID = ProviderInstanceId.make("codex");
+const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: INSTANCE_ID,
-  driver: ProviderDriverKind.make("codex"),
+  driver: ProviderDriverKind.make("claudeAgent"),
   enabled: true,
   installed: true,
-  version: "0.147.0",
+  version: "2.1.170",
   status: "warning",
   auth: { status: "unauthenticated", required: true },
   checkedAt: "2026-08-09T08:00:00.000Z",
   models: [],
   slashCommands: [],
   skills: [],
-  connection: { methods: ["codex_browser"], canDisconnect: false, operation: null },
+  connection: { methods: ["claude_subscription"], canDisconnect: false, operation: null },
   ...patch,
 });
 
@@ -30,11 +30,11 @@ const updatePlan: ProviderRuntimePlan = {
   instanceId: INSTANCE_ID,
   action: "update",
   target: "darwin-arm64",
-  version: "0.148.0",
+  version: "2.1.171",
   downloadBytes: 1,
-  sourceLabel: "Official OpenAI release",
+  sourceLabel: "Official Anthropic release",
   catalogRevision: "reviewed:2",
-  message: "Update Codex.",
+  message: "Update Claude.",
 };
 
 function controller(overrides: Partial<ProviderLifecycleController> = {}) {
@@ -52,12 +52,12 @@ function controller(overrides: Partial<ProviderLifecycleController> = {}) {
   } satisfies ProviderLifecycleController;
 }
 
-describe("Codex lifecycle actions", () => {
+describe("Claude lifecycle actions", () => {
   it("routes a managed update through the reviewed runtime plan", async () => {
     const lifecycle = controller();
     const managed = provider({
       connection: {
-        methods: ["codex_browser"],
+        methods: ["claude_subscription"],
         canDisconnect: false,
         operation: null,
         runtime: {
@@ -65,15 +65,15 @@ describe("Codex lifecycle actions", () => {
           supportTier: "fully_assisted",
           target: "darwin-arm64",
           actions: ["update", "repair", "remove"],
-          managedVersion: "0.147.0",
+          managedVersion: "2.1.170",
           previousManagedVersion: null,
           operation: null,
-          message: "Managed Codex is ready.",
+          message: "Managed Claude is ready.",
         },
       },
     });
 
-    await updateCodexRuntime(lifecycle, managed);
+    await updateClaudeRuntime(lifecycle, managed);
 
     expect(lifecycle.planRuntime).toHaveBeenCalledWith("update");
     expect(lifecycle.startRuntime).toHaveBeenCalledWith(updatePlan);
@@ -82,14 +82,14 @@ describe("Codex lifecycle actions", () => {
 
   it("preserves T3's updater for an external installation", async () => {
     const lifecycle = controller();
-    await updateCodexRuntime(
+    await updateClaudeRuntime(
       lifecycle,
       provider({
         versionAdvisory: {
           status: "behind_latest",
-          currentVersion: "0.147.0",
-          latestVersion: "0.148.0",
-          updateCommand: "npm install -g @openai/codex@latest",
+          currentVersion: "2.1.170",
+          latestVersion: "2.1.171",
+          updateCommand: "claude update",
           canUpdate: true,
           checkedAt: "2026-08-09T08:00:00.000Z",
           message: "Update available.",
@@ -101,29 +101,38 @@ describe("Codex lifecycle actions", () => {
     expect(lifecycle.planRuntime).not.toHaveBeenCalled();
   });
 
-  it("opens the provider-owned browser URL returned by Codex", async () => {
+  it("lets Claude own the first browser launch and retains Scient's reopen recovery", async () => {
     const lifecycle = controller({
       startConnection: vi.fn(async () =>
         provider({
           connection: {
-            methods: ["codex_browser"],
+            methods: ["claude_subscription", "claude_console"],
             canDisconnect: false,
             operation: {
               operationId: "connection-1",
-              method: "codex_browser",
+              method: "claude_subscription",
               status: "waiting_for_browser",
               startedAt: "2026-08-09T08:00:00.000Z",
               finishedAt: null,
               message: "Finish sign in.",
-              authorizationUrl: "https://auth.openai.com/",
+              authorizationUrl: "https://claude.ai/oauth/authorize",
             },
           },
         }),
       ),
     });
 
-    await startCodexBrowserSignIn(lifecycle);
+    await startClaudeSignIn(lifecycle, "claude_subscription");
 
-    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/");
+    expect(lifecycle.startConnection).toHaveBeenCalledWith("claude_subscription");
+    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
+  });
+
+  it("can start the Console flow without changing the provider execution path", async () => {
+    const lifecycle = controller();
+
+    await startClaudeSignIn(lifecycle, "claude_console");
+
+    expect(lifecycle.startConnection).toHaveBeenCalledWith("claude_console");
   });
 });
