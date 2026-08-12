@@ -5,6 +5,7 @@ on:
     paths:
       - "docs/**"
       - "**/*.md"
+      - ".github/oxfmt-documentation.json"
       - ".github/workflows/documentation.yml"
       - "scripts/check-markdown-links.mjs"
       - "scripts/check-markdown-links.node-tests.mjs"
@@ -14,6 +15,7 @@ on:
     paths:
       - "docs/**"
       - "**/*.md"
+      - ".github/oxfmt-documentation.json"
       - ".github/workflows/documentation.yml"
       - "scripts/check-markdown-links.mjs"
       - "scripts/check-markdown-links.node-tests.mjs"
@@ -37,11 +39,10 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version-file: package.json
-          run-install: false
 
       - name: Check documentation
         env:
@@ -70,7 +71,7 @@ jobs:
           done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**")
 
           if (( ${#markdown_files[@]} > 0 )); then
-            vp fmt --check "${markdown_files[@]}"
+            npx --yes oxfmt@0.57.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"
             node scripts/check-markdown-links.mjs "${markdown_files[@]}"
           fi
 
