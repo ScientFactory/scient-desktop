@@ -18,7 +18,7 @@ export function shouldAssignScientGeneralChatNewThreadShortcut(input: {
 }
 
 export function isScientGeneralChatRightPanelKindAllowed(
-  kind: "diff" | "files" | "file" | "preview" | "terminal" | "pull-request" | "agents",
+  kind: "diff" | "files" | "file" | "preview" | "terminal" | "pull-request" | "agents" | "scient",
 ): boolean {
   switch (kind) {
     case "files":
@@ -34,19 +34,22 @@ export function isScientGeneralChatRightPanelKindAllowed(
       return supportsScientGeneralChatCapability("diff");
     case "pull-request":
       return supportsScientGeneralChatCapability("pullRequests");
+    case "scient":
+      return false;
   }
 }
 
 /** Workspace-relative surfaces cannot be reinterpreted after relocation. */
 export function shouldCloseSurfaceAfterScientGeneralChatMove(
-  kind: "diff" | "files" | "file" | "preview" | "terminal" | "pull-request" | "agents",
+  kind: "diff" | "files" | "file" | "preview" | "terminal" | "pull-request" | "agents" | "scient",
 ): boolean {
   return (
     kind === "file" ||
     kind === "files" ||
     kind === "terminal" ||
     kind === "diff" ||
-    kind === "pull-request"
+    kind === "pull-request" ||
+    kind === "scient"
   );
 }
 

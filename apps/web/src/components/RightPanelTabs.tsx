@@ -3,9 +3,11 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
   FileDiff,
+  FileText,
   Files,
   GitPullRequest,
   Globe2,
+  Library,
   Plus,
   TerminalSquare,
   X,
@@ -59,12 +61,14 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddSources: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  sourcesAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -86,6 +90,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
+  sources: "Sources are only available inside a project workspace.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -125,15 +130,26 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddSources: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  sourcesAvailable: boolean;
   liveAgentCount: number;
 }) {
   const actions = [
+    {
+      label: "Sources",
+      description: "Import and read research sources.",
+      icon: Library,
+      available: props.sourcesAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.sources,
+      onClick: props.onAddSources,
+      badgeCount: 0,
+    },
     {
       label: "Browser",
       description: "Open a local app or URL.",
@@ -277,6 +293,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "scient":
+      return surface.module === "sources" ? "Sources" : surface.fileName;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -354,6 +372,12 @@ function SurfaceIcon({
     }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "scient":
+      return surface.module === "sources" ? (
+        <Library className="size-3 shrink-0" />
+      ) : (
+        <FileText className="size-3 shrink-0" />
+      );
   }
 }
 
@@ -530,6 +554,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
                   <SurfaceMenuItem
+                    available={props.sourcesAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.sources}
+                    onClick={props.onAddSources}
+                  >
+                    <Library />
+                    Sources
+                  </SurfaceMenuItem>
+                  <SurfaceMenuItem
                     available={props.browserAvailable}
                     disabledReason={SURFACE_DISABLED_REASONS.browser}
                     onClick={props.onAddBrowser}
@@ -593,12 +625,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
+            onAddSources={props.onAddSources}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
+            sourcesAvailable={props.sourcesAvailable}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (

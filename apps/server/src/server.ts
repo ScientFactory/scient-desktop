@@ -130,6 +130,7 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
+import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
@@ -478,6 +479,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(scientProjectHttpApiLayer),
+      Layer.provide(scientSourcesHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
