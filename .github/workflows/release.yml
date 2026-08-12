@@ -716,7 +716,7 @@ jobs:
             --arg digest "$EXPECTED_ARTIFACT_DIGEST" \
             --argjson artifact_id "$EXPECTED_ARTIFACT_ID" \
             --argjson run_id "$GITHUB_RUN_ID" \
-            '.id == $artifact_id and .digest == $digest and .expired == false and .workflow_run.id == $run_id' \
+            '.id == $artifact_id and (.digest | sub("^sha256:"; "")) == ($digest | sub("^sha256:"; "")) and .expired == false and .workflow_run.id == $run_id' \
             <<<"$artifact_metadata" >/dev/null
           jq -e \
             --arg commit "$EXPECTED_SOURCE_SHA" \
