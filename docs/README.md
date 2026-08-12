@@ -44,6 +44,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Scient project initialization](./internals/scient-project-initialization.md)
+- [Scient PDF export and rendering implementation plan](./internals/scient-pdf-export-rendering-plan.md)
 - [D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
 - [Candidate upstream maintenance](../UPSTREAM.md)
