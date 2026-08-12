@@ -27,7 +27,8 @@ implementation worktree is never read at runtime or modified by this lab.
 Available scenarios are imported sources, a just-completed import, incomplete
 metadata, and an empty source library. Open a project, add the real **Sources**
 right-panel surface, and switch scenarios from the **UX Lab** control in the
-bottom-right corner.
+app overlay. Drag the control away from any surface under review; its position
+is retained across reloads.
 
 ## Launch
 
