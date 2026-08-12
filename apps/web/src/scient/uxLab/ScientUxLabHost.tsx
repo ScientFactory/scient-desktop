@@ -41,6 +41,7 @@ export function ScientUxLabHost() {
     readonly pointerY: number;
     readonly originX: number;
     readonly originY: number;
+    readonly suppressClick: boolean;
     moved: boolean;
   } | null>(null);
   const ignoreClickRef = useRef(false);
@@ -78,7 +79,7 @@ export function ScientUxLabHost() {
     const finishDragging = () => {
       const drag = dragRef.current;
       if (drag === null) return;
-      ignoreClickRef.current = drag.moved;
+      ignoreClickRef.current = drag.moved && drag.suppressClick;
       if (drag.moved && latestPositionRef.current !== null) {
         saveUxLabControlPosition(latestPositionRef.current);
       }
@@ -97,7 +98,7 @@ export function ScientUxLabHost() {
 
   const activeScenario = readSourcesLabScenario();
 
-  const startDragging = (event: ReactMouseEvent<HTMLButtonElement>) => {
+  const startDragging = (event: ReactMouseEvent<HTMLElement>, suppressClick: boolean) => {
     if (event.button !== 0 || rootRef.current === null) return;
     const bounds = rootRef.current.getBoundingClientRect();
     dragRef.current = {
@@ -105,20 +106,34 @@ export function ScientUxLabHost() {
       pointerY: event.clientY,
       originX: bounds.left,
       originY: bounds.top,
+      suppressClick,
       moved: false,
     };
     event.preventDefault();
   };
 
+  const anchorX = position?.x ?? 16;
+  const anchorY = position?.y ?? window.innerHeight - 52;
+  const openPanelToLeft = anchorX > window.innerWidth / 2;
+  const openPanelBelow = anchorY < 320;
+
   return (
     <div
-      className="pointer-events-none fixed z-[100] flex w-72 flex-col items-start gap-2"
+      className="pointer-events-none fixed z-[100]"
       ref={rootRef}
       style={position === null ? { left: 16, bottom: 16 } : { left: position.x, top: position.y }}
     >
       {open ? (
-        <section className="pointer-events-auto w-72 rounded-xl border border-border bg-background/95 p-3 text-foreground shadow-xl backdrop-blur">
-          <header className="mb-3 flex items-start justify-between gap-3">
+        <section
+          className={`pointer-events-auto absolute w-72 rounded-xl border border-border bg-background/95 p-3 text-foreground shadow-xl backdrop-blur ${
+            openPanelToLeft ? "right-0" : "left-0"
+          } ${openPanelBelow ? "top-[calc(100%+0.5rem)]" : "bottom-[calc(100%+0.5rem)]"}`}
+        >
+          <header
+            className="mb-3 flex cursor-grab touch-none items-start justify-between gap-3 select-none active:cursor-grabbing"
+            onMouseDown={(event) => startDragging(event, false)}
+            title="Drag to move"
+          >
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <FlaskConical className="size-4" aria-hidden="true" />
@@ -132,6 +147,7 @@ export function ScientUxLabHost() {
               aria-label="Close UX Lab controls"
               className="size-7"
               onClick={() => setOpen(false)}
+              onMouseDown={(event) => event.stopPropagation()}
               size="icon"
               variant="ghost"
             >
@@ -186,7 +202,7 @@ export function ScientUxLabHost() {
           }
           setOpen((value) => !value);
         }}
-        onMouseDown={startDragging}
+        onMouseDown={(event) => startDragging(event, true)}
         size="sm"
         title="Drag to move · Click to open"
       >

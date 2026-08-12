@@ -27,8 +27,10 @@ implementation worktree is never read at runtime or modified by this lab.
 Available scenarios are imported sources, a just-completed import, incomplete
 metadata, and an empty source library. Open a project, add the real **Sources**
 right-panel surface, and switch scenarios from the **UX Lab** control in the
-app overlay. Drag the control away from any surface under review; its position
-is retained across reloads.
+app overlay. Drag either the collapsed button or the open card header away from
+any surface under review; its position is retained across reloads. The card
+automatically opens toward the available viewport space without restricting
+where its button can be placed.
 
 ## Launch
 
