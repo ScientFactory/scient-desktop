@@ -1,6 +1,26 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeSourcesLabScenario, normalizeUxLabControlPosition } from "./state";
+import {
+  matlabLabScenarioDefinition,
+  normalizeMatlabLabScenario,
+  normalizeSourcesLabScenario,
+  normalizeUxLabControlPosition,
+  normalizeUxLabJourney,
+} from "./state";
+
+describe("normalizeUxLabJourney", () => {
+  it.each(["zotero-sources", "matlab-run-file"] as const)(
+    "keeps the registered %s journey",
+    (journey) => {
+      expect(normalizeUxLabJourney(journey)).toBe(journey);
+    },
+  );
+
+  it("falls back to Zotero for older saved lab state", () => {
+    expect(normalizeUxLabJourney(null)).toBe("zotero-sources");
+    expect(normalizeUxLabJourney("unknown")).toBe("zotero-sources");
+  });
+});
 
 describe("normalizeSourcesLabScenario", () => {
   it.each(["imported", "recent-import", "warning", "empty"] as const)(
@@ -27,4 +47,20 @@ describe("normalizeUxLabControlPosition", () => {
       expect(normalizeUxLabControlPosition(value)).toBeNull();
     },
   );
+});
+
+describe("MATLAB lab scenarios", () => {
+  it.each(["success", "failure", "long-running"] as const)(
+    "keeps the registered %s scenario",
+    (scenario) => {
+      expect(normalizeMatlabLabScenario(scenario)).toBe(scenario);
+    },
+  );
+
+  it("falls back to the successful run and resolves its real fixture", () => {
+    expect(normalizeMatlabLabScenario("unknown")).toBe("success");
+    expect(matlabLabScenarioDefinition("success").relativePath).toBe(
+      "ux-lab-fixtures/matlab/cohort_analysis.m",
+    );
+  });
 });

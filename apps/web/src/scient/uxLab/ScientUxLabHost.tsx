@@ -1,19 +1,55 @@
-import { type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useParams } from "@tanstack/react-router";
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { FlaskConical, X } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { resolveThreadRouteTarget } from "../../threadRoutes";
 import {
   SCIENT_UX_LAB_ENABLED,
+  matlabLabScenarioDefinition,
+  matlabLabScenarios,
+  type MatlabLabScenario,
+  readMatlabLabScenario,
   readUxLabControlPosition,
+  readUxLabJourney,
   readSourcesLabScenario,
   saveUxLabControlPosition,
+  selectMatlabLabScenario,
   selectSourcesLabScenario,
+  selectUxLabJourney,
   sourcesLabScenarios,
   type SourcesLabScenario,
+  type UxLabJourney,
   type UxLabControlPosition,
+  uxLabJourneys,
 } from "./state";
 
 const VIEWPORT_MARGIN = 8;
+const MATLAB_RUNTIME_PATH = "ux-lab-fixtures/matlab/fake-runtime/matlab";
+
+function useActiveThreadRef(): ScopedThreadRef | null {
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const draftSession = useComposerDraftStore((store) =>
+    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+  );
+
+  return useMemo(() => {
+    if (routeTarget?.kind === "server") return routeTarget.threadRef;
+    if (routeTarget?.kind === "draft" && draftSession) {
+      return {
+        environmentId: draftSession.environmentId,
+        threadId: draftSession.threadId,
+      };
+    }
+    return null;
+  }, [draftSession, routeTarget]);
+}
 
 function clampPosition(
   position: UxLabControlPosition,
@@ -45,6 +81,16 @@ export function ScientUxLabHost() {
     moved: boolean;
   } | null>(null);
   const ignoreClickRef = useRef(false);
+  const activeThreadRef = useActiveThreadRef();
+  const activeJourney = readUxLabJourney();
+  const activeSourcesScenario = readSourcesLabScenario();
+  const activeMatlabScenario = readMatlabLabScenario();
+  const matlabScenario = matlabLabScenarioDefinition(activeMatlabScenario);
+
+  useEffect(() => {
+    if (activeJourney !== "matlab-run-file" || activeThreadRef === null) return;
+    useRightPanelStore.getState().openFile(activeThreadRef, matlabScenario.relativePath);
+  }, [activeJourney, activeThreadRef, matlabScenario.relativePath]);
 
   useEffect(() => {
     const keepControlOnScreen = () => {
@@ -95,8 +141,6 @@ export function ScientUxLabHost() {
   }, []);
 
   if (!SCIENT_UX_LAB_ENABLED) return null;
-
-  const activeScenario = readSourcesLabScenario();
 
   const startDragging = (event: ReactMouseEvent<HTMLElement>, suppressClick: boolean) => {
     if (event.button !== 0 || rootRef.current === null) return;
@@ -163,11 +207,15 @@ export function ScientUxLabHost() {
           </label>
           <select
             className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-            disabled
             id="ux-lab-journey"
-            value="zotero-sources"
+            onChange={(event) => selectUxLabJourney(event.currentTarget.value as UxLabJourney)}
+            value={activeJourney}
           >
-            <option value="zotero-sources">Zotero sources</option>
+            {uxLabJourneys.map((journey) => (
+              <option key={journey.value} value={journey.value}>
+                {journey.label}
+              </option>
+            ))}
           </select>
 
           <label
@@ -179,17 +227,46 @@ export function ScientUxLabHost() {
           <select
             className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
             id="ux-lab-scenario"
-            onChange={(event) =>
-              selectSourcesLabScenario(event.currentTarget.value as SourcesLabScenario)
+            onChange={(event) => {
+              if (activeJourney === "zotero-sources") {
+                selectSourcesLabScenario(event.currentTarget.value as SourcesLabScenario);
+              } else {
+                selectMatlabLabScenario(event.currentTarget.value as MatlabLabScenario);
+              }
+            }}
+            value={
+              activeJourney === "zotero-sources" ? activeSourcesScenario : activeMatlabScenario
             }
-            value={activeScenario}
           >
-            {sourcesLabScenarios.map((scenario) => (
-              <option key={scenario.value} value={scenario.value}>
-                {scenario.label}
-              </option>
-            ))}
+            {(activeJourney === "zotero-sources" ? sourcesLabScenarios : matlabLabScenarios).map(
+              (scenario) => (
+                <option key={scenario.value} value={scenario.value}>
+                  {scenario.label}
+                </option>
+              ),
+            )}
           </select>
+
+          {activeJourney === "matlab-run-file" ? (
+            <div className="mt-3 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5 text-xs">
+              <p className="leading-relaxed text-muted-foreground">
+                The real file editor opens this synthetic source automatically. Run it with the
+                production MATLAB panel below the editor.
+              </p>
+              <div>
+                <p className="font-medium">Fixture</p>
+                <code className="mt-0.5 block break-all text-[11px] text-muted-foreground">
+                  {matlabScenario.relativePath}
+                </code>
+              </div>
+              <div>
+                <p className="font-medium">Synthetic runtime</p>
+                <code className="mt-0.5 block break-all text-[11px] text-muted-foreground">
+                  {MATLAB_RUNTIME_PATH}
+                </code>
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
