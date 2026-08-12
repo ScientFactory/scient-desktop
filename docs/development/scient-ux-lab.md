@@ -36,7 +36,7 @@ Run from this branch's isolated worktree:
 ```bash
 VITE_SCIENT_UX_LAB=1 \
 T3CODE_PORT_OFFSET=531 \
-pnpm run dev -- \
+pnpm run dev \
   --home-dir "$PWD/.scient-next/ux-lab" \
   --auto-bootstrap-project-from-cwd
 ```
