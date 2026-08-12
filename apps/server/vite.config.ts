@@ -34,7 +34,7 @@ export default mergeConfig(
       },
     },
     pack: {
-      entry: ["src/bin.ts", "src/analytics-worker.ts"],
+      entry: ["src/bin.ts", "src/analytics-worker.ts", "src/pdf-validation-worker.ts"],
       outDir: "dist",
       sourcemap: true,
       clean: true,

@@ -403,6 +403,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resolved.providerLogsDir,
         resolved.terminalLogsDir,
         resolved.attachmentsDir,
+        resolved.documentArtifactsDir,
         resolved.worktreesDir,
         path.dirname(resolved.serverLogPath),
         path.dirname(resolved.serverTracePath),

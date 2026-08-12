@@ -168,6 +168,23 @@ export function useScientPdfReader(input: {
             scale: runtime.viewer.currentScale,
           }));
 
+          const activeQuery = activeSearchQueryRef.current;
+          if (activeQuery.length > 0) {
+            runtime.eventBus.dispatch("find", {
+              source: runtime,
+              type: "",
+              query: activeQuery,
+              phraseSearch: true,
+              caseSensitive: false,
+              entireWord: false,
+              highlightAll: true,
+              findPrevious: false,
+              matchDiacritics: true,
+            });
+            setState((previous) => ({ ...previous, findPhase: "pending" }));
+            return;
+          }
+
           const warmSearch = () => {
             searchWarmupHandle = null;
             searchWarmupKind = null;
