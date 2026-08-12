@@ -1,3 +1,8 @@
+import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactRevisionId,
+} from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -18,6 +23,11 @@ export const AssetResource = Schema.Union([
     // A cache-key hint only. The server reads the authoritative path from the
     // project projection before it issues the signed URL.
     path: Schema.optional(ProjectFaviconPath),
+  }),
+  Schema.TaggedStruct("generated-document", {
+    authority: ArtifactAuthority,
+    artifactId: ArtifactId,
+    revisionId: ArtifactRevisionId,
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
@@ -175,6 +185,40 @@ export class AssetProjectFaviconNotFoundError extends Schema.TaggedErrorClass<As
   }
 }
 
+export class AssetGeneratedDocumentNotFoundError extends Schema.TaggedErrorClass<AssetGeneratedDocumentNotFoundError>()(
+  "AssetGeneratedDocumentNotFoundError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "Generated document was not found.";
+  }
+}
+
+export class AssetGeneratedDocumentAuthorityMismatchError extends Schema.TaggedErrorClass<AssetGeneratedDocumentAuthorityMismatchError>()(
+  "AssetGeneratedDocumentAuthorityMismatchError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "Generated document belongs to another environment.";
+  }
+}
+
+export class AssetGeneratedDocumentResolutionError extends Schema.TaggedErrorClass<AssetGeneratedDocumentResolutionError>()(
+  "AssetGeneratedDocumentResolutionError",
+  {
+    resource: AssetResource,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to resolve generated document.";
+  }
+}
+
 export class AssetSigningKeyLoadError extends Schema.TaggedErrorClass<AssetSigningKeyLoadError>()(
   "AssetSigningKeyLoadError",
   {
@@ -200,6 +244,9 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
+  AssetGeneratedDocumentNotFoundError,
+  AssetGeneratedDocumentAuthorityMismatchError,
+  AssetGeneratedDocumentResolutionError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

@@ -49,6 +49,9 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  AssetGeneratedDocumentAuthorityMismatchError,
+  AssetGeneratedDocumentNotFoundError,
+  AssetGeneratedDocumentResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -89,6 +92,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES } from "./scient/generalChat/ServerCapability.ts";
 import { ensureScientGeneralChatMoveHasNoRunningTerminals } from "./scient/generalChat/MoveCoordinator.ts";
 import { validateScientGeneralChatTerminalOpen } from "./scient/generalChat/TerminalPolicy.ts";
@@ -400,6 +404,7 @@ const makeWsRpcLayer = (
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+      const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -1938,6 +1943,29 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "generated-document") {
+                const generatedDocument = yield* generatedDocuments
+                  .resolveRevision(input.resource)
+                  .pipe(
+                    Effect.mapError((cause) => {
+                      if (cause.reason === "authority-mismatch") {
+                        return new AssetGeneratedDocumentAuthorityMismatchError({
+                          resource: input.resource,
+                        });
+                      }
+                      if (cause.reason === "missing-revision") {
+                        return new AssetGeneratedDocumentNotFoundError({
+                          resource: input.resource,
+                        });
+                      }
+                      return new AssetGeneratedDocumentResolutionError({
+                        resource: input.resource,
+                        cause,
+                      });
+                    }),
+                  );
+                return yield* issueAssetUrl({ resource: input.resource, generatedDocument });
+              }
               if (input.resource._tag === "attachment") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

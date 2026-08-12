@@ -1,4 +1,8 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  PdfSourceActions,
+  PdfSourceDescriptor,
+  PdfSourceResolver,
+} from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
 import {
   ChevronDown,
@@ -16,11 +20,11 @@ import {
   Plus,
   RotateCw,
   Search,
+  FolderSearch,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useAssetUrlState } from "~/assets/assetUrls";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,6 +36,7 @@ import { cn } from "~/lib/utils";
 
 import { PdfOutline } from "./PdfOutline";
 import { PdfThumbnail } from "./PdfThumbnail";
+import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
 import {
   formatPdfZoom,
   parsePdfPageInput,
@@ -97,16 +102,12 @@ function PdfPasswordPrompt(props: {
 }
 
 export function ScientPdfReader(props: {
-  readonly absolutePath: string;
-  readonly environmentId: EnvironmentId;
-  readonly fileName: string;
-  readonly threadRef: ScopedThreadRef;
+  readonly actions?: PdfSourceActions;
+  readonly resolver?: PdfSourceResolver;
+  readonly source: PdfSourceDescriptor;
 }) {
-  const asset = useAssetUrlState(props.environmentId, {
-    _tag: "workspace-file",
-    threadId: props.threadRef.threadId,
-    path: props.absolutePath,
-  });
+  const resolver = props.resolver ?? webPdfSourceResolver;
+  const asset = resolver.useResolve(props.source);
   if (asset._tag === "Failure") {
     return (
       <div className="scient-pdf-reader">
@@ -128,16 +129,23 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  return <LoadedScientPdfReader {...props} sourceUrl={asset.url} refreshSource={asset.refresh} />;
+  return (
+    <LoadedScientPdfReader
+      source={props.source}
+      sourceUrl={asset.url}
+      sourceExpiresAt={asset.expiresAt}
+      refreshSource={asset.refresh}
+      actions={props.actions ?? webPdfSourceActions}
+    />
+  );
 }
 
 function LoadedScientPdfReader(props: {
-  readonly absolutePath: string;
-  readonly environmentId: EnvironmentId;
-  readonly fileName: string;
+  readonly actions: PdfSourceActions;
+  readonly source: PdfSourceDescriptor;
   readonly refreshSource: () => void;
+  readonly sourceExpiresAt: number;
   readonly sourceUrl: string;
-  readonly threadRef: ScopedThreadRef;
 }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
@@ -148,7 +156,7 @@ function LoadedScientPdfReader(props: {
   const rootRef = useRef<HTMLDivElement>(null);
   const [pageInput, setPageInput] = useState("1");
   const reader = useScientPdfReader({
-    documentKey: props.absolutePath,
+    documentKey: JSON.stringify([props.source.authority, props.source.logicalDocumentKey]),
     onSourceInvalidated: props.refreshSource,
     sourceUrl: props.sourceUrl,
     container,
@@ -212,7 +220,7 @@ function LoadedScientPdfReader(props: {
     <div
       ref={rootRef}
       className="scient-pdf-reader"
-      aria-label={`PDF reader: ${props.fileName}`}
+      aria-label={`PDF reader: ${props.source.fileName}`}
       onKeyDown={onReaderKeyDown}
     >
       <div className="scient-pdf-toolbar" role="toolbar" aria-label="PDF controls">
@@ -306,19 +314,41 @@ function LoadedScientPdfReader(props: {
             <Ellipsis />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              onClick={() => {
-                const anchor = document.createElement("a");
-                anchor.href = props.sourceUrl;
-                anchor.download = props.fileName;
-                anchor.click();
-              }}
-            >
-              <Download /> Save a copy…
-            </DropdownMenuItem>
+            {props.source.capabilities.canSaveCopy ? (
+              <DropdownMenuItem
+                onClick={() => {
+                  props.actions.saveCopy(props.source, {
+                    url: props.sourceUrl,
+                    expiresAt: props.sourceExpiresAt,
+                    refresh: props.refreshSource,
+                  });
+                }}
+              >
+                <Download /> Save a copy…
+              </DropdownMenuItem>
+            ) : null}
+            {props.source.capabilities.canRevealSource && props.actions.revealSource ? (
+              <DropdownMenuItem
+                onClick={() =>
+                  props.actions.revealSource?.(props.source, {
+                    url: props.sourceUrl,
+                    expiresAt: props.sourceExpiresAt,
+                    refresh: props.refreshSource,
+                  })
+                }
+              >
+                <FolderSearch /> Reveal source
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {props.source._tag === "generated-pdf" && props.source.bindingStatus === "stale" ? (
+        <div className="scient-pdf-notice" role="status">
+          The latest build failed. Showing the last successful PDF.
+          {props.source.staleReason ? ` ${props.source.staleReason}` : ""}
+        </div>
+      ) : null}
       {searchOpen ? (
         <form
           className="scient-pdf-searchbar"

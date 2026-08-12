@@ -15,6 +15,7 @@ export type AssetUrlState =
   | {
       readonly _tag: "Success";
       readonly url: string;
+      readonly expiresAt: number;
       readonly sourcePath?: string;
       readonly refresh: () => void;
     };
@@ -42,6 +43,7 @@ export function useAssetUrlState(
     : {
         _tag: "Success",
         url,
+        expiresAt: result.value.expiresAt,
         refresh,
         ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
       };

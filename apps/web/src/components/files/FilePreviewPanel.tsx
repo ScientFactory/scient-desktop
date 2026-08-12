@@ -39,6 +39,7 @@ import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { SCIENT_DEFAULT_RENDER_MARKDOWN } from "~/scient/fileOpening/fileOpeningPolicy";
+import { workspacePdfSource } from "~/scient/pdf/pdfSource";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
@@ -840,6 +841,18 @@ export default function FilePreviewPanel({
     isPreviewSupportedInRuntime() &&
     resolveWorkspaceFileLinkOpenTarget(relativePath) === "browser";
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
+  const pdfSource = useMemo(
+    () =>
+      absolutePath && relativePath
+        ? workspacePdfSource({
+            absolutePath,
+            environmentId,
+            fileName: relativePath.split(/[\\/]/).at(-1) ?? relativePath,
+            threadId: threadRef.threadId,
+          })
+        : null,
+    [absolutePath, environmentId, relativePath, threadRef.threadId],
+  );
   const breadcrumbs = useMemo(
     () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
     [projectName, relativePath],
@@ -1028,7 +1041,7 @@ export default function FilePreviewPanel({
               absolutePath={absolutePath}
               alt={relativePath}
             />
-          ) : relativePath && isPdf && absolutePath ? (
+          ) : relativePath && isPdf && absolutePath && pdfSource ? (
             <Suspense
               fallback={
                 <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1036,13 +1049,7 @@ export default function FilePreviewPanel({
                 </div>
               }
             >
-              <ScientPdfReader
-                key={absolutePath}
-                environmentId={environmentId}
-                threadRef={threadRef}
-                absolutePath={absolutePath}
-                fileName={relativePath.split(/[\\/]/).at(-1) ?? relativePath}
-              />
+              <ScientPdfReader key={absolutePath} source={pdfSource} />
             </Suspense>
           ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
