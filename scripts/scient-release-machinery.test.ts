@@ -67,6 +67,7 @@ describe("Scient release machinery", () => {
     assert.include(publish, "actions: read");
     assert.include(publish, "name: scient-release-v${{ needs.preflight.outputs.version }}");
     assert.include(publish, "Verify accepted candidate identity and checksums");
+    assert.include(publish, 'sub("^sha256:"; "")');
     assert.include(publish, ".workflow_run.id == $run_id");
     assert.include(publish, "sha256sum --check SHA256SUMS.txt");
     assert.include(publish, "Stage, verify, and publish the immutable release");
