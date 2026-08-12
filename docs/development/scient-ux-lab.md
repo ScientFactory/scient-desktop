@@ -40,7 +40,7 @@ The MATLAB journey uses the exact production file editor, `.m` file seam, and
 Run File panel integrated from `feat/matlab-run-foundation-20260812` at
 `c7cb810315125da6d164c3cb3c3efe568122cb5b`. Only the external MATLAB process
 is replaced, using the tracked synthetic runtime at
-`ux-lab-fixtures/matlab/fake-runtime/matlab`.
+`apps/server/ux-lab-fixtures/matlab/fake-runtime/matlab`.
 
 Choose a successful, failed, or long-running fixture from the **UX Lab**
 control. The lab opens the real source file automatically. The production
@@ -54,7 +54,7 @@ Run from this branch's isolated worktree:
 
 ```bash
 mkdir -p "$PWD/.scient-next/ux-lab/userdata/analysis"
-node -e 'const fs=require("node:fs");const path=require("node:path");const runtime=path.resolve("ux-lab-fixtures/matlab/fake-runtime/matlab");fs.chmodSync(runtime,0o755);fs.writeFileSync(".scient-next/ux-lab/userdata/analysis/runtime-settings.json",JSON.stringify({version:1,executablePaths:{matlab:runtime}},null,2)+"\n")'
+node -e 'const fs=require("node:fs");const path=require("node:path");const runtime=path.resolve("apps/server/ux-lab-fixtures/matlab/fake-runtime/matlab");fs.chmodSync(runtime,0o755);fs.writeFileSync(".scient-next/ux-lab/userdata/analysis/runtime-settings.json",JSON.stringify({version:1,executablePaths:{matlab:runtime}},null,2)+"\n")'
 
 VITE_SCIENT_UX_LAB=1 \
 T3CODE_PORT_OFFSET=531 \

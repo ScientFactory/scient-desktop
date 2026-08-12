@@ -28,7 +28,7 @@ import {
 } from "./state";
 
 const VIEWPORT_MARGIN = 8;
-const MATLAB_RUNTIME_PATH = "ux-lab-fixtures/matlab/fake-runtime/matlab";
+const MATLAB_RUNTIME_PATH = "apps/server/ux-lab-fixtures/matlab/fake-runtime/matlab";
 
 function useActiveThreadRef(): ScopedThreadRef | null {
   const routeTarget = useParams({
