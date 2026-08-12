@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260811-2db08457f.md`](docs/internals/t3-upstream-sync-20260811-2db08457f.md)
+[`docs/internals/t3-upstream-sync-20260812-849bac894.md`](docs/internals/t3-upstream-sync-20260812-849bac894.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `2db08457f2f4eaaa713a067b2ea480ca2b583025` into the refresh
-branch, preserving the complete nine-commit T3 range from the previously
-integrated tip `ac4780f451f98c10d5b518f2bfa3d035b46645df`. Later observed T3
+checkpoint `849bac8946c40420174b4187e36fcf17b5ea7cc4` into the refresh
+branch, preserving the complete 11-commit T3 range from the previously
+integrated tip `2db08457f2f4eaaa713a067b2ea480ca2b583025`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -116,6 +116,14 @@ fixes, and clearer git action icons. Of 32 upstream paths, 12 overlapped
 Scient work and five conflicted. Scient kept its minimal stage branding,
 typography profile, and sidebar identity mounts while adopting the upstream
 theme pipeline and footer navigation behavior.
+
+The 2026-08-12 sync through `849bac894` receives Open VSX theme discovery,
+composer and sidebar layout refinements, mobile title regeneration and ordered-
+list rendering, the right-panel surface launcher, hosted onboarding alignment,
+and the repaired CLI browser OAuth handoff. Of 46 upstream paths, 18 overlapped
+Scient work and only three conflicted. Scient adopted all product behavior,
+kept its cloud gate and product identity at existing seams, and did not inherit
+T3's repository contributor-trust decision.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
