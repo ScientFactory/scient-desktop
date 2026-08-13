@@ -90,6 +90,14 @@ import {
   ZoteroStatusRequest,
 } from "./scientSources.ts";
 import {
+  ScientLatexBuildRequest,
+  ScientLatexBuildSnapshot,
+  ScientLatexCancelRequest,
+  ScientLatexStatusRequest,
+  ScientLatexToolchainRequest,
+  ScientLatexToolchainStatus,
+} from "./scientLatex.ts";
+import {
   ScientAnalyticsDeletionResult,
   ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
@@ -141,6 +149,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_project_inspection_failed",
   "scient_project_initialization_failed",
   "scient_sources_operation_failed",
+  "scient_latex_build_failed",
+  "scient_latex_toolchain_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
   "internal_error",
@@ -835,6 +845,40 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLatex")
+  .add(
+    HttpApiEndpoint.post("build", "/api/scient/latex/build", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexBuildRequest,
+      success: ScientLatexBuildSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("status", "/api/scient/latex/status", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexStatusRequest,
+      success: ScientLatexBuildSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancel", "/api/scient/latex/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexCancelRequest,
+      success: ScientLatexBuildSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("toolchain", "/api/scient/latex/toolchain", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexToolchainRequest,
+      success: ScientLatexToolchainStatus,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
   .add(
     HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
@@ -875,4 +919,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientProjectHttpApi)
   .add(EnvironmentScientSourcesHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
+  .add(EnvironmentScientLatexHttpApi)
   .add(EnvironmentConnectHttpApi) {}

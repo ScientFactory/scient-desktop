@@ -134,8 +134,11 @@ import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./scient/analysis/LocalAnalysisStore.ts";
 import * as AnalysisRunIndex from "./scient/analysis/AnalysisRunIndex.ts";
 import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
+import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
+import * as LatexToolchain from "./scient/latex/LatexToolchain.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
+import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
@@ -488,6 +491,13 @@ const AnalysisServiceLive = AnalysisService.layer.pipe(
   Layer.provide(LocalExecutionProcess.layer),
 );
 
+// The build coordinator owns its execution port the way the analysis runtime
+// does; the toolchain probe is merged out because the HTTP group reads it too.
+const ScientLatexServicesLive = LatexBuildService.layer.pipe(
+  Layer.provide(LocalExecutionProcess.layer),
+  Layer.provideMerge(LatexToolchain.layer),
+);
+
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -498,6 +508,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientProjectHttpApiLayer),
       Layer.provide(scientSourcesHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
+      Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -517,6 +528,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
+  Layer.provide(ScientLatexServicesLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),
