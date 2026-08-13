@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { renderScientTexToHtml } from "./katexRuntime";
-import { getScientKatexRuntimePromise, isLikelyCurrencyText } from "./ScientMath";
+import {
+  getScientKatexRuntimePromise,
+  isLikelyCurrencyText,
+  shouldRenderMathAsCurrency,
+} from "./ScientMath";
 
 describe("isLikelyCurrencyText", () => {
   it("treats digits and money punctuation as prose", () => {
@@ -30,6 +34,19 @@ describe("isLikelyCurrencyText", () => {
   it("needs a digit to look like money", () => {
     expect(isLikelyCurrencyText("")).toBe(false);
     expect(isLikelyCurrencyText("+-")).toBe(false);
+  });
+});
+
+describe("shouldRenderMathAsCurrency", () => {
+  it("never treats display math as money — $$ around a number is an equation", () => {
+    expect(shouldRenderMathAsCurrency("42", true)).toBe(false);
+    expect(shouldRenderMathAsCurrency("5 - 3", true)).toBe(false);
+  });
+
+  it("treats ambiguous single-dollar spans as money", () => {
+    expect(shouldRenderMathAsCurrency("5-", false)).toBe(true);
+    expect(shouldRenderMathAsCurrency("5 and ", false)).toBe(true);
+    expect(shouldRenderMathAsCurrency("x^2", false)).toBe(false);
   });
 });
 

@@ -39,9 +39,13 @@ describe("ChatMarkdown math seam", () => {
     );
   });
 
-  it("routes math code nodes to the Scient components", () => {
-    expect(chatMarkdownSource).toContain("<ScientInlineMath tex={nodeToPlainText(children)} />");
-    expect(chatMarkdownSource).toContain("<ScientDisplayMath tex={codeBlock.code} />");
+  it("routes math code nodes to the Scient components, with streaming state", () => {
+    expect(chatMarkdownSource).toContain(
+      "<ScientInlineMath tex={nodeToPlainText(children)} isStreaming={isStreaming} />",
+    );
+    expect(chatMarkdownSource).toContain(
+      "<ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} />",
+    );
   });
 });
 

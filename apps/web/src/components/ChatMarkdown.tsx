@@ -1694,7 +1694,7 @@ function ChatMarkdown({
       },
       code({ node, children, className, ...props }) {
         if (isScientMathCodeClassName(className)) {
-          return <ScientInlineMath tex={nodeToPlainText(children)} />;
+          return <ScientInlineMath tex={nodeToPlainText(children)} isStreaming={isStreaming} />;
         }
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
@@ -1725,7 +1725,7 @@ function ChatMarkdown({
           return <pre {...props}>{children}</pre>;
         }
         if (isScientMathCodeClassName(codeBlock.className)) {
-          return <ScientDisplayMath tex={codeBlock.code} />;
+          return <ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} />;
         }
 
         const language = extractFenceLanguage(codeBlock.className);

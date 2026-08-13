@@ -36,9 +36,11 @@ own line, so an own-line `\[...\]` becomes a `$$` fence, replaying the
 opening line's indentation so the fence still nests correctly inside a list;
 a mid-sentence `\[...\]` instead degrades to inline `$...$`. Single-dollar
 math is enabled (`singleDollarTextMath: true`), and the currency guard
-(`isLikelyCurrencyText`) renders digit-only and digit-led-prose TeX back as
-literal text at the component level, because the parser itself cannot tell a
-price like `$5 and $10` from an intended math span.
+(`shouldRenderMathAsCurrency`) renders digit-only and digit-led-prose TeX back
+as literal text at the component level, because the parser itself cannot tell
+a price like `$5 and $10` from an intended math span. The guard applies to
+inline math only; display math is always rendered as math, since `$$` around a
+bare number still means an equation.
 
 ## Detection
 
@@ -56,9 +58,15 @@ display. ` ```math ` fences render as display math, matching GitHub.
 throwOnError: false, strict: "ignore" })`, leaving `trust` (default `false`)
 and `output` (default `htmlAndMathml`) at their KaTeX defaults. Rendered HTML
 is cached in an LRU cache (500 entries / 5 MiB), with cache writes performed
-in an effect after render. `RenderErrorBoundary` and `Suspense` both fall back
-to the literal dollar-form text — as a `<code>` element — while the KaTeX
-chunk is still loading or if rendering throws.
+in an effect after render; cache reads and writes are skipped while the
+message is still streaming — matching the Shiki highlight cache — so the
+growing prefixes of an unclosed block never occupy entries.
+`RenderErrorBoundary` and `Suspense` both fall back to the literal dollar-form
+text — as a `<code>` element — while the KaTeX chunk is still loading or if
+rendering throws. Every rendered or fallback math element carries
+`data-markdown-copy` with its dollar-form source, so highlight-and-copy
+(`markdown-clipboard.ts`) round-trips math instead of serializing KaTeX's
+DOM.
 
 ## Verification
 
