@@ -14,6 +14,7 @@ import {
   usePdfSourceState,
   webPdfSourceResolver,
   workspacePdfSource,
+  workspacePdfSourceForPreview,
 } from "./pdfSource";
 
 describe("PDF source resolution", () => {
@@ -32,6 +33,75 @@ describe("PDF source resolution", () => {
       _tag: "workspace-file",
       threadId: "thread-1",
       path: "/workspace/reports/paper.pdf",
+    });
+  });
+
+  it.each(["README.md", "analysis.m", "figure.png", "data.txt"])(
+    "does not construct a PDF source for a restored %s preview",
+    (relativePath) => {
+      expect(
+        workspacePdfSourceForPreview({
+          absolutePath: `/workspace/${relativePath}`,
+          environmentId: EnvironmentId.make("environment-1"),
+          relativePath,
+          threadId: ThreadId.make("thread-1"),
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("does not construct a PDF source for an empty preview", () => {
+    expect(
+      workspacePdfSourceForPreview({
+        absolutePath: null,
+        environmentId: EnvironmentId.make("environment-1"),
+        relativePath: null,
+        threadId: ThreadId.make("thread-1"),
+      }),
+    ).toBeNull();
+  });
+
+  it("constructs a PDF source for a restored PDF preview", () => {
+    expect(
+      workspacePdfSourceForPreview({
+        absolutePath: "/workspace/reports/PAPER.PDF",
+        environmentId: EnvironmentId.make("environment-1"),
+        relativePath: "reports/PAPER.PDF",
+        threadId: ThreadId.make("thread-1"),
+      }),
+    ).toMatchObject({
+      _tag: "workspace-pdf",
+      absolutePath: "/workspace/reports/PAPER.PDF",
+      fileName: "PAPER.PDF",
+      threadId: "thread-1",
+    });
+  });
+
+  it("removes browser suffixes before constructing a PDF source", () => {
+    expect(
+      workspacePdfSourceForPreview({
+        absolutePath: "/workspace/reports/paper.pdf?download=1",
+        environmentId: EnvironmentId.make("environment-1"),
+        relativePath: "reports/paper.pdf?download=1",
+        threadId: ThreadId.make("thread-1"),
+      }),
+    ).toMatchObject({
+      absolutePath: "/workspace/reports/paper.pdf",
+      fileName: "paper.pdf",
+    });
+  });
+
+  it("preserves special characters in the workspace directory", () => {
+    expect(
+      workspacePdfSourceForPreview({
+        absolutePath: "/workspace/Project #1/reports/paper.pdf",
+        environmentId: EnvironmentId.make("environment-1"),
+        relativePath: "reports/paper.pdf",
+        threadId: ThreadId.make("thread-1"),
+      }),
+    ).toMatchObject({
+      absolutePath: "/workspace/Project #1/reports/paper.pdf",
+      fileName: "paper.pdf",
     });
   });
 
