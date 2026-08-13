@@ -253,6 +253,17 @@ async function readSourceRecordFromPaths(
   return record;
 }
 
+/** Reads one source without scanning or decoding the rest of the project ledger. */
+export async function readScientSourceRecord(
+  root: string,
+  sourceId: string,
+): Promise<ScientSourceRecord | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = sourceRecordPath(paths, sourceId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  return readSourceRecordFromPaths(paths, sourceId);
+}
+
 function sourceHistoryPath(
   paths: Awaited<ReturnType<typeof sourceStorePaths>>,
   sourceId: string,
