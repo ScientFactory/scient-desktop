@@ -22,6 +22,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
+import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -216,6 +218,10 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+export const ScientSourcesToolkitRegistrationLive = McpServer.toolkit(ScientSourcesToolkit).pipe(
+  Layer.provide(ScientSourcesToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
   version: packageJson.version,
@@ -223,4 +229,7 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  ScientSourcesToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

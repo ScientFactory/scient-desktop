@@ -2,13 +2,18 @@ import {
   advanceEnvironmentScientSourcesImport,
   beginEnvironmentLocalSourceImport,
   beginEnvironmentZoteroImport,
+  beginEnvironmentZoteroScopedImport,
   cancelEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
   getEnvironmentScientSourceAttachmentPreview,
+  getEnvironmentScientSourceDetail,
+  getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
   getEnvironmentZoteroStatus,
   listEnvironmentZoteroLibrary,
+  listEnvironmentZoteroCollections,
   preflightEnvironmentZoteroImport,
+  refreshEnvironmentScientSourceMetadata,
   removeEnvironmentScientSource,
   updateEnvironmentScientSourceMetadata,
   uploadEnvironmentLocalSourcePdf,
@@ -16,8 +21,10 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
   EnvironmentId,
+  ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceRemovalRequest,
+  ZoteroImportScope,
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
@@ -35,12 +42,30 @@ export function readScientSources(environmentId: EnvironmentId, root: string) {
   );
 }
 
+export function readScientSource(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly sourceId: string },
+) {
+  return runtime.runPromise(
+    getEnvironmentScientSourceDetail({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
 export function updateScientSourceMetadata(
   environmentId: EnvironmentId,
   input: ScientSourceMetadataUpdateRequest,
 ) {
   return runtime.runPromise(
     updateEnvironmentScientSourceMetadata({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function refreshScientSourceMetadata(
+  environmentId: EnvironmentId,
+  input: ScientSourceMetadataRefreshRequest,
+) {
+  return runtime.runPromise(
+    refreshEnvironmentScientSourceMetadata({ prepared: prepared(environmentId), ...input }),
   );
 }
 
@@ -55,7 +80,7 @@ export function removeScientSource(
 
 export async function readScientSourceAttachmentPreview(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly attachmentId: string },
+  input: { readonly root: string; readonly sourceId?: string; readonly attachmentId: string },
 ) {
   const connection = prepared(environmentId);
   const result = await runtime.runPromise(
@@ -66,17 +91,39 @@ export async function readScientSourceAttachmentPreview(
   return { ...result, url };
 }
 
+export async function readScientSourceJournalIcon(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly sourceId: string },
+) {
+  const connection = prepared(environmentId);
+  const result = await runtime.runPromise(
+    getEnvironmentScientSourceJournalIcon({ prepared: connection, ...input }),
+  );
+  if (!result.icon) return null;
+  const url = resolveAssetUrl(connection.httpBaseUrl, result.icon.relativeUrl);
+  return url ? { ...result.icon, url } : null;
+}
+
 export function readZoteroStatus(environmentId: EnvironmentId) {
   return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId)));
 }
 
 export function readZoteroLibrary(
   environmentId: EnvironmentId,
-  input: { readonly query: string; readonly start: number; readonly limit: number },
+  input: {
+    readonly scope: ZoteroImportScope;
+    readonly query: string;
+    readonly start: number;
+    readonly limit: number;
+  },
 ) {
   return runtime.runPromise(
     listEnvironmentZoteroLibrary({ prepared: prepared(environmentId), ...input }),
   );
+}
+
+export function readZoteroCollections(environmentId: EnvironmentId) {
+  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId)));
 }
 
 export function preflightZoteroItems(
@@ -99,6 +146,19 @@ export function beginZoteroItemsImport(
 ) {
   return runtime.runPromise(
     beginEnvironmentZoteroImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function beginZoteroScopeImport(
+  environmentId: EnvironmentId,
+  input: {
+    readonly root: string;
+    readonly operationId: string;
+    readonly scope: ZoteroImportScope;
+  },
+) {
+  return runtime.runPromise(
+    beginEnvironmentZoteroScopedImport({ prepared: prepared(environmentId), ...input }),
   );
 }
 
