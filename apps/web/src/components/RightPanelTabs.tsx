@@ -179,6 +179,7 @@ function RightPanelEmptyState(props: {
       label: "Sources",
       description: "Import and read research sources.",
       icon: Library,
+      shortcut: "S",
       available: props.sourcesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.sources,
       onClick: props.onAddSources,
