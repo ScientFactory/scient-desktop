@@ -44,6 +44,7 @@ export function validateIntroducedMergeParents(input) {
     }
     for (const parent of merge.parents.slice(1)) {
       if (input.isOfficialAncestor(parent)) continue;
+      if (input.isOwnedAncestor(parent)) continue;
       const exception = input.exceptions.find(
         (candidate) => candidate.head === parent && candidate.importMerge === merge.commit,
       );
@@ -106,6 +107,7 @@ export function verifyUpstreamProvenance(argv = process.argv.slice(2)) {
           exceptions,
           allowOwnedHeadMerge: args["allow-owned-head-merge"] === "true",
           isOfficialAncestor: (commit) => isAncestor(commit, args["official-ref"]),
+          isOwnedAncestor: (commit) => isAncestor(commit, base),
         }),
       );
     }
