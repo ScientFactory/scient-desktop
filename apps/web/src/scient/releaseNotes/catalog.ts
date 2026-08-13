@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.4",
+    publishedAt: "2026-08-14",
+    kicker: "MATLAB analysis, source notes, and smoother project work",
+    headline: "Run MATLAB analyses inside Scient",
+    summary:
+      "Scient can now run project MATLAB files with your installed MATLAB, keep their results and figures close to the code, and make sources, projects, and local previews more dependable.",
+    highlights: [
+      {
+        id: "matlab-run-file",
+        title: "Run MATLAB files from your project",
+        description:
+          "Open a saved .m file, connect your existing MATLAB installation, follow its output and errors, and stop or revisit runs without leaving Scient.",
+      },
+      {
+        id: "matlab-results-and-figures",
+        title: "Keep figures and results with each run",
+        description:
+          "Review captured figures in the workspace, open movable figure cards, download native FIG files, and see when results no longer match the saved source.",
+      },
+      {
+        id: "source-notes",
+        title: "Add notes directly to research sources",
+        description:
+          "Write persistent source notes with bold, italic, and bidirectional text support. Agents can work with the same project-owned notes when you ask them to.",
+      },
+      {
+        id: "source-reliability",
+        title: "More trustworthy source details",
+        description:
+          "Structured abstracts preserve their sections and text more reliably, source search handles multiple terms consistently, and stalled imports now fail clearly instead of hanging.",
+      },
+      {
+        id: "everyday-navigation",
+        title: "Fewer interruptions around the workspace",
+        description:
+          "Project folders open on the first Enter, browser previews prioritize relevant local servers, and pull-request panels stay within the available window.",
+      },
+    ],
+  },
+  {
     version: "0.6.3",
     publishedAt: "2026-08-13",
     kicker: "Complete source intake and a stronger everyday workspace",
