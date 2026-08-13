@@ -344,13 +344,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 48rem) {
-    /* The resizable desktop sidebar bottoms out at 13rem. On macOS the
-       titlebar reserve leaves 78px there, enough for the compact 16px Scient
-       mark and name; below that width the identity yields to window controls. */
-    @container sidebar-header (min-width: 13rem) {
-      .sidebar-brand {
-        display: flex;
-      }
+    .sidebar-brand {
+      display: flex;
     }
 
     @container sidebar-header (min-width: 15.75rem) {
