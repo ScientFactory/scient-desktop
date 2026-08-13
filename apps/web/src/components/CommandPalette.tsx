@@ -113,6 +113,7 @@ import {
   buildRootGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
+  type BrowseHighlightReason,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -122,6 +123,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  isKeyboardBrowseHighlight,
   reduceCommandPaletteUiState,
   resolveBrowseEnterAction,
   shouldOfferProjectPathCreation,
@@ -585,6 +587,10 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const highlightedItemValueRef = useRef<string | null>(null);
+  const [highlightedItemReason, setHighlightedItemReason] = useState<BrowseHighlightReason | null>(
+    null,
+  );
+  const highlightedItemReasonRef = useRef<BrowseHighlightReason | null>(null);
   const [isNewProjectFolderDraft, setIsNewProjectFolderDraft] = useState(false);
   const clientSettings = useClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
@@ -1165,6 +1171,13 @@ function OpenCommandPaletteDialog(props: {
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 
+  function clearHighlightedItem(): void {
+    highlightedItemValueRef.current = null;
+    highlightedItemReasonRef.current = null;
+    setHighlightedItemValue(null);
+    setHighlightedItemReason(null);
+  }
+
   const pushPaletteView = useCallback(
     (view: CommandPaletteView): void => {
       browseNavigation.invalidate();
@@ -1176,8 +1189,7 @@ function OpenCommandPaletteDialog(props: {
           ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
         },
       ]);
-      highlightedItemValueRef.current = null;
-      setHighlightedItemValue(null);
+      clearHighlightedItem();
       setIsNewProjectFolderDraft(false);
       setQuery(view.initialQuery ?? "");
     },
@@ -1199,16 +1211,14 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(null);
     }
     setViewStack((previousViews) => previousViews.slice(0, -1));
-    highlightedItemValueRef.current = null;
-    setHighlightedItemValue(null);
+    clearHighlightedItem();
     setIsNewProjectFolderDraft(false);
     setQuery("");
   }
 
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
-    highlightedItemValueRef.current = null;
-    setHighlightedItemValue(null);
+    clearHighlightedItem();
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
@@ -1991,8 +2001,7 @@ function OpenCommandPaletteDialog(props: {
           repository: null,
           remoteUrl: rawRepository,
         });
-        highlightedItemValueRef.current = null;
-        setHighlightedItemValue(null);
+        clearHighlightedItem();
         setQuery(destinationPath);
         setBrowseGeneration((generation) => generation + 1);
         return;
@@ -2029,8 +2038,7 @@ function OpenCommandPaletteDialog(props: {
         repository,
         remoteUrl: repository.sshUrl,
       });
-      highlightedItemValueRef.current = null;
-      setHighlightedItemValue(null);
+      clearHighlightedItem();
       setQuery(destinationPath);
       setBrowseGeneration((generation) => generation + 1);
       return;
@@ -2101,8 +2109,7 @@ function OpenCommandPaletteDialog(props: {
       await browseNavigation.run(
         () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
         () => {
-          highlightedItemValueRef.current = null;
-          setHighlightedItemValue(null);
+          clearHighlightedItem();
           setIsNewProjectFolderDraft(false);
           setQuery(nextQuery);
           setBrowseGeneration((generation) => generation + 1);
@@ -2121,8 +2128,7 @@ function OpenCommandPaletteDialog(props: {
     await browseNavigation.run(
       () => prefetchBrowsePath(parentPath),
       () => {
-        highlightedItemValueRef.current = null;
-        setHighlightedItemValue(null);
+        clearHighlightedItem();
         setIsNewProjectFolderDraft(false);
         setQuery(parentPath);
         setBrowseGeneration((generation) => generation + 1);
@@ -2182,8 +2188,12 @@ function OpenCommandPaletteDialog(props: {
     remoteProjectInputPlaceholder(addProjectCloneFlow) ??
     getCommandPaletteInputPlaceholder(paletteMode);
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
-  const hasHighlightedBrowseItem =
-    !isNewProjectFolderDraft && (highlightedItemValue?.startsWith("browse:") ?? false);
+  const hasKeyboardBrowseHighlight =
+    !isNewProjectFolderDraft &&
+    isKeyboardBrowseHighlight({
+      highlightedItemValue,
+      highlightReason: highlightedItemReason,
+    });
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
@@ -2193,7 +2203,7 @@ function OpenCommandPaletteDialog(props: {
     isBrowsePending,
     hasBrowseResult: browseResult !== null,
     query,
-    hasHighlightedBrowseItem,
+    hasKeyboardBrowseHighlight,
     hasTrailingPathSeparator: hasTrailingPathSeparator(query),
     exactEntryExists: exactBrowseEntry !== null,
   });
@@ -2207,7 +2217,7 @@ function OpenCommandPaletteDialog(props: {
     : willCreateProjectPath
       ? "Create & Add"
       : "Add";
-  const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
+  const addShortcutLabel = hasKeyboardBrowseHighlight ? `${submitModifierLabel} Enter` : "Enter";
   const remoteProjectButtonLabel = addProjectCloneFlow
     ? addProjectCloneFlow.source === "url"
       ? "Continue"
@@ -2288,6 +2298,7 @@ function OpenCommandPaletteDialog(props: {
       isComposing: event.nativeEvent.isComposing,
       isPrimaryModifierPressed: isPrimaryModifierPressed(event),
       highlightedItemValue: highlightedItemValueRef.current,
+      highlightReason: highlightedItemReasonRef.current,
     });
     if (browseEnterAction !== "submit-current-path") return;
 
@@ -2481,8 +2492,7 @@ function OpenCommandPaletteDialog(props: {
     const directoryNames = browseEntries.map((entry) => entry.name);
     const folderName = getAvailableNewFolderName(directoryNames);
     const nextQuery = getAvailableNewProjectPath(browseDirectoryPath, directoryNames);
-    highlightedItemValueRef.current = null;
-    setHighlightedItemValue(null);
+    clearHighlightedItem();
     setIsNewProjectFolderDraft(true);
     setQuery(nextQuery);
     requestAnimationFrame(() => {
@@ -2538,7 +2548,7 @@ function OpenCommandPaletteDialog(props: {
               tabIndex={-1}
               className={cn(
                 "absolute inset-e-2.5 top-1/2 border-info/32 bg-info/4 pe-1 ps-2 text-info-foreground shadow-none -translate-y-1/2 before:shadow-none [:hover,[data-pressed]]:border-info/45 [:hover,[data-pressed]]:bg-info/8 dark:bg-info/4 dark:[:hover,[data-pressed]]:bg-info/8",
-                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
+                hasKeyboardBrowseHighlight ? "gap-1" : "gap-1.5",
               )}
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
               disabled={
@@ -2566,7 +2576,7 @@ function OpenCommandPaletteDialog(props: {
             {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
           </span>
           <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-            <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+            <Kbd>{hasKeyboardBrowseHighlight ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
           </KbdGroup>
         </TooltipTrigger>
         <TooltipPopup side="top">
@@ -2578,7 +2588,7 @@ function OpenCommandPaletteDialog(props: {
   const footerActionLabel =
     addProjectCloneFlow?.step === "repository"
       ? (remoteProjectButtonLabel ?? "Continue")
-      : !canSubmitBrowsePath || hasHighlightedBrowseItem
+      : !canSubmitBrowsePath || hasKeyboardBrowseHighlight
         ? "Select"
         : undefined;
 
@@ -2619,6 +2629,7 @@ function OpenCommandPaletteDialog(props: {
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}`}
       aria-label="Command palette"
       autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
+      keepHighlight={!(isBrowsing || isRemoteProjectCloneFlow)}
       containerProps={{
         onDragEnter: projectFolderDrop.onDragEnter,
         onDragLeave: projectFolderDrop.onDragLeave,
@@ -2662,10 +2673,18 @@ function OpenCommandPaletteDialog(props: {
         onKeyDown: handleKeyDown,
       }}
       mode="none"
-      onItemHighlighted={(value) => {
+      onItemHighlighted={(value, eventDetails) => {
         const nextValue = typeof value === "string" ? value : null;
+        const nextReason: BrowseHighlightReason | null =
+          nextValue == null
+            ? null
+            : eventDetails.reason === "keyboard" || eventDetails.reason === "pointer"
+              ? eventDetails.reason
+              : "none";
         highlightedItemValueRef.current = nextValue;
+        highlightedItemReasonRef.current = nextReason;
         setHighlightedItemValue(nextValue);
+        setHighlightedItemReason(nextReason);
       }}
       onValueChange={handleQueryChange}
       panelClassName="flex max-h-[min(28rem,70vh)] flex-col"

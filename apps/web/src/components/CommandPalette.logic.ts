@@ -139,6 +139,18 @@ export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-b
 
 export type BrowseEnterAction = "ignore" | "activate-highlighted" | "submit-current-path";
 
+export type BrowseHighlightReason = "keyboard" | "pointer" | "none";
+
+export function isKeyboardBrowseHighlight(input: {
+  readonly highlightedItemValue: string | null;
+  readonly highlightReason: BrowseHighlightReason | null;
+}): boolean {
+  return (
+    input.highlightReason === "keyboard" &&
+    input.highlightedItemValue?.startsWith("browse:") === true
+  );
+}
+
 export function resolveBrowseEnterAction(input: {
   readonly canSubmitBrowsePath: boolean;
   readonly forceSubmitCurrentPath: boolean;
@@ -146,12 +158,13 @@ export function resolveBrowseEnterAction(input: {
   readonly isComposing: boolean;
   readonly isPrimaryModifierPressed: boolean;
   readonly highlightedItemValue: string | null;
+  readonly highlightReason: BrowseHighlightReason | null;
 }): BrowseEnterAction {
   if (!input.canSubmitBrowsePath || input.key !== "Enter" || input.isComposing) return "ignore";
   if (
     input.forceSubmitCurrentPath ||
     input.isPrimaryModifierPressed ||
-    input.highlightedItemValue?.startsWith("browse:") !== true
+    !isKeyboardBrowseHighlight(input)
   ) {
     return "submit-current-path";
   }
@@ -163,7 +176,7 @@ export function shouldOfferProjectPathCreation(input: {
   readonly isBrowsePending: boolean;
   readonly hasBrowseResult: boolean;
   readonly query: string;
-  readonly hasHighlightedBrowseItem: boolean;
+  readonly hasKeyboardBrowseHighlight: boolean;
   readonly hasTrailingPathSeparator: boolean;
   readonly exactEntryExists: boolean;
 }): boolean {
@@ -172,7 +185,7 @@ export function shouldOfferProjectPathCreation(input: {
     !input.isBrowsePending &&
     input.hasBrowseResult &&
     input.query.trim().length > 0 &&
-    !input.hasHighlightedBrowseItem &&
+    !input.hasKeyboardBrowseHighlight &&
     !input.hasTrailingPathSeparator &&
     !input.exactEntryExists
   );

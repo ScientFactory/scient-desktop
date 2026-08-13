@@ -7,6 +7,7 @@ import {
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  isKeyboardBrowseHighlight,
   resolveBrowseEnterAction,
   shouldOfferProjectPathCreation,
   shouldOpenNewThreadTargetPicker,
@@ -21,15 +22,54 @@ describe("resolveBrowseEnterAction", () => {
     isComposing: false,
     isPrimaryModifierPressed: false,
     highlightedItemValue: null,
+    highlightReason: null,
   } as const;
 
   it("submits the current folder when no browse row is currently highlighted", () => {
     expect(resolveBrowseEnterAction(enter)).toBe("submit-current-path");
   });
 
-  it("leaves a current browse-row selection to the component library", () => {
+  it("leaves a keyboard browse-row selection to the component library", () => {
     expect(
-      resolveBrowseEnterAction({ ...enter, highlightedItemValue: "browse:directory:Projects" }),
+      resolveBrowseEnterAction({
+        ...enter,
+        highlightedItemValue: "browse:directory:Projects",
+        highlightReason: "keyboard",
+      }),
+    ).toBe("activate-highlighted");
+  });
+
+  it("submits the current folder when a browse row is highlighted by pointer or stale state", () => {
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        highlightedItemValue: "browse:up",
+        highlightReason: "pointer",
+      }),
+    ).toBe("submit-current-path");
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        highlightedItemValue: "browse:directory:Projects",
+        highlightReason: "pointer",
+      }),
+    ).toBe("submit-current-path");
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        highlightedItemValue: "browse:up",
+        highlightReason: "none",
+      }),
+    ).toBe("submit-current-path");
+  });
+
+  it("activates .. only after deliberate keyboard highlighting", () => {
+    expect(
+      resolveBrowseEnterAction({
+        ...enter,
+        highlightedItemValue: "browse:up",
+        highlightReason: "keyboard",
+      }),
     ).toBe("activate-highlighted");
   });
 
@@ -39,6 +79,7 @@ describe("resolveBrowseEnterAction", () => {
         ...enter,
         isPrimaryModifierPressed: true,
         highlightedItemValue: "browse:up",
+        highlightReason: "keyboard",
       }),
     ).toBe("submit-current-path");
   });
@@ -49,6 +90,7 @@ describe("resolveBrowseEnterAction", () => {
         ...enter,
         forceSubmitCurrentPath: true,
         highlightedItemValue: "browse:up",
+        highlightReason: "keyboard",
       }),
     ).toBe("submit-current-path");
   });
@@ -59,13 +101,36 @@ describe("resolveBrowseEnterAction", () => {
   });
 });
 
+describe("isKeyboardBrowseHighlight", () => {
+  it("treats only arrow-key browse highlights as deliberate", () => {
+    expect(
+      isKeyboardBrowseHighlight({
+        highlightedItemValue: "browse:up",
+        highlightReason: "keyboard",
+      }),
+    ).toBe(true);
+    expect(
+      isKeyboardBrowseHighlight({
+        highlightedItemValue: "browse:up",
+        highlightReason: "pointer",
+      }),
+    ).toBe(false);
+    expect(
+      isKeyboardBrowseHighlight({
+        highlightedItemValue: "browse:directory:Projects",
+        highlightReason: "none",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("shouldOfferProjectPathCreation", () => {
   const confirmedMissingPath = {
     canSubmitBrowsePath: true,
     isBrowsePending: false,
     hasBrowseResult: true,
     query: "~/Projects/New project",
-    hasHighlightedBrowseItem: false,
+    hasKeyboardBrowseHighlight: false,
     hasTrailingPathSeparator: false,
     exactEntryExists: false,
   } as const;
