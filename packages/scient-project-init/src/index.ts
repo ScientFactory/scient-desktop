@@ -49,8 +49,6 @@ export interface ScientProjectIdentity {
   readonly createdAt: string;
 }
 
-type ProjectIdentity = ScientProjectIdentity;
-
 interface TransactionFileEntry {
   readonly path: string;
   readonly content: string;
@@ -62,7 +60,7 @@ interface ProjectInitializationTransaction {
   readonly operationId: string;
   readonly createdAt: string;
   readonly title: string;
-  readonly identity: ProjectIdentity;
+  readonly identity: ScientProjectIdentity;
   readonly files: ReadonlyArray<TransactionFileEntry>;
 }
 
@@ -115,7 +113,7 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-function parseIdentity(content: string): ProjectIdentity | null {
+function parseIdentity(content: string): ScientProjectIdentity | null {
   try {
     const value: unknown = JSON.parse(content);
     if (typeof value !== "object" || value === null) return null;
@@ -129,7 +127,7 @@ function parseIdentity(content: string): ProjectIdentity | null {
     ) {
       return null;
     }
-    return candidate as unknown as ProjectIdentity;
+    return candidate as unknown as ScientProjectIdentity;
   } catch {
     return null;
   }
@@ -221,7 +219,7 @@ async function inspectResolvedRoot(root: string): Promise<ScientProjectInspectio
     .filter(([, snapshot]) => snapshot.kind !== "missing")
     .map(([relativePath]) => relativePath);
   const issues: ScientProjectIssue[] = [];
-  let identity: ProjectIdentity | null = null;
+  let identity: ScientProjectIdentity | null = null;
   let identityContents: string | null = null;
   let transaction: ProjectInitializationTransaction | null = null;
 
@@ -325,16 +323,19 @@ export async function inspectScientProject(root: string): Promise<ScientProjectI
   return inspectResolvedRoot(await validateRoot(root, false));
 }
 
-/** Read the durable identity without initializing or repairing an ordinary folder. */
-export async function readScientProjectIdentity(
-  root: string,
-): Promise<ScientProjectIdentity | null> {
+export async function readScientProjectIdentity(root: string): Promise<ScientProjectIdentity> {
   const resolvedRoot = await validateRoot(root, false);
-  const identityPath = NodePath.join(resolvedRoot, SCIENT_IDENTITY_FILE);
-  const snapshot = await snapshotPath(identityPath);
-  if (snapshot.kind === "missing") return null;
-  if (snapshot.kind !== "file" || snapshot.size > MAX_IDENTITY_BYTES) return null;
-  return parseIdentity(await readBoundedFile(identityPath, MAX_IDENTITY_BYTES));
+  const inspection = await inspectResolvedRoot(resolvedRoot);
+  if (inspection.state !== "initialized") {
+    throw new Error("This folder is not an initialized Scient project.");
+  }
+  const identity = parseIdentity(
+    await readBoundedFile(NodePath.join(resolvedRoot, SCIENT_IDENTITY_FILE), MAX_IDENTITY_BYTES),
+  );
+  if (identity === null) {
+    throw new Error("The Scient project identity is invalid.");
+  }
+  return identity;
 }
 
 async function writeMissingFile(
@@ -396,7 +397,7 @@ async function initializeResolvedRoot(
       : null;
   const title = existingTransaction?.title ?? projectTitle(root, requestedTitle);
   const now = new Date().toISOString();
-  const identity: ProjectIdentity = existingTransaction?.identity ?? {
+  const identity: ScientProjectIdentity = existingTransaction?.identity ?? {
     projectId: NodeCrypto.randomUUID(),
     formatVersion: PROJECT_SCHEMA_VERSION,
     createdAt: now,

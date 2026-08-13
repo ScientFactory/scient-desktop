@@ -5343,7 +5343,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               relativePath: "slow.m",
             }).pipe(
               Stream.filterMap((event) =>
-                event._tag === "run-updated" && event.run.receipt.runId === started.receipt.runId
+                event._tag !== "run-output" && event.run.receipt.runId === started.receipt.runId
                   ? Result.succeed(event.run)
                   : Result.failVoid,
               ),

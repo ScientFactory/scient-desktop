@@ -454,6 +454,16 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const ScientSourcesPanel = lazy(() =>
+  import("../scient/sources/ScientSourcesPanel").then((module) => ({
+    default: module.ScientSourcesPanel,
+  })),
+);
+const SourcePdfPreview = lazy(() =>
+  import("../scient/sources/SourcePdfPreview").then((module) => ({
+    default: module.SourcePdfPreview,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -3442,6 +3452,17 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addSourcesSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
+    useRightPanelStore.getState().openScient(activeThreadRef, "sources");
+  }, [activeProject, activeThreadRef, activeWorkspaceRoot]);
+  const openScientSourcePdf = useCallback(
+    (input: { readonly attachmentId: string; readonly fileName: string }) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().openScientSourcePdf(activeThreadRef, input);
+    },
+    [activeThreadRef],
+  );
   const openFileSourceSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
@@ -6323,6 +6344,34 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
+    ) : activeRightPanelSurface?.kind === "scient" &&
+      activeRightPanelSurface.module === "source-pdf" &&
+      activeThread &&
+      activeThreadRef &&
+      activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <SourcePdfPreview
+          attachmentId={activeRightPanelSurface.attachmentId}
+          environmentId={activeThread.environmentId}
+          fileName={activeRightPanelSurface.fileName}
+          root={activeWorkspaceRoot}
+          threadRef={activeThreadRef}
+        />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "scient" &&
+      activeRightPanelSurface.module === "sources" &&
+      activeThread &&
+      activeThreadRef &&
+      activeProject &&
+      activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <ScientSourcesPanel
+          environmentId={activeThread.environmentId}
+          root={activeWorkspaceRoot}
+          projectTitle={activeProject.title}
+          onOpenPdf={openScientSourcePdf}
+        />
+      </Suspense>
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeThread &&
       activeWorkspaceRoot ? (
@@ -6782,12 +6831,14 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddAgents={addAgentsSurface}
+          onAddSources={addSourcesSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeTerminalTarget !== null}
           diffAvailable={diffAvailable}
           filesAvailable={activeWorkspaceRoot !== undefined}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
+          sourcesAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
         >
@@ -6816,12 +6867,14 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddAgents={addAgentsSurface}
+            onAddSources={addSourcesSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeTerminalTarget !== null}
             diffAvailable={diffAvailable}
             filesAvailable={activeWorkspaceRoot !== undefined}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
+            sourcesAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
             pullRequestStatuses={pullRequestTabStatuses}
             liveAgentCount={agentPanelModel.liveCount}
           >

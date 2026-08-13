@@ -114,6 +114,14 @@ checkout. `dev:app:logs` prints the last 200 lines produced by clickable app
 launches. `dev:app:stop` signals only the exact runner PID recorded by that
 checkout; do not stop Electron, Node, or pnpm processes by name or pattern.
 
+The desktop renderer hot-reloads, but its local backend runs from the server
+bundle built when the candidate starts. After changing `apps/server`, an HTTP
+contract used by the server, or a workspace package bundled into the server,
+stop and rerun that candidate before testing the change. Do not trust renderer
+reload alone. Contract-derived features may explicitly report that the app and
+server are out of sync, but logic-only server changes cannot always be detected
+from the renderer.
+
 The lower-level command remains available when its managed lifecycle is not
 needed:
 

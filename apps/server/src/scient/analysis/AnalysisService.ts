@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- local execution receipts use host SHA-256.
 import * as NodeCrypto from "node:crypto";
 
-import { readScientProjectIdentity } from "@scientfactory/project-init";
+import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   AnalysisOperationError,
@@ -247,7 +247,10 @@ const make = Effect.gen(function* () {
 
   const identityForCwd = (operation: AnalysisOperation, cwd: string) =>
     Effect.tryPromise({
-      try: () => readScientProjectIdentity(cwd),
+      try: async () => {
+        const inspection = await inspectScientProject(cwd);
+        return inspection.state === "initialized" ? readScientProjectIdentity(cwd) : null;
+      },
       catch: (cause) =>
         analysisError(
           operation,
@@ -842,17 +845,19 @@ const make = Effect.gen(function* () {
       yield* ensureProjectRunsLoaded(identity.projectId);
       const subscription = yield* PubSub.subscribe(pubsub);
       const boundarySequence = yield* Ref.get(eventSequenceRef);
-      const snapshots = [...(yield* Ref.get(runsRef)).values()]
+      const matchingRuns = [...(yield* Ref.get(runsRef)).values()]
         .filter(
           (run) =>
             run.projectId === identity.projectId &&
-            !isTerminal(run.receipt.status) &&
             matchesSubscription(
               { _tag: "run-snapshot", eventSequence: boundarySequence, run },
               input,
             ),
         )
-        .toSorted((left, right) => left.receipt.startedAt.localeCompare(right.receipt.startedAt))
+        .toSorted((left, right) => left.receipt.startedAt.localeCompare(right.receipt.startedAt));
+      const latestRunId = matchingRuns.at(-1)?.receipt.runId;
+      const snapshots = matchingRuns
+        .filter((run) => !isTerminal(run.receipt.status) || run.receipt.runId === latestRunId)
         .map((run) => ({
           _tag: "run-snapshot" as const,
           eventSequence: boundarySequence,

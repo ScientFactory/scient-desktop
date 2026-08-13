@@ -38,8 +38,10 @@
     "@scientfactory/pdf-validation": "workspace:*",
     "@scientfactory/project-init": "workspace:*",
     "@scientfactory/provider-runtime": "workspace:*",
+    "@scientfactory/scient-sources": "workspace:*",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
+    "pdfjs-dist": "6.2.108",
     "yaml": "catalog:"
   },
   "devDependencies": {

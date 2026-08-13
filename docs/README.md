@@ -20,6 +20,7 @@ Scient release authority.
 - [File previews](./user/file-previews.md)
 - [Reading PDFs](./user/pdf-reader.md)
 - [Run a MATLAB file](./user/matlab-run-file.md)
+- [Sources and Zotero import](./user/sources.md)
 - [Background service (Linux)](./user/background-service.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)
 
@@ -45,6 +46,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Scient project initialization](./internals/scient-project-initialization.md)
+- [Scient Sources foundation](./internals/scient-sources.md)
 - [Scient PDF export and rendering implementation plan](./internals/scient-pdf-export-rendering-plan.md)
 - [Scient analysis runtime foundation](./internals/scient-analysis-runtime-foundation.md)
 - [D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
