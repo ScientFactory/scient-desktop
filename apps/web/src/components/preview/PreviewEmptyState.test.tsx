@@ -10,15 +10,19 @@ const mocks = vi.hoisted(() => ({
     requestedUrl: string;
     processName: string | null;
     pid: number | null;
-    terminal: null;
+    terminal: null | { threadId: string; terminalId: string };
     source: "scanner";
     listening: boolean;
   }>,
 }));
 
-vi.mock("./useDiscoveredLocalServers", () => ({
-  useDiscoveredLocalServers: () => mocks.servers,
-}));
+vi.mock("./useDiscoveredLocalServers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./useDiscoveredLocalServers")>();
+  return {
+    ...actual,
+    useDiscoveredLocalServers: () => mocks.servers,
+  };
+});
 
 import { PreviewEmptyState } from "./PreviewEmptyState";
 
@@ -42,6 +46,8 @@ function render(recentEntries: Array<{ url: string; lastVisitedAt: number; title
   return renderToStaticMarkup(
     <PreviewEmptyState
       environmentId={environmentId}
+      threadId="thread-current"
+      environmentHttpBaseUrl="http://localhost:3773"
       recentEntries={recentEntries}
       onRemoveRecent={() => undefined}
       onOpenUrl={() => undefined}
@@ -50,18 +56,40 @@ function render(recentEntries: Array<{ url: string; lastVisitedAt: number; title
 }
 
 describe("PreviewEmptyState", () => {
-  it("renders a history entry in both groups when its host:port matches a live server", () => {
+  it("keeps unrelated listeners collapsed and shows actual history", () => {
     mocks.servers = [server(5173)];
     const html = render([
       { url: "https://myapp.test/admin#users", lastVisitedAt: Date.now(), title: "Admin" },
       { url: "http://localhost:5173/", lastVisitedAt: Date.now(), title: "Recent Local" },
     ]);
     expect(html).toContain("Recently used");
-    expect(html).toContain("Local servers");
+    expect(html).not.toContain("Find another local server");
     expect(html).toContain("myapp.test/admin#users");
     expect(html).toContain("Admin");
     expect(html).toContain("Recent Local");
+    expect(html).not.toContain("node");
+  });
+
+  it("offers unrelated listeners through a collapsed secondary action", () => {
+    mocks.servers = [server(8080)];
+    const html = render([]);
+    expect(html).toContain("Find another local server");
+    expect(html).toContain(">1<");
+    expect(html).not.toContain("localhost:8080");
+    expect(html).not.toContain("node");
+  });
+
+  it("shows a server owned by the current thread as a project preview", () => {
+    mocks.servers = [
+      {
+        ...server(5173),
+        terminal: { threadId: "thread-current", terminalId: "terminal-1" },
+      },
+    ];
+    const html = render([]);
+    expect(html).toContain("Local previews");
     expect(html).toContain("node");
+    expect(html).not.toContain("Find another local server");
   });
 
   it("renders only the recents group when no servers are found", () => {
