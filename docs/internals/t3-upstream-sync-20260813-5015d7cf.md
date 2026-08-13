@@ -19,7 +19,10 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
 ## Authoritative gate and exact boundaries
 
 - Owned repository: `ScientFactory/scient-desktop-next`
-- Owned base: `d623ec6ef3d1a4645d08483be539ef9609e2dac8`
+- Original review and T3-merge base:
+  `d623ec6ef3d1a4645d08483be539ef9609e2dac8`
+- Current publication base after PR #69 merged:
+  `994bbe7c7bfff5965a5232f8e31d6bcc70a3a676`
 - Previous literal T3 boundary:
   `2db08457f2f4eaaa713a067b2ea480ca2b583025`
 - Official T3 target: `5015d7cf9f98fe551115b625031f01e3f022cd2d`
@@ -29,13 +32,22 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
 - Newly dispositioned: 30
 - Remaining undispositioned: 0
 - History-preserving merge: `4d812e742298b5023cae40b05ece9446935914f7`
+- Current-main alignment merge: `46a2dbe371efef80cd21f643dbf6224970e0d51b`
 - Integration branch: `agent/t3-sync-5015d7cf-20260813`
-- Inspection time: 2026-08-13 14:21 Asia/Jerusalem / 11:21 UTC
+- Inspection time: 2026-08-13 14:35 Asia/Jerusalem / 11:35 UTC
 - Donor write boundary: the `upstream` push URL remains `DISABLED`
 
 The target was freshly fetched from official `pingdotgg/t3code:main`. Every
-received commit is official T3 `main` ancestry. Open PRs #69, #70, and #74 and
-their worktrees were inspected for overlap and left untouched.
+received commit is official T3 `main` ancestry. PR #69 merged its partial
+checkpoint through `849bac894` while this complete lane was running. This
+branch then merged the resulting owned `main` without rewriting either line of
+history. Open PRs #70, #74, and #75 and their worktrees were inspected for
+overlap and left untouched.
+
+PR #69 remains useful historical evidence for the first 11 commits, but it is
+not the current cursor. This record reviews the full 30-commit contiguous range
+and, relative to current owned `main`, adds the final 19 official commits
+through `5015d7cf`.
 
 ## Complete commit ledger
 
@@ -114,7 +126,8 @@ launcher contract.
 - T3 cloud, relay, mobile publication, hosted deployment, and release authority
   remain fail-closed unless separately approved.
 - The exact T3 target and owned base are literal parents of the merge commit.
-- Open PRs #69, #70, and #74 were not edited, rebased, merged, or closed.
+- PR #69 was merged independently into owned `main`; this lane did not edit,
+  rebase, close, or merge it. Open PRs #70, #74, and #75 remain untouched.
 - `upstream` remains fetch-only with push URL `DISABLED`.
 
 ## Verification
@@ -141,6 +154,10 @@ Local verification on the exact merge completed:
 The first full test attempt exposed the wordmark contract mismatch and a
 load-related `MessagesTimeline` import timeout. The CSS was corrected; the
 timeline suite passed independently and the complete final rerun passed.
+After PR #69 entered owned `main`, the complete candidate merged that exact
+owned head. The product tree did not change; only PR #69's historical evidence
+and the reviewed provenance guard were added. The final gate below was rerun
+against the new publication base.
 Hosted CI remains a draft-PR gate and is not represented as complete here.
 
 ## Publication boundary

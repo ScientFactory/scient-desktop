@@ -20,7 +20,7 @@
   "lastRefreshRangeCount": 30,
   "lastRefreshMerge": "4d812e742298b5023cae40b05ece9446935914f7",
   "lastRefreshBranch": "agent/t3-sync-5015d7cf-20260813",
-  "lastRefreshVerifiedAt": "2026-08-13T11:21:27Z",
+  "lastRefreshVerifiedAt": "2026-08-13T11:35:00Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
