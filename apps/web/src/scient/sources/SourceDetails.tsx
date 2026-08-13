@@ -1,6 +1,7 @@
-import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type { ScientSourceDetailResult, ScientSourcesOverviewResult } from "@t3tools/contracts";
 import {
   AlertCircle,
+  AlertTriangle,
   Check,
   ChevronLeft,
   Copy,
@@ -9,29 +10,37 @@ import {
   LoaderCircle,
   MoreHorizontal,
   Pencil,
-  Trash2,
+  RefreshCw,
 } from "lucide-react";
-import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-
 import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
+
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import {
+  Popover,
+  PopoverDescription,
+  PopoverPopup,
+  PopoverTitle,
+} from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
 import { SourceReference } from "./SourceReference";
+import {
+  SourceRemovalConfirmation,
+  type SourceRemovalAnchorPoint,
+} from "./SourceRemovalConfirmation";
 
-type SourceRecord = ScientSourcesOverviewResult["records"][number];
+type SourceRecord = ScientSourceDetailResult;
 type SourceDiagnostic =
   ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 
@@ -279,17 +288,317 @@ function DetailsSection(props: { readonly title: string; readonly children: Reac
   );
 }
 
+function keyedValues<T>(values: ReadonlyArray<T>, identity: (value: T) => string) {
+  const occurrences = new Map<string, number>();
+  return values.map((value) => {
+    const base = identity(value);
+    const occurrence = occurrences.get(base) ?? 0;
+    occurrences.set(base, occurrence + 1);
+    return { key: `${base}:${occurrence}`, value };
+  });
+}
+
+function AbstractPreview(props: {
+  readonly text: string;
+  readonly sections?: SourceRecord["abstractSections"];
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [mode, setMode] = useState<"compact" | "more" | "full">("compact");
+  const [canExpand, setCanExpand] = useState(false);
+
+  useEffect(() => {
+    setMode("compact");
+    setCanExpand(false);
+  }, [props.text]);
+
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node || mode !== "compact") return;
+    const measure = () => setCanExpand(node.scrollHeight > node.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [mode, props.sections, props.text]);
+
+  const normalizedSections = props.sections?.length
+    ? props.sections
+    : [{ title: null, paragraphs: props.text.split(/\n{2,}/u) }];
+  const [firstSection, ...remainingSections] = normalizedSections;
+  const sections =
+    firstSection?.title?.trim().toLowerCase() === "abstract"
+      ? firstSection.paragraphs.length > 0
+        ? [{ title: null, paragraphs: firstSection.paragraphs }, ...remainingSections]
+        : remainingSections
+      : normalizedSections;
+
+  const firstVisibleSection = sections[0]!;
+  const secondVisibleSection = sections[1];
+  const unstructuredSecondParagraph =
+    sections.length === 1 && !firstVisibleSection?.title
+      ? firstVisibleSection.paragraphs[1]
+      : undefined;
+  const hasIntermediatePreview =
+    secondVisibleSection !== undefined || unstructuredSecondParagraph !== undefined;
+  const intermediateSections = secondVisibleSection
+    ? [
+        firstVisibleSection,
+        { ...secondVisibleSection, paragraphs: secondVisibleSection.paragraphs.slice(0, 1) },
+      ]
+    : unstructuredSecondParagraph
+      ? [
+          { ...firstVisibleSection, paragraphs: firstVisibleSection.paragraphs.slice(0, 1) },
+          { title: null, paragraphs: [unstructuredSecondParagraph] },
+        ]
+      : sections;
+  const visibleSections = mode === "more" ? intermediateSections : sections;
+
+  return (
+    <div className="min-w-0">
+      <div
+        ref={contentRef}
+        className={`break-words text-sm ${mode === "compact" ? "max-h-24 overflow-hidden" : ""}`}
+        style={
+          mode === "compact"
+            ? {
+                WebkitMaskImage:
+                  "linear-gradient(to bottom, black 0%, black 42%, rgb(0 0 0 / 58%) 72%, transparent 100%)",
+                maskImage:
+                  "linear-gradient(to bottom, black 0%, black 42%, rgb(0 0 0 / 58%) 72%, transparent 100%)",
+              }
+            : undefined
+        }
+      >
+        {keyedValues(
+          visibleSections,
+          (section) => `${section.title ?? "abstract"}\u241e${section.paragraphs.join("\u241e")}`,
+        ).map(({ key, value: section }, sectionIndex) => (
+          <section key={key} className={sectionIndex === 0 ? "" : "mt-2.5"}>
+            {section.title ? (
+              <h4 className="font-semibold leading-5 text-foreground">{section.title}</h4>
+            ) : null}
+            <div
+              className={`${section.title ? "mt-0.5 space-y-1.5" : "space-y-1.5"} ${
+                mode === "more" && hasIntermediatePreview && sectionIndex === 1
+                  ? "max-h-12 overflow-hidden"
+                  : ""
+              }`}
+              style={
+                mode === "more" && hasIntermediatePreview && sectionIndex === 1
+                  ? {
+                      WebkitMaskImage:
+                        "linear-gradient(to bottom, black 0%, rgb(0 0 0 / 62%) 52%, transparent 100%)",
+                      maskImage:
+                        "linear-gradient(to bottom, black 0%, rgb(0 0 0 / 62%) 52%, transparent 100%)",
+                    }
+                  : undefined
+              }
+            >
+              {keyedValues(section.paragraphs, (paragraph) => paragraph).map(
+                ({ key: paragraphKey, value: paragraph }) => (
+                  <p key={paragraphKey} className="whitespace-pre-wrap leading-6">
+                    {paragraph}
+                  </p>
+                ),
+              )}
+            </div>
+          </section>
+        ))}
+      </div>
+      {canExpand ? (
+        <div className="-ml-1 mt-1 flex items-center gap-1">
+          {mode !== "compact" ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              aria-expanded
+              onClick={() => setMode("compact")}
+              className="h-6 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground hover:bg-muted/55 hover:text-foreground"
+            >
+              Show less
+            </Button>
+          ) : null}
+          {mode !== "full" ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              aria-expanded={mode !== "compact"}
+              onClick={() =>
+                setMode(mode === "compact" && hasIntermediatePreview ? "more" : "full")
+              }
+              className="h-6 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground hover:bg-muted/55 hover:text-foreground"
+            >
+              {mode === "compact" ? "Show more" : "Show full abstract"}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const identity = props.tags.join("\u241e");
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [identity]);
+
+  useEffect(() => {
+    if (expanded) return;
+    const row = rowRef.current;
+    if (!row) return;
+    const measure = () => setOverflows(row.scrollHeight > row.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [expanded, identity]);
+
+  return (
+    <div className="min-w-0">
+      <div
+        ref={rowRef}
+        className={
+          expanded
+            ? "flex min-w-0 w-full flex-wrap gap-1.5"
+            : "flex h-6 min-w-0 w-full flex-wrap gap-1.5 overflow-hidden"
+        }
+      >
+        {props.tags.map((tag) => (
+          <Badge key={tag} variant="outline" className="shrink-0 whitespace-nowrap">
+            {tag}
+          </Badge>
+        ))}
+      </div>
+      {expanded || overflows ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          className="mt-1 h-6 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground hover:bg-muted/55 hover:text-foreground"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function MetadataRefreshConfirmation(props: {
+  readonly anchorPoint: SourceRemovalAnchorPoint;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onRefresh: () => Promise<void>;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const anchor = useMemo(
+    () => ({
+      getBoundingClientRect: () => ({
+        x: props.anchorPoint.x,
+        y: props.anchorPoint.y,
+        top: props.anchorPoint.y,
+        right: props.anchorPoint.x,
+        bottom: props.anchorPoint.y,
+        left: props.anchorPoint.x,
+        width: 0,
+        height: 0,
+      }),
+    }),
+    [props.anchorPoint.x, props.anchorPoint.y],
+  );
+
+  return (
+    <Popover
+      open
+      modal
+      onOpenChange={(open) => {
+        if (!refreshing) props.onOpenChange(open);
+      }}
+    >
+      <PopoverPopup
+        anchor={anchor}
+        side="right"
+        align="start"
+        sideOffset={8}
+        className="w-[18rem] max-w-[calc(100vw-1rem)]"
+        viewportClassName="p-0"
+        role="alertdialog"
+      >
+        <div className="p-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="size-4 shrink-0 text-amber-600" />
+            <PopoverTitle className="text-sm">Refresh metadata?</PopoverTitle>
+          </div>
+          <PopoverDescription className="mt-1.5 text-xs leading-5">
+            Scient will replace matching metadata fields using this source’s PDF and identifiers.
+            Manual edits to those fields may be lost. The PDF stays unchanged.
+          </PopoverDescription>
+          {error ? (
+            <p className="mt-2 text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="mt-3 flex justify-end gap-1.5">
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={refreshing}
+              onClick={() => props.onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              disabled={refreshing}
+              onClick={() => {
+                setRefreshing(true);
+                setError(null);
+                void props
+                  .onRefresh()
+                  .then(() => props.onOpenChange(false))
+                  .catch((cause: unknown) => {
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "Metadata could not be refreshed. Please try again.",
+                    );
+                    setRefreshing(false);
+                  });
+              }}
+            >
+              {refreshing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
 export function SourceDetails(props: {
   readonly record: SourceRecord;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
   readonly onOpenPdf: (input: { readonly attachmentId: string; readonly fileName: string }) => void;
 }) {
-  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeAnchorPoint, setRemoveAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(null);
+  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(
+    null,
+  );
   const record = props.record;
   const publication = publicationLocation(record);
   const hasPublicationDetails = Boolean(
@@ -343,7 +652,6 @@ export function SourceDetails(props: {
                 variant="ghost"
                 aria-label="More source actions"
                 title="More source actions"
-                disabled={removing}
               >
                 <MoreHorizontal />
               </Button>
@@ -351,13 +659,28 @@ export function SourceDetails(props: {
           />
           <MenuPopup align="end" side="bottom" className="min-w-44">
             <MenuItem
-              variant="destructive"
-              onClick={() => {
-                setRemoveError(null);
-                setRemoveConfirmOpen(true);
+              onClick={(event) => {
+                const target = event.currentTarget.getBoundingClientRect();
+                setRefreshAnchorPoint({
+                  x: event.clientX || target.right,
+                  y: event.clientY || target.top + target.height / 2,
+                });
               }}
             >
-              <Trash2 />
+              <RefreshCw />
+              Refresh metadata
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              variant="destructive"
+              onClick={(event) => {
+                const target = event.currentTarget.getBoundingClientRect();
+                setRemoveAnchorPoint({
+                  x: event.clientX || target.right,
+                  y: event.clientY || target.top + target.height / 2,
+                });
+              }}
+            >
               Remove from Sources
             </MenuItem>
           </MenuPopup>
@@ -388,7 +711,7 @@ export function SourceDetails(props: {
 
           {record.abstract ? (
             <DetailsSection title="Abstract">
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{record.abstract}</p>
+              <AbstractPreview text={record.abstract} sections={record.abstractSections} />
             </DetailsSection>
           ) : null}
 
@@ -453,13 +776,7 @@ export function SourceDetails(props: {
 
           {tags.length > 0 ? (
             <DetailsSection title="Tags">
-              <div className="flex flex-wrap gap-1.5">
-                {tags.map((tag) => (
-                  <Badge key={tag} variant="outline">
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
+              <SourceTags tags={tags} />
             </DetailsSection>
           ) : null}
 
@@ -471,61 +788,28 @@ export function SourceDetails(props: {
         </article>
       </ScrollArea>
 
-      <AlertDialog
-        open={removeConfirmOpen}
-        onOpenChange={(open) => {
-          if (removing) return;
-          setRemoveConfirmOpen(open);
-          if (!open) setRemoveError(null);
-        }}
-      >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this source?</AlertDialogTitle>
-            <AlertDialogDescription>
-              “{record.title ?? "Untitled source"}” will be removed from this Scient project.
-              {pdf
-                ? " Its imported PDF will also be removed unless another source uses the same file."
-                : ""}
-              {record.externalReferences.some((reference) => reference.system === "zotero")
-                ? " Your Zotero library will not be changed."
-                : " The original source will not be changed."}
-            </AlertDialogDescription>
-            {removeError ? (
-              <p className="text-sm text-destructive" role="alert">
-                {removeError}
-              </p>
-            ) : null}
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" disabled={removing} />}>
-              Cancel
-            </AlertDialogClose>
-            <Button
-              variant="destructive"
-              disabled={removing}
-              onClick={() => {
-                setRemoving(true);
-                setRemoveError(null);
-                void props
-                  .onRemove()
-                  .then(() => setRemoveConfirmOpen(false))
-                  .catch((cause: unknown) => {
-                    setRemoveError(
-                      cause instanceof Error
-                        ? cause.message
-                        : "The source could not be removed. Please try again.",
-                    );
-                  })
-                  .finally(() => setRemoving(false));
-              }}
-            >
-              {removing ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
-              {removing ? "Removing…" : "Remove source"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
+      {refreshAnchorPoint ? (
+        <MetadataRefreshConfirmation
+          anchorPoint={refreshAnchorPoint}
+          onOpenChange={(open) => {
+            if (!open) setRefreshAnchorPoint(null);
+          }}
+          onRefresh={props.onRefreshMetadata}
+        />
+      ) : null}
+
+      {removeAnchorPoint ? (
+        <SourceRemovalConfirmation
+          key={record.sourceId}
+          open
+          record={record}
+          anchorPoint={removeAnchorPoint}
+          onOpenChange={(open) => {
+            if (!open) setRemoveAnchorPoint(null);
+          }}
+          onRemove={props.onRemove}
+        />
+      ) : null}
     </div>
   );
 }

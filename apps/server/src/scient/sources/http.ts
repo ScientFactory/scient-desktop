@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as Path from "effect/Path";
 
 import {
   annotateEnvironmentRequest,
@@ -13,17 +14,23 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
+import * as ServerConfig from "../../config.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
   beginZoteroImport,
+  beginZoteroScopedImport,
   cancelSourceImport,
   discardLocalPdfSources,
   getScientSourcesOverview,
+  getScientSourceDetail,
   getScientSourceAttachmentPreviewMaterial,
+  getScientSourceJournalIconMaterial,
   inspectZoteroConnection,
+  listZoteroCollections,
   listZoteroLibrary,
   preflightZoteroImport,
+  refreshScientSourceMetadata,
   removeSource,
   updateScientSource,
   uploadLocalPdfSource,
@@ -54,6 +61,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             getScientSourcesOverview(args.payload.root),
           ),
         )
+        .handle("detail", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            getScientSourceDetail(args.payload),
+          ),
+        )
         .handle("attachmentPreview", (args) =>
           Effect.gen(function* () {
             yield* annotateEnvironmentRequest(args.endpoint.name);
@@ -80,9 +92,46 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             return { ...asset, absolutePath: material.absolutePath };
           }),
         )
+        .handle("journalIcon", (args) =>
+          Effect.gen(function* () {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            const config = yield* ServerConfig.ServerConfig;
+            const path = yield* Path.Path;
+            const material = yield* Effect.tryPromise(() =>
+              getScientSourceJournalIconMaterial({
+                ...args.payload,
+                cacheRoot: path.join(config.stateDir, "scient", "journal-icons", "v1"),
+              }),
+            ).pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("scient_sources_operation_failed", cause),
+              ),
+            );
+            if (!material) return { icon: null };
+            const asset = yield* issueAssetUrl({
+              resource: {
+                _tag: "workspace-file",
+                threadId: ThreadId.make(`scient-journal-icon:${args.payload.sourceId}`),
+                path: material.absolutePath,
+              },
+              workspaceRoot: material.cacheRoot,
+            }).pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("scient_sources_operation_failed", cause),
+              ),
+            );
+            return { icon: { ...asset, journalTitle: material.journalTitle } };
+          }),
+        )
         .handle("updateMetadata", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             updateScientSource(args.payload),
+          ),
+        )
+        .handle("refreshMetadata", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            refreshScientSourceMetadata(args.payload),
           ),
         )
         .handle("remove", (args) =>
@@ -97,6 +146,9 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
             listZoteroLibrary(args.payload),
           ),
+        )
+        .handle("zoteroCollections", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () => listZoteroCollections()),
         )
         .handle("preflight", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
@@ -125,6 +177,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("beginImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             beginZoteroImport(args.payload),
+          ),
+        )
+        .handle("beginScopedImport", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            beginZoteroScopedImport(args.payload),
           ),
         )
         .handle("advanceImport", (args) =>

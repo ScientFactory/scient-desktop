@@ -7,19 +7,32 @@ import { normalizePersistentIdentifier, sourceMetadataKey } from "./normalize.ts
 
 type SourceMetadata = Pick<ScientSourceRecord, "creators" | "identifiers" | "issuedYear" | "title">;
 
+// These schemes identify one scholarly work. Container-level identifiers such
+// as ISSN and ISBN are still preserved as metadata, but they must never prove
+// that two articles or chapters are the same work.
+const WORK_LEVEL_IDENTIFIER_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid"]);
+
+function workLevelIdentifierKey(scheme: string, value: string): string | null {
+  const normalizedScheme = scheme.trim().toLowerCase();
+  if (!WORK_LEVEL_IDENTIFIER_SCHEMES.has(normalizedScheme)) return null;
+  return normalizePersistentIdentifier(normalizedScheme, value);
+}
+
 export function assessSourceMetadataDuplicate(input: {
   readonly source: SourceMetadata;
   readonly existing: ReadonlyArray<ScientSourceRecord>;
 }): ScientSourceDuplicateAssessment {
   const identifiers = new Set(
-    input.source.identifiers.map((identifier) =>
-      normalizePersistentIdentifier(identifier.scheme, identifier.value),
-    ),
+    input.source.identifiers.flatMap((identifier) => {
+      const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+      return key ? [key] : [];
+    }),
   );
   const identifierMatches = input.existing.filter((record) =>
-    record.identifiers.some((identifier) =>
-      identifiers.has(normalizePersistentIdentifier(identifier.scheme, identifier.value)),
-    ),
+    record.identifiers.some((identifier) => {
+      const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+      return key !== null && identifiers.has(key);
+    }),
   );
   if (identifiers.size > 0 && identifierMatches.length > 0) {
     return {

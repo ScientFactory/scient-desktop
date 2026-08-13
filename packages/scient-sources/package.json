@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@scientfactory/project-init": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "parse5": "7.3.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -1,3 +1,4 @@
+export * from "./abstract.ts";
 export * from "./duplicates.ts";
 export * from "./editable.ts";
 export * from "./model.ts";
