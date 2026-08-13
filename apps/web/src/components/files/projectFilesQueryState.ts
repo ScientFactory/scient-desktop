@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   ProjectListEntriesResult,
@@ -12,7 +13,6 @@ import { useCallback } from "react";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(
@@ -22,11 +22,15 @@ function optimisticFileAtom(environmentId: EnvironmentId, cwd: string, relativeP
   return projectEnvironment.optimisticFile({ environmentId, cwd, relativePath });
 }
 
-interface ProjectQueryState<A> {
+export interface ProjectQueryState<A> {
   readonly data: A | null;
   readonly error: string | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
+}
+
+export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
+  readonly authoritativeData: ProjectReadFileResult | null;
 }
 
 export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
@@ -49,14 +53,26 @@ export function setProjectFileQueryData(
   cwd: string,
   relativePath: string,
   contents: string,
+  revision?: string,
 ): void {
-  appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), {
+  const optimisticAtom = optimisticFileAtom(environmentId, cwd, relativePath);
+  const currentRevision =
+    revision ??
+    appAtomRegistry.get(optimisticAtom)?.data.revision ??
+    Option.getOrUndefined(
+      AsyncResult.value(
+        appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
+      ),
+    )?.revision;
+  if (!currentRevision) return;
+  appAtomRegistry.set(optimisticAtom, {
     confirmedAgainst: undefined,
     data: {
       relativePath,
       contents,
       byteLength: new TextEncoder().encode(contents).byteLength,
       truncated: false,
+      revision: currentRevision,
     },
   });
 }
@@ -74,6 +90,7 @@ export function confirmProjectFileQueryData(
   cwd: string,
   relativePath: string,
   contents: string,
+  revision: string,
 ): boolean {
   const atom = optimisticFileAtom(environmentId, cwd, relativePath);
   const optimisticFile = appAtomRegistry.get(atom);
@@ -82,6 +99,7 @@ export function confirmProjectFileQueryData(
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
   const confirmed = {
     ...optimisticFile,
+    data: { ...optimisticFile.data, revision },
     confirmedAgainst: appAtomRegistry.get(queryAtom),
   };
   appAtomRegistry.set(atom, confirmed);
@@ -177,7 +195,7 @@ export function useProjectFileQuery(
   cwd: string,
   relativePath: string | null,
   enabled = true,
-): ProjectQueryState<ProjectReadFileResult> {
+): ProjectFileQueryState {
   const atom = enabled
     ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
     : EMPTY_PROJECT_FILE_QUERY_ATOM;
@@ -192,6 +210,7 @@ export function useProjectFileQuery(
 
   return {
     data: optimisticFile?.data ?? data,
+    authoritativeData: data,
     error: errorMessage(result),
     isPending: result.waiting,
     refresh,

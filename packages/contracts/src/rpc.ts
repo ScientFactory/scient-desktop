@@ -114,6 +114,8 @@ import {
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectFileWatchEvent,
+  ProjectSubscribeFileChangesInput,
   ProjectSearchContentsError,
   ProjectSearchContentsInput,
   ProjectSearchContentsResult,
@@ -200,6 +202,27 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  AnalysisCancelRunInput,
+  AnalysisCleanupProjectInput,
+  AnalysisCleanupResult,
+  AnalysisCleanupRunInput,
+  AnalysisConfigureRuntimeInput,
+  AnalysisGetRunInput,
+  AnalysisInspectRuntimesInput,
+  AnalysisListRunsInput,
+  AnalysisListRunsResult,
+  AnalysisOperationError,
+  AnalysisRunSnapshot,
+  AnalysisRunStreamEvent,
+  AnalysisRuntimeInspection,
+  AnalysisRuntimeProfile,
+  AnalysisStartRunInput,
+  AnalysisStorageSummary,
+  AnalysisStorageSummaryInput,
+  AnalysisSubscribeRunsInput,
+  AnalysisVerifyRuntimeInput,
+} from "./scientAnalysis.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -211,6 +234,18 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+
+  // Scient-owned scientific analysis runtime methods
+  analysisInspectRuntimes: "analysis.inspectRuntimes",
+  analysisConfigureRuntime: "analysis.configureRuntime",
+  analysisVerifyRuntime: "analysis.verifyRuntime",
+  analysisStartRun: "analysis.startRun",
+  analysisCancelRun: "analysis.cancelRun",
+  analysisListRuns: "analysis.listRuns",
+  analysisGetRun: "analysis.getRun",
+  analysisStorageSummary: "analysis.storageSummary",
+  analysisCleanupRun: "analysis.cleanupRun",
+  analysisCleanupProject: "analysis.cleanupProject",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -327,6 +362,8 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeAnalysisRuns: "subscribeAnalysisRuns",
+  projectsSubscribeFileChanges: "projects.subscribeFileChanges",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -705,6 +742,82 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsSubscribeFileChangesRpc = Rpc.make(WS_METHODS.projectsSubscribeFileChanges, {
+  payload: ProjectSubscribeFileChangesInput,
+  success: ProjectFileWatchEvent,
+  error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const AnalysisRpcError = Schema.Union([AnalysisOperationError, EnvironmentAuthorizationError]);
+
+export const WsAnalysisInspectRuntimesRpc = Rpc.make(WS_METHODS.analysisInspectRuntimes, {
+  payload: AnalysisInspectRuntimesInput,
+  success: AnalysisRuntimeInspection,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisConfigureRuntimeRpc = Rpc.make(WS_METHODS.analysisConfigureRuntime, {
+  payload: AnalysisConfigureRuntimeInput,
+  success: AnalysisRuntimeInspection,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisVerifyRuntimeRpc = Rpc.make(WS_METHODS.analysisVerifyRuntime, {
+  payload: AnalysisVerifyRuntimeInput,
+  success: AnalysisRuntimeProfile,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisStartRunRpc = Rpc.make(WS_METHODS.analysisStartRun, {
+  payload: AnalysisStartRunInput,
+  success: AnalysisRunSnapshot,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisCancelRunRpc = Rpc.make(WS_METHODS.analysisCancelRun, {
+  payload: AnalysisCancelRunInput,
+  success: AnalysisRunSnapshot,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisListRunsRpc = Rpc.make(WS_METHODS.analysisListRuns, {
+  payload: AnalysisListRunsInput,
+  success: AnalysisListRunsResult,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisGetRunRpc = Rpc.make(WS_METHODS.analysisGetRun, {
+  payload: AnalysisGetRunInput,
+  success: AnalysisRunSnapshot,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisStorageSummaryRpc = Rpc.make(WS_METHODS.analysisStorageSummary, {
+  payload: AnalysisStorageSummaryInput,
+  success: AnalysisStorageSummary,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisCleanupRunRpc = Rpc.make(WS_METHODS.analysisCleanupRun, {
+  payload: AnalysisCleanupRunInput,
+  success: AnalysisCleanupResult,
+  error: AnalysisRpcError,
+});
+
+export const WsAnalysisCleanupProjectRpc = Rpc.make(WS_METHODS.analysisCleanupProject, {
+  payload: AnalysisCleanupProjectInput,
+  success: AnalysisCleanupResult,
+  error: AnalysisRpcError,
+});
+
+export const WsSubscribeAnalysisRunsRpc = Rpc.make(WS_METHODS.subscribeAnalysisRuns, {
+  payload: AnalysisSubscribeRunsInput,
+  success: AnalysisRunStreamEvent,
+  error: AnalysisRpcError,
+  stream: true,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -1094,6 +1207,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsSubscribeFileChangesRpc,
+  WsAnalysisInspectRuntimesRpc,
+  WsAnalysisConfigureRuntimeRpc,
+  WsAnalysisVerifyRuntimeRpc,
+  WsAnalysisStartRunRpc,
+  WsAnalysisCancelRunRpc,
+  WsAnalysisListRunsRpc,
+  WsAnalysisGetRunRpc,
+  WsAnalysisStorageSummaryRpc,
+  WsAnalysisCleanupRunRpc,
+  WsAnalysisCleanupProjectRpc,
+  WsSubscribeAnalysisRunsRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,

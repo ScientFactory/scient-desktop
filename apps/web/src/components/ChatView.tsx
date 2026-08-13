@@ -466,6 +466,11 @@ const SourcePdfPreview = lazy(() =>
     default: module.SourcePdfPreview,
   })),
 );
+const ScientArtifactPreview = lazy(() =>
+  import("../scient/artifacts/ScientArtifactPreview").then((module) => ({
+    default: module.ScientArtifactPreview,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1744,12 +1749,18 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThreadRef || !activePreviewMiniPlayer) return;
-    const miniTabStillExists = Boolean(activePreviewState.sessions[activePreviewMiniPlayer.tabId]);
-    const sameTabOpenInPanel =
-      previewPanelOpen &&
-      activeRightPanelSurface?.kind === "preview" &&
-      activeRightPanelSurface.resourceId === activePreviewMiniPlayer.tabId;
-    if (!miniTabStillExists || sameTabOpenInPanel) {
+    const content = activePreviewMiniPlayer.content;
+    const shouldClose =
+      content.kind === "browser"
+        ? !activePreviewState.sessions[content.tabId] ||
+          (previewPanelOpen &&
+            activeRightPanelSurface?.kind === "preview" &&
+            activeRightPanelSurface.resourceId === content.tabId)
+        : rightPanelOpen &&
+          activeRightPanelSurface?.kind === "scient" &&
+          activeRightPanelSurface.module === "artifact" &&
+          activeRightPanelSurface.artifact.surfaceId === content.artifact.surfaceId;
+    if (shouldClose) {
       usePreviewMiniPlayerStore.getState().close(activeThreadRef);
     }
   }, [
@@ -1758,6 +1769,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeRightPanelSurface,
     activeThreadRef,
     previewPanelOpen,
+    rightPanelOpen,
   ]);
 
   const existingOpenTerminalThreadKeys = useMemo(() => {
@@ -6371,6 +6383,15 @@ function ChatViewContent(props: ChatViewProps) {
         threadId={activeThreadRef?.threadId ?? null}
       />
     ) : activeRightPanelSurface?.kind === "scient" &&
+      activeRightPanelSurface.module === "artifact" ? (
+      <Suspense fallback={null}>
+        <ScientArtifactPreview
+          environmentId={activeThreadRef.environmentId}
+          threadRef={activeThreadRef}
+          artifact={activeRightPanelSurface.artifact}
+        />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "scient" &&
       activeRightPanelSurface.module === "source-pdf" &&
       activeThread &&
       activeThreadRef &&
@@ -6758,10 +6779,8 @@ function ChatViewContent(props: ChatViewProps) {
 
             {activeThreadRef && activePreviewMiniPlayer ? (
               <ThreadPreviewMiniPlayer
-                key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
+                key={`${activeThreadKey}:${activePreviewMiniPlayer.content.id}`}
                 threadRef={activeThreadRef}
-                tabId={activePreviewMiniPlayer.tabId}
-                bottomInset={isDraftHeroState ? 0 : composerOverlayHeight}
               />
             ) : null}
 

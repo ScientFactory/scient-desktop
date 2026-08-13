@@ -35,3 +35,7 @@ jobs:
             --allow-owned-head-merge "$ALLOW_OWNED_HEAD_MERGE" \
             --official-ref refs/remotes/upstream-verification/main
           node scripts/verify-scient-general-chat-seams.mjs
+          node scripts/verify-scient-analysis-seams.mjs \
+            --base "$VERIFY_BASE" \
+            --head "$VERIFY_HEAD" \
+            --upstream-ref refs/remotes/upstream-verification/main

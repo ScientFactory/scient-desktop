@@ -31,6 +31,7 @@ export interface ServerDerivedPaths {
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
   readonly providerStatusCacheDir: string;
+  readonly analysisDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
   readonly documentArtifactsDir: string;
@@ -49,6 +50,7 @@ export interface ServerDerivedPaths {
 export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
   readonly developmentStateDirName?: string;
+  readonly forceDevelopmentState?: boolean;
 }
 
 /**
@@ -106,7 +108,7 @@ export const deriveServerPaths = Effect.fn(function* (
   const { join } = yield* Path.Path;
   const stateDir = join(
     baseDir,
-    devUrl !== undefined && !options.baseDirIsExplicit
+    options.forceDevelopmentState || (devUrl !== undefined && !options.baseDirIsExplicit)
       ? (options.developmentStateDirName ?? "dev")
       : "userdata",
   );
@@ -122,6 +124,7 @@ export const deriveServerPaths = Effect.fn(function* (
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     settingsPath: join(stateDir, "settings.json"),
     providerStatusCacheDir,
+    analysisDir: join(stateDir, "analysis"),
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
     documentArtifactsDir,
@@ -154,6 +157,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true }),
       fs.makeDirectory(derivedPaths.providerStatusCacheDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.analysisDir, { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.serverRuntimeStatePath), { recursive: true }),
     ],

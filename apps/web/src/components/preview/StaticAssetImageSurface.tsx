@@ -1,0 +1,70 @@
+"use client";
+
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useEffect, useRef } from "react";
+
+import { useAssetUrlState } from "~/assets/assetUrls";
+import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
+import {
+  previewStaticImageRevisionKey,
+  type PreviewStaticImageSurfaceDescriptor,
+} from "~/previewStaticImageSurface";
+
+import { PreviewImageSurface } from "./PreviewImageSurface";
+
+export function StaticAssetImageSurface(props: {
+  readonly environmentId: EnvironmentId;
+  readonly image: PreviewStaticImageSurfaceDescriptor;
+  readonly className?: string;
+  readonly refreshToken?: number;
+}) {
+  // The shared asset atom renews signed URLs every 30 minutes (before the
+  // server's 60-minute expiry); this surface only owns revision/error retries.
+  const asset = useAssetUrlState(props.environmentId, props.image.resource);
+  const autoRetriedRevisionRef = useRef<string | null>(null);
+  const previousRefreshTokenRef = useRef(props.refreshToken);
+  const revisionKey = previewStaticImageRevisionKey(props.image);
+  const refreshAsset = asset.refresh;
+
+  useEffect(() => {
+    if (previousRefreshTokenRef.current === props.refreshToken) return;
+    previousRefreshTokenRef.current = props.refreshToken;
+    autoRetriedRevisionRef.current = null;
+    refreshAsset();
+  }, [props.refreshToken, refreshAsset]);
+
+  if (asset._tag !== "Success") {
+    return (
+      <div
+        className={cn(
+          "flex min-h-0 items-center justify-center bg-background text-xs text-muted-foreground",
+          props.className,
+        )}
+      >
+        {asset._tag === "Loading" ? (
+          "Loading figure…"
+        ) : (
+          <div className="flex items-center gap-2">
+            <span>Unable to load figure</span>
+            <Button size="xs" variant="outline" onClick={refreshAsset}>
+              Try again
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <PreviewImageSurface
+      source={{ url: asset.url, alt: props.image.label, revisionKey }}
+      {...(props.className === undefined ? {} : { className: props.className })}
+      onLoadError={() => {
+        if (autoRetriedRevisionRef.current === revisionKey) return;
+        autoRetriedRevisionRef.current = revisionKey;
+        refreshAsset();
+      }}
+    />
+  );
+}

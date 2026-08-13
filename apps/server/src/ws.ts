@@ -52,6 +52,8 @@ import {
   AssetGeneratedDocumentAuthorityMismatchError,
   AssetGeneratedDocumentNotFoundError,
   AssetGeneratedDocumentResolutionError,
+  AssetAnalysisArtifactNotFoundError,
+  AssetAnalysisArtifactResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -93,6 +95,7 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES } from "./scient/generalChat/ServerCapability.ts";
 import { ensureScientGeneralChatMoveHasNoRunningTerminals } from "./scient/generalChat/MoveCoordinator.ts";
 import { validateScientGeneralChatTerminalOpen } from "./scient/generalChat/TerminalPolicy.ts";
@@ -250,6 +253,7 @@ function projectFileFailureContext(
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  readonly currentRevision?: string;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
@@ -271,6 +275,12 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceFileRevisionConflictError":
+      return {
+        failure: "revision_conflict",
+        resolvedPath: error.resolvedPath,
+        currentRevision: error.currentRevision,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -402,6 +412,7 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const analysis = yield* AnalysisService.AnalysisService;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
@@ -1920,6 +1931,21 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsSubscribeFileChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.projectsSubscribeFileChanges,
+            workspaceFileSystem.watchFile(input).pipe(
+              Stream.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
@@ -1936,6 +1962,50 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.analysisInspectRuntimes]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisInspectRuntimes, analysis.inspectRuntimes(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisConfigureRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisConfigureRuntime, analysis.configureRuntime(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisVerifyRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisVerifyRuntime, analysis.verifyRuntime(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisStartRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisStartRun, analysis.startRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisCancelRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisCancelRun, analysis.cancelRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisListRuns]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisListRuns, analysis.listRuns(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisGetRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisGetRun, analysis.getRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisStorageSummary]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisStorageSummary, analysis.storageSummary(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisCleanupRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisCleanupRun, analysis.cleanupRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.analysisCleanupProject]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisCleanupProject, analysis.cleanupProject(input), {
+            "rpc.aggregate": "analysis",
+          }),
+        [WS_METHODS.subscribeAnalysisRuns]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.subscribeAnalysisRuns, analysis.subscribeRuns(input), {
+            "rpc.aggregate": "analysis",
+          }),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
@@ -1959,6 +2029,23 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "analysis-artifact") {
+                const analysisArtifact = yield* analysis.resolveArtifact(input.resource).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetAnalysisArtifactResolutionError({
+                        resource: input.resource,
+                        cause,
+                      }),
+                  ),
+                );
+                if (analysisArtifact === null) {
+                  return yield* new AssetAnalysisArtifactNotFoundError({
+                    resource: input.resource,
+                  });
+                }
+                return yield* issueAssetUrl({ resource: input.resource, analysisArtifact });
+              }
               if (input.resource._tag === "generated-document") {
                 const generatedDocument = yield* generatedDocuments
                   .resolveRevision(input.resource)
@@ -2445,6 +2532,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const analysis = yield* AnalysisService.AnalysisService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2492,6 +2580,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

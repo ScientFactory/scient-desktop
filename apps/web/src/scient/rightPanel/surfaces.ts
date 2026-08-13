@@ -1,3 +1,8 @@
+import {
+  isPreviewStaticImageSurfaceDescriptor,
+  type PreviewStaticImageSurfaceDescriptor,
+} from "~/previewStaticImageSurface";
+
 export type ScientRightPanelSurface =
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
   | {
@@ -6,6 +11,12 @@ export type ScientRightPanelSurface =
       readonly module: "source-pdf";
       readonly attachmentId: string;
       readonly fileName: string;
+    }
+  | {
+      readonly id: `scient:artifact:${string}`;
+      readonly kind: "scient";
+      readonly module: "artifact";
+      readonly artifact: PreviewStaticImageSurfaceDescriptor;
     };
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
@@ -22,6 +33,23 @@ export function scientSourcePdfSurface(input: {
     module: "source-pdf",
     attachmentId: input.attachmentId,
     fileName: input.fileName,
+  };
+}
+
+export function scientArtifactSurfaceId(
+  artifact: PreviewStaticImageSurfaceDescriptor,
+): `scient:artifact:${string}` {
+  return `scient:artifact:${artifact.surfaceId}`;
+}
+
+export function scientArtifactSurface(
+  artifact: PreviewStaticImageSurfaceDescriptor,
+): Extract<ScientRightPanelSurface, { module: "artifact" }> {
+  return {
+    id: scientArtifactSurfaceId(artifact),
+    kind: "scient",
+    module: "artifact",
+    artifact,
   };
 }
 
@@ -44,9 +72,19 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
       fileName: surface.fileName,
     });
   }
+  if (surface.module === "artifact" && isPreviewStaticImageSurfaceDescriptor(surface.artifact)) {
+    return scientArtifactSurface(surface.artifact);
+  }
   return null;
 }
 
 export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): string {
-  return surface.module === "sources" ? "Sources" : surface.fileName;
+  switch (surface.module) {
+    case "sources":
+      return "Sources";
+    case "source-pdf":
+      return surface.fileName;
+    case "artifact":
+      return surface.artifact.label;
+  }
 }

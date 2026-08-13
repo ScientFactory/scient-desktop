@@ -129,8 +129,13 @@ vi.mock("~/previewMiniPlayerStore", () => {
         byThreadKey: mocks.miniPlayerTabId
           ? {
               "environment-1:thread-1": {
-                tabId: mocks.miniPlayerTabId,
+                content: {
+                  kind: "browser" as const,
+                  id: mocks.miniPlayerTabId,
+                  tabId: mocks.miniPlayerTabId,
+                },
                 position: null,
+                size: null,
               },
             }
           : {},
@@ -144,7 +149,14 @@ vi.mock("~/previewMiniPlayerStore", () => {
   );
   return {
     selectThreadPreviewMiniPlayer: (
-      byThreadKey: Record<string, { tabId: string; position: null }>,
+      byThreadKey: Record<
+        string,
+        {
+          content: { kind: "browser"; id: string; tabId: string };
+          position: null;
+          size: null;
+        }
+      >,
     ) => byThreadKey["environment-1:thread-1"] ?? null,
     usePreviewMiniPlayerStore,
   };

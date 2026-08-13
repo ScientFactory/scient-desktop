@@ -25,8 +25,15 @@ describe("project files queries", () => {
       contents: '{"nodeVersion":"20"}',
       byteLength: 20,
       truncated: false,
+      revision: "revision-1",
     } satisfies ProjectReadFileResult;
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}');
+    setProjectFileQueryData(
+      environmentId,
+      "/repo",
+      "convex.json",
+      '{"nodeVersion":"220"}',
+      initial.revision,
+    );
     setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}');
 
     expect(getOptimisticProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
@@ -34,7 +41,13 @@ describe("project files queries", () => {
     );
 
     expect(
-      confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}'),
+      confirmProjectFileQueryData(
+        environmentId,
+        "/repo",
+        "convex.json",
+        '{"nodeVersion":"220"}',
+        "revision-2",
+      ),
     ).toBe(false);
 
     expect(resolveProjectFileQueryData(environmentId, "/repo", "convex.json", initial)).toEqual({
@@ -42,10 +55,44 @@ describe("project files queries", () => {
       contents: '{"nodeVersion":"22"}',
       byteLength: 20,
       truncated: false,
+      revision: "revision-1",
     });
 
     expect(
-      confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}'),
+      confirmProjectFileQueryData(
+        environmentId,
+        "/repo",
+        "convex.json",
+        '{"nodeVersion":"22"}',
+        "revision-2",
+      ),
     ).toBe(true);
+  });
+
+  it("reveals authoritative contents after a local draft is discarded", () => {
+    const authoritative = {
+      relativePath: "convex.json",
+      contents: '{"nodeVersion":"22"}',
+      byteLength: 20,
+      truncated: false,
+      revision: "revision-agent",
+    } satisfies ProjectReadFileResult;
+    setProjectFileQueryData(
+      environmentId,
+      "/repo",
+      "convex.json",
+      '{"nodeVersion":"local"}',
+      "revision-before",
+    );
+
+    expect(
+      resolveProjectFileQueryData(environmentId, "/repo", "convex.json", authoritative),
+    ).not.toEqual(authoritative);
+
+    clearProjectFileQueryData(environmentId, "/repo", "convex.json");
+
+    expect(
+      resolveProjectFileQueryData(environmentId, "/repo", "convex.json", authoritative),
+    ).toEqual(authoritative);
   });
 });

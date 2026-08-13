@@ -2,10 +2,27 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeScientRightPanelSurface,
+  scientArtifactSurface,
   scientRightPanelSurfaceTitle,
   scientSourcePdfSurface,
   scientSourcesSurface,
 } from "./surfaces";
+import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
+
+const artifact: PreviewStaticImageSurfaceDescriptor = {
+  surfaceId: "project-a:script.m:figure-001",
+  label: "Figure 1",
+  fileName: "figure-001.png",
+  mediaType: "image/png",
+  sourcePath: "script.m",
+  resource: {
+    _tag: "analysis-artifact",
+    projectId: "project-a",
+    runId: "run-1",
+    artifactId: "figure-001",
+    representationId: "static-png",
+  } as PreviewStaticImageSurfaceDescriptor["resource"],
+};
 
 describe("Scient right-panel surfaces", () => {
   it("builds stable Sources and source-PDF descriptors", () => {
@@ -42,6 +59,14 @@ describe("Scient right-panel surfaces", () => {
     ).toBeNull();
     expect(
       normalizeScientRightPanelSurface({
+        id: "scient:artifact:stale-id",
+        kind: "scient",
+        module: "artifact",
+        artifact,
+      }),
+    ).toEqual(scientArtifactSurface(artifact));
+    expect(
+      normalizeScientRightPanelSurface({
         id: "scient:source-pdf:missing-file",
         kind: "scient",
         module: "source-pdf",
@@ -57,5 +82,6 @@ describe("Scient right-panel surfaces", () => {
         scientSourcePdfSurface({ attachmentId: "pdf_1", fileName: "Paper.pdf" }),
       ),
     ).toBe("Paper.pdf");
+    expect(scientRightPanelSurfaceTitle(scientArtifactSurface(artifact))).toBe("Figure 1");
   });
 });

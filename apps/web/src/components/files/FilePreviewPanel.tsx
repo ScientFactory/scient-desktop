@@ -1,8 +1,8 @@
-import type {
-  EditorId,
-  EnvironmentId,
-  ResolvedKeybindingsConfig,
-  ScopedThreadRef,
+import {
+  type EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
@@ -42,7 +42,17 @@ import {
   SCIENT_DEFAULT_RENDER_MARKDOWN,
   resolveInitialFileExplorerOpen,
 } from "~/scient/fileOpening/fileOpeningPolicy";
+import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
+import {
+  ScientFileFreshnessNotices,
+  ScientFileReloadButton,
+} from "~/scient/fileSurfaces/ScientFileFreshnessControls";
+import {
+  type FileSaveResolution,
+  useWorkspaceFileRefresh,
+} from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
@@ -70,7 +80,6 @@ import {
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
-  useProjectFileQuery,
 } from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
@@ -147,6 +156,7 @@ function WorkspaceImagePreview(props: {
   readonly threadRef: ScopedThreadRef;
   readonly absolutePath: string;
   readonly alt: string;
+  readonly refreshKey: number;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, {
     _tag: "workspace-file",
@@ -154,6 +164,14 @@ function WorkspaceImagePreview(props: {
     path: props.absolutePath,
   });
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const previousRefreshKey = useRef(props.refreshKey);
+
+  useEffect(() => {
+    if (previousRefreshKey.current === props.refreshKey) return;
+    previousRefreshKey.current = props.refreshKey;
+    setFailedUrl(null);
+    assetUrl.refresh();
+  }, [assetUrl.refresh, props.refreshKey]);
 
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
     return (
@@ -402,11 +420,16 @@ interface EditableFileSurfaceProps {
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
+  revision: string;
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
   wordWrap: boolean;
   onPostRender: FilePostRender;
   onPendingChange: (relativePath: string, pending: boolean) => void;
+  onSaveFailure: (relativePath: string, error: unknown) => void;
+  onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
+  onSaveResolutionApplied: () => void;
+  saveResolution: FileSaveResolution | null;
 }
 
 interface FileSelectionOverride {
@@ -418,29 +441,72 @@ function useFileSaveCoordinator({
   environmentId,
   cwd,
   relativePath,
+  revision,
   onPendingChange,
+  onSaveFailure,
+  onSaveConfirmed,
+  onSaveResolutionApplied,
+  saveResolution,
 }: Pick<
   EditableFileSurfaceProps,
-  "environmentId" | "cwd" | "relativePath" | "onPendingChange"
->): FileSaveCoordinator {
+  | "environmentId"
+  | "cwd"
+  | "relativePath"
+  | "revision"
+  | "onPendingChange"
+  | "onSaveFailure"
+  | "onSaveConfirmed"
+  | "onSaveResolutionApplied"
+  | "saveResolution"
+>) {
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const coordinator = useMemo(
     () =>
       new FileSaveCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
+        initialRevision: revision,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents) =>
+        persist: (nextContents, expectedRevision) =>
           writeFile({
             environmentId,
-            input: { cwd, relativePath, contents: nextContents },
+            input: { cwd, relativePath, contents: nextContents, expectedRevision },
           }),
-        onConfirmed: (confirmedContents) => {
-          confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
+        revisionFromResult: (result) => result.revision,
+        onConfirmed: (confirmedContents, result) => {
+          confirmProjectFileQueryData(
+            environmentId,
+            cwd,
+            relativePath,
+            confirmedContents,
+            result.revision,
+          );
+          onSaveConfirmed(relativePath, confirmedContents, result.revision);
         },
+        onFailure: (_contents, result) =>
+          onSaveFailure(relativePath, squashAtomCommandFailure(result)),
+        onResolutionApplied: onSaveResolutionApplied,
       }),
-    [cwd, environmentId, onPendingChange, relativePath, writeFile],
+    [
+      cwd,
+      environmentId,
+      onPendingChange,
+      onSaveConfirmed,
+      onSaveFailure,
+      onSaveResolutionApplied,
+      relativePath,
+      writeFile,
+    ],
   );
 
+  useEffect(() => coordinator.syncConfirmedFileRevision(revision), [coordinator, revision]);
+  useEffect(() => {
+    if (saveResolution?.relativePath !== relativePath) return;
+    if (saveResolution.action === "discard") {
+      coordinator.discardPending(saveResolution.revision);
+    } else {
+      coordinator.retryPending(saveResolution.revision);
+    }
+  }, [coordinator, relativePath, saveResolution]);
   useEffect(() => () => coordinator.dispose(), [coordinator]);
   return coordinator;
 }
@@ -451,11 +517,16 @@ function EditableFileSurface({
   relativePath,
   composerDraftTarget,
   contents,
+  revision,
   resolvedTheme,
   revealRequestId,
   wordWrap,
   onPostRender,
   onPendingChange,
+  onSaveFailure,
+  onSaveConfirmed,
+  onSaveResolutionApplied,
+  saveResolution,
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -475,7 +546,12 @@ function EditableFileSurface({
     environmentId,
     cwd,
     relativePath,
+    revision,
     onPendingChange,
+    onSaveFailure,
+    onSaveConfirmed,
+    onSaveResolutionApplied,
+    saveResolution,
   });
   const editor = useMemo(
     () =>
@@ -667,6 +743,7 @@ function EditableFileSurface({
             file={{
               name: relativePath,
               contents,
+              ...scientificSourceLanguageOverride(relativePath),
               cacheKey: projectFileEditorCacheKey(
                 environmentId,
                 cwd,
@@ -719,9 +796,14 @@ function RenderedMarkdownSurface({
   cwd,
   relativePath,
   contents,
+  revision,
   truncated,
   threadRef,
   onPendingChange,
+  onSaveFailure,
+  onSaveConfirmed,
+  onSaveResolutionApplied,
+  saveResolution,
 }: Omit<
   EditableFileSurfaceProps,
   | "resolvedTheme"
@@ -738,7 +820,12 @@ function RenderedMarkdownSurface({
     environmentId,
     cwd,
     relativePath,
+    revision,
     onPendingChange,
+    onSaveFailure,
+    onSaveConfirmed,
+    onSaveResolutionApplied,
+    saveResolution,
   });
 
   return (
@@ -811,12 +898,27 @@ export default function FilePreviewPanel({
   const previewKind = resolveFilePreviewKind(relativePath);
   const isImage = previewKind === "image";
   const isPdf = previewKind === "pdf";
-  const file = useProjectFileQuery(
+  const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
+  const {
+    cancelReloadNotice,
+    file,
+    handleSaveConfirmed,
+    handleSaveFailure,
+    handleSaveResolutionApplied,
+    reloadNotice,
+    requestManualReload,
+    requestOverwrite,
+    resolveReloadNotice,
+    saveResolution,
+    viewerRefreshKey,
+  } = useWorkspaceFileRefresh({
     environmentId,
     cwd,
     relativePath,
-    shouldLoadFileAsText(relativePath),
-  );
+    loadAsText: shouldLoadFileAsText(relativePath),
+    sourcePending,
+  });
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
   const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
@@ -861,7 +963,18 @@ export default function FilePreviewPanel({
     [projectName, relativePath],
   );
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
-
+  const handlePendingChange = useCallback(
+    (path: string, pending: boolean) => {
+      setPendingPaths((current) => {
+        const next = new Set(current);
+        if (pending) next.add(path);
+        else next.delete(path);
+        return next;
+      });
+      onPendingChange(path, pending);
+    },
+    [onPendingChange],
+  );
   useEffect(() => {
     const currentCrumb = breadcrumbRef.current?.querySelector<HTMLElement>(
       "[data-current-file-crumb='true']",
@@ -1002,6 +1115,7 @@ export default function FilePreviewPanel({
               <TooltipPopup>Open file in preview browser</TooltipPopup>
             </Tooltip>
           ) : null}
+          <ScientFileReloadButton isPending={file.isPending} onReload={requestManualReload} />
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1023,6 +1137,16 @@ export default function FilePreviewPanel({
           </Tooltip>
         </div>
       ) : null}
+      <ScientFileFreshnessNotices
+        relativePath={relativePath}
+        notice={reloadNotice}
+        readError={file.error}
+        hasFallbackData={file.data !== null}
+        onCancel={cancelReloadNotice}
+        onReload={requestManualReload}
+        onRequestOverwrite={requestOverwrite}
+        onResolve={resolveReloadNotice}
+      />
       {relativePath && !isPdf && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
@@ -1043,6 +1167,7 @@ export default function FilePreviewPanel({
               threadRef={threadRef}
               absolutePath={absolutePath}
               alt={relativePath}
+              refreshKey={viewerRefreshKey}
             />
           ) : relativePath && isPdf && absolutePath && pdfSource ? (
             <Suspense
@@ -1052,7 +1177,11 @@ export default function FilePreviewPanel({
                 </div>
               }
             >
-              <ScientPdfReader key={absolutePath} source={pdfSource} />
+              <ScientPdfReader
+                key={absolutePath}
+                source={pdfSource}
+                refreshKey={viewerRefreshKey}
+              />
             </Suspense>
           ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
@@ -1070,8 +1199,13 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
+                revision={file.data.revision}
                 truncated={file.data.truncated}
-                onPendingChange={onPendingChange}
+                onPendingChange={handlePendingChange}
+                onSaveFailure={handleSaveFailure}
+                onSaveConfirmed={handleSaveConfirmed}
+                onSaveResolutionApplied={handleSaveResolutionApplied}
+                saveResolution={saveResolution}
               />
             ) : file.data.truncated ? (
               <Virtualizer
@@ -1086,6 +1220,7 @@ export default function FilePreviewPanel({
                   file={{
                     name: relativePath,
                     contents: file.data.contents,
+                    ...scientificSourceLanguageOverride(relativePath),
                     cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
                   }}
                   options={{
@@ -1107,14 +1242,28 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 composerDraftTarget={composerDraftTarget}
                 contents={file.data.contents}
+                revision={file.data.revision}
                 resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
-                onPendingChange={onPendingChange}
+                onPendingChange={handlePendingChange}
+                onSaveFailure={handleSaveFailure}
+                onSaveConfirmed={handleSaveConfirmed}
+                onSaveResolutionApplied={handleSaveResolutionApplied}
+                saveResolution={saveResolution}
               />
             )
           ) : null}
+          <ScientFileAuxiliarySurface
+            environmentId={environmentId}
+            threadRef={threadRef}
+            cwd={cwd}
+            relativePath={relativePath}
+            sourceRevision={file.data?.revision ?? null}
+            sourcePending={sourcePending}
+            truncated={file.data?.truncated ?? false}
+          />
         </div>
         {effectiveExplorerOpen || relativePath === null ? (
           <aside

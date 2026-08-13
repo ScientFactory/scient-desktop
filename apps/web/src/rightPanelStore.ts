@@ -15,8 +15,13 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import {
   normalizeScientRightPanelSurface,
+  scientArtifactSurface,
   type ScientRightPanelSurface,
 } from "./scient/rightPanel/surfaces";
+import {
+  previewStaticImageRevisionKey,
+  type PreviewStaticImageSurfaceDescriptor,
+} from "./previewStaticImageSurface";
 
 export const RIGHT_PANEL_KINDS = [
   "diff",
@@ -76,8 +81,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds a generic Scient-owned module surface; the feature state remains outside this store.
 // v13 lets a source PDF open beside, rather than replace, the Sources library.
-const RIGHT_PANEL_STORAGE_VERSION = 13;
-
+// v14 adds stable direct artifact surfaces without persisting signed asset URLs.
+const RIGHT_PANEL_STORAGE_VERSION = 14;
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
  * state: reopening the app should show the list, not last session's tabs and detail fetches.
@@ -103,6 +108,11 @@ interface RightPanelStoreState {
     target: { environmentId?: string; projectId: string; repository: string; number: number },
   ) => void;
   openScient: (ref: ScopedThreadRef, surface: ScientRightPanelSurface) => void;
+  openScientArtifact: (ref: ScopedThreadRef, artifact: PreviewStaticImageSurfaceDescriptor) => void;
+  updateScientArtifact: (
+    ref: ScopedThreadRef,
+    artifact: PreviewStaticImageSurfaceDescriptor,
+  ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -408,6 +418,45 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
             upsertSurface(current, surface),
           ),
+        })),
+      openScientArtifact: (ref, artifact) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const surface = scientArtifactSurface(artifact);
+            const existing = current.surfaces.some((entry) => entry.id === surface.id);
+            return {
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: existing
+                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+                : [...current.surfaces, surface],
+            };
+          }),
+        })),
+      updateScientArtifact: (ref, artifact) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const surface = scientArtifactSurface(artifact);
+            const existing = current.surfaces.find((entry) => entry.id === surface.id);
+            if (!existing || existing.kind !== "scient" || existing.module !== "artifact") {
+              return current;
+            }
+            if (
+              existing.artifact.label === artifact.label &&
+              existing.artifact.fileName === artifact.fileName &&
+              existing.artifact.mediaType === artifact.mediaType &&
+              previewStaticImageRevisionKey(existing.artifact) ===
+                previewStaticImageRevisionKey(artifact)
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === surface.id ? surface : entry,
+              ),
+            };
+          }),
         })),
       openFile: (ref, relativePath, line) =>
         set((state) => ({
