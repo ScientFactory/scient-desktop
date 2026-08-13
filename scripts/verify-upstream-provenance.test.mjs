@@ -13,6 +13,7 @@ describe("upstream provenance merge-parent guard", () => {
       ],
       exceptions: [],
       isOfficialAncestor: (commit) => commit === "official-parent",
+      isOwnedAncestor: () => false,
     });
     expect(failures).toEqual(["donor-merge: non-official merge parent open-pr-parent"]);
   });
@@ -26,6 +27,7 @@ describe("upstream provenance merge-parent guard", () => {
         merges: [{ commit: "historical-merge", parents: ["owned-base", "open-pr-parent"] }],
         exceptions: [exception],
         isOfficialAncestor: () => false,
+        isOwnedAncestor: () => false,
       }),
     ).toEqual([]);
     expect(
@@ -35,6 +37,7 @@ describe("upstream provenance merge-parent guard", () => {
         merges: [{ commit: "new-merge", parents: ["owned-base", "open-pr-parent"] }],
         exceptions: [exception],
         isOfficialAncestor: () => false,
+        isOwnedAncestor: () => false,
       }),
     ).toEqual(["new-merge: non-official merge parent open-pr-parent"]);
   });
@@ -48,6 +51,7 @@ describe("upstream provenance merge-parent guard", () => {
         exceptions: [],
         allowOwnedHeadMerge: true,
         isOfficialAncestor: () => false,
+        isOwnedAncestor: () => false,
       }),
     ).toEqual([]);
     expect(
@@ -58,7 +62,44 @@ describe("upstream provenance merge-parent guard", () => {
         exceptions: [],
         allowOwnedHeadMerge: false,
         isOfficialAncestor: () => false,
+        isOwnedAncestor: () => false,
       }),
     ).toEqual(["upstream-pr-head: non-official merge parent open-pr-parent"]);
+  });
+
+  it("accepts a realignment parent already contained in the exact owned base", () => {
+    expect(
+      validateIntroducedMergeParents({
+        base: "current-owned-main",
+        head: "aligned-feature-head",
+        merges: [
+          {
+            commit: "alignment-merge",
+            parents: ["feature-head", "current-owned-main"],
+          },
+        ],
+        exceptions: [],
+        allowOwnedHeadMerge: false,
+        isOfficialAncestor: () => false,
+        isOwnedAncestor: (commit) => commit === "current-owned-main",
+      }),
+    ).toEqual([]);
+
+    expect(
+      validateIntroducedMergeParents({
+        base: "current-owned-main",
+        head: "aligned-feature-head",
+        merges: [
+          {
+            commit: "alignment-merge",
+            parents: ["feature-head", "unapproved-donor-head"],
+          },
+        ],
+        exceptions: [],
+        allowOwnedHeadMerge: false,
+        isOfficialAncestor: () => false,
+        isOwnedAncestor: () => false,
+      }),
+    ).toEqual(["alignment-merge: non-official merge parent unapproved-donor-head"]);
   });
 });
