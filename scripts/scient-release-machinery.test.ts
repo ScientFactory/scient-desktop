@@ -31,6 +31,27 @@ describe("Scient release machinery", () => {
     assert.include(workflow, "cancel-in-progress: false");
   });
 
+  it("prepares stable candidates at 03:00 Jerusalem without direct publication authority", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/scheduled-stable-candidate.yml"),
+      "utf8",
+    );
+
+    assert.include(workflow, 'cron: "0 3 * * *"');
+    assert.include(workflow, 'timezone: "Asia/Jerusalem"');
+    assert.include(workflow, "actions: write");
+    assert.include(workflow, "contents: read");
+    assert.notInclude(workflow, "contents: write");
+    assert.notInclude(workflow, "environment: production");
+    assert.notInclude(workflow, "gh release create");
+    assert.include(workflow, 'status != "completed"');
+    assert.include(workflow, "gh workflow run promote-release.yml");
+    assert.include(workflow, "gh workflow run release.yml");
+    assert.include(workflow, '-f "publish_release=true"');
+    assert.include(workflow, '-f "allow_note_free=false"');
+    assert.include(workflow, '-f "allow_unsigned_windows=true"');
+  });
+
   it("fails duplicate release identities before builds and again before publication", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
@@ -86,12 +107,18 @@ describe("Scient release machinery", () => {
   });
 
   it("pins every release-owned action to an immutable commit", () => {
-    for (const workflowName of ["promote-release.yml", "release.yml"]) {
+    for (const workflowName of [
+      "promote-release.yml",
+      "release.yml",
+      "scheduled-stable-candidate.yml",
+    ]) {
       const workflow = NodeFS.readFileSync(
         NodePath.join(import.meta.dirname, "../.github/workflows", workflowName),
         "utf8",
       );
-      const uses = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
+      const uses = [...workflow.matchAll(/^\s+(?:-\s+)?uses:\s*([^\s#]+)/gmu)].map(
+        (match) => match[1],
+      );
       assert(uses.length > 0, `${workflowName} must declare at least one action`);
       for (const action of uses) {
         assert.match(

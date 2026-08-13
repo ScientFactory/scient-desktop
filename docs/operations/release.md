@@ -13,6 +13,10 @@ separate states and must be reported separately.
 - `.github/workflows/promote-release.yml` is the only normal promotion path.
 - `.github/workflows/release.yml` is manual-only. Its default is a build-only
   proof and creates no tag or release.
+- `.github/workflows/scheduled-stable-candidate.yml` may dispatch those two
+  guarded workflows at 03:00 Asia/Jerusalem, but it has no direct publication
+  or branch-write authority. The existing promotion and production gates remain
+  authoritative.
 - Publication additionally requires the protected `production` environment and
   repository variable `SCIENT_DESKTOP_RELEASES_ENABLED=true`.
 - Never publish from an arbitrary branch, an unreviewed commit, or a dirty local
@@ -41,6 +45,37 @@ acceptable shortcut. `Scient (Dev)` retains its separate identity, protocol,
 state, ports, and lifecycle and is never a publication source.
 
 ## Release graph
+
+### Scheduled candidate path
+
+At 03:00 Asia/Jerusalem, the scheduled candidate workflow checks current
+`main`. It does nothing when `main` is already the source of the Latest stable
+release or another stable candidate is active or awaiting approval. Otherwise
+it requires successful CI for the exact current `main` commit, derives the next
+patch version from the Latest stable tag (`v0.6.2` becomes `v0.6.3`), and
+requires an approved What's New entry for that exact version.
+
+After those checks, it invokes the normal exact-commit promotion and starts the
+normal release workflow with `publish_release=true`, `allow_note_free=false`,
+and the currently approved unsigned-Windows exception. The release workflow
+builds, signs, assembles, and attests one immutable candidate, then stops at the
+protected `production` environment. Only Yaacov is configured as its required
+reviewer. Approval publishes those exact accepted bytes as the public Latest
+release; rejection, cancellation, or no decision publishes nothing.
+
+The schedule uses GitHub's named-time-zone support with `Asia/Jerusalem`, so it
+remains at local 03:00 across daylight-saving changes. A manual invocation
+defaults to a dry run that validates version, notes, and exact-main CI without
+promoting a branch or starting release builds.
+
+If a candidate is still awaiting a decision the following night, the scheduler
+does not replace it. Approve, reject, or cancel that run first, then manually
+rerun the scheduler or wait for the next 03:00 cycle. The scheduler fails closed
+when current-main CI is missing or unsuccessful, the next release note is not
+approved, the stable tag history is inconsistent, promotion fails, or a target
+tag or release already exists.
+
+### Manual path
 
 1. Select the exact current `main` SHA after its CI workflow is successful.
 2. Manually run **Promote main to release/stable** with that full SHA. Promotion
