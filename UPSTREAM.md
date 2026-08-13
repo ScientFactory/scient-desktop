@@ -126,6 +126,10 @@ the new command subtitle for projectless General Chat and gives the Scient
 Sources surface a launcher shortcut. T3's contributor-trust change remains in
 ancestry without changing the Scient trust list.
 
+The earlier 2026-08-12 record through `849bac894` remains preserved as the
+partial checkpoint merged by PR #69. It covers the first 11 commits of this
+same contiguous range; it is historical evidence, not the current cursor.
+
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
 Synara behavior must enter through a separately justified Scient-native lane,
