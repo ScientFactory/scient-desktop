@@ -190,6 +190,56 @@ describe("ScientSourcesCoordinator", () => {
     expect(await NodeFSP.readFile(recordPath, "utf8")).toBe(persisted);
   });
 
+  it("does not present heading-only legacy sections as an abstract", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-headings-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const identity = await readScientProjectIdentity(root);
+    const record = {
+      formatVersion: 1 as const,
+      sourceId: "source_heading_only_abstract",
+      projectId: identity.projectId,
+      revision: 1,
+      type: "article" as const,
+      customType: null,
+      title: "Incomplete legacy abstract",
+      creators: [],
+      issuedRaw: null,
+      issuedYear: null,
+      identifiers: [],
+      abstract: "Background\n\nMethods\n\nResults\n\nInterpretation",
+      abstractSections: [
+        { title: "Background", paragraphs: [] },
+        { title: "Methods", paragraphs: [] },
+        { title: "Results", paragraphs: [] },
+        { title: "Interpretation", paragraphs: [] },
+      ],
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      attachments: [],
+      fieldProvenance: [],
+      importedAt: "2026-08-13T06:00:00.000Z",
+    };
+    const recordsDirectory = NodePath.join(root, SCIENT_SOURCE_RECORDS_DIRECTORY);
+    await NodeFSP.mkdir(recordsDirectory, { recursive: true });
+    const recordPath = NodePath.join(recordsDirectory, `${record.sourceId}.json`);
+    const persisted = `${JSON.stringify(record, null, 2)}\n`;
+    await NodeFSP.writeFile(recordPath, persisted, "utf8");
+
+    const detail = await getScientSourceDetail({ root, sourceId: record.sourceId });
+
+    expect(detail.abstract).toBeNull();
+    expect(detail.abstractSections).toBeUndefined();
+    expect(await NodeFSP.readFile(recordPath, "utf8")).toBe(persisted);
+  });
+
   it("imports a local PDF through the same durable source operation model", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-local-"));
     fixtures.push(root);

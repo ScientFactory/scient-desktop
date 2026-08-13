@@ -7,6 +7,7 @@ type AbstractElement = DefaultTreeAdapterMap["element"];
 type AbstractText = DefaultTreeAdapterMap["textNode"];
 
 const OMIT_CONTENT_ELEMENTS = new Set(["script", "style", "template"]);
+const BLOCK_CONTENT_ELEMENTS = new Set(["abstract", "article", "body", "div", "section", "sec"]);
 
 export interface ScientSourceAbstractDocument {
   readonly text: string;
@@ -52,31 +53,65 @@ function inlineText(node: AbstractNode): string | null {
   return normalizeInlineText(parts.join(""));
 }
 
-function collectSemanticEvents(node: AbstractNode, events: AbstractEvent[]): void {
-  if (!isElement(node) && !("childNodes" in node)) return;
-  if (isElement(node)) {
-    const name = elementName(node);
-    if (OMIT_CONTENT_ELEMENTS.has(name)) return;
-    if (name === "title" || /^h[1-6]$/u.test(name)) {
-      const text = inlineText(node);
-      if (text) events.push({ kind: "heading", text });
-      return;
-    }
-    if (name === "p" || name === "li" || name === "list-item") {
-      const text = inlineText(node);
-      if (text) events.push({ kind: "paragraph", text });
-      return;
-    }
-  }
-  for (const child of node.childNodes) collectSemanticEvents(child, events);
-}
-
 function normalizePlainParagraphs(value: string): string[] {
   return value
     .replace(/\r\n?/gu, "\n")
     .split(/\n{2,}/u)
     .map((paragraph) => normalizeInlineText(paragraph))
     .filter((paragraph): paragraph is string => paragraph !== null);
+}
+
+/**
+ * Provider HTML is not consistently block-wrapped. Europe PMC, for example,
+ * can return `<h4>Methods</h4>Body text` with the body as a bare sibling text
+ * node. Accumulate those loose nodes across inline markup and flush them only
+ * at semantic block boundaries so no scholarly text is discarded or split.
+ */
+function collectSemanticEvents(root: AbstractNode, events: AbstractEvent[]): void {
+  let looseText: string[] = [];
+  const flushLooseText = () => {
+    const paragraphs = normalizePlainParagraphs(looseText.join(""));
+    looseText = [];
+    for (const text of paragraphs) events.push({ kind: "paragraph", text });
+  };
+
+  const visit = (node: AbstractNode): void => {
+    if (isText(node)) {
+      looseText.push(node.value);
+      return;
+    }
+    if (!isElement(node) && !("childNodes" in node)) return;
+    if (isElement(node)) {
+      const name = elementName(node);
+      if (OMIT_CONTENT_ELEMENTS.has(name)) return;
+      if (name === "title" || /^h[1-6]$/u.test(name)) {
+        flushLooseText();
+        const text = inlineText(node);
+        if (text) events.push({ kind: "heading", text });
+        return;
+      }
+      if (name === "p" || name === "li" || name === "list-item") {
+        flushLooseText();
+        const text = inlineText(node);
+        if (text) events.push({ kind: "paragraph", text });
+        return;
+      }
+      if (name === "br") {
+        flushLooseText();
+        return;
+      }
+
+      const block = BLOCK_CONTENT_ELEMENTS.has(name);
+      if (block) flushLooseText();
+      for (const child of node.childNodes) visit(child);
+      if (block) flushLooseText();
+      return;
+    }
+    for (const child of node.childNodes) visit(child);
+  };
+
+  visit(root);
+  flushLooseText();
 }
 
 function sectionsFromEvents(events: ReadonlyArray<AbstractEvent>): MutableAbstractSection[] {
@@ -114,7 +149,7 @@ export function abstractDocumentFromSections(
       });
       return title || paragraphs.length > 0 ? [{ title, paragraphs }] : [];
     }),
-  );
+  ).filter((section) => section.paragraphs.length > 0);
   const text = sections
     .flatMap((section) => [section.title, ...section.paragraphs].filter(Boolean))
     .join("\n\n");

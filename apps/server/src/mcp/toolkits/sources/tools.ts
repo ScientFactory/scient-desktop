@@ -3,6 +3,7 @@ import {
   ScientSourceExternalReference,
   ScientSourceFieldProvenance,
   ScientSourceIdentifier,
+  ScientSourceNote,
   ScientSourceType,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
@@ -74,6 +75,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   identifiers: Schema.Array(ScientSourceIdentifier),
   abstract: NullableText,
   abstractTruncated: Schema.Boolean,
+  note: ScientSourceNote,
   containerTitle: NullableText,
   publisher: NullableText,
   volume: NullableText,
@@ -121,4 +123,33 @@ export const ScientSourceGetTool = Tool.make("scient_sources_get", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSourcesToolkit = Toolkit.make(ScientSourcesListTool, ScientSourceGetTool);
+export const ScientSourceNoteUpdateResult = Schema.Struct({
+  outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+  sourceId: NonEmptyString,
+  revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  note: ScientSourceNote,
+});
+
+export const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
+  description:
+    "Add, replace, or clear the project-owned note for one canonical Source. Read the source first and pass its current revision. Use null to clear the note; bold and italic may use Markdown markers.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    note: ScientSourceNote,
+  }),
+  success: ScientSourceNoteUpdateResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update a source note")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const ScientSourcesToolkit = Toolkit.make(
+  ScientSourcesListTool,
+  ScientSourceGetTool,
+  ScientSourceNoteUpdateTool,
+);

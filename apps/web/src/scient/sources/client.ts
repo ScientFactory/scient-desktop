@@ -16,6 +16,7 @@ import {
   refreshEnvironmentScientSourceMetadata,
   removeEnvironmentScientSource,
   updateEnvironmentScientSourceMetadata,
+  updateEnvironmentScientSourceNote,
   uploadEnvironmentLocalSourcePdf,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -23,6 +24,7 @@ import type {
   EnvironmentId,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
+  ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -66,6 +68,15 @@ export function refreshScientSourceMetadata(
 ) {
   return runtime.runPromise(
     refreshEnvironmentScientSourceMetadata({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function updateScientSourceNote(
+  environmentId: EnvironmentId,
+  input: ScientSourceNoteUpdateRequest,
+) {
+  return runtime.runPromise(
+    updateEnvironmentScientSourceNote({ prepared: prepared(environmentId), ...input }),
   );
 }
 

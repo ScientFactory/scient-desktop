@@ -181,6 +181,7 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
+import { scientSourcePdfSurface, scientSourcesSurface } from "~/scient/rightPanel/surfaces";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -3467,12 +3468,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef]);
   const addSourcesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
-    useRightPanelStore.getState().openScient(activeThreadRef, "sources");
+    useRightPanelStore.getState().openScient(activeThreadRef, scientSourcesSurface());
   }, [activeProject, activeThreadRef, activeWorkspaceRoot]);
   const openScientSourcePdf = useCallback(
     (input: { readonly attachmentId: string; readonly fileName: string }) => {
       if (!activeThreadRef) return;
-      useRightPanelStore.getState().openScientSourcePdf(activeThreadRef, input);
+      useRightPanelStore.getState().openScient(activeThreadRef, scientSourcePdfSurface(input));
     },
     [activeThreadRef],
   );

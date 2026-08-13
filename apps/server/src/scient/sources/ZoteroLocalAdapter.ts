@@ -4,6 +4,7 @@ import * as NodeURL from "node:url";
 
 import {
   normalizeScientSourceAbstractDocument,
+  SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   scientSourceTypeFromZotero,
   type ScientSourceCandidate,
   type ScientSourceCreator,
@@ -25,7 +26,8 @@ const ZOTERO_API_VERSION = 3;
 const REQUEST_TIMEOUT_MS = 4_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PAGE_SIZE = 100;
-const MAX_SCOPED_IMPORT_ITEMS = 10_000;
+const MAX_ZOTERO_COLLECTIONS = 10_000;
+const MAX_ZOTERO_SCOPED_BROWSE_ITEMS = 10_000;
 const ITEM_KEY_PATTERN = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/u;
 
 const ZoteroRawCreator = Schema.Struct({
@@ -335,7 +337,7 @@ async function listAllZoteroCollections(): Promise<ReadonlyArray<ZoteroCollectio
     assertReady(response);
     const page = decodeCollections(response.body).map(collectionFromRaw);
     collections.push(...page);
-    if (collections.length > MAX_SCOPED_IMPORT_ITEMS) {
+    if (collections.length > MAX_ZOTERO_COLLECTIONS) {
       throw new Error("Zotero contains too many collections for one import session.");
     }
     const reportedTotal = Number.parseInt(
@@ -421,6 +423,7 @@ export function zoteroDescendantCollectionKeys(
 async function readAllItemsAtPath(
   path: string,
   query: string,
+  maximumItems: number,
 ): Promise<ReadonlyArray<ZoteroRawItem>> {
   const items: ZoteroRawItem[] = [];
   let start = 0;
@@ -428,9 +431,9 @@ async function readAllItemsAtPath(
     const page = await readZoteroItemPage({ path, query, start, limit: MAX_PAGE_SIZE });
     items.push(...importableItems(page.rawItems));
     start += page.rawItems.length;
-    if (items.length > MAX_SCOPED_IMPORT_ITEMS) {
+    if (items.length > maximumItems) {
       throw new Error(
-        "This Zotero scope contains more than 10,000 references. Import a smaller collection.",
+        `This Zotero scope contains more than ${maximumItems} references. Choose a smaller collection or search result.`,
       );
     }
     if (page.rawItems.length === 0 || start >= page.total) break;
@@ -441,9 +444,10 @@ async function readAllItemsAtPath(
 async function readAllScopedItems(
   scope: ZoteroImportScope,
   query: string,
+  maximumItems: number = MAX_ZOTERO_SCOPED_BROWSE_ITEMS,
 ): Promise<ReadonlyArray<ZoteroRawItem>> {
   if (scope.kind === "library" || !scope.includeSubcollections) {
-    return readAllItemsAtPath(scopePath(scope), query);
+    return readAllItemsAtPath(scopePath(scope), query, maximumItems);
   }
   const collections = await listAllZoteroCollections();
   if (!collections.some((collection) => collection.key === scope.collectionKey)) {
@@ -455,14 +459,16 @@ async function readAllScopedItems(
     const batch = await Promise.all(
       keys
         .slice(index, index + 4)
-        .map((key) => readAllItemsAtPath(`/api/users/0/collections/${key}/items/top`, query)),
+        .map((key) =>
+          readAllItemsAtPath(`/api/users/0/collections/${key}/items/top`, query, maximumItems),
+        ),
     );
     for (const items of batch) {
       for (const item of items) unique.set(item.key, item);
     }
-    if (unique.size > MAX_SCOPED_IMPORT_ITEMS) {
+    if (unique.size > maximumItems) {
       throw new Error(
-        "This Zotero collection contains more than 10,000 references. Import a smaller collection.",
+        `This Zotero collection contains more than ${maximumItems} references. Choose a smaller collection or search result.`,
       );
     }
   }
@@ -512,7 +518,13 @@ export async function listZoteroLibrary(input: {
 export async function listZoteroScopeItemKeys(
   scope: ZoteroImportScope,
 ): Promise<ReadonlyArray<string>> {
-  return [...new Set((await readAllScopedItems(scope, "")).map((item) => item.key))];
+  return [
+    ...new Set(
+      (await readAllScopedItems(scope, "", SCIENT_SOURCE_IMPORT_ITEM_LIMIT)).map(
+        (item) => item.key,
+      ),
+    ),
+  ];
 }
 
 async function readZoteroItemWithChildren(itemKey: string): Promise<{

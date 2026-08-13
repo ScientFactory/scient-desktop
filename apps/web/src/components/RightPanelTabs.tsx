@@ -3,7 +3,6 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
   FileDiff,
-  FileText,
   Files,
   GitPullRequest,
   Globe2,
@@ -34,6 +33,8 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { ScientRightPanelSurfaceIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
+import { scientRightPanelSurfaceTitle } from "~/scient/rightPanel/surfaces";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -440,7 +441,7 @@ function surfaceTitle(
     case "agents":
       return "Agents";
     case "scient":
-      return surface.module === "sources" ? "Sources" : surface.fileName;
+      return scientRightPanelSurfaceTitle(surface);
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -519,11 +520,7 @@ function SurfaceIcon({
     case "agents":
       return <Bot className="size-3 shrink-0" />;
     case "scient":
-      return surface.module === "sources" ? (
-        <Library className="size-3 shrink-0" />
-      ) : (
-        <FileText className="size-3 shrink-0" />
-      );
+      return <ScientRightPanelSurfaceIcon surface={surface} />;
   }
 }
 

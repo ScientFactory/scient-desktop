@@ -2,6 +2,11 @@ import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
+export interface ScientSourceSearchEntry {
+  readonly source: SourceSummary;
+  readonly searchable: string;
+}
+
 function searchableSourceText(source: SourceSummary): string {
   return [
     source.title,
@@ -24,14 +29,19 @@ function searchableSourceText(source: SourceSummary): string {
     .toLocaleLowerCase();
 }
 
-export function filterScientSourceSummaries(
+export function indexScientSourceSummaries(
   sources: ReadonlyArray<SourceSummary>,
+): ReadonlyArray<ScientSourceSearchEntry> {
+  return sources.map((source) => ({ source, searchable: searchableSourceText(source) }));
+}
+
+export function filterScientSourceSearchIndex(
+  entries: ReadonlyArray<ScientSourceSearchEntry>,
   query: string,
 ): ReadonlyArray<SourceSummary> {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
-  if (terms.length === 0) return sources;
-  return sources.filter((source) => {
-    const searchable = searchableSourceText(source);
-    return terms.every((term) => searchable.includes(term));
-  });
+  if (terms.length === 0) return entries.map((entry) => entry.source);
+  return entries
+    .filter((entry) => terms.every((term) => entry.searchable.includes(term)))
+    .map((entry) => entry.source);
 }

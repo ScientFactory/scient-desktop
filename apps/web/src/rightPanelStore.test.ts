@@ -12,6 +12,7 @@ import {
   updatePullRequestTabStatus,
   useRightPanelStore,
 } from "./rightPanelStore";
+import { scientSourcePdfSurface, scientSourcesSurface } from "./scient/rightPanel/surfaces";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
@@ -294,8 +295,8 @@ describe("rightPanelStore", () => {
   });
 
   it("keeps Sources as one generic Scient-owned module surface", () => {
-    useRightPanelStore.getState().openScient(refA, "sources");
-    useRightPanelStore.getState().openScient(refA, "sources");
+    useRightPanelStore.getState().openScient(refA, scientSourcesSurface());
+    useRightPanelStore.getState().openScient(refA, scientSourcesSurface());
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
@@ -305,11 +306,10 @@ describe("rightPanelStore", () => {
   });
 
   it("opens a source PDF beside the Sources library", () => {
-    useRightPanelStore.getState().openScient(refA, "sources");
-    useRightPanelStore.getState().openScientSourcePdf(refA, {
-      attachmentId: "pdf_123",
-      fileName: "Paper.pdf",
-    });
+    useRightPanelStore.getState().openScient(refA, scientSourcesSurface());
+    useRightPanelStore
+      .getState()
+      .openScient(refA, scientSourcePdfSurface({ attachmentId: "pdf_123", fileName: "Paper.pdf" }));
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
