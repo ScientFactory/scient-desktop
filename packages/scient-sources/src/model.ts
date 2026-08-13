@@ -39,6 +39,15 @@ const BoundedIdentifiers = Schema.Array(ScientSourceIdentifier).pipe(
 );
 const BoundedTags = Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(1_000)));
 
+export const ScientSourceAbstractSection = Schema.Struct({
+  title: NullableText,
+  paragraphs: Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(256))),
+});
+export type ScientSourceAbstractSection = typeof ScientSourceAbstractSection.Type;
+const BoundedAbstractSections = Schema.Array(ScientSourceAbstractSection).pipe(
+  Schema.check(Schema.isMaxLength(256)),
+);
+
 export const ScientSourceExternalReference = Schema.Struct({
   system: NonEmptyString,
   libraryId: NonEmptyString,
@@ -50,8 +59,19 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceFieldProvenance = Schema.Struct({
   field: NonEmptyString,
-  origin: Schema.Literals(["zotero", "local-pdf", "doi", "pubmed", "derived", "user"]),
+  origin: Schema.Literals([
+    "zotero",
+    "local-pdf",
+    "doi",
+    "pubmed",
+    "crossref",
+    "europe-pmc",
+    "derived",
+    "user",
+  ]),
   sourceField: NullableText,
+  sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
+  retrievedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceFieldProvenance = typeof ScientSourceFieldProvenance.Type;
 
@@ -67,6 +87,14 @@ export const ScientSourceAttachment = Schema.Struct({
 });
 export type ScientSourceAttachment = typeof ScientSourceAttachment.Type;
 
+export const ScientSourceAttachmentSummary = Schema.Struct({
+  attachmentId: ScientSourceAttachment.fields.attachmentId,
+  kind: ScientSourceAttachment.fields.kind,
+  fileName: ScientSourceAttachment.fields.fileName,
+  mediaType: ScientSourceAttachment.fields.mediaType,
+});
+export type ScientSourceAttachmentSummary = typeof ScientSourceAttachmentSummary.Type;
+
 export const ScientSourceRecord = Schema.Struct({
   formatVersion: Schema.Literal(1),
   sourceId: NonEmptyString,
@@ -80,6 +108,7 @@ export const ScientSourceRecord = Schema.Struct({
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier),
   abstract: NullableText,
+  abstractSections: Schema.optionalKey(BoundedAbstractSections),
   containerTitle: NullableText,
   publisher: NullableText,
   volume: NullableText,
@@ -95,6 +124,50 @@ export const ScientSourceRecord = Schema.Struct({
   updatedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceRecord = typeof ScientSourceRecord.Type;
+
+/**
+ * Bounded list projection. Large abstracts, provenance, and external sync
+ * evidence stay behind the per-source detail boundary.
+ */
+export const ScientSourceSummary = Schema.Struct({
+  sourceId: ScientSourceRecord.fields.sourceId,
+  revision: ScientSourceRecord.fields.revision,
+  type: ScientSourceRecord.fields.type,
+  title: ScientSourceRecord.fields.title,
+  creators: ScientSourceRecord.fields.creators,
+  issuedYear: ScientSourceRecord.fields.issuedYear,
+  identifiers: ScientSourceRecord.fields.identifiers,
+  containerTitle: ScientSourceRecord.fields.containerTitle,
+  url: ScientSourceRecord.fields.url,
+  externalReferences: ScientSourceRecord.fields.externalReferences,
+  attachments: Schema.Array(ScientSourceAttachmentSummary),
+  importedAt: ScientSourceRecord.fields.importedAt,
+  updatedAt: ScientSourceRecord.fields.updatedAt,
+});
+export type ScientSourceSummary = typeof ScientSourceSummary.Type;
+
+export function scientSourceSummaryFromRecord(record: ScientSourceRecord): ScientSourceSummary {
+  return {
+    sourceId: record.sourceId,
+    revision: record.revision,
+    type: record.type,
+    title: record.title,
+    creators: record.creators,
+    issuedYear: record.issuedYear,
+    identifiers: record.identifiers,
+    containerTitle: record.containerTitle,
+    url: record.url,
+    externalReferences: record.externalReferences,
+    attachments: record.attachments.map((attachment) => ({
+      attachmentId: attachment.attachmentId,
+      kind: attachment.kind,
+      fileName: attachment.fileName,
+      mediaType: attachment.mediaType,
+    })),
+    importedAt: record.importedAt,
+    ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
+  };
+}
 
 /** The fields a researcher may correct without changing source identity or files. */
 export const ScientSourceEditableMetadata = Schema.Struct({
@@ -133,6 +206,7 @@ export const ScientSourceCandidate = Schema.Struct({
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier),
   abstract: NullableText,
+  abstractSections: Schema.optionalKey(BoundedAbstractSections),
   containerTitle: NullableText,
   publisher: NullableText,
   volume: NullableText,
@@ -213,6 +287,9 @@ export const ScientSourceOperationItem = Schema.Struct({
   itemKey: NonEmptyString,
   allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
   state: Schema.Literals(["pending", "imported", "skipped", "failed"]),
+  // Optional for compatibility with operations created before duplicate
+  // dispositions were recorded explicitly.
+  duplicateKind: Schema.optionalKey(ScientSourceDuplicateKind),
   sourceId: NullableText,
   message: NullableText,
 });
@@ -272,7 +349,31 @@ export const ZoteroConnectionStatus = Schema.Struct({
 });
 export type ZoteroConnectionStatus = typeof ZoteroConnectionStatus.Type;
 
+/** A Zotero source boundary. Collections are Zotero's project-like grouping primitive. */
+export const ZoteroImportScope = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("library") }),
+  Schema.Struct({
+    kind: Schema.Literal("collection"),
+    collectionKey: NonEmptyString,
+    includeSubcollections: Schema.Boolean,
+  }),
+]);
+export type ZoteroImportScope = typeof ZoteroImportScope.Type;
+
+export const ZoteroCollection = Schema.Struct({
+  key: NonEmptyString,
+  name: NonEmptyString,
+  parentCollectionKey: NullableText,
+});
+export type ZoteroCollection = typeof ZoteroCollection.Type;
+
+export const ZoteroCollectionsResult = Schema.Struct({
+  collections: Schema.Array(ZoteroCollection),
+});
+export type ZoteroCollectionsResult = typeof ZoteroCollectionsResult.Type;
+
 export const ZoteroLibraryPage = Schema.Struct({
+  scope: ZoteroImportScope,
   items: Schema.Array(ScientSourceCandidate),
   start: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   nextStart: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

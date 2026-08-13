@@ -24,7 +24,8 @@ const record = {
     { scheme: "doi", value: "10.1371/journal.pmed.0020124" },
     { scheme: "issn", value: "1549-1676" },
   ],
-  abstract: "A testable abstract.",
+  abstract: "Importance\n\nA testable abstract.",
+  abstractSections: [{ title: "Importance", paragraphs: ["A testable abstract."] }],
   containerTitle: "PLOS Medicine",
   publisher: "Public Library of Science",
   volume: "2",
@@ -66,6 +67,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
       />,
@@ -74,6 +76,10 @@ describe("SourceDetails", () => {
     expect(markup).toContain(record.title);
     expect(markup).toContain("John Ioannidis");
     expect(markup).toContain("A testable abstract.");
+    expect(markup).toContain("Importance");
+    expect(markup).toContain("max-h-24");
+    expect(markup).toContain("mt-0.5 space-y-1.5");
+    expect(markup).toContain("mask-image");
     expect(markup).toContain("Publication details");
     expect(markup).toContain("Reference");
     expect(markup).toContain("Reference style");
@@ -94,6 +100,33 @@ describe("SourceDetails", () => {
     expect(markup).toContain("Imported from Zotero");
   });
 
+  it("does not repeat a canonical abstract wrapper heading", () => {
+    const markup = renderToStaticMarkup(
+      <SourceDetails
+        record={{
+          ...record,
+          abstract: "Background\n\nEvidence.",
+          abstractSections: [
+            { title: "Abstract", paragraphs: [] },
+            { title: "Background", paragraphs: ["Evidence."] },
+          ],
+          tags: ["trial", "emergency medicine", "outcomes", "methods", "review"],
+        }}
+        diagnostics={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+
+    expect(markup.match(/>Abstract</gu)).toHaveLength(1);
+    expect(markup).toContain(">Background<");
+    expect(markup).toContain("font-semibold leading-5");
+    expect(markup).toContain("h-6 min-w-0 w-full flex-wrap gap-1.5 overflow-hidden");
+  });
+
   it("keeps metadata-only sources inspectable without offering a PDF action", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
@@ -101,6 +134,7 @@ describe("SourceDetails", () => {
         diagnostics={[{ field: "identifiers", severity: "info", message: "No identifier." }]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
       />,
@@ -117,6 +151,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
       />,
@@ -133,6 +168,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
       />,

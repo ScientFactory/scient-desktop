@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
 
 import type {
+  ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceRemovalRequest,
+  ZoteroImportScope,
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
@@ -12,6 +14,7 @@ import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../
 import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const METADATA_REFRESH_TIMEOUT_MS = 45_000;
 const IMPORT_STEP_TIMEOUT_MS = 120_000;
 
 const requestContext = Effect.fn("clientRuntime.state.scientSourcesRequestContext")(
@@ -49,6 +52,30 @@ export const getEnvironmentScientSourcesOverview = Effect.fn(
   );
 });
 
+export const getEnvironmentScientSourceDetail = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientSourceDetail",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly sourceId: string;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/detail",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.detail({
+        headers: context.headers,
+        payload: { root: input.root, sourceId: input.sourceId },
+      }),
+    ),
+  );
+});
+
 export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
   "clientRuntime.state.getEnvironmentScientSourceAttachmentPreview",
 )(function* (input: {
@@ -67,7 +94,34 @@ export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
       input.prepared.httpAuthorization,
       context.client.scientSources.attachmentPreview({
         headers: context.headers,
-        payload: { root: input.root, attachmentId: input.attachmentId },
+        payload: {
+          root: input.root,
+          attachmentId: input.attachmentId,
+        },
+      }),
+    ),
+  );
+});
+
+export const getEnvironmentScientSourceJournalIcon = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientSourceJournalIcon",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly sourceId: string;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/journal-icon",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.journalIcon({
+        headers: context.headers,
+        payload: { root: input.root, sourceId: input.sourceId },
       }),
     ),
   );
@@ -102,6 +156,35 @@ export const updateEnvironmentScientSourceMetadata = Effect.fn(
           ...(input.allowPossibleMetadataMatch === undefined
             ? {}
             : { allowPossibleMetadataMatch: input.allowPossibleMetadataMatch }),
+        },
+      }),
+    ),
+  );
+});
+
+export const refreshEnvironmentScientSourceMetadata = Effect.fn(
+  "clientRuntime.state.refreshEnvironmentScientSourceMetadata",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientSourceMetadataRefreshRequest["root"];
+  readonly sourceId: ScientSourceMetadataRefreshRequest["sourceId"];
+  readonly expectedRevision: ScientSourceMetadataRefreshRequest["expectedRevision"];
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/metadata/refresh",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    METADATA_REFRESH_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.refreshMetadata({
+        headers: context.headers,
+        payload: {
+          root: input.root,
+          sourceId: input.sourceId,
+          expectedRevision: input.expectedRevision,
         },
       }),
     ),
@@ -155,6 +238,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
   "clientRuntime.state.listEnvironmentZoteroLibrary",
 )(function* (input: {
   readonly prepared: PreparedConnection;
+  readonly scope: ZoteroImportScope;
   readonly query: string;
   readonly start: number;
   readonly limit: number;
@@ -170,8 +254,30 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
       input.prepared.httpAuthorization,
       context.client.scientSources.zoteroLibrary({
         headers: context.headers,
-        payload: { query: input.query, start: input.start, limit: input.limit },
+        payload: {
+          scope: input.scope,
+          query: input.query,
+          start: input.start,
+          limit: input.limit,
+        },
       }),
+    ),
+  );
+});
+
+export const listEnvironmentZoteroCollections = Effect.fn(
+  "clientRuntime.state.listEnvironmentZoteroCollections",
+)(function* (prepared: PreparedConnection) {
+  const context = yield* requestContext({
+    prepared,
+    path: "/api/scient/sources/zotero/collections",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      prepared.httpAuthorization,
+      context.client.scientSources.zoteroCollections({ headers: context.headers, payload: {} }),
     ),
   );
 });
@@ -225,6 +331,35 @@ export const beginEnvironmentZoteroImport = Effect.fn(
           operationId: input.operationId,
           itemKeys: input.itemKeys,
           possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
+        },
+      }),
+    ),
+  );
+});
+
+export const beginEnvironmentZoteroScopedImport = Effect.fn(
+  "clientRuntime.state.beginEnvironmentZoteroScopedImport",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly operationId: string;
+  readonly scope: ZoteroImportScope;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/zotero/import-scope/begin",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    IMPORT_STEP_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.beginScopedImport({
+        headers: context.headers,
+        payload: {
+          root: input.root,
+          operationId: input.operationId,
+          scope: input.scope,
         },
       }),
     ),

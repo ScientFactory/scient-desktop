@@ -2,9 +2,26 @@ import { describe, expect, it } from "@effect/vitest";
 import { ZoteroLibraryPage } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { zoteroItemToCandidate, zoteroItemWithChildrenToCandidate } from "./ZoteroLocalAdapter.ts";
+import {
+  zoteroDescendantCollectionKeys,
+  zoteroItemToCandidate,
+  zoteroItemWithChildrenToCandidate,
+} from "./ZoteroLocalAdapter.ts";
 
 describe("Zotero local adapter", () => {
+  it("includes nested collection descendants exactly once", () => {
+    expect(
+      new Set(
+        zoteroDescendantCollectionKeys("ROOT2345", [
+          { key: "ROOT2345", name: "Project", parentCollectionKey: null },
+          { key: "CHLD2345", name: "Evidence", parentCollectionKey: "ROOT2345" },
+          { key: "DEEP2345", name: "Included", parentCollectionKey: "CHLD2345" },
+          { key: "OTHR2345", name: "Other", parentCollectionKey: null },
+        ]),
+      ),
+    ).toEqual(new Set(["ROOT2345", "CHLD2345", "DEEP2345"]));
+  });
+
   it("normalizes Zotero metadata without making Zotero the Scient schema", () => {
     const candidate = zoteroItemToCandidate({
       key: "ABCD2345",
@@ -18,6 +35,8 @@ describe("Zotero local adapter", () => {
         creators: [{ creatorType: "author", firstName: "Ada", lastName: "Lovelace" }],
         date: "2026-03-10",
         DOI: "10.1000/example",
+        abstractNote:
+          "<jats:sec><jats:title>Objective</jats:title><jats:p>Test &amp; verify.</jats:p></jats:sec>",
         tags: [{ tag: "important" }],
       },
     });
@@ -26,6 +45,8 @@ describe("Zotero local adapter", () => {
       type: "article",
       title: "A study",
       issuedYear: 2026,
+      abstract: "Objective\n\nTest & verify.",
+      abstractSections: [{ title: "Objective", paragraphs: ["Test & verify."] }],
       sourceKey: "ABCD2345",
       externalReferences: [
         {
@@ -41,13 +62,11 @@ describe("Zotero local adapter", () => {
         { field: "title", origin: "zotero", sourceField: "title" },
         { field: "creators", origin: "zotero", sourceField: "creators" },
         { field: "identifiers.doi", origin: "zotero", sourceField: "DOI" },
+        { field: "abstract", origin: "zotero", sourceField: "abstractNote" },
       ]),
     );
     expect(candidate.fieldProvenance).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ field: "abstract" }),
-        expect.objectContaining({ field: "publisher" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ field: "publisher" })]),
     );
   });
 
@@ -130,6 +149,7 @@ describe("Zotero local adapter", () => {
       },
     });
     const page: ZoteroLibraryPage = {
+      scope: { kind: "library" },
       items: [candidate],
       start: 0,
       nextStart: 1,

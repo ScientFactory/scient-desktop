@@ -1,7 +1,7 @@
 import type {
   EnvironmentId,
+  ScientSourceDetailResult,
   ScientSourceMetadataUpdateRequest,
-  ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
 import { AlertCircle, ChevronLeft, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
@@ -22,7 +22,7 @@ import { Textarea, type TextareaProps } from "../../components/ui/textarea";
 import { cn } from "../../lib/utils";
 import { useSourceEditor } from "./useSourceEditor";
 
-type SourceRecord = ScientSourcesOverviewResult["records"][number];
+type SourceRecord = ScientSourceDetailResult;
 type Metadata = ScientSourceMetadataUpdateRequest["metadata"];
 type Creator = Metadata["creators"][number];
 type Identifier = Metadata["identifiers"][number];
@@ -131,7 +131,7 @@ export function SourceEditor(props: {
   readonly onRefreshed: (record: SourceRecord) => void;
   readonly onSaved: (record: SourceRecord) => void;
 }) {
-  const initialMetadata = useMemo(() => metadataFromRecord(props.record), [props.record]);
+  const originalMetadata = useMemo(() => metadataFromRecord(props.record), [props.record]);
   const sourceTypeOptions = useMemo(() => {
     if (COMMON_SOURCE_TYPES.some(([type]) => type === props.record.type)) {
       return COMMON_SOURCE_TYPES;
@@ -142,16 +142,16 @@ export function SourceEditor(props: {
       COMMON_SOURCE_TYPES.at(-1)!,
     ];
   }, [props.record.type]);
-  const [metadata, setMetadata] = useState<Metadata>(initialMetadata);
+  const [metadata, setMetadata] = useState<Metadata>(originalMetadata);
   const [yearText, setYearText] = useState(
-    props.record.issuedYear === null ? "" : String(props.record.issuedYear),
+    originalMetadata.issuedYear === null ? "" : String(originalMetadata.issuedYear),
   );
-  const [tagsText, setTagsText] = useState(props.record.tags.join("\n"));
+  const [tagsText, setTagsText] = useState(originalMetadata.tags.join("\n"));
   const [creatorKeys, setCreatorKeys] = useState(() =>
-    props.record.creators.map((_, index) => `creator-${props.record.sourceId}-${index}`),
+    originalMetadata.creators.map((_, index) => `creator-${props.record.sourceId}-${index}`),
   );
   const [identifierKeys, setIdentifierKeys] = useState(() =>
-    props.record.identifiers.map((_, index) => `identifier-${props.record.sourceId}-${index}`),
+    originalMetadata.identifiers.map((_, index) => `identifier-${props.record.sourceId}-${index}`),
   );
   const nextRowId = useRef(0);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -165,7 +165,7 @@ export function SourceEditor(props: {
     issuedYear: yearText.trim() ? Number.parseInt(yearText, 10) : null,
     tags: tagsFromText(tagsText),
   };
-  const dirty = metadataKey(effectiveMetadata) !== metadataKey(initialMetadata);
+  const dirty = metadataKey(effectiveMetadata) !== metadataKey(originalMetadata);
   const invalidYear =
     yearText.trim().length > 0 &&
     (!/^\d{4}$/u.test(yearText.trim()) || Number.parseInt(yearText, 10) < 1000);

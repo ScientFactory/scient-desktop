@@ -7,6 +7,7 @@ import {
   type PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
 import { EnvironmentId, ThreadId, type AssetResource } from "@t3tools/contracts";
+import { isWorkspacePdfPreviewPath } from "@t3tools/shared/filePreview";
 
 import { useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
 
@@ -27,6 +28,39 @@ export function workspacePdfSource(input: {
     capabilities: { canSaveCopy: true, canRevealSource: false },
     threadId: input.threadId,
     absolutePath: input.absolutePath,
+  });
+}
+
+/** Only file-panel paths classified as PDFs may enter the strict PDF descriptor contract. */
+export function workspacePdfSourceForPreview(input: {
+  readonly absolutePath: string | null;
+  readonly environmentId: EnvironmentId;
+  readonly relativePath: string | null;
+  readonly threadId: string;
+}): PdfSourceDescriptorType | null {
+  if (
+    input.absolutePath === null ||
+    input.relativePath === null ||
+    !isWorkspacePdfPreviewPath(input.relativePath)
+  ) {
+    return null;
+  }
+
+  const browserSuffixIndex = input.relativePath.search(/[?#]/u);
+  const browserSuffix =
+    browserSuffixIndex === -1 ? "" : input.relativePath.slice(browserSuffixIndex);
+  const sourcePath =
+    browserSuffix.length > 0 && input.absolutePath.endsWith(browserSuffix)
+      ? input.absolutePath.slice(0, -browserSuffix.length)
+      : input.absolutePath;
+  const relativeSourcePath = input.relativePath.split(/[?#]/, 1)[0] ?? input.relativePath;
+  const fileName = relativeSourcePath.split(/[\\/]/).at(-1) ?? relativeSourcePath;
+
+  return workspacePdfSource({
+    absolutePath: sourcePath,
+    environmentId: input.environmentId,
+    fileName,
+    threadId: input.threadId,
   });
 }
 
