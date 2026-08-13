@@ -21,8 +21,8 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
 - Owned repository: `ScientFactory/scient-desktop-next`
 - Original review and T3-merge base:
   `d623ec6ef3d1a4645d08483be539ef9609e2dac8`
-- Current publication base after PR #69 merged:
-  `994bbe7c7bfff5965a5232f8e31d6bcc70a3a676`
+- Current publication base after PRs #69, #75, and #76 merged:
+  `b4f81cf1ddb934841e7e93383b6c5b1d6ec3c54a`
 - Previous literal T3 boundary:
   `2db08457f2f4eaaa713a067b2ea480ca2b583025`
 - Official T3 target: `5015d7cf9f98fe551115b625031f01e3f022cd2d`
@@ -32,9 +32,12 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
 - Newly dispositioned: 30
 - Remaining undispositioned: 0
 - History-preserving merge: `4d812e742298b5023cae40b05ece9446935914f7`
-- Current-main alignment merge: `46a2dbe371efef80cd21f643dbf6224970e0d51b`
+- Initial current-main alignment merge:
+  `46a2dbe371efef80cd21f643dbf6224970e0d51b`
+- Final current-main alignment merge:
+  `3d74fefd5cca2215cb23477e77f348c6e24d4d7f`
 - Integration branch: `agent/t3-sync-5015d7cf-20260813`
-- Inspection time: 2026-08-13 14:35 Asia/Jerusalem / 11:35 UTC
+- Inspection time: 2026-08-13 14:46 Asia/Jerusalem / 11:46 UTC
 - Donor write boundary: the `upstream` push URL remains `DISABLED`
 
 The target was freshly fetched from official `pingdotgg/t3code:main`. Every
@@ -42,7 +45,10 @@ received commit is official T3 `main` ancestry. PR #69 merged its partial
 checkpoint through `849bac894` while this complete lane was running. This
 branch then merged the resulting owned `main` without rewriting either line of
 history. Open PRs #70, #74, and #75 and their worktrees were inspected for
-overlap and left untouched.
+overlap and left untouched at the initial publication point. PRs #75 and #76
+subsequently merged independently; this branch merged their resulting owned
+`main` without conflict and preserved their newer Sources and PDF behavior.
+Open PRs #70 and #74 remain untouched.
 
 PR #69 remains useful historical evidence for the first 11 commits, but it is
 not the current cursor. This record reviews the full 30-commit contiguous range
@@ -156,8 +162,11 @@ load-related `MessagesTimeline` import timeout. The CSS was corrected; the
 timeline suite passed independently and the complete final rerun passed.
 After PR #69 entered owned `main`, the complete candidate merged that exact
 owned head. The product tree did not change; only PR #69's historical evidence
-and the reviewed provenance guard were added. The final gate below was rerun
-against the new publication base.
+and the reviewed provenance guard were added. After PRs #75 and #76 entered
+owned `main`, the candidate merged that exact head without conflict. The
+shared `environmentHttp.ts` additions merged automatically; focused contract,
+Sources, PDF, General Chat, type, and full hosted gates were rerun against the
+final publication base.
 Hosted CI remains a draft-PR gate and is not represented as complete here.
 
 ## Publication boundary
