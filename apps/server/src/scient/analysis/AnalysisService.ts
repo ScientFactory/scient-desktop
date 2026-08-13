@@ -64,16 +64,17 @@ import * as AnalysisRunIndex from "./AnalysisRunIndex.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
+import {
+  appendBoundedAnalysisOutput,
+  completeUtf8PrefixByteLength,
+} from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 
-const MAXIMUM_OUTPUT_BYTES = 4 * 1024 * 1024;
-const MAXIMUM_OUTPUT_CHUNK_BYTES = 256 * 1024;
 const RUN_HISTORY_DEFAULT_LIMIT = 20;
 const OUTPUT_COALESCE_MAX_CHUNK = 64;
 const OUTPUT_COALESCE_WINDOW = Duration.millis(25);
 const MAXIMUM_VERIFICATION_OUTPUT_BYTES = 512 * 1024;
 const MAXIMUM_QUEUED_RUNS_PER_RUNTIME = 100;
-const runtimeAdapters: ReadonlyArray<AnalysisRuntimeAdapter> = [matlabRuntimeAdapter];
 
 interface QueuedAnalysisRun {
   readonly runId: ExecutionRunId;
@@ -115,47 +116,6 @@ export function recoveredOutputContentHash(
   outputTruncated: boolean,
 ): string | null {
   return outputTruncated ? null : outputContentHash(chunks);
-}
-
-function utf8Boundary(bytes: Uint8Array, requested: number): number {
-  if (requested >= bytes.byteLength) return bytes.byteLength;
-  let boundary = requested;
-  while (boundary > 0 && (bytes[boundary]! & 0xc0) === 0x80) boundary -= 1;
-  return boundary;
-}
-
-function decodeUtf8Chunks(bytes: Uint8Array): ReadonlyArray<string> {
-  const chunks: string[] = [];
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    const boundary = utf8Boundary(
-      bytes,
-      Math.min(bytes.byteLength, offset + MAXIMUM_OUTPUT_CHUNK_BYTES),
-    );
-    if (boundary <= offset) break;
-    chunks.push(new TextDecoder().decode(bytes.subarray(offset, boundary)));
-    offset = boundary;
-  }
-  return chunks;
-}
-
-function coalesceProcessOutput(
-  outputs: ReadonlyArray<ExecutionProcessOutput>,
-): ReadonlyArray<ExecutionProcessOutput> {
-  const coalesced: Array<ExecutionProcessOutput> = [];
-  for (const output of outputs) {
-    if (output.text.length === 0) continue;
-    const previous = coalesced.at(-1);
-    if (previous?.stream === output.stream) {
-      coalesced[coalesced.length - 1] = {
-        stream: previous.stream,
-        text: previous.text + output.text,
-      };
-    } else {
-      coalesced.push(output);
-    }
-  }
-  return coalesced;
 }
 
 function matchesSubscription(
@@ -218,7 +178,13 @@ export class AnalysisService extends Context.Service<
   }
 >()("t3/scient/analysis/AnalysisService") {}
 
+class AnalysisRuntimeAdapters extends Context.Reference<ReadonlyArray<AnalysisRuntimeAdapter>>(
+  "t3/scient/analysis/AnalysisRuntimeAdapters",
+  { defaultValue: () => [matlabRuntimeAdapter] },
+) {}
+
 const make = Effect.gen(function* () {
+  const runtimeAdapters = yield* AnalysisRuntimeAdapters;
   const crypto = yield* Crypto.Crypto;
   const hostEnvironment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
@@ -556,7 +522,10 @@ const make = Effect.gen(function* () {
                 const remaining = Math.max(0, MAXIMUM_VERIFICATION_OUTPUT_BYTES - usedBytes);
                 if (remaining === 0) return;
                 const encoded = new TextEncoder().encode(output.text);
-                const accepted = utf8Boundary(encoded, Math.min(encoded.byteLength, remaining));
+                const accepted = completeUtf8PrefixByteLength(
+                  encoded,
+                  Math.min(encoded.byteLength, remaining),
+                );
                 if (accepted === 0) return;
                 const text = new TextDecoder().decode(encoded.subarray(0, accepted));
                 yield* Ref.update(outputsRef, (outputs) => [...outputs, { ...output, text }]);
@@ -872,41 +841,17 @@ const make = Effect.gen(function* () {
 
   const appendOutput = (runId: string, outputs: ReadonlyArray<ExecutionProcessOutput>) =>
     Effect.gen(function* () {
-      const coalesced = coalesceProcessOutput(outputs);
-      if (coalesced.length === 0) return;
       const observedAt = yield* nowIso;
       const update = yield* Ref.modify(runsRef, (runs) => {
         const run = runs.get(runId);
         if (!run) return [null, runs] as const;
-        const chunks: ExecutionOutputChunk[] = [];
-        let outputByteLength = run.receipt.outputByteLength;
-        let outputTruncated = run.receipt.outputTruncated;
-        for (const output of coalesced) {
-          const remainingBytes = Math.max(0, MAXIMUM_OUTPUT_BYTES - outputByteLength);
-          const encoded = new TextEncoder().encode(output.text);
-          const acceptedByteLength = utf8Boundary(
-            encoded,
-            Math.min(encoded.byteLength, remainingBytes),
-          );
-          for (const acceptedText of decodeUtf8Chunks(encoded.subarray(0, acceptedByteLength))) {
-            chunks.push({
-              sequence: run.receipt.output.length + chunks.length,
-              stream: output.stream,
-              text: acceptedText,
-              observedAt,
-            });
-          }
-          outputByteLength += acceptedByteLength;
-          if (encoded.byteLength > remainingBytes && !outputTruncated) {
-            outputTruncated = true;
-            chunks.push({
-              sequence: run.receipt.output.length + chunks.length,
-              stream: "system",
-              text: `Output was truncated at the ${MAXIMUM_OUTPUT_BYTES}-byte limit.\n`,
-              observedAt,
-            });
-          }
-        }
+        const { chunks, outputByteLength, outputTruncated } = appendBoundedAnalysisOutput({
+          outputs,
+          outputByteLength: run.receipt.outputByteLength,
+          outputTruncated: run.receipt.outputTruncated,
+          nextSequence: run.receipt.output.length,
+          observedAt,
+        });
         if (chunks.length === 0) return [{ run, chunks }, runs] as const;
         const nextRun = {
           ...run,
@@ -1716,6 +1661,8 @@ const make = Effect.gen(function* () {
         );
       let freedBytes = 0;
       let cleanedRunCount = 0;
+      // Keep journal deletion and index projection updates ordered. Parallel
+      // generations can invalidate one another and leave the projection dirty.
       for (const run of retainedRuns) {
         const cleaned = yield* cleanPersistedRun(identity.projectId, run.receipt.runId);
         freedBytes += cleaned.freedBytes;
@@ -1827,5 +1774,11 @@ const make = Effect.gen(function* () {
     subscribeRuns,
   });
 });
+
+/** Adapter injection keeps orchestration testable and lets future runtimes share one coordinator. */
+export const layerWithAdapters = (runtimeAdapters: ReadonlyArray<AnalysisRuntimeAdapter>) =>
+  Layer.effect(AnalysisService, make).pipe(
+    Layer.provide(Layer.succeed(AnalysisRuntimeAdapters, runtimeAdapters)),
+  );
 
 export const layer = Layer.effect(AnalysisService, make);

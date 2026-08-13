@@ -5539,7 +5539,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 runId: cancelled.receipt.runId,
               });
               assert.equal(cancelledReceipt.receipt.status, "cancelled");
-              yield* Effect.sleep("1 second");
+              const terminalThird = yield* Effect.gen(function* () {
+                for (let attempt = 0; attempt < 100; attempt += 1) {
+                  const run = yield* client[WS_METHODS.analysisGetRun]({
+                    cwd: workspaceDir,
+                    runId: third.receipt.runId,
+                  });
+                  if (["succeeded", "failed", "cancelled", "lost"].includes(run.receipt.status)) {
+                    return run;
+                  }
+                  yield* Effect.sleep("50 millis");
+                }
+                return yield* Effect.die(
+                  new Error("Timed out waiting for the third queued MATLAB run."),
+                );
+              });
               return {
                 first: yield* client[WS_METHODS.analysisGetRun]({
                   cwd: workspaceDir,
@@ -5549,10 +5563,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   cwd: workspaceDir,
                   runId: cancelled.receipt.runId,
                 }),
-                third: yield* client[WS_METHODS.analysisGetRun]({
-                  cwd: workspaceDir,
-                  runId: third.receipt.runId,
-                }),
+                third: terminalThird,
               };
             }),
           ),

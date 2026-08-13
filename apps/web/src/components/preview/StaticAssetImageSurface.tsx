@@ -19,14 +19,13 @@ export function StaticAssetImageSurface(props: {
   readonly className?: string;
   readonly refreshToken?: number;
 }) {
+  // The shared asset atom renews signed URLs every 30 minutes (before the
+  // server's 60-minute expiry); this surface only owns revision/error retries.
   const asset = useAssetUrlState(props.environmentId, props.image.resource);
   const autoRetriedRevisionRef = useRef<string | null>(null);
-  const refreshedExpiredUrlRef = useRef<string | null>(null);
   const previousRefreshTokenRef = useRef(props.refreshToken);
   const revisionKey = previewStaticImageRevisionKey(props.image);
   const refreshAsset = asset.refresh;
-  const assetUrl = asset._tag === "Success" ? asset.url : null;
-  const assetExpiresAt = asset._tag === "Success" ? asset.expiresAt : null;
 
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
@@ -34,13 +33,6 @@ export function StaticAssetImageSurface(props: {
     autoRetriedRevisionRef.current = null;
     refreshAsset();
   }, [props.refreshToken, refreshAsset]);
-
-  useEffect(() => {
-    if (!assetUrl || assetExpiresAt === null || assetExpiresAt > Date.now() + 5_000) return;
-    if (refreshedExpiredUrlRef.current === assetUrl) return;
-    refreshedExpiredUrlRef.current = assetUrl;
-    refreshAsset();
-  }, [assetExpiresAt, assetUrl, refreshAsset]);
 
   if (asset._tag !== "Success") {
     return (
@@ -66,7 +58,7 @@ export function StaticAssetImageSurface(props: {
 
   return (
     <PreviewImageSurface
-      source={{ url: asset.url, alt: props.image.label }}
+      source={{ url: asset.url, alt: props.image.label, revisionKey }}
       {...(props.className === undefined ? {} : { className: props.className })}
       onLoadError={() => {
         if (autoRetriedRevisionRef.current === revisionKey) return;

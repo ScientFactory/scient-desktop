@@ -72,10 +72,7 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
       fileName: surface.fileName,
     });
   }
-  if (
-    surface.module === "artifact" &&
-    isPreviewStaticImageSurfaceDescriptor(surface.artifact)
-  ) {
+  if (surface.module === "artifact" && isPreviewStaticImageSurfaceDescriptor(surface.artifact)) {
     return scientArtifactSurface(surface.artifact);
   }
   return null;

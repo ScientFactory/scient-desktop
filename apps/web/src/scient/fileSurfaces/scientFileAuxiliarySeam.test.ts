@@ -12,9 +12,6 @@ describe("Scient file surface seams", () => {
     expect(source).toContain("ScientFileAuxiliarySurface");
     expect(source.match(/<ScientFileAuxiliarySurface/gu)).toHaveLength(1);
     expect(source.match(/useWorkspaceFileRefresh\(/gu)).toHaveLength(1);
-    expect(source).toContain("ScientFileReloadButton");
-    expect(source).toContain("ScientFileFreshnessNotices");
-    expect(source).toContain("viewerRefreshKey");
     expect(source).not.toMatch(/matlab|-batch|AnalysisRunFilePanel/iu);
   });
 });

@@ -21,7 +21,7 @@ const artifact: PreviewStaticImageSurfaceDescriptor = {
     runId: "run-1",
     artifactId: "figure-001",
     representationId: "static-png",
-  },
+  } as PreviewStaticImageSurfaceDescriptor["resource"],
 };
 
 describe("Scient right-panel surfaces", () => {

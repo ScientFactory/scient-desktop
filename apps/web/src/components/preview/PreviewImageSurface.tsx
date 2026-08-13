@@ -9,6 +9,8 @@ import { nextPreviewImageZoom } from "./previewImageZoom";
 export interface PreviewImageSource {
   readonly url: string;
   readonly alt: string;
+  /** Stable content identity. URL-only callers still reset when their source changes. */
+  readonly revisionKey?: string;
 }
 
 interface ImageZoomAnchor {
@@ -19,6 +21,10 @@ interface ImageZoomAnchor {
 }
 
 const ZOOM_HINT_DURATION_MS = 1_800;
+
+export function previewImageSourceIdentity(source: PreviewImageSource): string {
+  return source.revisionKey ?? source.url;
+}
 
 /** Shared static-image viewer used by both the right panel and floating preview. */
 export function PreviewImageSurface({
@@ -41,6 +47,7 @@ export function PreviewImageSurface({
   const [zoom, setZoom] = useState(1);
   const [showZoomHint, setShowZoomHint] = useState(false);
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "failed">("loading");
+  const sourceIdentity = previewImageSourceIdentity(source);
 
   const dismissZoomHint = () => {
     if (zoomHintTimerRef.current !== null) {
@@ -68,8 +75,11 @@ export function PreviewImageSurface({
     pendingZoomAnchorRef.current = null;
     zoomRef.current = 1;
     setZoom(1);
-    setLoadState("loading");
     viewportRef.current?.scrollTo({ left: 0, top: 0 });
+  }, [sourceIdentity]);
+
+  useEffect(() => {
+    setLoadState("loading");
   }, [source.url]);
 
   useEffect(() => {
@@ -170,7 +180,7 @@ export function PreviewImageSurface({
           showZoomHint ? "opacity-100" : "opacity-0",
         )}
       >
-        Pinch with two fingers to zoom
+        Pinch or Ctrl-scroll to zoom
       </div>
     </div>
   );
