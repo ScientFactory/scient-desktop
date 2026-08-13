@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260811-2db08457f.md`](docs/internals/t3-upstream-sync-20260811-2db08457f.md)
+[`docs/internals/t3-upstream-sync-20260813-5015d7cf.md`](docs/internals/t3-upstream-sync-20260813-5015d7cf.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `2db08457f2f4eaaa713a067b2ea480ca2b583025` into the refresh
-branch, preserving the complete nine-commit T3 range from the previously
-integrated tip `ac4780f451f98c10d5b518f2bfa3d035b46645df`. Later observed T3
+checkpoint `5015d7cf9f98fe551115b625031f01e3f022cd2d` into the refresh
+branch, preserving the complete 30-commit T3 range from the previously
+integrated tip `2db08457f2f4eaaa713a067b2ea480ca2b583025`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -116,6 +116,15 @@ fixes, and clearer git action icons. Of 32 upstream paths, 12 overlapped
 Scient work and five conflicted. Scient kept its minimal stage branding,
 typography profile, and sidebar identity mounts while adopting the upstream
 theme pipeline and footer navigation behavior.
+
+The 2026-08-13 sync through `5015d7cf` receives 30 official commits, including
+the maintained PR center, Open VSX theme discovery, assisted OAuth handoff
+repairs, mobile title/list improvements, and composer/sidebar/diff stability.
+Five textual conflicts retained Scient provider onboarding, identity, and
+copy while adopting T3's layout and behavior. The merge also explicitly adapts
+the new command subtitle for projectless General Chat and gives the Scient
+Sources surface a launcher shortcut. T3's contributor-trust change remains in
+ancestry without changing the Scient trust list.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
