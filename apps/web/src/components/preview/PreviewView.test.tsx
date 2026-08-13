@@ -24,9 +24,6 @@ const mocks = vi.hoisted(() => ({
   toggleAnnotation: null as (() => void) | null,
   pictureInPicture: false,
   showEmptyState: false,
-  imageSource: null as { url: string; alt: string } | null,
-  imageSurfaceRendered: false,
-  browserSurfaceRendered: false,
   recordVisitForThread: vi.fn(),
 }));
 
@@ -132,8 +129,13 @@ vi.mock("~/previewMiniPlayerStore", () => {
         byThreadKey: mocks.miniPlayerTabId
           ? {
               "environment-1:thread-1": {
-                tabId: mocks.miniPlayerTabId,
+                content: {
+                  kind: "browser" as const,
+                  id: mocks.miniPlayerTabId,
+                  tabId: mocks.miniPlayerTabId,
+                },
                 position: null,
+                size: null,
               },
             }
           : {},
@@ -147,17 +149,18 @@ vi.mock("~/previewMiniPlayerStore", () => {
   );
   return {
     selectThreadPreviewMiniPlayer: (
-      byThreadKey: Record<string, { tabId: string; position: null }>,
+      byThreadKey: Record<
+        string,
+        {
+          content: { kind: "browser"; id: string; tabId: string };
+          position: null;
+          size: null;
+        }
+      >,
     ) => byThreadKey["environment-1:thread-1"] ?? null,
     usePreviewMiniPlayerStore,
   };
 });
-
-vi.mock("~/previewImageSurfaceStore", () => ({
-  selectPreviewImageSource: () => mocks.imageSource,
-  usePreviewImageSurfaceStore: (select: (state: { byThreadKey: {} }) => unknown) =>
-    select({ byThreadKey: {} }),
-}));
 
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
@@ -216,18 +219,7 @@ vi.mock("./PreviewMoreMenu", () => ({
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
-vi.mock("~/browser/BrowserSurfaceSlot", () => ({
-  BrowserSurfaceSlot: () => {
-    mocks.browserSurfaceRendered = true;
-    return null;
-  },
-}));
-vi.mock("./PreviewImageSurface", () => ({
-  PreviewImageSurface: () => {
-    mocks.imageSurfaceRendered = true;
-    return null;
-  },
-}));
+vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("./useLoadingProgress", () => ({ useLoadingProgress: () => 0 }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
@@ -263,9 +255,6 @@ describe("PreviewView navigation", () => {
     mocks.toggleAnnotation = null;
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
-    mocks.imageSource = null;
-    mocks.imageSurfaceRendered = false;
-    mocks.browserSurfaceRendered = false;
     mocks.recordVisitForThread.mockClear();
   });
 
@@ -381,28 +370,6 @@ describe("PreviewView navigation", () => {
     expect(mocks.pictureInPicturePressed).toBe(true);
     mocks.togglePictureInPicture?.();
     expect(mocks.closeMiniPlayer).toHaveBeenCalledWith(props.threadRef);
-  });
-
-  it("uses the shared image surface and preserves it when floating a static preview", () => {
-    mocks.imageSource = { url: "http://example.com/", alt: "Figure 1" };
-    const props = {
-      threadRef: TEST_THREAD_REF,
-      tabId: "tab-1",
-      visible: true,
-    } as const;
-
-    renderToStaticMarkup(<PreviewView {...props} />);
-
-    expect(mocks.imageSurfaceRendered).toBe(true);
-    expect(mocks.browserSurfaceRendered).toBe(false);
-    expect(mocks.toggleNativePictureInPicture).toBeNull();
-    mocks.togglePictureInPicture?.();
-    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(
-      TEST_THREAD_REF,
-      "tab-1",
-      undefined,
-      mocks.imageSource,
-    );
   });
 
   it("keeps the native preview window as a secondary action", async () => {

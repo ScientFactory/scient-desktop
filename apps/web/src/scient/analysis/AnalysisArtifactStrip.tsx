@@ -29,7 +29,6 @@ import {
 import { createPortal } from "react-dom";
 
 import { resolveAssetUrl, useAssetUrls } from "~/assets/assetUrls";
-import { usePreviewImageSurfaceStore } from "~/previewImageSurfaceStore";
 import {
   applyPreviewServerSnapshot,
   isPreviewSupportedInRuntime,
@@ -47,13 +46,13 @@ import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { createStaticArtifactSurfaceDescriptor } from "~/scient/artifacts/staticArtifactSurface";
 
 import {
   analysisArtifactResource,
   canFollowArtifactInTab,
   floatingArtifactPositionForDrop,
   interactiveArtifactRepresentation,
-  isImageArtifactRepresentation,
   nativeArtifactRepresentation,
   preferredArtifactPreview,
   preferredArtifactThumbnail,
@@ -143,10 +142,13 @@ export function AnalysisArtifactStrip(props: {
         thumbnail,
         interactive,
         native,
+        staticArtifact: preview
+          ? createStaticArtifactSurfaceDescriptor(props.run, artifact, preview)
+          : null,
         thumbnailIndex: thumbnail ? thumbnailIndex++ : null,
       };
     });
-  }, [props.run.artifacts]);
+  }, [props.run]);
   const thumbnailResources = useMemo(
     () =>
       cards.flatMap((card) =>
@@ -173,6 +175,16 @@ export function AnalysisArtifactStrip(props: {
     expandedRunIdRef.current = props.run.receipt.runId;
     setExpanded(true);
   }, [props.run.receipt.runId]);
+
+  useEffect(() => {
+    const rightPanel = useRightPanelStore.getState();
+    const miniPlayer = usePreviewMiniPlayerStore.getState();
+    for (const card of cards) {
+      if (!card.staticArtifact) continue;
+      rightPanel.updateScientArtifact(props.threadRef, card.staticArtifact);
+      miniPlayer.updateArtifact(props.threadRef, card.staticArtifact);
+    }
+  }, [cards, props.threadRef]);
 
   const restoreDragCursor = () => {
     if (previousBodyCursorRef.current === null) return;
@@ -222,24 +234,6 @@ export function AnalysisArtifactStrip(props: {
         }
         applyPreviewServerSnapshot(props.threadRef, navigation.value);
         rememberPreviewUrl(props.threadRef, url);
-        if (isImageArtifactRepresentation(representation)) {
-          usePreviewImageSurfaceStore.getState().register(props.threadRef, tabId, {
-            url,
-            alt: artifact.label,
-          });
-        } else {
-          usePreviewImageSurfaceStore.getState().remove(props.threadRef, tabId);
-        }
-        const miniPlayer = selectThreadPreviewMiniPlayer(
-          usePreviewMiniPlayerStore.getState().byThreadKey,
-          props.threadRef,
-        );
-        if (miniPlayer?.tabId === tabId && miniPlayer.imageSource) {
-          usePreviewMiniPlayerStore.getState().open(props.threadRef, tabId, undefined, {
-            url,
-            alt: artifact.label,
-          });
-        }
         followedTabsRef.current.set(tabId, {
           artifactId: artifact.artifactId,
           representationId: representation.representationId,
@@ -291,13 +285,32 @@ export function AnalysisArtifactStrip(props: {
     mode: "open" | "pin" | "interactive",
     initialPosition?: { readonly x: number; readonly y: number },
   ) => {
-    if (!representation || !isPreviewSupportedInRuntime()) {
+    if (!representation) {
       reportFailure("Figure preview is unavailable");
       return;
     }
     const actionKey = `${mode}:${artifact.artifactId}`;
     setPendingAction(actionKey);
     try {
+      const staticArtifact = createStaticArtifactSurfaceDescriptor(
+        props.run,
+        artifact,
+        representation,
+      );
+      if (staticArtifact) {
+        if (mode === "pin") {
+          usePreviewMiniPlayerStore
+            .getState()
+            .openArtifact(props.threadRef, staticArtifact, initialPosition);
+        } else {
+          useRightPanelStore.getState().openScientArtifact(props.threadRef, staticArtifact);
+        }
+        return;
+      }
+      if (!isPreviewSupportedInRuntime()) {
+        reportFailure("Figure preview is unavailable");
+        return;
+      }
       const url = await createUrl(analysisArtifactResource(props.run, artifact, representation));
       if (!url) return;
       const result = await openPreview({
@@ -310,16 +323,6 @@ export function AnalysisArtifactStrip(props: {
       }
       applyPreviewServerSnapshot(props.threadRef, result.value);
       rememberPreviewUrl(props.threadRef, url);
-      const imageSource = isImageArtifactRepresentation(representation)
-        ? { url, alt: artifact.label }
-        : null;
-      if (imageSource) {
-        usePreviewImageSurfaceStore
-          .getState()
-          .register(props.threadRef, result.value.tabId, imageSource);
-      } else {
-        usePreviewImageSurfaceStore.getState().remove(props.threadRef, result.value.tabId);
-      }
       followedTabsRef.current.set(result.value.tabId, {
         artifactId: artifact.artifactId,
         representationId: representation.representationId,
@@ -328,7 +331,7 @@ export function AnalysisArtifactStrip(props: {
       if (mode === "pin") {
         usePreviewMiniPlayerStore
           .getState()
-          .open(props.threadRef, result.value.tabId, initialPosition, imageSource ?? undefined);
+          .open(props.threadRef, result.value.tabId, initialPosition);
       } else {
         useRightPanelStore.getState().openBrowser(props.threadRef, result.value.tabId);
       }

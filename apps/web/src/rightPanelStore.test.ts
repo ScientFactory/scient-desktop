@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import type { PreviewStaticImageSurfaceDescriptor } from "./previewStaticImageSurface";
 import {
   migratePersistedRightPanelState,
   pullRequestSurfaceId,
@@ -16,6 +17,21 @@ import { scientSourcePdfSurface, scientSourcesSurface } from "./scient/rightPane
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
+
+const staticImage = (runId: string): PreviewStaticImageSurfaceDescriptor => ({
+  surfaceId: "project-a:script.m:figure-001",
+  label: "Figure 1",
+  fileName: "figure-001.png",
+  mediaType: "image/png",
+  sourcePath: "script.m",
+  resource: {
+    _tag: "analysis-artifact",
+    projectId: "project-a",
+    runId,
+    artifactId: "figure-001",
+    representationId: "static-png",
+  } as PreviewStaticImageSurfaceDescriptor["resource"],
+});
 
 beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {} });
@@ -254,6 +270,49 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps valid direct-image surfaces and drops malformed ones during migration", () => {
+    const artifact = staticImage("run-1");
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "scient:artifact:legacy",
+            surfaces: [
+              {
+                id: "scient:artifact:legacy",
+                kind: "scient",
+                module: "artifact",
+                artifact,
+              },
+              {
+                id: "scient:artifact:broken",
+                kind: "scient",
+                module: "artifact",
+                artifact: { ...artifact, resource: { _tag: "not-an-asset" } },
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: `scient:artifact:${artifact.surfaceId}`,
+          surfaces: [
+            {
+              id: `scient:artifact:${artifact.surfaceId}`,
+              kind: "scient",
+              module: "artifact",
+              artifact,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -325,6 +384,31 @@ describe("rightPanelStore", () => {
         },
       ],
     });
+  });
+
+  it("updates an open direct-image surface to the latest resource without changing its tab", () => {
+    const first = staticImage("run-1");
+    const updated = staticImage("run-2");
+    useRightPanelStore.getState().openScientArtifact(refA, first);
+    useRightPanelStore.getState().updateScientArtifact(refA, updated);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: `scient:artifact:${first.surfaceId}`,
+      surfaces: [
+        {
+          id: `scient:artifact:${first.surfaceId}`,
+          kind: "scient",
+          module: "artifact",
+          artifact: updated,
+        },
+      ],
+    });
+  });
+
+  it("does not create a direct-image surface during a passive update", () => {
+    useRightPanelStore.getState().updateScientArtifact(refA, staticImage("run-2"));
+    expect(useRightPanelStore.getState().byThreadKey).toEqual({});
   });
 
   it("replaces the standalone explorer with peer file surfaces", () => {

@@ -3,9 +3,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
-import type { PreviewImageSource } from "~/previewImageSurfaceStore";
 
 import { nextPreviewImageZoom } from "./previewImageZoom";
+
+export interface PreviewImageSource {
+  readonly url: string;
+  readonly alt: string;
+}
 
 interface ImageZoomAnchor {
   readonly contentX: number;
@@ -20,9 +24,11 @@ const ZOOM_HINT_DURATION_MS = 1_800;
 export function PreviewImageSurface({
   source,
   className,
+  onLoadError,
 }: {
   readonly source: PreviewImageSource;
   readonly className?: string;
+  readonly onLoadError?: () => void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
@@ -148,6 +154,7 @@ export function PreviewImageSurface({
           onError={() => {
             dismissZoomHint();
             setLoadState("failed");
+            onLoadError?.();
           }}
         />
       </div>

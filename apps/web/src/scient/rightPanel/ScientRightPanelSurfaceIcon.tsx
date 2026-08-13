@@ -1,11 +1,14 @@
-import { FileText, Library } from "lucide-react";
+import { FileText, Image as ImageIcon, Library } from "lucide-react";
 
 import type { ScientRightPanelSurface } from "./surfaces";
 
 export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRightPanelSurface }) {
-  return props.surface.module === "sources" ? (
-    <Library className="size-3 shrink-0" />
-  ) : (
-    <FileText className="size-3 shrink-0" />
-  );
+  switch (props.surface.module) {
+    case "sources":
+      return <Library className="size-3 shrink-0" />;
+    case "source-pdf":
+      return <FileText className="size-3 shrink-0" />;
+    case "artifact":
+      return <ImageIcon className="size-3 shrink-0" />;
+  }
 }

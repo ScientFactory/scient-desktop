@@ -9,13 +9,12 @@ import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
-import { selectPreviewImageSource, usePreviewImageSurfaceStore } from "~/previewImageSurfaceStore";
 import { useThreadPreviewState } from "~/previewStateStore";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
-import { PreviewImageSurface } from "./PreviewImageSurface";
+import { StaticAssetImageSurface } from "./StaticAssetImageSurface";
 import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
@@ -93,10 +92,9 @@ const RESIZE_HANDLES: ReadonlyArray<{
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
-  readonly tabId: string;
 }
 
-export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
+export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
   const rootRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -111,34 +109,33 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
   const miniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
   );
+  const content = miniPlayer?.content ?? null;
+  const contentId = content?.id ?? "";
+  const browserTabId = content?.kind === "browser" ? content.tabId : null;
   const previewState = useThreadPreviewState(threadRef);
-  const snapshot = previewState.sessions[tabId] ?? null;
-  const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
-  const desktopOverlay = previewState.desktopByTabId[tabId] ?? null;
-  const registeredImageSource = usePreviewImageSurfaceStore((state) =>
-    selectPreviewImageSource(state.byThreadKey, threadRef, tabId),
-  );
-  const position = miniPlayer?.tabId === tabId ? miniPlayer.position : null;
-  const size =
-    miniPlayer?.tabId === tabId && miniPlayer.size
-      ? miniPlayer.size
-      : PREVIEW_MINI_PLAYER_DEFAULT_SIZE;
-  const imageSource =
-    miniPlayer?.tabId === tabId ? (miniPlayer.imageSource ?? registeredImageSource) : null;
+  const snapshot = browserTabId ? (previewState.sessions[browserTabId] ?? null) : null;
+  const runtimeTabId = browserTabId
+    ? previewRuntimeTabId(threadRef, previewState.serverEpoch, browserTabId)
+    : null;
+  const desktopOverlay = browserTabId ? (previewState.desktopByTabId[browserTabId] ?? null) : null;
+  const position = miniPlayer?.position ?? null;
+  const size = miniPlayer?.size ?? PREVIEW_MINI_PLAYER_DEFAULT_SIZE;
   const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
   const openInPanel = () => {
-    if (imageSource) {
-      usePreviewImageSurfaceStore.getState().register(threadRef, tabId, imageSource);
-    }
+    if (!content) return;
     usePreviewMiniPlayerStore.getState().close(threadRef);
-    useRightPanelStore.getState().openBrowser(threadRef, tabId);
+    if (content.kind === "static-artifact") {
+      useRightPanelStore.getState().openScientArtifact(threadRef, content.artifact);
+      return;
+    }
+    useRightPanelStore.getState().openBrowser(threadRef, content.tabId);
   };
 
   const toggleNativePictureInPicture = () => {
-    if (!previewBridge) return;
+    if (!previewBridge || !runtimeTabId) return;
     const operation = desktopOverlay?.pictureInPicture
       ? previewBridge.pictureInPicture.close
       : previewBridge.pictureInPicture.open;
@@ -168,11 +165,6 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
     [],
   );
 
-  useEffect(() => {
-    if (!imageSource || !desktopOverlay?.pictureInPicture || !previewBridge) return;
-    void previewBridge.pictureInPicture.close(runtimeTabId).catch(() => undefined);
-  }, [desktopOverlay?.pictureInPicture, imageSource, runtimeTabId]);
-
   const flushDragPosition = () => {
     if (dragFrameRef.current !== null) {
       window.cancelAnimationFrame(dragFrameRef.current);
@@ -180,7 +172,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
     }
     const next = pendingDragPositionRef.current;
     pendingDragPositionRef.current = null;
-    if (next) usePreviewMiniPlayerStore.getState().move(threadRef, tabId, next);
+    if (next) usePreviewMiniPlayerStore.getState().move(threadRef, contentId, next);
   };
   const scheduleDragPosition = (next: { readonly x: number; readonly y: number }) => {
     pendingDragPositionRef.current = next;
@@ -189,7 +181,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
       dragFrameRef.current = null;
       const pending = pendingDragPositionRef.current;
       pendingDragPositionRef.current = null;
-      if (pending) usePreviewMiniPlayerStore.getState().move(threadRef, tabId, pending);
+      if (pending) usePreviewMiniPlayerStore.getState().move(threadRef, contentId, pending);
     });
   };
 
@@ -200,7 +192,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
     }
     const next = pendingResizeRectRef.current;
     pendingResizeRectRef.current = null;
-    if (next) usePreviewMiniPlayerStore.getState().setRect(threadRef, tabId, next);
+    if (next) usePreviewMiniPlayerStore.getState().setRect(threadRef, contentId, next);
   };
 
   const scheduleResizeRect = (next: {
@@ -213,7 +205,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
       resizeFrameRef.current = null;
       const pending = pendingResizeRectRef.current;
       pendingResizeRectRef.current = null;
-      if (pending) usePreviewMiniPlayerStore.getState().setRect(threadRef, tabId, pending);
+      if (pending) usePreviewMiniPlayerStore.getState().setRect(threadRef, contentId, pending);
     });
   };
 
@@ -230,13 +222,13 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
       const current = selectThreadPreviewMiniPlayer(store.byThreadKey, threadRef);
       const rootRect = root.getBoundingClientRect();
       const next = clampPreviewMiniPlayerPosition(
-        current?.tabId === tabId && current.position
+        current?.content.id === contentId && current.position
           ? current.position
           : { x: rootRect.left, y: rootRect.top },
         viewport,
         nextSize,
       );
-      store.setRect(threadRef, tabId, { position: next, size: nextSize });
+      store.setRect(threadRef, contentId, { position: next, size: nextSize });
     };
     clampAndMove();
     const root = rootRef.current;
@@ -248,7 +240,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
       observer?.disconnect();
       window.removeEventListener("resize", clampAndMove);
     };
-  }, [tabId, threadRef]);
+  }, [contentId, threadRef]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -348,7 +340,14 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
     }
   };
 
-  if (!snapshot || miniPlayer?.tabId !== tabId || typeof document === "undefined") return null;
+  if (
+    !miniPlayer ||
+    !content ||
+    (content.kind === "browser" && !snapshot) ||
+    typeof document === "undefined"
+  ) {
+    return null;
+  }
   const defaultPosition = resolvePreviewMiniPlayerDefaultPosition(
     { width: window.innerWidth, height: window.innerHeight },
     size,
@@ -358,7 +357,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
     <section
       ref={rootRef}
       aria-label="Floating preview"
-      data-preview-mini-player={tabId}
+      data-preview-mini-player={content.id}
       className="pointer-events-none fixed z-[29] select-none"
       style={
         position
@@ -391,7 +390,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
           >
             <PanelRightIcon />
           </Button>
-          {!imageSource ? (
+          {content.kind === "browser" ? (
             <Button
               variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
               size="icon-xs"
@@ -436,14 +435,15 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
 
       <div className="relative h-full min-h-0">
         <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl/35" />
-        {imageSource ? (
-          <PreviewImageSurface
-            source={imageSource}
+        {content.kind === "static-artifact" ? (
+          <StaticAssetImageSurface
+            environmentId={threadRef.environmentId}
+            image={content.artifact}
             className="absolute inset-x-2 bottom-3 top-7 z-[30]"
           />
         ) : (
           <BrowserSurfaceSlot
-            tabId={runtimeTabId}
+            tabId={runtimeTabId!}
             visible={Boolean(desktopOverlay?.hasWebContents)}
             cornerRadius={8}
             fitSourceContent
@@ -452,7 +452,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId }: Props) {
           />
         )}
         <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-inset ring-border/80" />
-        {!imageSource && !desktopOverlay?.hasWebContents ? (
+        {content.kind === "browser" && !desktopOverlay?.hasWebContents ? (
           <div className="pointer-events-none absolute inset-x-2 bottom-3 top-7 z-[32] flex items-center justify-center bg-muted text-xs text-muted-foreground">
             Reconnecting preview…
           </div>
