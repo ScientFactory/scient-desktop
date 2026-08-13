@@ -130,7 +130,7 @@ describe("shouldOfferProjectPathCreation", () => {
     isBrowsePending: false,
     hasBrowseResult: true,
     query: "~/Projects/New project",
-    hasHighlightedBrowseItem: false,
+    hasKeyboardBrowseHighlight: false,
     hasTrailingPathSeparator: false,
     exactEntryExists: false,
   } as const;

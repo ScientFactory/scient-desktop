@@ -176,7 +176,7 @@ export function shouldOfferProjectPathCreation(input: {
   readonly isBrowsePending: boolean;
   readonly hasBrowseResult: boolean;
   readonly query: string;
-  readonly hasHighlightedBrowseItem: boolean;
+  readonly hasKeyboardBrowseHighlight: boolean;
   readonly hasTrailingPathSeparator: boolean;
   readonly exactEntryExists: boolean;
 }): boolean {
@@ -185,7 +185,7 @@ export function shouldOfferProjectPathCreation(input: {
     !input.isBrowsePending &&
     input.hasBrowseResult &&
     input.query.trim().length > 0 &&
-    !input.hasHighlightedBrowseItem &&
+    !input.hasKeyboardBrowseHighlight &&
     !input.hasTrailingPathSeparator &&
     !input.exactEntryExists
   );
