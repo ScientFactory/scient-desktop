@@ -1,4 +1,8 @@
-import type { ScientSourceDetailResult, ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type {
+  ScientSourceDetailResult,
+  ScientSourceNoteUpdateResult,
+  ScientSourcesOverviewResult,
+} from "@t3tools/contracts";
 import {
   AlertCircle,
   AlertTriangle,
@@ -35,6 +39,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
 import { SourceReference } from "./SourceReference";
+import { useSourceNoteControls } from "./SourceNote";
 import {
   SourceRemovalConfirmation,
   type SourceRemovalAnchorPoint,
@@ -591,6 +596,10 @@ export function SourceDetails(props: {
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onSaveNote: (
+    note: string | null,
+    expectedRevision: number,
+  ) => Promise<ScientSourceNoteUpdateResult>;
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
   readonly onOpenPdf: (input: { readonly attachmentId: string; readonly fileName: string }) => void;
@@ -600,6 +609,7 @@ export function SourceDetails(props: {
     null,
   );
   const record = props.record;
+  const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
   const publication = publicationLocation(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
@@ -625,6 +635,7 @@ export function SourceDetails(props: {
           Sources
         </Button>
         <div className="min-w-0 flex-1" />
+        {sourceNote.button}
         <Button size="xs" variant="ghost" onClick={props.onEdit}>
           <Pencil />
           Edit
@@ -781,6 +792,8 @@ export function SourceDetails(props: {
           ) : null}
 
           <SourceReference record={record} />
+
+          {sourceNote.section}
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">
             {importedLabel(record)}

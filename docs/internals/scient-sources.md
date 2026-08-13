@@ -24,8 +24,9 @@ presentation and orchestration. The inherited host is changed only at narrow
 seams:
 
 - additive typed environment HTTP endpoints;
-- two generic Scient right-panel surface variants for the library and its peer
-  PDF tabs;
+- one Scient-owned right-panel surface registry for the library and its peer
+  PDF tabs; the inherited store accepts validated descriptors without owning
+  their subtype shapes, persistence normalization, labels, or icons;
 - lazy Sources and source-PDF render branches; and
 - one Sources entry in the existing right-panel menu.
 
@@ -124,6 +125,11 @@ presentation without being silently rewritten; an explicit metadata edit
 stores the canonical value in a new revision. A leading provider wrapper named
 `Abstract` is discarded while its paragraphs are preserved, leaving only the
 actual structured headings in the canonical document.
+Provider HTML may place section bodies as bare text siblings after explicit
+headings rather than inside paragraph elements. The boundary parser preserves
+that text across inline markup and associates it with the preceding heading.
+A legacy structured abstract containing headings but no body paragraphs is
+treated as absent rather than displaying an invented heading-only summary.
 
 Direct PDF intake uses an immutable per-upload candidate key while keeping the
 content SHA-256 as the duplicate and storage identity. This prevents two
@@ -183,6 +189,24 @@ overridden. A possible metadata match requires an explicit per-save decision.
 Concurrent edits are serialized by canonical project root within the owning
 environment server; an edit based on an older revision returns the current
 record as stale instead of overwriting it.
+
+Each source may also carry one optional project-owned note. The note is stored
+on the canonical record, not in Zotero or a UI-only sidecar, and follows the
+same atomic revision/history rules as metadata. The details surface exposes an
+anchored quick editor and one directly editable note below the reference; both
+share one autosave state and retain the local draft when another writer changes
+the note first. Notes are plain Markdown text with only lightweight bold and
+italic controls in this slice. Their text direction is resolved by the browser
+from the note itself, so Hebrew, Arabic, English, and mixed research notes do
+not inherit an unrelated application direction.
+
+Provider agents use the same canonical store through the bounded Sources MCP
+toolkit. `scient_sources_get` returns the current note and revision, while
+`scient_sources_note_update` adds, replaces, or clears it with optimistic
+revision safety. The tool is idempotent and project-scoped; it does not expose
+host paths, write Zotero, or create a second agent-owned notes format. Normal
+agent tool authorization remains the approval boundary rather than a separate
+Sources permission UI.
 
 Metadata refresh is an explicitly destructive operation guarded by a compact
 confirmation surface. The environment server re-runs the existing local-PDF
@@ -267,7 +291,7 @@ selected collection uses Zotero's bounded server-side pagination for that
 exact collection; nested collections are selected explicitly. This avoids
 materializing an entire collection tree merely to render one page. **My
 Library** remains available as an explicit whole-library scope. Scope discovery
-is read-only, capped at 10,000 importable references per operation, and fails
+is read-only, capped at 500 importable references per operation, and fails
 with a request to choose a smaller scope above that bound.
 
 Collection and whole-library actions deliberately skip a separate preflight
@@ -289,7 +313,11 @@ adapter source keys. Zotero uses its library/item identity; direct PDFs use an
 immutable upload identity and retain their content hash separately. The
 coordinator advances one pending item at a time. Each record/PDF unit is
 durable before its operation item is marked imported. Replaying an operation or
-item is safe because exact origins and content are assessed again.
+item is safe because exact origins and content are assessed again. Within one
+operation, the store reuses a record snapshot only while the records directory
+fingerprint remains unchanged. Another source import, edit, or removal
+invalidates that snapshot before the next item, avoiding repeated full-ledger
+scans without making an in-memory cache authoritative.
 Coordinator lane keys and store paths both use the canonical project root, so
 filesystem aliases cannot create parallel lanes for the same operation.
 
@@ -312,6 +340,11 @@ resumed from its next pending item.
 Only one import operation may be running for a project in an environment
 server. Concurrent begin requests are serialized, same-ID replay remains
 idempotent, and a new operation is accepted after completion or cancellation.
+The current store assumes the normal application ownership model of one
+environment server writing a project at a time. The filesystem remains durable,
+and the normal single-server write paths invalidate cached snapshots. True
+multi-process writers would require an explicit cross-process locking protocol
+rather than a larger in-process map.
 
 ## Deliberate exclusions
 

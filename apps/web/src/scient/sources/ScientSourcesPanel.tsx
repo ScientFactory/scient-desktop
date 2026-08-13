@@ -45,7 +45,7 @@ import { readPreparedConnection } from "../../state/session";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceJournalIcon } from "./SourceJournalIcon";
-import { filterScientSourceSummaries } from "./filterSources";
+import { filterScientSourceSearchIndex, indexScientSourceSummaries } from "./filterSources";
 import {
   completedImportCounts,
   importedSourceIdToReveal,
@@ -210,9 +210,13 @@ export function ScientSourcesPanel(props: {
       ),
     [sources.overview?.recordDiagnostics],
   );
+  const sourceSearchIndex = useMemo(
+    () => indexScientSourceSummaries(sources.overview?.records ?? []),
+    [sources.overview?.records],
+  );
   const filteredSourceRecords = useMemo(
-    () => filterScientSourceSummaries(sources.overview?.records ?? [], sourceQuery),
-    [sourceQuery, sources.overview?.records],
+    () => filterScientSourceSearchIndex(sourceSearchIndex, sourceQuery),
+    [sourceQuery, sourceSearchIndex],
   );
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
@@ -691,6 +695,7 @@ export function ScientSourcesPanel(props: {
     }
     return (
       <SourceDetails
+        key={selectedRecord.sourceId}
         record={selectedRecord}
         diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
         onBack={() => {
@@ -698,6 +703,9 @@ export function ScientSourcesPanel(props: {
           setSelectedSourceId(null);
         }}
         onEdit={() => setEditingSource(true)}
+        onSaveNote={(note, expectedRevision) =>
+          sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
+        }
         onRefreshMetadata={async () => {
           const result = await sources.refreshSourceMetadata(
             selectedRecord.sourceId,

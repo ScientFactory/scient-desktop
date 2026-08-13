@@ -25,12 +25,14 @@ import {
   ScientSourceImportReceipt,
   ScientSourceRecord,
   ScientSourceStagedMaterial,
+  SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceAttachment,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
   type ScientSourceMetadataUpdateResult,
+  type ScientSourceNoteUpdateResult,
   type ScientSourceStagedMaterial as ScientSourceStagedMaterialType,
   type ScientSourceRemovalResult,
   type ScientSourcesOverview,
@@ -51,6 +53,14 @@ const COPY_CHUNK_BYTES = 1024 * 1024;
 const MAX_STAGED_MATERIAL_BYTES = 2 * 1024 * 1024;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const operationLocks = new Map<string, Promise<unknown>>();
+const activeOperationIds = new Map<string, string>();
+const operationRecordSnapshots = new Map<
+  string,
+  {
+    readonly fingerprint: string;
+    readonly records: ReadonlyArray<ScientSourceRecord>;
+  }
+>();
 const decodeScientSourceRecordV1 = Schema.decodeUnknownSync(ScientSourceRecord);
 const decodeScientSourceStagedMaterial = Schema.decodeUnknownSync(ScientSourceStagedMaterial);
 const PersistedScientSourceImportOperation = Schema.Struct({
@@ -85,12 +95,12 @@ function assertSafeIdentifier(value: string, label: string): void {
   }
 }
 
-function stableJson(value: unknown): string {
+function formatJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 function boundedJson(value: unknown, maximumBytes: number, label: string): string {
-  const serialized = stableJson(value);
+  const serialized = formatJson(value);
   if (Buffer.byteLength(serialized, "utf8") > maximumBytes) {
     throw new Error(`${label} exceeds the safe size limit.`);
   }
@@ -254,6 +264,32 @@ async function sourceStorePaths(root: string): Promise<{
   };
 }
 
+type SourceStorePaths = Awaited<ReturnType<typeof sourceStorePaths>>;
+
+function operationCacheKey(paths: SourceStorePaths, operationId: string): string {
+  return `${paths.root}\0${operationId}`;
+}
+
+function clearOperationCaches(paths: SourceStorePaths, operationId: string): void {
+  if (activeOperationIds.get(paths.root) === operationId) {
+    activeOperationIds.delete(paths.root);
+  }
+  operationRecordSnapshots.delete(operationCacheKey(paths, operationId));
+}
+
+async function recordsDirectoryFingerprint(paths: SourceStorePaths): Promise<string> {
+  try {
+    const stats = await NodeFSP.lstat(paths.records, { bigint: true });
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error("The Scient source record store is unsafe.");
+    }
+    return [stats.dev, stats.ino, stats.mtimeNs, stats.ctimeNs].join(":");
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return "missing";
+    throw error;
+  }
+}
+
 function sourceRecordPath(paths: Awaited<ReturnType<typeof sourceStorePaths>>, sourceId: string) {
   assertSafeIdentifier(sourceId, "Source ID");
   return NodePath.join(paths.records, `${sourceId}.json`);
@@ -384,6 +420,55 @@ export async function updateScientSourceMetadata(input: {
   });
 }
 
+function normalizeScientSourceNote(value: string | null): string | null {
+  if (value === null) return null;
+  const normalized = value.replace(/\r\n?/gu, "\n");
+  return normalized.trim() ? normalized : null;
+}
+
+export async function updateScientSourceNote(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly note: string | null;
+}): Promise<ScientSourceNoteUpdateResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  const note = normalizeScientSourceNote(input.note);
+
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    if ((current.note ?? null) === note) {
+      return { outcome: "unchanged", record: current };
+    }
+    if (current.revision !== input.expectedRevision) {
+      return { outcome: "stale", record: current };
+    }
+
+    const next: ScientSourceRecord = {
+      ...current,
+      note,
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    const preserved = await atomicCreateJson(
+      sourceHistoryPath(paths, current.sourceId, current.revision),
+      current,
+      MAX_RECORD_BYTES,
+    );
+    if (!preserved) {
+      const history = await readBoundedSourceRecord(
+        sourceHistoryPath(paths, current.sourceId, current.revision),
+      );
+      if (JSON.stringify(history) !== JSON.stringify(current)) {
+        throw new Error("The source revision history conflicts with the current record.");
+      }
+    }
+    await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
+    return { outcome: "updated", record: next };
+  });
+}
+
 export async function removeScientSource(input: {
   readonly root: string;
   readonly sourceId: string;
@@ -473,10 +558,9 @@ export async function removeScientSource(input: {
   });
 }
 
-export async function listScientSourceRecords(
-  root: string,
+async function listScientSourceRecordsFromPaths(
+  paths: SourceStorePaths,
 ): Promise<ReadonlyArray<ScientSourceRecord>> {
-  const paths = await sourceStorePaths(root);
   const recordsState = await snapshot(paths.records);
   if (recordsState === "missing") return [];
   if (recordsState !== "directory") throw new Error("The Scient source record store is unsafe.");
@@ -491,6 +575,41 @@ export async function listScientSourceRecords(
     records.push(record);
   }
   return records.toSorted((left, right) => right.importedAt.localeCompare(left.importedAt));
+}
+
+export async function listScientSourceRecords(
+  root: string,
+): Promise<ReadonlyArray<ScientSourceRecord>> {
+  return listScientSourceRecordsFromPaths(await sourceStorePaths(root));
+}
+
+async function operationRecordSnapshot(
+  paths: SourceStorePaths,
+  operationId: string,
+): Promise<ReadonlyArray<ScientSourceRecord>> {
+  const key = operationCacheKey(paths, operationId);
+  const fingerprint = await recordsDirectoryFingerprint(paths);
+  const cached = operationRecordSnapshots.get(key);
+  if (cached?.fingerprint === fingerprint) return cached.records;
+  const records = await listScientSourceRecordsFromPaths(paths);
+  const refreshedFingerprint = await recordsDirectoryFingerprint(paths);
+  if (refreshedFingerprint === fingerprint) {
+    operationRecordSnapshots.set(key, { fingerprint: refreshedFingerprint, records });
+  } else {
+    operationRecordSnapshots.delete(key);
+  }
+  return records;
+}
+
+async function replaceOperationRecordSnapshot(
+  paths: SourceStorePaths,
+  operationId: string,
+  records: ReadonlyArray<ScientSourceRecord>,
+): Promise<void> {
+  operationRecordSnapshots.set(operationCacheKey(paths, operationId), {
+    fingerprint: await recordsDirectoryFingerprint(paths),
+    records,
+  });
 }
 
 function operationPath(directory: string, operationId: string): string {
@@ -531,8 +650,21 @@ async function readSourceImportOperationFromPaths(
 }
 
 async function findActiveOperation(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
 ): Promise<ScientSourceImportOperation | null> {
+  const cachedOperationId = activeOperationIds.get(paths.root);
+  if (cachedOperationId) {
+    let cached = await readSourceImportOperationFromPaths(paths, cachedOperationId);
+    if (cached?.state === "running" && cached.items.every((item) => item.state !== "pending")) {
+      cached = await withOperationLock(`${paths.root}:${cachedOperationId}`, async () => {
+        const current = await readSourceImportOperationFromPaths(paths, cachedOperationId);
+        if (!current) return null;
+        return finishOperationIfSettled(paths, current);
+      });
+    }
+    if (cached?.state === "running") return cached;
+    clearOperationCaches(paths, cachedOperationId);
+  }
   if ((await snapshot(paths.operations)) === "missing") return null;
   const entries = await NodeFSP.readdir(paths.operations, { withFileTypes: true });
   const operations: ScientSourceImportOperation[] = [];
@@ -557,9 +689,11 @@ async function findActiveOperation(
     }
     if (operation.state === "running") operations.push(operation);
   }
-  return (
-    operations.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
-  );
+  const active =
+    operations.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
+  if (active) activeOperationIds.set(paths.root, active.operationId);
+  else activeOperationIds.delete(paths.root);
+  return active;
 }
 
 export async function inspectScientSources(root: string): Promise<ScientSourcesOverview> {
@@ -589,6 +723,11 @@ export async function createSourceImportOperation(input: {
   assertSafeIdentifier(input.operationId, "Operation ID");
   const uniqueItemKeys = [...new Set(input.itemKeys)];
   if (uniqueItemKeys.length === 0) throw new Error("Choose at least one source to import.");
+  if (uniqueItemKeys.length > SCIENT_SOURCE_IMPORT_ITEM_LIMIT) {
+    throw new Error(
+      `Choose no more than ${SCIENT_SOURCE_IMPORT_ITEM_LIMIT} sources in one import.`,
+    );
+  }
   for (const itemKey of uniqueItemKeys) assertSafeIdentifier(itemKey, "Source item key");
   const overrides = new Set(input.possibleMetadataMatchOverrides ?? []);
   for (const itemKey of overrides) {
@@ -612,6 +751,9 @@ export async function createSourceImportOperation(input: {
         existing.adapter !== input.adapter
       ) {
         throw new Error("This operation ID was already used for another import selection.");
+      }
+      if (existing.state === "running") {
+        activeOperationIds.set(paths.root, existing.operationId);
       }
       return existing;
     }
@@ -641,6 +783,7 @@ export async function createSourceImportOperation(input: {
       operation,
       MAX_OPERATION_BYTES,
     );
+    activeOperationIds.set(paths.root, operation.operationId);
     return operation;
   });
 }
@@ -684,6 +827,7 @@ async function finishOperationIfSettled(
     receipt,
     MAX_OPERATION_BYTES,
   );
+  clearOperationCaches(paths, completed.operationId);
   return completed;
 }
 
@@ -768,6 +912,7 @@ export async function cancelSourceImportOperation(
       MAX_OPERATION_BYTES,
     );
     await atomicWriteJson(operationPath(paths.receipts, operationId), receipt, MAX_OPERATION_BYTES);
+    clearOperationCaches(paths, operationId);
     return cancelled;
   });
 }
@@ -1088,18 +1233,26 @@ async function stagePdf(input: {
   }
 }
 
-export async function importScientSource(input: {
+interface ImportScientSourceInput {
   readonly root: string;
   readonly operationId: string;
   readonly candidate: ScientSourceCandidate;
   readonly pdfPath?: string;
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly allowPossibleMetadataMatch?: boolean;
-}): Promise<ImportedSourceResult> {
+}
+
+async function importScientSourceWithRecordLookup(
+  input: ImportScientSourceInput,
+  lookup: "complete" | "operation-snapshot",
+): Promise<ImportedSourceResult> {
   assertSafeIdentifier(input.operationId, "Operation ID");
   const paths = await sourceStorePaths(input.root);
   return withOperationLock(`${paths.root}:source-write`, async () => {
-    const existing = await listScientSourceRecords(paths.root);
+    const existing =
+      lookup === "operation-snapshot"
+        ? await operationRecordSnapshot(paths, input.operationId)
+        : await listScientSourceRecordsFromPaths(paths);
     const importedAt = new Date().toISOString();
     const preliminaryDuplicate = assessSourceDuplicate({ candidate: input.candidate, existing });
     if (duplicateBlocksImport(preliminaryDuplicate, input.allowPossibleMetadataMatch ?? false)) {
@@ -1162,7 +1315,10 @@ export async function importScientSource(input: {
     };
     const recordPath = sourceRecordPath(paths, sourceId);
     if (!(await atomicCreateJson(recordPath, record, MAX_RECORD_BYTES))) {
-      const concurrentRecords = await listScientSourceRecords(paths.root);
+      const concurrentRecords = await listScientSourceRecordsFromPaths(paths);
+      if (lookup === "operation-snapshot") {
+        await replaceOperationRecordSnapshot(paths, input.operationId, concurrentRecords);
+      }
       const concurrentDuplicate = assessSourceDuplicate({
         candidate: input.candidate,
         existing: concurrentRecords,
@@ -1173,8 +1329,35 @@ export async function importScientSource(input: {
       }
       return { outcome: "duplicate", record: null, duplicate: concurrentDuplicate };
     }
+    if (lookup === "operation-snapshot") {
+      await replaceOperationRecordSnapshot(
+        paths,
+        input.operationId,
+        [record, ...existing].toSorted((left, right) =>
+          right.importedAt.localeCompare(left.importedAt),
+        ),
+      );
+    }
     return { outcome: "imported", record, duplicate };
   });
+}
+
+/** Imports one standalone source after reading the current project ledger in full. */
+export async function importScientSource(
+  input: ImportScientSourceInput,
+): Promise<ImportedSourceResult> {
+  return importScientSourceWithRecordLookup(input, "complete");
+}
+
+/**
+ * Imports one item from a durable operation while reusing a validated ledger
+ * snapshot. Any source record mutation changes the records-directory identity
+ * and forces a complete refresh before the next operation item.
+ */
+export async function importScientSourceOperationItem(
+  input: ImportScientSourceInput,
+): Promise<ImportedSourceResult> {
+  return importScientSourceWithRecordLookup(input, "operation-snapshot");
 }
 
 export function sourceAttachmentAbsolutePath(

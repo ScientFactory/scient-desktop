@@ -7,13 +7,14 @@ import * as NodePath from "node:path";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import type { ScientSourceCandidate } from "./model.ts";
+import { SCIENT_SOURCE_IMPORT_ITEM_LIMIT, type ScientSourceCandidate } from "./model.ts";
 import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
   decodePersistedScientSourceRecord,
   importScientSource,
+  importScientSourceOperationItem,
   inspectScientSourcePdf,
   inspectScientSources,
   listScientSourceRecords,
@@ -28,6 +29,7 @@ import {
   sourceAttachmentAbsolutePath,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
+  updateScientSourceNote,
 } from "./store.ts";
 
 const fixtures: string[] = [];
@@ -600,6 +602,93 @@ describe("Scient source store", () => {
     expect(history).toMatchObject({ revision: 1, title: candidate.title });
   });
 
+  it("autosaves source notes with revision safety and an idempotent retry", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const updated = await updateScientSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      note: "First observation.\r\n\r\nFollow-up question.",
+    });
+    expect(updated).toMatchObject({
+      outcome: "updated",
+      record: {
+        revision: 2,
+        note: "First observation.\n\nFollow-up question.",
+      },
+    });
+
+    await expect(
+      updateScientSourceNote({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        note: "First observation.\n\nFollow-up question.",
+      }),
+    ).resolves.toMatchObject({ outcome: "unchanged", record: { revision: 2 } });
+    await expect(
+      updateScientSourceNote({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        note: "A stale overwrite",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "stale",
+      record: { revision: 2, note: "First observation.\n\nFollow-up question." },
+    });
+
+    const history = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(
+          root,
+          SCIENT_SOURCE_HISTORY_DIRECTORY,
+          record.sourceId,
+          `${record.revision}.json`,
+        ),
+        "utf8",
+      ),
+    ) as { note?: string; revision: number };
+    expect(history).toEqual(expect.objectContaining({ revision: 1 }));
+    expect(history).not.toHaveProperty("note");
+  });
+
+  it("clears a source note when the draft contains only whitespace", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const added = await updateScientSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      note: "Keep this temporarily.",
+    });
+    await expect(
+      updateScientSourceNote({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: added.record.revision,
+        note: " \n\t ",
+      }),
+    ).resolves.toMatchObject({ outcome: "updated", record: { revision: 3, note: null } });
+  });
+
   it("rejects incomplete custom types and records that would exceed the readable size limit", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
@@ -928,6 +1017,78 @@ describe("Scient source store", () => {
       ),
     ) as { unprocessedItemKeys: string[] };
     expect(receipt.unprocessedItemKeys).toEqual(["DEF456"]);
+  });
+
+  it("rejects oversized operations at the Scient-owned persistence boundary", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+
+    const acceptedOperationId = NodeCrypto.randomUUID();
+    const accepted = await createSourceImportOperation({
+      root,
+      operationId: acceptedOperationId,
+      adapter: "zotero",
+      itemKeys: Array.from(
+        { length: SCIENT_SOURCE_IMPORT_ITEM_LIMIT },
+        (_, index) => `ITEM_${String(index).padStart(4, "0")}`,
+      ),
+    });
+    expect(accepted.items).toHaveLength(SCIENT_SOURCE_IMPORT_ITEM_LIMIT);
+    await cancelSourceImportOperation(root, acceptedOperationId);
+
+    await expect(
+      createSourceImportOperation({
+        root,
+        operationId: NodeCrypto.randomUUID(),
+        adapter: "zotero",
+        itemKeys: Array.from(
+          { length: SCIENT_SOURCE_IMPORT_ITEM_LIMIT + 1 },
+          (_, index) => `ITEM_${String(index).padStart(4, "0")}`,
+        ),
+      }),
+    ).rejects.toThrow(`no more than ${SCIENT_SOURCE_IMPORT_ITEM_LIMIT} sources`);
+  });
+
+  it("invalidates an operation snapshot when another source write changes the ledger", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const operationId = NodeCrypto.randomUUID();
+    await createSourceImportOperation({
+      root,
+      operationId,
+      adapter: "zotero",
+      itemKeys: ["ABC123", "GHI789"],
+    });
+    await importScientSourceOperationItem({ root, operationId, candidate });
+
+    const directCandidate: ScientSourceCandidate = {
+      ...candidate,
+      sourceKey: "DEF456",
+      title: "A source imported outside the active operation",
+      identifiers: [{ scheme: "doi", value: "10.1000/direct" }],
+      externalReferences: [{ ...candidate.externalReferences[0]!, itemKey: "DEF456" }],
+    };
+    await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: directCandidate,
+    });
+
+    const result = await importScientSourceOperationItem({
+      root,
+      operationId,
+      candidate: {
+        ...directCandidate,
+        sourceKey: "GHI789",
+        externalReferences: [{ ...candidate.externalReferences[0]!, itemKey: "GHI789" }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "duplicate",
+      duplicate: { kind: "same-identifier" },
+    });
+    await expect(listScientSourceRecords(root)).resolves.toHaveLength(2);
   });
 
   it("reads operations written before adapters were persisted as Zotero operations", async () => {

@@ -33,6 +33,7 @@ import {
   refreshScientSourceMetadata,
   removeSource,
   updateScientSource,
+  updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
 
@@ -127,6 +128,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("updateMetadata", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             updateScientSource(args.payload),
+          ),
+        )
+        .handle("updateNote", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            updateSourceNote(args.payload),
           ),
         )
         .handle("refreshMetadata", (args) =>

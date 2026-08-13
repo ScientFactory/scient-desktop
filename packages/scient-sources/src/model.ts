@@ -47,6 +47,10 @@ export type ScientSourceAbstractSection = typeof ScientSourceAbstractSection.Typ
 const BoundedAbstractSections = Schema.Array(ScientSourceAbstractSection).pipe(
   Schema.check(Schema.isMaxLength(256)),
 );
+export const ScientSourceNote = Schema.NullOr(
+  Schema.String.pipe(Schema.check(Schema.isMaxLength(100_000))),
+);
+export type ScientSourceNote = typeof ScientSourceNote.Type;
 
 export const ScientSourceExternalReference = Schema.Struct({
   system: NonEmptyString,
@@ -109,6 +113,7 @@ export const ScientSourceRecord = Schema.Struct({
   identifiers: Schema.Array(ScientSourceIdentifier),
   abstract: NullableText,
   abstractSections: Schema.optionalKey(BoundedAbstractSections),
+  note: Schema.optionalKey(ScientSourceNote),
   containerTitle: NullableText,
   publisher: NullableText,
   volume: NullableText,
@@ -267,6 +272,12 @@ export const ScientSourceMetadataUpdateResult = Schema.Struct({
 });
 export type ScientSourceMetadataUpdateResult = typeof ScientSourceMetadataUpdateResult.Type;
 
+export const ScientSourceNoteUpdateResult = Schema.Struct({
+  outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+  record: ScientSourceRecord,
+});
+export type ScientSourceNoteUpdateResult = typeof ScientSourceNoteUpdateResult.Type;
+
 export const ScientSourceRemovalResult = Schema.Struct({
   outcome: Schema.Literals(["removed", "not-found", "stale"]),
   sourceId: NonEmptyString,
@@ -294,6 +305,16 @@ export const ScientSourceOperationItem = Schema.Struct({
   message: NullableText,
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
+
+/**
+ * Maximum number of references in one durable import operation.
+ *
+ * Each item is checkpointed in the operation record so an interrupted import
+ * can resume without guessing what reached the project ledger. Larger library
+ * transfers need a versioned append-only operation format rather than a larger
+ * in-memory array and repeated whole-file rewrites.
+ */
+export const SCIENT_SOURCE_IMPORT_ITEM_LIMIT = 500;
 
 export const ScientSourceImportOperation = Schema.Struct({
   formatVersion: Schema.Literal(1),

@@ -1,6 +1,7 @@
 import {
   listScientSourceRecords,
   readScientSourceRecord,
+  updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -29,7 +30,7 @@ export const resolveScientSourcesProject = Effect.fn("ScientSourcesToolkit.resol
     if (!invocation.capabilities.has("sources:read")) {
       return yield* toolError(
         "capability-unavailable",
-        "This provider session does not grant Sources read access.",
+        "This provider session does not grant Sources access.",
       );
     }
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -135,6 +136,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       ...record,
       abstract: abstractTruncated ? abstract.slice(0, maximumAbstractCharacters) : abstract,
       abstractTruncated,
+      note: record.note ?? null,
       attachments: record.attachments.map(
         ({ attachmentId, kind, fileName, mediaType, sha256, byteLength, importedAt }) => ({
           attachmentId,
@@ -150,9 +152,36 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
   },
 );
 
+export const updateScientSourceNoteForInvocation = Effect.fn("ScientSourcesToolkit.updateNote")(
+  function* (input: {
+    readonly sourceId: string;
+    readonly expectedRevision: number;
+    readonly note: string | null;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const current = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
+    if (!current) return yield* toolError("not-found", "The source was not found in this project.");
+    const result = yield* attempt(() =>
+      updateScientSourceNote({
+        root,
+        sourceId: input.sourceId,
+        expectedRevision: input.expectedRevision,
+        note: input.note,
+      }),
+    );
+    return {
+      outcome: result.outcome,
+      sourceId: result.record.sourceId,
+      revision: result.record.revision,
+      note: result.record.note ?? null,
+    };
+  },
+);
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
+  scient_sources_note_update: updateScientSourceNoteForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

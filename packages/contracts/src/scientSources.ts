@@ -3,6 +3,8 @@ import {
   ScientSourceImportOperation,
   ScientSourceMetadataDiagnostic,
   ScientSourceMetadataUpdateResult,
+  ScientSourceNote,
+  ScientSourceNoteUpdateResult,
   ScientSourceRecord,
   ScientSourceRemovalResult,
   ScientSourceSummary,
@@ -72,6 +74,15 @@ export const ScientSourceMetadataUpdateRequest = Schema.Struct({
   allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientSourceMetadataUpdateRequest = typeof ScientSourceMetadataUpdateRequest.Type;
+
+export const ScientSourceNoteUpdateRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  note: ScientSourceNote,
+});
+export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
+export { ScientSourceNoteUpdateResult };
 
 export const ScientSourceMetadataRefreshRequest = Schema.Struct({
   root: NonEmptyString,

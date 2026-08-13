@@ -66,6 +66,8 @@ import {
   ScientSourceMetadataRefreshResult,
   ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
+  ScientSourceNoteUpdateRequest,
+  ScientSourceNoteUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
   ScientSourcesAdvanceImportRequest,
@@ -725,6 +727,14 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
       headers: OptionalBearerHeaders,
       payload: ScientSourceMetadataUpdateRequest,
       success: ScientSourceMetadataUpdateResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateNote", "/api/scient/sources/note/update", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourceNoteUpdateRequest,
+      success: ScientSourceNoteUpdateResult,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

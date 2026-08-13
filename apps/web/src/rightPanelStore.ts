@@ -13,6 +13,10 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import {
+  normalizeScientRightPanelSurface,
+  type ScientRightPanelSurface,
+} from "./scient/rightPanel/surfaces";
 
 export const RIGHT_PANEL_KINDS = [
   "diff",
@@ -64,14 +68,7 @@ export type RightPanelSurface =
       number: number;
     }
   | { id: "agents"; kind: "agents" }
-  | { id: "scient:sources"; kind: "scient"; module: "sources" }
-  | {
-      id: `scient:source-pdf:${string}`;
-      kind: "scient";
-      module: "source-pdf";
-      attachmentId: string;
-      fileName: string;
-    };
+  | ScientRightPanelSurface;
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -80,19 +77,6 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v12 adds a generic Scient-owned module surface; the feature state remains outside this store.
 // v13 lets a source PDF open beside, rather than replace, the Sources library.
 const RIGHT_PANEL_STORAGE_VERSION = 13;
-
-function scientSourcePdfSurface(input: {
-  readonly attachmentId: string;
-  readonly fileName: string;
-}): Extract<RightPanelSurface, { module: "source-pdf" }> {
-  return {
-    id: `scient:source-pdf:${encodeURIComponent(input.attachmentId)}`,
-    kind: "scient",
-    module: "source-pdf",
-    attachmentId: input.attachmentId,
-    fileName: input.fileName,
-  };
-}
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -118,11 +102,7 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     target: { environmentId?: string; projectId: string; repository: string; number: number },
   ) => void;
-  openScient: (ref: ScopedThreadRef, module: "sources") => void;
-  openScientSourcePdf: (
-    ref: ScopedThreadRef,
-    input: { readonly attachmentId: string; readonly fileName: string },
-  ) => void;
+  openScient: (ref: ScopedThreadRef, surface: ScientRightPanelSurface) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -329,19 +309,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       ];
                     }
                     if (surface.kind === "scient") {
-                      if (surface.id === "scient:sources" && surface.module === "sources") {
-                        return [surface];
-                      }
-                      if (
-                        surface.module === "source-pdf" &&
-                        typeof surface.attachmentId === "string" &&
-                        surface.attachmentId.length > 0 &&
-                        typeof surface.fileName === "string" &&
-                        surface.fileName.length > 0
-                      ) {
-                        return [scientSourcePdfSurface(surface)];
-                      }
-                      return [];
+                      const normalized = normalizeScientRightPanelSurface(surface);
+                      return normalized ? [normalized] : [];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (
@@ -434,16 +403,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface(current, pullRequestSurface(target));
           }),
         })),
-      openScient: (ref, module) =>
+      openScient: (ref, surface) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, { id: `scient:${module}`, kind: "scient", module }),
-          ),
-        })),
-      openScientSourcePdf: (ref, input) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, scientSourcePdfSurface(input)),
+            upsertSurface(current, surface),
           ),
         })),
       openFile: (ref, relativePath, line) =>

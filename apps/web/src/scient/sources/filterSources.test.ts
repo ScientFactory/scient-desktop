@@ -1,7 +1,7 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterScientSourceSummaries } from "./filterSources";
+import { filterScientSourceSearchIndex, indexScientSourceSummaries } from "./filterSources";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
@@ -30,7 +30,7 @@ function source(overrides: Partial<SourceSummary>): SourceSummary {
   };
 }
 
-describe("filterScientSourceSummaries", () => {
+describe("Scient source search index", () => {
   const records = [
     source({ sourceId: "one" }),
     source({
@@ -51,18 +51,31 @@ describe("filterScientSourceSummaries", () => {
   ];
 
   it("matches compact metadata without loading source details", () => {
+    const index = indexScientSourceSummaries(records);
     expect(
-      filterScientSourceSummaries(records, "ioannidis 2024").map((item) => item.sourceId),
+      filterScientSourceSearchIndex(index, "ioannidis 2024").map((item) => item.sourceId),
     ).toEqual(["one"]);
     expect(
-      filterScientSourceSummaries(records, "nature medicine").map((item) => item.sourceId),
+      filterScientSourceSearchIndex(index, "nature medicine").map((item) => item.sourceId),
     ).toEqual(["two"]);
     expect(
-      filterScientSourceSummaries(records, "10.1000/example").map((item) => item.sourceId),
+      filterScientSourceSearchIndex(index, "10.1000/example").map((item) => item.sourceId),
     ).toEqual(["one"]);
   });
 
-  it("returns the original list for an empty query", () => {
-    expect(filterScientSourceSummaries(records, "  ")).toBe(records);
+  it("returns every indexed source for an empty query", () => {
+    expect(filterScientSourceSearchIndex(indexScientSourceSummaries(records), "  ")).toEqual(
+      records,
+    );
+  });
+
+  it("reuses a precomputed metadata index across queries", () => {
+    const index = indexScientSourceSummaries(records);
+    expect(filterScientSourceSearchIndex(index, "smith").map((item) => item.sourceId)).toEqual([
+      "two",
+    ]);
+    expect(filterScientSourceSearchIndex(index, "pmid 12345").map((item) => item.sourceId)).toEqual(
+      ["two"],
+    );
   });
 });

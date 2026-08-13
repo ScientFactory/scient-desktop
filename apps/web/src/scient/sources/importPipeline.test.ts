@@ -126,4 +126,22 @@ describe("source import continuation", () => {
     expect(calls).toBe(1);
     expect(result.items[1]?.state).toBe("pending");
   });
+
+  test("fails a stalled server response instead of retrying forever", async () => {
+    const initial = operation("stalled", ["pending"]);
+    let calls = 0;
+
+    await expect(
+      continueSourceImport({
+        environmentId,
+        root: "/project",
+        operation: initial,
+        advance: async () => {
+          calls += 1;
+          return initial;
+        },
+      }),
+    ).rejects.toThrow("did not advance");
+    expect(calls).toBe(1);
+  });
 });
