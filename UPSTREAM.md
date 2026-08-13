@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260813-5015d7cf.md`](docs/internals/t3-upstream-sync-20260813-5015d7cf.md)
+[`docs/internals/t3-upstream-sync-20260813-97db94c9.md`](docs/internals/t3-upstream-sync-20260813-97db94c9.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `5015d7cf9f98fe551115b625031f01e3f022cd2d` into the refresh
-branch, preserving the complete 30-commit T3 range from the previously
-integrated tip `2db08457f2f4eaaa713a067b2ea480ca2b583025`. Later observed T3
+checkpoint `97db94c9bf6fa5d83f94c8fff85566d7fc96276e` into the refresh
+branch, preserving the next clean commit after the previously integrated tip
+`5015d7cf9f98fe551115b625031f01e3f022cd2d`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -125,6 +125,15 @@ copy while adopting T3's layout and behavior. The merge also explicitly adapts
 the new command subtitle for projectless General Chat and gives the Scient
 Sources surface a launcher shortcut. T3's contributor-trust change remains in
 ancestry without changing the Scient trust list.
+
+The next 2026-08-13 sync advances the literal T3 ancestry through `97db94c9`.
+It adopts the bounded pull-request-panel viewport fix and its regression test
+without changing any Scient-owned seam. The following three official commits
+remain outside the integration base: the next commit overlaps Scient's
+repository-local trust policy, the latency-tracker fix follows it in the
+official ancestry, and the final commit overlaps this repository's governing
+instructions. They must be reconciled in a separate conscious alignment rather
+than cherry-picked around the policy commit.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
