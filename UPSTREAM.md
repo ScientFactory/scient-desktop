@@ -21,10 +21,10 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260812-849bac894.md`](docs/internals/t3-upstream-sync-20260812-849bac894.md)
+[`docs/internals/t3-upstream-sync-20260813-5015d7cf.md`](docs/internals/t3-upstream-sync-20260813-5015d7cf.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `849bac8946c40420174b4187e36fcf17b5ea7cc4` into the refresh
-branch, preserving the complete 11-commit T3 range from the previously
+checkpoint `5015d7cf9f98fe551115b625031f01e3f022cd2d` into the refresh
+branch, preserving the complete 30-commit T3 range from the previously
 integrated tip `2db08457f2f4eaaa713a067b2ea480ca2b583025`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
@@ -117,13 +117,18 @@ Scient work and five conflicted. Scient kept its minimal stage branding,
 typography profile, and sidebar identity mounts while adopting the upstream
 theme pipeline and footer navigation behavior.
 
-The 2026-08-12 sync through `849bac894` receives Open VSX theme discovery,
-composer and sidebar layout refinements, mobile title regeneration and ordered-
-list rendering, the right-panel surface launcher, hosted onboarding alignment,
-and the repaired CLI browser OAuth handoff. Of 46 upstream paths, 18 overlapped
-Scient work and only three conflicted. Scient adopted all product behavior,
-kept its cloud gate and product identity at existing seams, and did not inherit
-T3's repository contributor-trust decision.
+The 2026-08-13 sync through `5015d7cf` receives 30 official commits, including
+the maintained PR center, Open VSX theme discovery, assisted OAuth handoff
+repairs, mobile title/list improvements, and composer/sidebar/diff stability.
+Five textual conflicts retained Scient provider onboarding, identity, and
+copy while adopting T3's layout and behavior. The merge also explicitly adapts
+the new command subtitle for projectless General Chat and gives the Scient
+Sources surface a launcher shortcut. T3's contributor-trust change remains in
+ancestry without changing the Scient trust list.
+
+The earlier 2026-08-12 record through `849bac894` remains preserved as the
+partial checkpoint merged by PR #69. It covers the first 11 commits of this
+same contiguous range; it is historical evidence, not the current cursor.
 
 Synara is not a candidate remote. It remains a research donor and the
 foundation of the separately supported continuity application. Valuable
