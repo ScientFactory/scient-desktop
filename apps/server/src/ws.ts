@@ -2002,6 +2002,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.analysisCleanupProject, analysis.cleanupProject(input), {
             "rpc.aggregate": "analysis",
           }),
+        [WS_METHODS.analysisPromoteRun]: (input) =>
+          observeRpcEffect(WS_METHODS.analysisPromoteRun, analysis.promoteRun(input), {
+            "rpc.aggregate": "analysis",
+          }),
         [WS_METHODS.subscribeAnalysisRuns]: (input) =>
           observeRpcStreamEffect(WS_METHODS.subscribeAnalysisRuns, analysis.subscribeRuns(input), {
             "rpc.aggregate": "analysis",

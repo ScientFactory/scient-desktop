@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleAlert,
+  FolderDown,
   LoaderCircle,
   Play,
   RotateCcw,
@@ -408,12 +409,13 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
   const cleanupProject = useAtomCommand(analysisEnvironment.cleanupProject, {
     reportFailure: false,
   });
+  const promoteRun = useAtomCommand(analysisEnvironment.promoteRun, { reportFailure: false });
   const [expanded, setExpanded] = useState(false);
   const [showRuntimeDetails, setShowRuntimeDetails] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runtimePath, setRuntimePath] = useState("");
   const [operation, setOperation] = useState<
-    "configure" | "verify" | "run" | "cancel" | "cleanup-run" | "cleanup-project" | null
+    "configure" | "verify" | "run" | "cancel" | "cleanup-run" | "cleanup-project" | "promote" | null
   >(null);
   const refreshedTerminalRunIdRef = useRef<string | null>(null);
   const observedStreamRunIdsRef = useRef<Set<string> | null>(null);
@@ -638,6 +640,34 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
     }
   };
 
+  const handlePromoteRun = async () => {
+    if (
+      !selectedRun ||
+      selectedRun.localStorage.status !== "retained" ||
+      !isTerminalAnalysisRunStatus(selectedRun.receipt.status)
+    ) {
+      return;
+    }
+    setOperation("promote");
+    const result = await promoteRun({
+      environmentId: props.environmentId,
+      input: { cwd: props.cwd, runId: selectedRun.receipt.runId },
+    });
+    setOperation(null);
+    if (result._tag === "Success") {
+      useRightPanelStore.getState().openFile(props.threadRef, result.value.readmeRelativePath);
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: result.value.reused ? "Project result already saved" : "Saved result to project",
+          description: result.value.directoryRelativePath,
+        }),
+      );
+    } else if (!isAtomCommandInterrupted(result)) {
+      reportFailure("Unable to save result to project", result);
+    }
+  };
+
   const askAboutDiagnostic = (
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
@@ -684,9 +714,11 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
         ? `Verifying ${props.runtimeLabel}…`
         : operation === "configure"
           ? `Saving ${props.runtimeLabel} path…`
-          : operation === "cleanup-run" || operation === "cleanup-project"
-            ? "Removing local data…"
-            : null;
+          : operation === "promote"
+            ? "Saving result to project…"
+            : operation === "cleanup-run" || operation === "cleanup-project"
+              ? "Removing local data…"
+              : null;
 
   return (
     <section
@@ -978,6 +1010,28 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
             <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
               Local output and artifact files were removed. Run metadata, diagnostics, hashes, and
               provenance remain available.
+            </div>
+          ) : null}
+          {!projectNotInitialized &&
+          selectedRun?.localStorage.status === "retained" &&
+          isTerminalAnalysisRunStatus(selectedRun.receipt.status) ? (
+            <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                Keep this run, its receipt, output, and figures with the project.
+              </span>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={operation !== null}
+                onClick={handlePromoteRun}
+              >
+                {operation === "promote" ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
+                  <FolderDown />
+                )}
+                Save to project
+              </Button>
             </div>
           ) : null}
           {!projectNotInitialized && storage && storage.totalBytes > 0 ? (

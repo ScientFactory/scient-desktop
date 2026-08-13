@@ -97,6 +97,7 @@ export function createAnalysisEnvironmentAtoms<R, E>(
   const runScheduler = createAtomCommandScheduler();
   const runtimeScheduler = createAtomCommandScheduler();
   const cleanupScheduler = createAtomCommandScheduler();
+  const promotionScheduler = createAtomCommandScheduler();
   return {
     runtimes: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:analysis:runtimes",
@@ -191,6 +192,15 @@ export function createAnalysisEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
+      },
+    }),
+    promoteRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:analysis:promote-run",
+      tag: WS_METHODS.analysisPromoteRun,
+      scheduler: promotionScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.runId]),
       },
     }),
   };

@@ -39,7 +39,7 @@
     "miniPlayerBrowserTabId",
     "openScientArtifact",
     "ScientFileAuxiliarySurface",
-    "analysis(Start|Cancel|Verify|List|Get|Cleanup)",
+    "analysis(Start|Cancel|Verify|List|Get|Cleanup|Promote)",
     "SCIENT_MATLAB",
     "MATLAB_"
   ],

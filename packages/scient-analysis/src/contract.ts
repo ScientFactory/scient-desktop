@@ -370,6 +370,21 @@ export const AnalysisCleanupResult = Schema.Struct({
 });
 export type AnalysisCleanupResult = typeof AnalysisCleanupResult.Type;
 
+export const AnalysisPromoteRunInput = Schema.Struct({
+  cwd: PathString,
+  runId: ExecutionRunId,
+});
+export type AnalysisPromoteRunInput = typeof AnalysisPromoteRunInput.Type;
+
+export const AnalysisPromoteRunResult = Schema.Struct({
+  directoryRelativePath: PathString,
+  readmeRelativePath: PathString,
+  manifestRelativePath: PathString,
+  artifactFileCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  reused: Schema.Boolean,
+});
+export type AnalysisPromoteRunResult = typeof AnalysisPromoteRunResult.Type;
+
 export const AnalysisSubscribeRunsInput = Schema.Struct({
   cwd: PathString,
   relativePath: Schema.optional(PathString),
@@ -430,6 +445,7 @@ export class AnalysisOperationError extends Schema.TaggedErrorClass<AnalysisOper
       "get",
       "storage",
       "cleanup",
+      "promote",
       "subscribe",
     ]),
     reason: Schema.Literals([
@@ -443,6 +459,8 @@ export class AnalysisOperationError extends Schema.TaggedErrorClass<AnalysisOper
       "run-already-active",
       "runtime-queue-full",
       "invalid-cursor",
+      "run-data-unavailable",
+      "destination-exists",
       "persistence-failed",
       "process-failed",
       "operation-failed",
