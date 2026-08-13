@@ -24,6 +24,36 @@ describe("Scient source abstract normalization", () => {
     ]);
   });
 
+  it("preserves Europe PMC bodies that are bare text after explicit headings", () => {
+    const document = normalizeScientSourceAbstractDocument(
+      "<h4>Background</h4>Short stays may be avoidable." +
+        "<h4>Methods</h4>This was a multicentre study." +
+        "<h4>Results</h4>Short stays were common." +
+        "<h4>Interpretation</h4>Care outside working hours may help.",
+    );
+
+    expect(document?.sections).toEqual([
+      { title: "Background", paragraphs: ["Short stays may be avoidable."] },
+      { title: "Methods", paragraphs: ["This was a multicentre study."] },
+      { title: "Results", paragraphs: ["Short stays were common."] },
+      { title: "Interpretation", paragraphs: ["Care outside working hours may help."] },
+    ]);
+  });
+
+  it("keeps loose body text intact across inline markup", () => {
+    expect(
+      normalizeScientSourceAbstractDocument(
+        "<h4>Results</h4>The finding was <i>clinically</i> important.",
+      )?.sections,
+    ).toEqual([{ title: "Results", paragraphs: ["The finding was clinically important."] }]);
+  });
+
+  it("rejects a structured abstract containing only empty headings", () => {
+    expect(
+      normalizeScientSourceAbstractDocument("<h4>Background</h4><h4>Methods</h4><h4>Results</h4>"),
+    ).toBeNull();
+  });
+
   it("removes a redundant abstract wrapper while preserving its content", () => {
     const document = normalizeScientSourceAbstractDocument(
       "<jats:title>Abstract</jats:title>" +

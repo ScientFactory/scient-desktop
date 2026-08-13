@@ -24,7 +24,7 @@ import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
-  importScientSource,
+  importScientSourceOperationItem,
   inspectScientSourcePdf,
   inspectScientSources,
   listScientSourceRecords,
@@ -33,6 +33,7 @@ import {
   removeScientSource,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
+  updateScientSourceNote,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 
@@ -80,10 +81,12 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
   // Older records may contain provider markup or a PDF Subject that an early
   // local adapter misclassified. Correct the detail response without rewriting
   // project evidence merely because it was read.
+  const storedSections = abstractDocumentFromSections(record.abstractSections);
   const abstract = hasMisclassifiedLegacyPdfSubject(record)
     ? null
-    : (abstractDocumentFromSections(record.abstractSections) ??
-      normalizeScientSourceAbstractDocument(record.abstract));
+    : record.abstractSections
+      ? storedSections
+      : normalizeScientSourceAbstractDocument(record.abstract);
   const { abstractSections: _storedAbstractSections, ...withoutAbstractSections } = record;
   return abstract
     ? {
@@ -144,6 +147,10 @@ export async function getScientSourceJournalIconMaterial(input: {
 
 export async function updateScientSource(input: Parameters<typeof updateScientSourceMetadata>[0]) {
   return updateScientSourceMetadata(input);
+}
+
+export async function updateSourceNote(input: Parameters<typeof updateScientSourceNote>[0]) {
+  return updateScientSourceNote(input);
 }
 
 function candidateEvidenceFields(candidate: ScientSourceCandidate): ReadonlySet<string> {
@@ -523,7 +530,7 @@ export async function advanceSourceImport(input: {
         operation.adapter === "zotero"
           ? { ...(await getZoteroImportMaterial(pending.itemKey)), expectedPdf: undefined }
           : await getLocalPdfImportMaterial(root, pending.itemKey);
-      const result = await importScientSource({
+      const result = await importScientSourceOperationItem({
         root,
         operationId: input.operationId,
         candidate,

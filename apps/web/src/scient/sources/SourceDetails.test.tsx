@@ -59,6 +59,8 @@ const record = {
   importedAt: "2026-08-12T12:00:00.000Z",
 };
 
+const saveNote = async () => ({ outcome: "unchanged" as const, record });
+
 describe("SourceDetails", () => {
   it("renders bibliographic information and the imported attachment", () => {
     const markup = renderToStaticMarkup(
@@ -67,6 +69,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
@@ -115,6 +118,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
@@ -134,6 +138,7 @@ describe("SourceDetails", () => {
         diagnostics={[{ field: "identifiers", severity: "info", message: "No identifier." }]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
@@ -144,6 +149,29 @@ describe("SourceDetails", () => {
     expect(markup).toContain("Metadata needs review");
   });
 
+  it("keeps a project-owned note directly editable below the reference", () => {
+    const markup = renderToStaticMarkup(
+      <SourceDetails
+        record={{ ...record, note: "Compare this **result** with the *replication* cohort." }}
+        diagnostics={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain(">Note<");
+    expect(markup).toContain(">Notes<");
+    expect(markup).toContain("Compare this <strong>result</strong> with the <em>replication</em>");
+    expect(markup.indexOf('id="source-note-heading"')).toBeGreaterThan(
+      markup.indexOf('id="source-reference-heading"'),
+    );
+    expect(markup).toContain('aria-label="Edit source note"');
+  });
+
   it("shows a researcher-defined label for another source type", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
@@ -151,6 +179,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
@@ -168,6 +197,7 @@ describe("SourceDetails", () => {
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}

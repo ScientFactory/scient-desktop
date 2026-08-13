@@ -45,7 +45,12 @@ export function continueSourceImport(input: {
           next.state === "running" &&
           next.items.some((item) => item.state === "pending")
         ) {
+          const pendingBefore = next.items.filter((item) => item.state === "pending").length;
           next = await input.advance(next.operationId);
+          const pendingAfter = next.items.filter((item) => item.state === "pending").length;
+          if (next.state === "running" && pendingAfter >= pendingBefore) {
+            throw new Error("The source import did not advance to the next item.");
+          }
           for (const listener of nextActive.listeners) {
             try {
               listener(next);

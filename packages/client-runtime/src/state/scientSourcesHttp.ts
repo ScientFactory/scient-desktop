@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
+  ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -185,6 +186,37 @@ export const refreshEnvironmentScientSourceMetadata = Effect.fn(
           root: input.root,
           sourceId: input.sourceId,
           expectedRevision: input.expectedRevision,
+        },
+      }),
+    ),
+  );
+});
+
+export const updateEnvironmentScientSourceNote = Effect.fn(
+  "clientRuntime.state.updateEnvironmentScientSourceNote",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientSourceNoteUpdateRequest["root"];
+  readonly sourceId: ScientSourceNoteUpdateRequest["sourceId"];
+  readonly expectedRevision: ScientSourceNoteUpdateRequest["expectedRevision"];
+  readonly note: ScientSourceNoteUpdateRequest["note"];
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/note/update",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.updateNote({
+        headers: context.headers,
+        payload: {
+          root: input.root,
+          sourceId: input.sourceId,
+          expectedRevision: input.expectedRevision,
+          note: input.note,
         },
       }),
     ),

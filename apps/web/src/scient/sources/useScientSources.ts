@@ -24,6 +24,7 @@ import {
   readScientSource,
   refreshScientSourceMetadata,
   removeScientSource,
+  updateScientSourceNote,
   readZoteroLibrary,
   readZoteroCollections,
   readZoteroStatus,
@@ -272,6 +273,20 @@ export function useScientSources(input: {
       }
     },
     [input.environmentId, input.root, isCurrentContext, refreshOverview],
+  );
+
+  const saveSourceNote = useCallback(
+    async (sourceId: string, expectedRevision: number, note: string | null) => {
+      const result = await updateScientSourceNote(input.environmentId, {
+        root: input.root,
+        sourceId,
+        expectedRevision,
+        note,
+      });
+      if (isCurrentContext()) acceptSourceRecord(result.record);
+      return result;
+    },
+    [acceptSourceRecord, input.environmentId, input.root, isCurrentContext],
   );
 
   useEffect(() => {
@@ -798,6 +813,7 @@ export function useScientSources(input: {
     acceptSourceRecord,
     loadSource,
     refreshSourceMetadata,
+    saveSourceNote,
     removeSource,
     closeZoteroStatus: () => setZoteroStatus(null),
     closeLibrary: () => setLibrary(null),

@@ -8,6 +8,8 @@ import {
   ScientSourceJournalIconResult,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
+  ScientSourceNoteUpdateRequest,
+  ScientSourceNoteUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
   ScientSourcesOverviewResult,
@@ -27,6 +29,8 @@ const decodeScientSourceMetadataUpdateRequest = Schema.decodeUnknownSync(
 const decodeScientSourceMetadataRefreshRequest = Schema.decodeUnknownSync(
   ScientSourceMetadataRefreshRequest,
 );
+const decodeScientSourceNoteUpdateRequest = Schema.decodeUnknownSync(ScientSourceNoteUpdateRequest);
+const decodeScientSourceNoteUpdateResult = Schema.decodeUnknownSync(ScientSourceNoteUpdateResult);
 const decodeScientSourceRemovalRequest = Schema.decodeUnknownSync(ScientSourceRemovalRequest);
 const decodeScientSourceRemovalResult = Schema.decodeUnknownSync(ScientSourceRemovalResult);
 const decodeScientSourceLocalPdfUploadResult = Schema.decodeUnknownSync(
@@ -122,6 +126,54 @@ describe("Scient sources contracts", () => {
       root: "/project",
       sourceId: "source_123",
       expectedRevision: 4,
+    });
+  });
+
+  it("round-trips bounded note updates without requiring complete metadata", () => {
+    expect(
+      decodeScientSourceNoteUpdateRequest({
+        root: "/project",
+        sourceId: "source_123",
+        expectedRevision: 4,
+        note: "A project-owned note.",
+      }),
+    ).toEqual({
+      root: "/project",
+      sourceId: "source_123",
+      expectedRevision: 4,
+      note: "A project-owned note.",
+    });
+
+    const record = decodeScientSourceDetailResult({
+      formatVersion: 1,
+      sourceId: "source_123",
+      projectId: "project_123",
+      revision: 5,
+      type: "article",
+      customType: null,
+      title: "A source",
+      creators: [],
+      issuedRaw: null,
+      issuedYear: null,
+      identifiers: [],
+      abstract: null,
+      note: "A project-owned note.",
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      attachments: [],
+      fieldProvenance: [],
+      importedAt: "2026-08-13T00:00:00.000Z",
+    });
+    expect(decodeScientSourceNoteUpdateResult({ outcome: "updated", record })).toMatchObject({
+      outcome: "updated",
+      record: { revision: 5, note: "A project-owned note." },
     });
   });
 

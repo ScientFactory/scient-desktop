@@ -23,6 +23,7 @@ import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   resolveScientSourcesProject,
+  updateScientSourceNoteForInvocation,
 } from "./handlers.ts";
 
 const fixtures: string[] = [];
@@ -316,6 +317,54 @@ describe("Scient Sources MCP handlers", () => {
       ).pipe(Effect.result);
       expect(crossProject._tag).toBe("Failure");
       if (crossProject._tag === "Failure") expect(crossProject.failure.code).toBe("not-found");
+    }),
+  );
+
+  it.effect("updates the canonical project note with optimistic revision safety", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-note-"));
+      yield* Effect.promise(() =>
+        writeSource(root, { sourceId: "source_note", title: "Noteworthy source" }),
+      );
+      const projectId = ProjectId.make("project-note");
+      const threadId = ThreadId.make("thread-note");
+      const project = makeProject(projectId, root);
+      const thread = makeThread({ threadId, projectId });
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({ project, thread }),
+      };
+
+      const updated = yield* provideContext(
+        updateScientSourceNoteForInvocation({
+          sourceId: "source_note",
+          expectedRevision: 1,
+          note: "Compare with the **replication** cohort.",
+        }),
+        context,
+      );
+      expect(updated).toEqual({
+        outcome: "updated",
+        sourceId: "source_note",
+        revision: 2,
+        note: "Compare with the **replication** cohort.",
+      });
+
+      const detail = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: "source_note" }),
+        context,
+      );
+      expect(detail.note).toBe("Compare with the **replication** cohort.");
+
+      const stale = yield* provideContext(
+        updateScientSourceNoteForInvocation({
+          sourceId: "source_note",
+          expectedRevision: 1,
+          note: "Do not overwrite the newer note.",
+        }),
+        context,
+      );
+      expect(stale).toEqual({ ...updated, outcome: "stale" });
     }),
   );
 });
