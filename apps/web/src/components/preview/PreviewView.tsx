@@ -713,6 +713,8 @@ export function PreviewView({
         {showEmptyState ? (
           <PreviewEmptyState
             environmentId={threadRef.environmentId}
+            threadId={threadRef.threadId}
+            environmentHttpBaseUrl={environmentHttpBaseUrl}
             configuredUrls={configuredUrls}
             recentlySeenUrls={previewState.recentlySeenUrls}
             recentEntries={recentHistoryEntries}

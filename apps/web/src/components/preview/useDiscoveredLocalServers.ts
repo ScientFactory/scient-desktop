@@ -20,6 +20,11 @@ export interface PreviewableServer extends DiscoveredLocalServer {
   requestedUrl: string;
 }
 
+export interface PreviewServerGroups {
+  relevant: ReadonlyArray<PreviewableServer>;
+  otherListening: ReadonlyArray<PreviewableServer>;
+}
+
 interface UseDiscoveredLocalServersInput {
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
@@ -124,8 +129,62 @@ export function mergeServers(input: {
   });
 }
 
+/**
+ * Keep the Browser empty state relevant to the active thread. The environment
+ * scanner intentionally sees every listening port, including databases and
+ * application-internal services; those remain available only through the
+ * explicit secondary discovery control.
+ */
+export function groupPreviewServers(input: {
+  servers: ReadonlyArray<PreviewableServer>;
+  threadId: string;
+  environmentHttpBaseUrl?: string | null | undefined;
+}): PreviewServerGroups {
+  const environmentPort = portFromUrl(input.environmentHttpBaseUrl);
+  const relevant: PreviewableServer[] = [];
+  const otherListening: PreviewableServer[] = [];
+
+  for (const server of input.servers) {
+    if (server.source !== "configured" && server.port === environmentPort) continue;
+    if (
+      server.source === "configured" ||
+      server.source === "recent" ||
+      server.terminal?.threadId === input.threadId
+    ) {
+      relevant.push(server);
+      continue;
+    }
+    if (server.source === "scanner") otherListening.push(server);
+  }
+
+  return { relevant, otherListening };
+}
+
+export function localServerKey(server: Pick<PreviewableServer, "host" | "port">): string {
+  return canonicalKey(server.host, server.port);
+}
+
+export function localUrlKey(raw: string): string | null {
+  const parsed = parseLocalUrl(raw);
+  return parsed ? canonicalKey(parsed.host, parsed.port) : null;
+}
+
 function canonicalKey(host: string, port: number): string {
-  return `${host.toLowerCase()}:${port}`;
+  const normalizedHost = host.toLowerCase();
+  return `${isLoopbackHost(normalizedHost) ? "loopback" : normalizedHost}:${port}`;
+}
+
+function portFromUrl(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.port) return Number.parseInt(parsed.port, 10);
+    if (parsed.protocol === "http:") return 80;
+    if (parsed.protocol === "https:") return 443;
+  } catch {
+    // A missing environment endpoint should not hide otherwise valid entries.
+  }
+  return null;
 }
 
 function parseLocalUrl(raw: string): { host: string; port: number; url: string } | null {
