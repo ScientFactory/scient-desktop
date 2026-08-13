@@ -58,6 +58,7 @@
     "apps/mobile/src/lib/projectThreadStartTurn.ts",
     "apps/mobile/src/state/use-thread-selection.ts",
     "apps/server/src/checkpointing/Utils.ts",
+    "apps/server/src/mcp/toolkits/sources/handlers.ts",
     "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
     "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
     "apps/server/src/orchestration/Normalizer.ts",
