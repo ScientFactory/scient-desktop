@@ -300,13 +300,15 @@ export const make = Effect.gen(function* () {
           path.join(temporaryDirectory, "metadata.json"),
           `${encodeRevision(stored)}\n`,
         );
+        // Windows rejects fsync on a read-only descriptor with EPERM, so the
+        // durability flush opens these freshly written files for writing.
         yield* Effect.scoped(
           Effect.all([
             fileSystem
-              .open(path.join(temporaryDirectory, "document.pdf"), { flag: "r" })
+              .open(path.join(temporaryDirectory, "document.pdf"), { flag: "r+" })
               .pipe(Effect.flatMap((file) => file.sync)),
             fileSystem
-              .open(path.join(temporaryDirectory, "metadata.json"), { flag: "r" })
+              .open(path.join(temporaryDirectory, "metadata.json"), { flag: "r+" })
               .pipe(Effect.flatMap((file) => file.sync)),
           ]),
         );
