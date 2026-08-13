@@ -1,7 +1,12 @@
-import type { DiscoveredLocalServer } from "@t3tools/contracts";
+import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeServers, type PreviewableServer } from "./useDiscoveredLocalServers";
+import {
+  groupPreviewServers,
+  localUrlKey,
+  mergeServers,
+  type PreviewableServer,
+} from "./useDiscoveredLocalServers";
 
 const scannerServer = (
   overrides: Partial<DiscoveredLocalServer & { requestedUrl: string }>,
@@ -109,6 +114,16 @@ describe("mergeServers", () => {
     expect(result).toHaveLength(1);
   });
 
+  it("dedupes loopback host aliases", () => {
+    const result = mergeServers({
+      scanner: [scannerServer({ host: "localhost", port: 5173 })],
+      configuredUrls: ["http://127.0.0.1:5173"],
+      recentlySeenUrls: [],
+    });
+    expect(result).toHaveLength(1);
+    expect(localUrlKey("http://[::1]:5173/path")).toBe("loopback:5173");
+  });
+
   it("keeps a scanner entry's pre-resolution requestedUrl distinct from a resolved url", () => {
     const result = mergeServers({
       scanner: [
@@ -123,6 +138,59 @@ describe("mergeServers", () => {
     });
     expect(result[0]?.url).toBe("https://env-42.example.dev:5173/");
     expect(result[0]?.requestedUrl).toBe("http://localhost:5173/");
+  });
+});
+
+describe("groupPreviewServers", () => {
+  it("keeps configured and current-thread servers visible", () => {
+    const configured = mergeServers({
+      scanner: [],
+      configuredUrls: ["http://localhost:4173"],
+      recentlySeenUrls: [],
+    })[0]!;
+    const owned = {
+      ...scannerServer({ port: 5173 }),
+      source: "scanner" as const,
+      listening: true,
+      terminal: { threadId: ThreadId.make("thread-current"), terminalId: "terminal-1" },
+    };
+    const unrelated = {
+      ...scannerServer({ port: 8080 }),
+      source: "scanner" as const,
+      listening: true,
+    };
+
+    const result = groupPreviewServers({
+      servers: [configured, owned, unrelated],
+      threadId: "thread-current",
+      environmentHttpBaseUrl: "http://127.0.0.1:3773",
+    });
+
+    expect(result.relevant.map((server) => server.port)).toEqual([4173, 5173]);
+    expect(result.otherListening.map((server) => server.port)).toEqual([8080]);
+  });
+
+  it("keeps thread-local recent URLs but does not suggest the environment backend", () => {
+    const environmentBackend = {
+      ...scannerServer({ port: 3773 }),
+      source: "scanner" as const,
+      listening: true,
+      terminal: { threadId: ThreadId.make("thread-current"), terminalId: "terminal-1" },
+    };
+    const recent = mergeServers({
+      scanner: [],
+      configuredUrls: [],
+      recentlySeenUrls: ["http://localhost:9000"],
+    })[0]!;
+
+    const result = groupPreviewServers({
+      servers: [environmentBackend, recent],
+      threadId: "thread-current",
+      environmentHttpBaseUrl: "http://localhost:3773",
+    });
+
+    expect(result.relevant.map((server) => server.port)).toEqual([9000]);
+    expect(result.otherListening).toEqual([]);
   });
 });
 
