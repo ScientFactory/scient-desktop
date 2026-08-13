@@ -42,7 +42,7 @@ import {
   SCIENT_DEFAULT_RENDER_MARKDOWN,
   resolveInitialFileExplorerOpen,
 } from "~/scient/fileOpening/fileOpeningPolicy";
-import { workspacePdfSource } from "~/scient/pdf/pdfSource";
+import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
@@ -848,14 +848,12 @@ export default function FilePreviewPanel({
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
   const pdfSource = useMemo(
     () =>
-      absolutePath && relativePath
-        ? workspacePdfSource({
-            absolutePath,
-            environmentId,
-            fileName: relativePath.split(/[\\/]/).at(-1) ?? relativePath,
-            threadId: threadRef.threadId,
-          })
-        : null,
+      workspacePdfSourceForPreview({
+        absolutePath,
+        environmentId,
+        relativePath,
+        threadId: threadRef.threadId,
+      }),
     [absolutePath, environmentId, relativePath, threadRef.threadId],
   );
   const breadcrumbs = useMemo(
