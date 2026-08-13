@@ -39,7 +39,10 @@ import { previewEnvironment } from "~/state/preview";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
-import { SCIENT_DEFAULT_RENDER_MARKDOWN } from "~/scient/fileOpening/fileOpeningPolicy";
+import {
+  SCIENT_DEFAULT_RENDER_MARKDOWN,
+  resolveInitialFileExplorerOpen,
+} from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
@@ -790,10 +793,12 @@ function RenderedMarkdownSurface({
 
 function initialExplorerOpen(): boolean {
   try {
-    return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
+    return resolveInitialFileExplorerOpen(
+      getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean),
+    );
   } catch (error) {
     console.error(error);
-    return true;
+    return resolveInitialFileExplorerOpen(null);
   }
 }
 

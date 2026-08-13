@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { SCIENT_DEFAULT_RENDER_MARKDOWN, shouldOpenInBrowserByDefault } from "./fileOpeningPolicy";
+import {
+  SCIENT_DEFAULT_FILE_EXPLORER_OPEN,
+  SCIENT_DEFAULT_RENDER_MARKDOWN,
+  resolveInitialFileExplorerOpen,
+  shouldOpenInBrowserByDefault,
+} from "./fileOpeningPolicy";
 
 describe("Scient file-opening policy", () => {
   it("renders markdown by default for users without a saved preference", () => {
     expect(SCIENT_DEFAULT_RENDER_MARKDOWN).toBe(true);
+  });
+
+  it("starts file content without the embedded explorer unless the user chose otherwise", () => {
+    expect(SCIENT_DEFAULT_FILE_EXPLORER_OPEN).toBe(false);
+    expect(resolveInitialFileExplorerOpen(null)).toBe(false);
+    expect(resolveInitialFileExplorerOpen(true)).toBe(true);
+    expect(resolveInitialFileExplorerOpen(false)).toBe(false);
   });
 
   it("opens HTML files in the integrated browser by default", () => {
