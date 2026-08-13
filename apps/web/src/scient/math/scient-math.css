@@ -1,0 +1,19 @@
+/* Scoped to the two rendered-math wrappers; KaTeX owns everything inside them.
+   Both selectors outrank KaTeX's own rules, which load from a later chunk. */
+
+.scient-math-display {
+  display: block;
+  margin-block: 0.75rem;
+  /* A wide equation scrolls inside its own block, never the conversation. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.scient-math-display > .katex-display {
+  margin: 0;
+}
+
+/* KaTeX bumps itself to 1.21em; inline math reads at the size of its sentence. */
+.scient-math-inline .katex {
+  font-size: inherit;
+}

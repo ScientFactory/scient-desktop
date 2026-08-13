@@ -110,6 +110,9 @@ import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import { MermaidDiagramCard } from "../scient/diagrams/MermaidDiagramCard";
+import { isScientMathCodeClassName, remarkScientMath } from "../scient/math/remarkScientMath";
+import { useScientMathMarkdownText } from "../scient/math/scientMathText";
+import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 
 interface ChatMarkdownProps {
   text: string;
@@ -179,6 +182,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkScientMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
@@ -187,6 +191,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkScientMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
@@ -1343,7 +1348,7 @@ function areMarkdownFileLinkPropsEqual(
 }
 
 function ChatMarkdown({
-  text,
+  text: textProp,
   cwd,
   threadRef,
   onTaskListChange,
@@ -1355,6 +1360,9 @@ function ChatMarkdown({
   messageId,
   directionHint,
 }: ChatMarkdownProps) {
+  // Task-list toggling writes back through character offsets into the original
+  // string, so delimiter normalization only runs where no such writer exists.
+  const text = useScientMathMarkdownText(textProp, onTaskListChange === undefined);
   const scopedContentDirection = useContentDirection();
   const effectiveContentDirection = contentDirection ?? scopedContentDirection;
   const streamingDirectionRef = useRef<{
@@ -1685,6 +1693,9 @@ function ChatMarkdown({
         );
       },
       code({ node, children, className, ...props }) {
+        if (isScientMathCodeClassName(className)) {
+          return <ScientInlineMath tex={nodeToPlainText(children)} />;
+        }
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
           const fileLinkMeta =
@@ -1712,6 +1723,9 @@ function ChatMarkdown({
         const codeBlock = extractCodeBlock(children);
         if (!codeBlock) {
           return <pre {...props}>{children}</pre>;
+        }
+        if (isScientMathCodeClassName(codeBlock.className)) {
+          return <ScientDisplayMath tex={codeBlock.code} />;
         }
 
         const language = extractFenceLanguage(codeBlock.className);
