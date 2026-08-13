@@ -58,6 +58,12 @@ import {
   ScientSourceImportOperation,
   ScientSourceAttachmentPreviewRequest,
   ScientSourceAttachmentPreviewResult,
+  ScientSourceDetailRequest,
+  ScientSourceDetailResult,
+  ScientSourceJournalIconRequest,
+  ScientSourceJournalIconResult,
+  ScientSourceMetadataRefreshRequest,
+  ScientSourceMetadataRefreshResult,
   ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
   ScientSourceRemovalRequest,
@@ -74,8 +80,11 @@ import {
   ScientSourcesPreflightRequest,
   ScientSourcesPreflightResult,
   ZoteroConnectionStatus,
+  ZoteroCollectionsRequest,
+  ZoteroCollectionsResult,
   ZoteroLibraryPage,
   ZoteroLibraryRequest,
+  ZoteroScopedImportRequest,
   ZoteroStatusRequest,
 } from "./scientSources.ts";
 import {
@@ -656,10 +665,34 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("detail", "/api/scient/sources/detail", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourceDetailRequest,
+      success: ScientSourceDetailResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("attachmentPreview", "/api/scient/sources/attachments/preview", {
       headers: OptionalBearerHeaders,
       payload: ScientSourceAttachmentPreviewRequest,
       success: ScientSourceAttachmentPreviewResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("journalIcon", "/api/scient/sources/journal-icon", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourceJournalIconRequest,
+      success: ScientSourceJournalIconResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("refreshMetadata", "/api/scient/sources/metadata/refresh", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourceMetadataRefreshRequest,
+      success: ScientSourceMetadataRefreshResult,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -692,6 +725,14 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
       headers: OptionalBearerHeaders,
       payload: ZoteroLibraryRequest,
       success: ZoteroLibraryPage,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("zoteroCollections", "/api/scient/sources/zotero/collections", {
+      headers: OptionalBearerHeaders,
+      payload: ZoteroCollectionsRequest,
+      success: ZoteroCollectionsResult,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -731,6 +772,14 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
     HttpApiEndpoint.post("beginImport", "/api/scient/sources/import/begin", {
       headers: OptionalBearerHeaders,
       payload: ScientSourcesBeginImportRequest,
+      success: ScientSourceImportOperation,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("beginScopedImport", "/api/scient/sources/zotero/import-scope/begin", {
+      headers: OptionalBearerHeaders,
+      payload: ZoteroScopedImportRequest,
       success: ScientSourceImportOperation,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),

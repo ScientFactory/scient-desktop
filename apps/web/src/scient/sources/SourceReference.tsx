@@ -2,7 +2,7 @@ import {
   SCIENT_REFERENCE_STYLES,
   type ScientReferenceStyleId,
 } from "@scientfactory/scient-citations/styles";
-import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Check, Copy, PenLine } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -19,7 +19,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 
-type SourceRecord = ScientSourcesOverviewResult["records"][number];
+type SourceRecord = ScientSourceDetailResult;
 type CitationModule = typeof import("@scientfactory/scient-citations");
 
 const REFERENCE_STYLE_ITEMS = SCIENT_REFERENCE_STYLES.map((style) => ({

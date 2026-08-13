@@ -12,6 +12,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
+import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
   applyEditableMetadata,
   editableMetadataEquals,
@@ -27,6 +28,7 @@ import {
   type ScientSourceAttachment,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
+  type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceStagedMaterial as ScientSourceStagedMaterialType,
@@ -49,6 +51,7 @@ const COPY_CHUNK_BYTES = 1024 * 1024;
 const MAX_STAGED_MATERIAL_BYTES = 2 * 1024 * 1024;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const operationLocks = new Map<string, Promise<unknown>>();
+const decodeScientSourceRecordV1 = Schema.decodeUnknownSync(ScientSourceRecord);
 const decodeScientSourceStagedMaterial = Schema.decodeUnknownSync(ScientSourceStagedMaterial);
 const PersistedScientSourceImportOperation = Schema.Struct({
   ...ScientSourceImportOperation.fields,
@@ -121,6 +124,25 @@ async function readBoundedJson<S extends Schema.ConstraintDecoder<unknown>>(
   }
   const value: unknown = JSON.parse(await NodeFSP.readFile(filePath, "utf8"));
   return Schema.decodeUnknownSync(schema)(value);
+}
+
+/** Central version boundary for durable source records. Add migrations here, never at callers. */
+export function decodePersistedScientSourceRecord(value: unknown): ScientSourceRecord {
+  if (!value || typeof value !== "object" || !("formatVersion" in value)) {
+    throw new Error("The source record has no recognized format version.");
+  }
+  const version = (value as { readonly formatVersion?: unknown }).formatVersion;
+  switch (version) {
+    case 1:
+      return decodeScientSourceRecordV1(value);
+    default:
+      throw new Error(`Source record format version ${String(version)} is not supported.`);
+  }
+}
+
+async function readBoundedSourceRecord(filePath: string): Promise<ScientSourceRecord> {
+  const value = await readBoundedJson(filePath, MAX_RECORD_BYTES, Schema.Unknown);
+  return decodePersistedScientSourceRecord(value);
 }
 
 async function ensureDirectory(filePath: string): Promise<void> {
@@ -241,16 +263,23 @@ async function readSourceRecordFromPaths(
   paths: Awaited<ReturnType<typeof sourceStorePaths>>,
   sourceId: string,
 ): Promise<ScientSourceRecord> {
-  const record = await readBoundedJson(
-    sourceRecordPath(paths, sourceId),
-    MAX_RECORD_BYTES,
-    ScientSourceRecord,
-  );
+  const record = await readBoundedSourceRecord(sourceRecordPath(paths, sourceId));
   if (record.projectId !== paths.identity.projectId) {
     throw new Error("The source record belongs to another Scient project.");
   }
   if (record.sourceId !== sourceId) throw new Error("The source record identity is inconsistent.");
   return record;
+}
+
+/** Reads one source without scanning or decoding the rest of the project ledger. */
+export async function readScientSourceRecord(
+  root: string,
+  sourceId: string,
+): Promise<ScientSourceRecord | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = sourceRecordPath(paths, sourceId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  return readSourceRecordFromPaths(paths, sourceId);
 }
 
 function sourceHistoryPath(
@@ -280,11 +309,7 @@ async function latestSourceHistoryRevision(
     if (!Number.isSafeInteger(revision) || revision <= 0) {
       throw new Error(`Source history ${entry.name} has an invalid revision.`);
     }
-    const record = await readBoundedJson(
-      NodePath.join(directory, entry.name),
-      MAX_RECORD_BYTES,
-      ScientSourceRecord,
-    );
+    const record = await readBoundedSourceRecord(NodePath.join(directory, entry.name));
     if (
       record.projectId !== paths.identity.projectId ||
       record.sourceId !== sourceId ||
@@ -347,10 +372,8 @@ export async function updateScientSourceMetadata(input: {
       MAX_RECORD_BYTES,
     );
     if (!preserved) {
-      const history = await readBoundedJson(
+      const history = await readBoundedSourceRecord(
         sourceHistoryPath(paths, current.sourceId, current.revision),
-        MAX_RECORD_BYTES,
-        ScientSourceRecord,
       );
       if (JSON.stringify(history) !== JSON.stringify(current)) {
         throw new Error("The source revision history conflicts with the current record.");
@@ -461,11 +484,7 @@ export async function listScientSourceRecords(
   const records: ScientSourceRecord[] = [];
   for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const record = await readBoundedJson(
-      NodePath.join(paths.records, entry.name),
-      MAX_RECORD_BYTES,
-      ScientSourceRecord,
-    );
+    const record = await readBoundedSourceRecord(NodePath.join(paths.records, entry.name));
     if (record.projectId !== paths.identity.projectId) {
       throw new Error(`Source record ${entry.name} belongs to another Scient project.`);
     }
@@ -673,6 +692,7 @@ export async function updateSourceImportOperationItem(input: {
   readonly operationId: string;
   readonly itemKey: string;
   readonly state: "imported" | "skipped" | "failed";
+  readonly duplicateKind?: ScientSourceDuplicateKind;
   readonly sourceId?: string;
   readonly message?: string;
 }): Promise<ScientSourceImportOperation> {
@@ -692,6 +712,7 @@ export async function updateSourceImportOperationItem(input: {
           ? {
               ...item,
               state: input.state,
+              ...(input.duplicateKind ? { duplicateKind: input.duplicateKind } : {}),
               sourceId: input.sourceId ?? null,
               message: input.message ?? null,
             }
@@ -1107,6 +1128,9 @@ export async function importScientSource(input: {
     // immutable revisions. Re-importing that same external source must continue
     // after those revisions rather than collide on the next metadata edit.
     const revision = (await latestSourceHistoryRevision(paths, sourceId)) + 1;
+    const abstract =
+      abstractDocumentFromSections(input.candidate.abstractSections) ??
+      normalizeScientSourceAbstractDocument(input.candidate.abstract);
     const record: ScientSourceRecord = {
       formatVersion: 1,
       sourceId,
@@ -1119,7 +1143,10 @@ export async function importScientSource(input: {
       issuedRaw: input.candidate.issuedRaw,
       issuedYear: input.candidate.issuedYear,
       identifiers: input.candidate.identifiers,
-      abstract: input.candidate.abstract,
+      // The store is the final adapter-independent guard for canonical source
+      // metadata. Future importers cannot persist provider markup accidentally.
+      abstract: abstract?.text ?? null,
+      ...(abstract ? { abstractSections: [...abstract.sections] } : {}),
       containerTitle: input.candidate.containerTitle,
       publisher: input.candidate.publisher,
       volume: input.candidate.volume,

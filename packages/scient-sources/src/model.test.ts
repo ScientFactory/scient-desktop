@@ -2,10 +2,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import { assessSourceDuplicate } from "./duplicates.ts";
-import { ScientSourceCandidate, type ScientSourceRecord } from "./model.ts";
+import {
+  ScientSourceCandidate,
+  scientSourceSummaryFromRecord,
+  type ScientSourceRecord,
+} from "./model.ts";
 import { normalizePersistentIdentifier, sourceMetadataDiagnostics } from "./normalize.ts";
 
-const candidate = Schema.decodeUnknownSync(ScientSourceCandidate)({
+const decodeScientSourceCandidate = Schema.decodeUnknownSync(ScientSourceCandidate);
+const candidate = decodeScientSourceCandidate({
   sourceKey: "ABC123",
   type: "article",
   customType: null,
@@ -70,11 +75,93 @@ function record(overrides: Partial<ScientSourceRecord> = {}): ScientSourceRecord
 }
 
 describe("Scient source model", () => {
+  it("keeps large detail-only metadata out of ledger summaries", () => {
+    const detail = record({
+      abstract: "A very large abstract. ".repeat(1_000),
+      tags: ["reviewed"],
+      fieldProvenance: [{ field: "abstract", origin: "derived", sourceField: null }],
+    });
+    const summary = scientSourceSummaryFromRecord(detail);
+
+    expect(summary).toMatchObject({ sourceId: "source_123", title: "A careful study" });
+    expect(summary).not.toHaveProperty("abstract");
+    expect(summary).not.toHaveProperty("tags");
+    expect(summary).not.toHaveProperty("fieldProvenance");
+    expect(JSON.stringify(summary).length).toBeLessThan(JSON.stringify(detail).length / 10);
+  });
+
+  it("decodes structured abstract retrieval provenance across the public contract", () => {
+    const enriched = decodeScientSourceCandidate({
+      ...candidate,
+      abstract: "Background\n\nReliable evidence.",
+      abstractSections: [{ title: "Background", paragraphs: ["Reliable evidence."] }],
+      fieldProvenance: [
+        {
+          field: "abstract",
+          origin: "pubmed",
+          sourceField: "efetch/AbstractText",
+          sourceIdentifier: { scheme: "pmid", value: "12345678" },
+          retrievedAt: "2026-08-13T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(enriched.fieldProvenance[0]).toMatchObject({
+      origin: "pubmed",
+      sourceIdentifier: { scheme: "pmid", value: "12345678" },
+      retrievedAt: "2026-08-13T10:00:00.000Z",
+    });
+  });
+
   it("normalizes DOI spellings before duplicate comparison", () => {
     expect(normalizePersistentIdentifier("DOI", "https://doi.org/10.1000/Example")).toBe(
       "doi:10.1000/example",
     );
   });
+
+  it("normalizes PMCID and arXiv spellings before duplicate comparison", () => {
+    expect(normalizePersistentIdentifier("PMCID", "PMCID: PMC1234567")).toBe("pmcid:pmc1234567");
+    expect(normalizePersistentIdentifier("arXiv", "https://arxiv.org/pdf/2401.01234.pdf")).toBe(
+      "arxiv:2401.01234",
+    );
+  });
+
+  it.each(["doi", "pmid", "pmcid", "arxiv"])(
+    "treats the work-level %s identifier as authoritative identity",
+    (scheme) => {
+      const identifiers = [{ scheme, value: `${scheme}-work-123` }];
+      expect(
+        assessSourceDuplicate({
+          candidate: {
+            ...candidate,
+            sourceKey: `candidate-${scheme}`,
+            identifiers,
+            externalReferences: [],
+          },
+          existing: [record({ identifiers, externalReferences: [] })],
+        }),
+      ).toMatchObject({ kind: "same-identifier", matchingSourceIds: ["source_123"] });
+    },
+  );
+
+  it.each(["issn", "isbn", "journal-id"])(
+    "does not treat the container-level or unknown %s identifier as work identity",
+    (scheme) => {
+      const identifiers = [{ scheme, value: `${scheme}-shared-123` }];
+      expect(
+        assessSourceDuplicate({
+          candidate: {
+            ...candidate,
+            sourceKey: `candidate-${scheme}`,
+            title: "A different article",
+            identifiers,
+            externalReferences: [],
+          },
+          existing: [record({ identifiers, externalReferences: [] })],
+        }),
+      ).toMatchObject({ kind: "new", matchingSourceIds: [] });
+    },
+  );
 
   it("prefers exact Zotero origin over weaker duplicate signals", () => {
     expect(assessSourceDuplicate({ candidate, existing: [record()] })).toMatchObject({

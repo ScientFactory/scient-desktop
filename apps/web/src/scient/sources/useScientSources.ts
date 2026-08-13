@@ -1,9 +1,12 @@
 import type {
   EnvironmentId,
+  ScientSourceDetailResult,
   ScientSourceImportOperation,
   ScientSourcesPreflightResult,
   ScientSourcesOverviewResult,
   ZoteroConnectionStatus,
+  ZoteroCollection,
+  ZoteroImportScope,
   ZoteroLibraryPage,
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -13,38 +16,98 @@ import {
   advanceSourcesImport,
   beginLocalSourcesImport,
   beginZoteroItemsImport,
+  beginZoteroScopeImport,
   cancelSourcesImport,
   discardLocalSourcePdfs,
   preflightZoteroItems,
   readScientSources,
+  readScientSource,
+  refreshScientSourceMetadata,
   removeScientSource,
   readZoteroLibrary,
+  readZoteroCollections,
   readZoteroStatus,
   uploadLocalSourcePdf,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import {
+  completedImportCounts,
+  preflightImportCounts,
+  reviewedImportCounts,
+  type ScientSourcesImportOutcome,
+  type ScientSourcesImportCounts,
+} from "./importOutcome";
+import { continueSourceImport, stopSourceImportContinuation } from "./importPipeline";
 
 const message = (error: unknown): string => scientSourcesErrorMessage(error, import.meta.env.DEV);
+
+export type { ScientSourcesImportOutcome } from "./importOutcome";
+
+type ImportPreparation =
+  | { readonly kind: "local-files"; readonly names: ReadonlyArray<string> }
+  | { readonly kind: "zotero"; readonly count: number };
+
+const DEFAULT_ZOTERO_SCOPE: ZoteroImportScope = { kind: "library" };
+
+function emptyZoteroPage(scope: ZoteroImportScope): ZoteroLibraryPage {
+  return { scope, items: [], start: 0, nextStart: 0, total: 0, hasMore: false };
+}
+
+function singleMatchingSourceId(preflight: ScientSourcesPreflightResult): string | null {
+  if (preflight.items.length !== 1) return null;
+  const matchingSourceIds = preflight.items[0]?.duplicate.matchingSourceIds ?? [];
+  return matchingSourceIds.length === 1 ? (matchingSourceIds[0] ?? null) : null;
+}
+
+function singleImportedSourceId(operation: ScientSourceImportOperation): string | null {
+  if (operation.items.length !== 1) return null;
+  const item = operation.items[0];
+  return item?.state === "imported" ? item.sourceId : null;
+}
+
+function importOutcomeFromOperation(input: {
+  readonly operation: ScientSourceImportOperation;
+  readonly priorCounts?: ScientSourcesImportCounts;
+  readonly revealSingleSource: boolean;
+}): ScientSourcesImportOutcome {
+  const counts = completedImportCounts(input.operation, input.priorCounts);
+  return {
+    kind:
+      counts.imported > 0
+        ? "imported"
+        : counts.alreadyPresent > 0 && counts.reviewRequired === 0
+          ? "already-present"
+          : "review-required",
+    operation: input.operation,
+    sourceId: input.revealSingleSource ? singleImportedSourceId(input.operation) : null,
+    existingSourceId: null,
+    counts,
+  };
+}
 
 export function useScientSources(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
 }) {
   const [overview, setOverview] = useState<ScientSourcesOverviewResult | null>(null);
+  const [sourceDetails, setSourceDetails] = useState<
+    Readonly<Record<string, ScientSourceDetailResult>>
+  >({});
   const [zoteroStatus, setZoteroStatus] = useState<ZoteroConnectionStatus | null>(null);
   const [library, setLibrary] = useState<ZoteroLibraryPage | null>(null);
+  const [zoteroCollections, setZoteroCollections] = useState<ReadonlyArray<ZoteroCollection>>([]);
+  const [zoteroScope, setZoteroScope] = useState<ZoteroImportScope>(DEFAULT_ZOTERO_SCOPE);
   const [preflight, setPreflight] = useState<ScientSourcesPreflightResult | null>(null);
   const [preflightAdapter, setPreflightAdapter] = useState<"zotero" | "local-files" | null>(null);
   const [operation, setOperation] = useState<ScientSourceImportOperation | null>(null);
   const [busy, setBusy] = useState(false);
-  const [preparingLocalFiles, setPreparingLocalFiles] = useState<ReadonlyArray<string>>([]);
+  const [importPreparation, setImportPreparation] = useState<ImportPreparation | null>(null);
   const [checkingZotero, setCheckingZotero] = useState(false);
   const [zoteroCheckFeedback, setZoteroCheckFeedback] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
   const generation = useRef(0);
-  const cancelRequested = useRef(false);
   const stagedLocalKeys = useRef<ReadonlyArray<string>>([]);
   const contextKey = `${input.environmentId}\0${input.root}`;
   const contextKeyRef = useRef(contextKey);
@@ -77,6 +140,15 @@ export function useScientSources(input: {
     const next = await readScientSources(input.environmentId, input.root);
     if (isCurrentContext()) {
       setOverview(next);
+      setSourceDetails((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([sourceId, detail]) =>
+            next.records.some(
+              (summary) => summary.sourceId === sourceId && summary.revision === detail.revision,
+            ),
+          ),
+        ),
+      );
       if (next.activeOperation) setOperation(next.activeOperation);
     }
     return next;
@@ -95,20 +167,69 @@ export function useScientSources(input: {
     }
   }, [isCurrentContext, refreshOverview]);
 
-  const acceptSourceRecord = useCallback(
-    (record: ScientSourcesOverviewResult["records"][number]) => {
-      setOverview((current) => {
-        if (!current) return current;
-        const recordIndex = current.records.findIndex(
-          (entry) => entry.sourceId === record.sourceId,
-        );
-        if (recordIndex === -1) return current;
-        const records = [...current.records];
-        records[recordIndex] = record;
-        return { ...current, records };
-      });
+  const acceptSourceRecord = useCallback((record: ScientSourceDetailResult) => {
+    setSourceDetails((current) => ({ ...current, [record.sourceId]: record }));
+    setOverview((current) => {
+      if (!current) return current;
+      const recordIndex = current.records.findIndex((entry) => entry.sourceId === record.sourceId);
+      if (recordIndex === -1) return current;
+      const records = [...current.records];
+      records[recordIndex] = {
+        sourceId: record.sourceId,
+        revision: record.revision,
+        type: record.type,
+        title: record.title,
+        creators: record.creators,
+        issuedYear: record.issuedYear,
+        identifiers: record.identifiers,
+        containerTitle: record.containerTitle,
+        url: record.url,
+        externalReferences: record.externalReferences,
+        attachments: record.attachments.map((attachment) => ({
+          attachmentId: attachment.attachmentId,
+          kind: attachment.kind,
+          fileName: attachment.fileName,
+          mediaType: attachment.mediaType,
+        })),
+        importedAt: record.importedAt,
+        ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
+      };
+      return { ...current, records };
+    });
+  }, []);
+
+  const loadSource = useCallback(
+    async (sourceId: string): Promise<ScientSourceDetailResult> => {
+      const cached = sourceDetails[sourceId];
+      const summary = overview?.records.find((record) => record.sourceId === sourceId);
+      if (cached && summary?.revision === cached.revision) return cached;
+      try {
+        const detail = await readScientSource(input.environmentId, { root: input.root, sourceId });
+        if (isCurrentContext()) {
+          setSourceDetails((current) => ({ ...current, [sourceId]: detail }));
+        }
+        return detail;
+      } catch (cause) {
+        if (isCurrentContext()) setError(message(cause));
+        throw cause;
+      }
     },
-    [],
+    [input.environmentId, input.root, isCurrentContext, overview?.records, sourceDetails],
+  );
+
+  const refreshSourceMetadata = useCallback(
+    async (sourceId: string, expectedRevision: number) => {
+      const result = await refreshScientSourceMetadata(input.environmentId, {
+        root: input.root,
+        sourceId,
+        expectedRevision,
+      });
+      if (isCurrentContext() && result.outcome === "stale") {
+        acceptSourceRecord(result.record);
+      }
+      return result;
+    },
+    [acceptSourceRecord, input.environmentId, input.root, isCurrentContext],
   );
 
   const removeSource = useCallback(
@@ -122,6 +243,10 @@ export function useScientSources(input: {
           expectedRevision,
         });
         if (isCurrentContext() && result.outcome !== "stale") {
+          setSourceDetails((current) => {
+            const { [sourceId]: _removed, ...remaining } = current;
+            return remaining;
+          });
           setOverview((current) =>
             current
               ? {
@@ -151,18 +276,20 @@ export function useScientSources(input: {
 
   useEffect(() => {
     setOverview(null);
+    setSourceDetails({});
     setLibrary(null);
+    setZoteroCollections([]);
+    setZoteroScope(DEFAULT_ZOTERO_SCOPE);
     setPreflight(null);
     setPreflightAdapter(null);
     setOperation(null);
     setZoteroStatus(null);
     setBusy(false);
-    setPreparingLocalFiles([]);
+    setImportPreparation(null);
     setCheckingZotero(false);
     setZoteroCheckFeedback(null);
     setCancelling(false);
     setError(null);
-    cancelRequested.current = false;
     const request = ++generation.current;
     void refreshOverview().catch((cause) => {
       if (isCurrentContext() && generation.current === request) setError(message(cause));
@@ -207,11 +334,16 @@ export function useScientSources(input: {
   );
 
   const searchZotero = useCallback(
-    async (query: string, start = 0) => {
+    async (query: string, start = 0, scope: ZoteroImportScope = zoteroScope) => {
       setBusy(true);
       setError(null);
       try {
-        const page = await readZoteroLibrary(input.environmentId, { query, start, limit: 50 });
+        const page = await readZoteroLibrary(input.environmentId, {
+          scope,
+          query,
+          start,
+          limit: 50,
+        });
         if (isCurrentContext()) {
           setLibrary((current) => {
             if (start === 0 || !current) return page;
@@ -229,48 +361,268 @@ export function useScientSources(input: {
         if (isCurrentContext()) setBusy(false);
       }
     },
-    [input.environmentId, isCurrentContext],
-  );
-
-  const previewImport = useCallback(
-    async (itemKeys: ReadonlyArray<string>) => {
-      setBusy(true);
-      setError(null);
-      try {
-        const result = await preflightZoteroItems(input.environmentId, {
-          root: input.root,
-          itemKeys,
-        });
-        if (isCurrentContext()) {
-          setPreflight(result);
-          setPreflightAdapter("zotero");
-        }
-      } catch (cause) {
-        if (isCurrentContext()) setError(message(cause));
-      } finally {
-        if (isCurrentContext()) setBusy(false);
-      }
-    },
-    [input.environmentId, input.root, isCurrentContext],
+    [input.environmentId, isCurrentContext, zoteroScope],
   );
 
   const openZoteroLibrary = useCallback(
     async (showRetryFeedback = false) => {
       const status = await checkZotero(showRetryFeedback);
-      if (status?.state === "ready") await searchZotero("", 0);
+      if (status?.state === "ready") {
+        if (isCurrentContext()) {
+          setZoteroScope(DEFAULT_ZOTERO_SCOPE);
+          setLibrary(emptyZoteroPage(DEFAULT_ZOTERO_SCOPE));
+        }
+        try {
+          const [collections] = await Promise.all([
+            readZoteroCollections(input.environmentId),
+            searchZotero("", 0, DEFAULT_ZOTERO_SCOPE),
+          ]);
+          if (isCurrentContext()) setZoteroCollections(collections.collections);
+        } catch (cause) {
+          if (isCurrentContext()) setError(message(cause));
+        }
+      }
       return status;
     },
-    [checkZotero, searchZotero],
+    [checkZotero, input.environmentId, isCurrentContext, searchZotero],
   );
 
-  const uploadLocalFiles = useCallback(
-    async (files: ReadonlyArray<File>) => {
-      if (files.length === 0) return;
-      setPreparingLocalFiles(files.map((file) => file.name));
+  const selectZoteroScope = useCallback(
+    async (scope: ZoteroImportScope) => {
+      setZoteroScope(scope);
+      setLibrary(emptyZoteroPage(scope));
+      await searchZotero("", 0, scope);
+    },
+    [searchZotero],
+  );
+
+  const importZoteroScope = useCallback(async (): Promise<ScientSourcesImportOutcome | null> => {
+    const count = library?.total ?? 0;
+    if (count === 0) return null;
+    setImportPreparation({ kind: "zotero", count });
+    setOperation(null);
+    setBusy(true);
+    setError(null);
+    const request = ++generation.current;
+    try {
+      let next = await beginZoteroScopeImport(input.environmentId, {
+        root: input.root,
+        operationId: randomUUID(),
+        scope: zoteroScope,
+      });
+      if (isCurrentContext() && generation.current === request) {
+        setImportPreparation(null);
+        setOperation(next);
+        setLibrary(null);
+      }
+      next = await continueSourceImport({
+        environmentId: input.environmentId,
+        root: input.root,
+        operation: next,
+        advance: (operationId) =>
+          advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
+        onProgress: (value) => {
+          if (isCurrentContext() && generation.current === request) setOperation(value);
+        },
+      });
+      if (isCurrentContext() && generation.current === request) {
+        setOperation(next);
+        await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+      }
+      return importOutcomeFromOperation({ operation: next, revealSingleSource: false });
+    } catch (cause) {
+      if (isCurrentContext() && generation.current === request) setError(message(cause));
+      return null;
+    } finally {
+      if (isCurrentContext() && generation.current === request) {
+        setImportPreparation(null);
+        setBusy(false);
+      }
+    }
+  }, [
+    input.environmentId,
+    input.root,
+    isCurrentContext,
+    library?.total,
+    refreshOverview,
+    zoteroScope,
+  ]);
+
+  const executeImport = useCallback(
+    async (options: {
+      readonly adapter: "zotero" | "local-files";
+      readonly itemKeys: ReadonlyArray<string>;
+      readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+      readonly allLocalItemKeys?: ReadonlyArray<string>;
+      readonly request: number;
+      readonly revealSingleSource: boolean;
+      readonly priorCounts?: ScientSourcesImportCounts;
+      readonly onStarted?: () => void;
+    }): Promise<ScientSourcesImportOutcome> => {
+      const begin =
+        options.adapter === "local-files" ? beginLocalSourcesImport : beginZoteroItemsImport;
+      let next = await begin(input.environmentId, {
+        root: input.root,
+        operationId: randomUUID(),
+        itemKeys: options.itemKeys,
+        possibleMetadataMatchOverrides: options.possibleMetadataMatchOverrides,
+      });
+      options.onStarted?.();
+
+      if (options.adapter === "local-files") {
+        const selectedKeys = new Set(options.itemKeys);
+        const unselectedKeys = (options.allLocalItemKeys ?? []).filter(
+          (itemKey) => !selectedKeys.has(itemKey),
+        );
+        stagedLocalKeys.current = [];
+        if (unselectedKeys.length > 0) {
+          await discardLocalSourcePdfs(input.environmentId, {
+            root: input.root,
+            itemKeys: unselectedKeys,
+          }).catch(() => undefined);
+        }
+      }
+
+      const reportProgress = (value: ScientSourceImportOperation) => {
+        if (isCurrentContext() && generation.current === options.request) setOperation(value);
+      };
+      if (isCurrentContext() && generation.current === options.request) {
+        setImportPreparation(null);
+        setOperation(next);
+        setPreflight(null);
+        setPreflightAdapter(null);
+        setLibrary(null);
+      }
+      next = await continueSourceImport({
+        environmentId: input.environmentId,
+        root: input.root,
+        operation: next,
+        advance: (operationId) =>
+          advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
+        onProgress: reportProgress,
+      });
+
+      if (isCurrentContext() && generation.current === options.request) {
+        setOperation(next);
+        await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+      }
+      return importOutcomeFromOperation({
+        operation: next,
+        revealSingleSource: options.revealSingleSource,
+        ...(options.priorCounts ? { priorCounts: options.priorCounts } : {}),
+      });
+    },
+    [input.environmentId, input.root, isCurrentContext, refreshOverview],
+  );
+
+  const importPreflight = useCallback(
+    async (options: {
+      readonly adapter: "zotero" | "local-files";
+      readonly result: ScientSourcesPreflightResult;
+      readonly request: number;
+      readonly onStarted?: () => void;
+    }): Promise<ScientSourcesImportOutcome | null> => {
+      const allItemKeys = options.result.items.map((item) => item.candidate.sourceKey);
+      const counts = preflightImportCounts(options.result);
+      const needsDuplicateDecision = options.result.items.some(
+        (item) => item.duplicate.kind === "possible-metadata-match",
+      );
+      if (needsDuplicateDecision) {
+        if (isCurrentContext() && generation.current === options.request) {
+          if (options.adapter === "local-files") stagedLocalKeys.current = allItemKeys;
+          setImportPreparation(null);
+          setPreflight(options.result);
+          setPreflightAdapter(options.adapter);
+        } else if (options.adapter === "local-files") {
+          await discardLocalSourcePdfs(input.environmentId, {
+            root: input.root,
+            itemKeys: allItemKeys,
+          }).catch(() => undefined);
+        }
+        return {
+          kind: "review-required",
+          operation: null,
+          sourceId: null,
+          existingSourceId: null,
+          counts,
+        };
+      }
+
+      const itemKeys = options.result.items.flatMap((item) =>
+        item.duplicate.kind === "new" ? [item.candidate.sourceKey] : [],
+      );
+      if (itemKeys.length === 0) {
+        if (options.adapter === "local-files" && allItemKeys.length > 0) {
+          await discardLocalSourcePdfs(input.environmentId, {
+            root: input.root,
+            itemKeys: allItemKeys,
+          }).catch(() => undefined);
+        }
+        if (isCurrentContext() && generation.current === options.request) {
+          setImportPreparation(null);
+          setLibrary(null);
+          await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+        }
+        return {
+          kind: "already-present",
+          operation: null,
+          sourceId: null,
+          existingSourceId: singleMatchingSourceId(options.result),
+          counts,
+        };
+      }
+
+      return executeImport({
+        adapter: options.adapter,
+        itemKeys,
+        possibleMetadataMatchOverrides: [],
+        ...(options.adapter === "local-files" ? { allLocalItemKeys: allItemKeys } : {}),
+        request: options.request,
+        revealSingleSource: options.result.items.length === 1,
+        priorCounts: counts,
+        ...(options.onStarted ? { onStarted: options.onStarted } : {}),
+      });
+    },
+    [executeImport, input.environmentId, input.root, isCurrentContext, refreshOverview],
+  );
+
+  const previewImport = useCallback(
+    async (itemKeys: ReadonlyArray<string>): Promise<ScientSourcesImportOutcome | null> => {
+      if (itemKeys.length === 0) return null;
+      setOperation(null);
+      setImportPreparation({ kind: "zotero", count: itemKeys.length });
       setBusy(true);
       setError(null);
       const request = ++generation.current;
-      const items = [];
+      try {
+        const result = await preflightZoteroItems(input.environmentId, {
+          root: input.root,
+          itemKeys,
+        });
+        return await importPreflight({ adapter: "zotero", result, request });
+      } catch (cause) {
+        if (isCurrentContext() && generation.current === request) setError(message(cause));
+        return null;
+      } finally {
+        if (isCurrentContext() && generation.current === request) {
+          setImportPreparation(null);
+          setBusy(false);
+        }
+      }
+    },
+    [importPreflight, input.environmentId, input.root, isCurrentContext],
+  );
+
+  const uploadLocalFiles = useCallback(
+    async (files: ReadonlyArray<File>): Promise<ScientSourcesImportOutcome | null> => {
+      if (files.length === 0) return null;
+      setOperation(null);
+      setImportPreparation({ kind: "local-files", names: files.map((file) => file.name) });
+      setBusy(true);
+      setError(null);
+      const request = ++generation.current;
+      const items: ScientSourcesPreflightResult["items"][number][] = [];
+      let operationStarted = false;
       try {
         for (const file of files) {
           if (
@@ -285,105 +637,71 @@ export function useScientSources(input: {
             file,
           });
           items.push(result.item);
-          if (!isCurrentContext() || generation.current !== request) {
-            await discardLocalSourcePdfs(input.environmentId, {
-              root: input.root,
-              itemKeys: items.map((item) => item.candidate.sourceKey),
-            }).catch(() => undefined);
-            return;
-          }
         }
-        const unique = new Map(items.map((item) => [item.candidate.sourceKey, item]));
-        if (isCurrentContext() && generation.current === request) {
-          const uploadedItems = [...unique.values()];
-          stagedLocalKeys.current = uploadedItems.map((item) => item.candidate.sourceKey);
-          setPreflight({ items: uploadedItems });
-          setPreflightAdapter("local-files");
-        }
+        const uploadedItems = [
+          ...new Map(items.map((item) => [item.candidate.sourceKey, item])).values(),
+        ];
+        return await importPreflight({
+          adapter: "local-files",
+          result: { items: uploadedItems },
+          request,
+          onStarted: () => {
+            operationStarted = true;
+          },
+        });
       } catch (cause) {
-        if (items.length > 0) {
+        if (!operationStarted && items.length > 0) {
           await discardLocalSourcePdfs(input.environmentId, {
             root: input.root,
             itemKeys: items.map((item) => item.candidate.sourceKey),
           }).catch(() => undefined);
         }
         if (isCurrentContext() && generation.current === request) setError(message(cause));
+        return null;
       } finally {
         if (isCurrentContext() && generation.current === request) {
-          setPreparingLocalFiles([]);
+          setImportPreparation(null);
           setBusy(false);
         }
       }
     },
-    [input.environmentId, input.root, isCurrentContext],
+    [importPreflight, input.environmentId, input.root, isCurrentContext],
   );
 
   const runImport = useCallback(
     async (
       itemKeys: ReadonlyArray<string>,
       possibleMetadataMatchOverrides: ReadonlyArray<string>,
-    ) => {
+    ): Promise<ScientSourcesImportOutcome | null> => {
+      if (!preflight || !preflightAdapter || itemKeys.length === 0) return null;
       setBusy(true);
       setCancelling(false);
       setError(null);
-      cancelRequested.current = false;
       const request = ++generation.current;
       try {
-        const begin =
-          preflightAdapter === "local-files" ? beginLocalSourcesImport : beginZoteroItemsImport;
-        let next = await begin(input.environmentId, {
-          root: input.root,
-          operationId: randomUUID(),
+        const selectedKeys = new Set(itemKeys);
+        const reviewedCounts = reviewedImportCounts(preflight, selectedKeys);
+        return await executeImport({
+          adapter: preflightAdapter,
           itemKeys,
           possibleMetadataMatchOverrides,
+          ...(preflightAdapter === "local-files"
+            ? {
+                allLocalItemKeys: preflight.items.map((item) => item.candidate.sourceKey),
+              }
+            : {}),
+          request,
+          revealSingleSource: preflight.items.length === 1,
+          priorCounts: reviewedCounts,
         });
-        if (preflightAdapter === "local-files") {
-          const selectedKeys = new Set(itemKeys);
-          const unselectedKeys = (preflight?.items ?? []).flatMap((item) =>
-            selectedKeys.has(item.candidate.sourceKey) ? [] : [item.candidate.sourceKey],
-          );
-          stagedLocalKeys.current = [];
-          if (unselectedKeys.length > 0) {
-            await discardLocalSourcePdfs(input.environmentId, {
-              root: input.root,
-              itemKeys: unselectedKeys,
-            }).catch(() => undefined);
-          }
-        }
-        if (isCurrentContext() && generation.current === request) setOperation(next);
-        while (
-          !cancelRequested.current &&
-          next.state === "running" &&
-          next.items.some((item) => item.state === "pending")
-        ) {
-          next = await advanceSourcesImport(input.environmentId, {
-            root: input.root,
-            operationId: next.operationId,
-          });
-          if (!isCurrentContext() || generation.current !== request) return;
-          setOperation(next);
-        }
-        if (isCurrentContext() && generation.current === request) {
-          setOperation(next);
-          setPreflight(null);
-          setPreflightAdapter(null);
-          setLibrary(null);
-          await refreshOverview();
-        }
       } catch (cause) {
         if (isCurrentContext() && generation.current === request) setError(message(cause));
+        return null;
       } finally {
         if (isCurrentContext() && generation.current === request) setBusy(false);
       }
     },
-    [
-      input.environmentId,
-      input.root,
-      isCurrentContext,
-      preflight,
-      preflightAdapter,
-      refreshOverview,
-    ],
+    [executeImport, isCurrentContext, preflight, preflightAdapter],
   );
 
   const resumeImport = useCallback(async () => {
@@ -391,22 +709,18 @@ export function useScientSources(input: {
     setBusy(true);
     setCancelling(false);
     setError(null);
-    cancelRequested.current = false;
     const request = ++generation.current;
-    let next = operation;
     try {
-      while (
-        !cancelRequested.current &&
-        next.state === "running" &&
-        next.items.some((item) => item.state === "pending")
-      ) {
-        next = await advanceSourcesImport(input.environmentId, {
-          root: input.root,
-          operationId: next.operationId,
-        });
-        if (!isCurrentContext() || generation.current !== request) return;
-        setOperation(next);
-      }
+      const next = await continueSourceImport({
+        environmentId: input.environmentId,
+        root: input.root,
+        operation,
+        advance: (operationId) =>
+          advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
+        onProgress: (value) => {
+          if (isCurrentContext() && generation.current === request) setOperation(value);
+        },
+      });
       if (isCurrentContext() && generation.current === request) {
         setOperation(next);
         await refreshOverview();
@@ -418,9 +732,18 @@ export function useScientSources(input: {
     }
   }, [busy, input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
 
+  useEffect(() => {
+    if (!operation || operation.state !== "running" || busy || cancelling) return;
+    void resumeImport();
+  }, [busy, cancelling, operation, resumeImport]);
+
   const cancelImport = useCallback(async () => {
-    if (!operation || operation.state !== "running" || cancelRequested.current) return;
-    cancelRequested.current = true;
+    if (!operation || operation.state !== "running" || cancelling) return;
+    stopSourceImportContinuation({
+      environmentId: input.environmentId,
+      projectId: operation.projectId,
+      operationId: operation.operationId,
+    });
     generation.current += 1;
     setCancelling(true);
     setBusy(true);
@@ -442,9 +765,8 @@ export function useScientSources(input: {
         setBusy(false);
         setCancelling(false);
       }
-      cancelRequested.current = false;
     }
-  }, [input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
+  }, [cancelling, input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
 
   return {
     busy,
@@ -452,16 +774,21 @@ export function useScientSources(input: {
     cancelling,
     error,
     overview,
+    sourceDetails,
     zoteroStatus,
+    zoteroCollections,
+    zoteroScope,
     zoteroCheckFeedback,
     library,
     preflight,
     preflightAdapter,
     operation,
-    preparingLocalFiles,
+    importPreparation,
     openZoteroLibrary,
     uploadLocalFiles,
     searchZotero,
+    selectZoteroScope,
+    importZoteroScope,
     previewImport,
     runImport,
     cancelImport,
@@ -469,6 +796,8 @@ export function useScientSources(input: {
     refreshOverview,
     reloadOverview,
     acceptSourceRecord,
+    loadSource,
+    refreshSourceMetadata,
     removeSource,
     closeZoteroStatus: () => setZoteroStatus(null),
     closeLibrary: () => setLibrary(null),

@@ -17,9 +17,15 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
   advanceSourceImport,
+  applyRefreshedSourceMetadata,
   assessSourcePreflightDuplicate,
   beginLocalPdfImport,
+  beginZoteroImport,
+  beginZoteroScopedImport,
+  getScientSourcesOverview,
+  getScientSourceDetail,
   getScientSourceAttachmentPreviewMaterial,
+  refreshScientSourceMetadata,
   removeSource,
   uploadLocalPdfSource,
   updateScientSource,
@@ -67,6 +73,123 @@ afterEach(async () => {
 });
 
 describe("ScientSourcesCoordinator", () => {
+  it("replays a started scoped Zotero import without contacting Zotero again", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-scope-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const operationId = NodeCrypto.randomUUID();
+    const started = await beginZoteroImport({
+      root,
+      operationId,
+      itemKeys: ["ABCD2345"],
+      possibleMetadataMatchOverrides: [],
+    });
+
+    await expect(
+      beginZoteroScopedImport({ root, operationId, scope: { kind: "library" } }),
+    ).resolves.toStrictEqual(started);
+  });
+
+  it("presents legacy markup as clean text without rewriting project evidence", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-legacy-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const identity = await readScientProjectIdentity(root);
+    const record = {
+      formatVersion: 1 as const,
+      sourceId: "source_legacy_abstract",
+      projectId: identity.projectId,
+      revision: 1,
+      type: "article" as const,
+      customType: null,
+      title: "Legacy abstract",
+      creators: [],
+      issuedRaw: null,
+      issuedYear: null,
+      identifiers: [],
+      abstract:
+        "<jats:sec><jats:title>Results</jats:title><jats:p>Readable evidence.</jats:p></jats:sec>",
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      attachments: [],
+      fieldProvenance: [],
+      importedAt: "2026-08-12T12:00:00.000Z",
+    };
+    const recordsDirectory = NodePath.join(root, SCIENT_SOURCE_RECORDS_DIRECTORY);
+    await NodeFSP.mkdir(recordsDirectory, { recursive: true });
+    const recordPath = NodePath.join(recordsDirectory, `${record.sourceId}.json`);
+    const persisted = `${JSON.stringify(record, null, 2)}\n`;
+    await NodeFSP.writeFile(recordPath, persisted, "utf8");
+
+    const overview = await getScientSourcesOverview(root);
+    const detail = await getScientSourceDetail({ root, sourceId: record.sourceId });
+
+    expect(overview.records[0]).not.toHaveProperty("abstract");
+    expect(detail.abstract).toBe("Results\n\nReadable evidence.");
+    expect(detail.abstractSections).toEqual([
+      { title: "Results", paragraphs: ["Readable evidence."] },
+    ]);
+    expect(await NodeFSP.readFile(recordPath, "utf8")).toBe(persisted);
+  });
+
+  it("does not present a legacy PDF Subject as a scholarly abstract", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-subject-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const identity = await readScientProjectIdentity(root);
+    const record = {
+      formatVersion: 1 as const,
+      sourceId: "src_legacy_pdf_subject",
+      projectId: identity.projectId,
+      revision: 1,
+      type: "article" as const,
+      customType: null,
+      title: "A journal article",
+      creators: [],
+      issuedRaw: "2021",
+      issuedYear: 2021,
+      identifiers: [],
+      abstract: "Health Affairs 2021.40:251-257",
+      containerTitle: "Health Affairs",
+      publisher: null,
+      volume: "40",
+      issue: "2",
+      pages: "251-257",
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      attachments: [],
+      fieldProvenance: [
+        {
+          field: "abstract",
+          origin: "local-pdf" as const,
+          sourceField: "document-info/subject",
+        },
+      ],
+      importedAt: "2026-08-13T06:00:00.000Z",
+    };
+    const recordsDirectory = NodePath.join(root, SCIENT_SOURCE_RECORDS_DIRECTORY);
+    await NodeFSP.mkdir(recordsDirectory, { recursive: true });
+    const recordPath = NodePath.join(recordsDirectory, `${record.sourceId}.json`);
+    const persisted = `${JSON.stringify(record, null, 2)}\n`;
+    await NodeFSP.writeFile(recordPath, persisted, "utf8");
+
+    const overview = await getScientSourcesOverview(root);
+    const detail = await getScientSourceDetail({ root, sourceId: record.sourceId });
+
+    expect(overview.records[0]).not.toHaveProperty("abstract");
+    expect(detail.abstract).toBeNull();
+    expect(await NodeFSP.readFile(recordPath, "utf8")).toBe(persisted);
+  });
+
   it("imports a local PDF through the same durable source operation model", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-local-"));
     fixtures.push(root);
@@ -99,7 +222,11 @@ describe("ScientSourcesCoordinator", () => {
     expect(operation.adapter).toBe("local-files");
 
     const completed = await advanceSourceImport({ root, operationId });
-    expect(completed).toMatchObject({ state: "completed", adapter: "local-files" });
+    expect(completed).toMatchObject({
+      state: "completed",
+      adapter: "local-files",
+      items: [{ state: "imported", duplicateKind: "new" }],
+    });
     const records = await listScientSourceRecords(root);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
@@ -110,6 +237,38 @@ describe("ScientSourcesCoordinator", () => {
     await expect(
       readScientSourceStagedMaterial(root, uploaded.item.candidate.sourceKey),
     ).rejects.toThrow();
+  });
+
+  it("imports every unique PDF in one local multi-file operation", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-multi-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const paths = [NodePath.join(root, "First_study.pdf"), NodePath.join(root, "Second_study.pdf")];
+    await Promise.all([
+      NodeFSP.writeFile(paths[0]!, "%PDF-1.7\nfirst source\n", "utf8"),
+      NodeFSP.writeFile(paths[1]!, "%PDF-1.7\nsecond source\n", "utf8"),
+    ]);
+    const uploaded = await Promise.all(
+      paths.map((sourcePath) =>
+        uploadLocalPdfSource({ root, sourcePath, fileName: NodePath.basename(sourcePath) }),
+      ),
+    );
+    const operationId = NodeCrypto.randomUUID();
+    let operation = await beginLocalPdfImport({
+      root,
+      operationId,
+      itemKeys: uploaded.map((item) => item.item.candidate.sourceKey),
+      possibleMetadataMatchOverrides: [],
+    });
+    while (operation.state === "running") {
+      operation = await advanceSourceImport({ root, operationId });
+    }
+
+    expect(operation.items).toMatchObject([
+      { state: "imported", duplicateKind: "new" },
+      { state: "imported", duplicateKind: "new" },
+    ]);
+    await expect(listScientSourceRecords(root)).resolves.toHaveLength(2);
   });
 
   it("refuses a staged PDF that changed after the researcher reviewed it", async () => {
@@ -167,8 +326,9 @@ describe("ScientSourcesCoordinator", () => {
       candidate,
       pdfPath,
     });
-    const attachment = imported.record?.attachments[0];
-    if (!attachment) throw new Error("Expected an imported attachment.");
+    const record = imported.record;
+    const attachment = record?.attachments[0];
+    if (!record || !attachment) throw new Error("Expected an imported attachment.");
 
     const material = await getScientSourceAttachmentPreviewMaterial({
       root,
@@ -180,6 +340,19 @@ describe("ScientSourcesCoordinator", () => {
       [".scient", "sources", "files", "sha256"].join(NodePath.sep),
     );
     expect(await NodeFSP.readFile(material.absolutePath, "utf8")).toBe("%PDF-1.7\npreview\n");
+
+    // Direct source/attachment reads must not decode unrelated ledger entries.
+    await NodeFSP.writeFile(
+      NodePath.join(root, SCIENT_SOURCE_RECORDS_DIRECTORY, "unrelated.json"),
+      "{ malformed",
+      "utf8",
+    );
+    await expect(getScientSourceDetail({ root, sourceId: record.sourceId })).resolves.toMatchObject(
+      {
+        sourceId: record.sourceId,
+      },
+    );
+    await NodeFSP.rm(NodePath.join(root, SCIENT_SOURCE_RECORDS_DIRECTORY, "unrelated.json"));
     await expect(
       getScientSourceAttachmentPreviewMaterial({ root, attachmentId: "pdf_missing" }),
     ).rejects.toThrow("The source attachment was not found in this project.");
@@ -253,6 +426,86 @@ describe("ScientSourcesCoordinator", () => {
       outcome: "updated",
       record: { revision: 2, title: "Corrected through the coordinator" },
     });
+  });
+
+  it("destructively refreshes only evidence-backed, non-empty metadata in one revision", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        title: "PEDS_20174087 1..3",
+        abstract: "Keep this abstract.",
+      },
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const result = await applyRefreshedSourceMetadata({
+      root,
+      record,
+      candidate: {
+        ...candidate,
+        title: "Timing and Location of Emergency Department Revisits",
+        creators: [
+          {
+            creatorType: "author",
+            givenName: "Daniel",
+            familyName: "Goldman",
+            literalName: null,
+          },
+        ],
+        abstract: null,
+        fieldProvenance: [
+          { field: "title", origin: "local-pdf", sourceField: "document-info/title" },
+          { field: "creators", origin: "doi", sourceField: "author" },
+        ],
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "refreshed",
+      record: {
+        revision: 2,
+        title: "Timing and Location of Emergency Department Revisits",
+        creators: [{ familyName: "Goldman" }],
+        abstract: "Keep this abstract.",
+      },
+    });
+    expect((await listScientSourceRecords(root))[0]).toMatchObject({
+      revision: 2,
+      title: "Timing and Location of Emergency Department Revisits",
+      abstract: "Keep this abstract.",
+    });
+  });
+
+  it("returns a non-mutating unavailable result without a PDF or resolvable identifier", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    await expect(
+      refreshScientSourceMetadata({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "unavailable",
+      record: { revision: 1 },
+      changedFields: [],
+    });
+    expect((await listScientSourceRecords(root))[0]?.revision).toBe(1);
   });
 
   it("removes a source through the environment coordinator", async () => {

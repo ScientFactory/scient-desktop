@@ -1,18 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This adapter reads an environment-local staged PDF.
 // @effect-diagnostics globalDate:off -- Staged project metadata uses an interoperable ISO timestamp.
-import * as NodeHttps from "node:https";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeURL from "node:url";
 
 import {
   assessSourceDuplicate,
+  normalizeScientSourceAbstractDocument,
   sourceMetadataDiagnostics,
   type ScientSourceCandidate,
   type ScientSourceCreator,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourcePreflightItem,
+  type ScientSourceRecord,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 import {
@@ -26,12 +26,10 @@ import {
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-const METADATA_TIMEOUT_MS = 5_000;
-const MAX_METADATA_RESPONSE_BYTES = 2 * 1024 * 1024;
+import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
+import { enrichScientSourceCandidate, requestMetadataJson } from "./SourceMetadataEnricher.ts";
+
 const MAX_EXTRACTED_TEXT_LENGTH = 64 * 1024;
-const PUBMED_REQUEST_INTERVAL_MS = 350;
-let nextPubmedRequestAt = 0;
-let pubmedRequestLane: Promise<void> = Promise.resolve();
 
 const PdfInfo = Schema.Struct({
   Title: Schema.optionalKey(Schema.Unknown),
@@ -112,6 +110,43 @@ function text(value: unknown): string | null {
 function year(value: string | null | undefined): number | null {
   const match = value?.match(/(?:^|\D)(1[5-9]\d{2}|20\d{2}|21\d{2})(?:\D|$)/u);
   return match?.[1] ? Number.parseInt(match[1], 10) : null;
+}
+
+function embeddedTitleWordCount(value: string): number {
+  return value.match(/\p{L}[\p{L}\p{M}'’.-]*/gu)?.filter((word) => word.length > 1).length ?? 0;
+}
+
+function looksLikeFileLabel(value: string): boolean {
+  const fileShaped = /[\\/_]/u.test(value) || /\.pdf$/iu.test(value);
+  return fileShaped && embeddedTitleWordCount(value) <= 2;
+}
+
+function selectEmbeddedPdfTitle(input: {
+  readonly xmpTitle: unknown;
+  readonly infoTitle: unknown;
+  readonly fallbackTitle: string | null;
+}): string | null {
+  const xmpTitle = text(input.xmpTitle);
+  const infoTitle = text(input.infoTitle);
+  if (
+    xmpTitle &&
+    infoTitle &&
+    xmpTitle !== infoTitle &&
+    looksLikeFileLabel(xmpTitle) &&
+    embeddedTitleWordCount(infoTitle) >= 3
+  ) {
+    return infoTitle;
+  }
+  return xmpTitle ?? infoTitle ?? input.fallbackTitle;
+}
+
+function normalizeEmbeddedPdfDate(value: unknown): string | null {
+  const raw = text(value);
+  if (!raw) return null;
+  const pdfDate = raw.match(
+    /^D:(1[5-9]\d{2}|20\d{2}|21\d{2})(?:\d{2}){0,5}(?:Z|[+-]\d{2}'?\d{2}'?)?$/u,
+  );
+  return pdfDate?.[1] ?? raw;
 }
 
 function embeddedCreatorNames(value: unknown): ReadonlyArray<string> {
@@ -234,6 +269,7 @@ function candidateFromCsl(input: {
         : []),
     ...input.fallback.identifiers,
   ]);
+  const abstract = normalizeScientSourceAbstractDocument(input.csl.abstract);
   const candidate: ScientSourceCandidate = {
     ...input.fallback,
     sourceKey: input.sourceKey,
@@ -245,7 +281,12 @@ function candidateFromCsl(input: {
     issuedRaw: issuedRaw ?? input.fallback.issuedRaw,
     issuedYear: issuedYear ?? input.fallback.issuedYear,
     identifiers,
-    abstract: text(input.csl.abstract) ?? input.fallback.abstract,
+    abstract: abstract?.text ?? input.fallback.abstract,
+    ...(abstract
+      ? { abstractSections: [...abstract.sections] }
+      : input.fallback.abstractSections
+        ? { abstractSections: input.fallback.abstractSections }
+        : {}),
     containerTitle: text(input.csl["container-title"]) ?? input.fallback.containerTitle,
     publisher: text(input.csl.publisher) ?? input.fallback.publisher,
     volume: text(input.csl.volume) ?? input.fallback.volume,
@@ -345,58 +386,10 @@ function candidateFromPubmed(input: {
   };
 }
 
-function requestJson(
-  url: URL,
-  headers: Readonly<Record<string, string>>,
-  redirects = 0,
-): Promise<unknown> {
-  if (url.protocol !== "https:") throw new Error("Metadata requests must use HTTPS.");
-  if (redirects > 4) throw new Error("The metadata service redirected too many times.");
-  return new Promise((resolve, reject) => {
-    const request = NodeHttps.get(url, { headers }, (response) => {
-      const status = response.statusCode ?? 0;
-      if (status >= 300 && status < 400 && response.headers.location) {
-        response.resume();
-        void requestJson(new URL(response.headers.location, url), headers, redirects + 1).then(
-          resolve,
-          reject,
-        );
-        return;
-      }
-      if (status < 200 || status >= 300) {
-        response.resume();
-        reject(new Error(`The metadata service returned HTTP ${status}.`));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let length = 0;
-      response.on("data", (chunk: Buffer) => {
-        length += chunk.byteLength;
-        if (length > MAX_METADATA_RESPONSE_BYTES) {
-          request.destroy(new Error("The metadata service returned too much data."));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("end", () => {
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
-        } catch (error) {
-          reject(error);
-        }
-      });
-    });
-    request.setTimeout(METADATA_TIMEOUT_MS, () => {
-      request.destroy(new Error("The metadata request timed out."));
-    });
-    request.on("error", reject);
-  });
-}
-
 async function resolveDoi(doi: string): Promise<CslMetadata | null> {
   try {
     const encodedDoi = doi.split("/").map(encodeURIComponent).join("/");
-    const value = await requestJson(new URL(`https://doi.org/${encodedDoi}`), {
+    const value = await requestMetadataJson(new URL(`https://doi.org/${encodedDoi}`), {
       Accept: "application/vnd.citationstyles.csl+json",
       "User-Agent": "Scient/0.0 (source metadata resolution)",
     });
@@ -408,27 +401,17 @@ async function resolveDoi(doi: string): Promise<CslMetadata | null> {
 
 async function resolvePubmed(pmid: string): Promise<typeof PubmedSummary.Type | null> {
   try {
-    let release: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const previous = pubmedRequestLane;
-    pubmedRequestLane = previous.catch(() => undefined).then(() => gate);
-    await previous.catch(() => undefined);
-    const waitMs = Math.max(0, nextPubmedRequestAt - Date.now());
-    if (waitMs > 0) await NodeTimersPromises.setTimeout(waitMs);
-    nextPubmedRequestAt = Date.now() + PUBMED_REQUEST_INTERVAL_MS;
-    release?.();
-
     const parameters = new URLSearchParams({
       db: "pubmed",
       id: pmid,
       retmode: "json",
       tool: "scient_desktop",
     });
-    const value = await requestJson(
-      new URL(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?${parameters}`),
-      { "User-Agent": "Scient/0.0 (source metadata resolution)" },
+    const value = await runWithNcbiRequestLimit(() =>
+      requestMetadataJson(
+        new URL(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?${parameters}`),
+        { "User-Agent": "Scient/0.0 (source metadata resolution)" },
+      ),
     );
     const decoded = decodePubmedResponse(value);
     const summary = decoded.result[pmid];
@@ -439,9 +422,21 @@ async function resolvePubmed(pmid: string): Promise<typeof PubmedSummary.Type | 
 }
 
 function uniqueDoi(textValue: string): string | null {
+  const normalizedContexts = [
+    ...textValue.matchAll(/\bDOI\s*:?\s*.{0,192}/giu),
+    ...textValue.matchAll(
+      /(?:https?\s*:\s*\/\s*\/\s*)?(?:dx\s*\.\s*)?doi\s*\.\s*org\s*\/\s*.{0,160}/giu,
+    ),
+  ].map((match) =>
+    (match[0] ?? "")
+      .replace(/[\u200B-\u200D\u2060\uFEFF]/gu, "")
+      .replace(/\s*([-._;()/:])\s*/gu, "$1"),
+  );
   const values = new Set(
-    [...textValue.matchAll(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/giu)].map((match) =>
-      (match[0] ?? "").replace(/[.,;:)\]}]+$/u, "").toLowerCase(),
+    [textValue, ...normalizedContexts].flatMap((context) =>
+      [...context.matchAll(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/giu)].map((match) =>
+        (match[0] ?? "").replace(/[.,;:)\]}]+$/u, "").toLowerCase(),
+      ),
     ),
   );
   if (values.size === 1) return [...values][0]!;
@@ -462,6 +457,52 @@ function uniquePmid(textValue: string): string | null {
   return values.size === 1 ? [...values][0]! : null;
 }
 
+function candidateFromEmbeddedPdf(input: {
+  readonly sourceKey: string;
+  readonly fileName: string;
+  readonly title: string | null;
+  readonly authors: ReadonlyArray<ScientSourceCreator>;
+  readonly issuedRaw: string | null;
+  readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
+  readonly keywords: ReadonlyArray<string>;
+}): ScientSourceCandidate {
+  const doi = input.identifiers.find((identifier) => identifier.scheme === "doi")?.value ?? null;
+  const pmid = input.identifiers.find((identifier) => identifier.scheme === "pmid")?.value ?? null;
+  return {
+    sourceKey: input.sourceKey,
+    type: "other",
+    customType: null,
+    title: input.title,
+    creators: input.authors,
+    issuedRaw: input.issuedRaw,
+    issuedYear: year(input.issuedRaw),
+    identifiers: input.identifiers,
+    // PDF Subject and Dublin Core description are generic document metadata.
+    // They may contain a citation, summary, or arbitrary publisher text, so
+    // they are not authoritative evidence of a scholarly abstract.
+    abstract: null,
+    containerTitle: null,
+    publisher: null,
+    volume: null,
+    issue: null,
+    pages: null,
+    language: null,
+    url: doi ? `https://doi.org/${doi}` : pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : null,
+    tags: input.keywords,
+    externalReferences: [],
+    fieldProvenance: provenance("local-pdf", [
+      ["title", "document-info/title", input.title !== null],
+      ["creators", "document-info/author", input.authors.length > 0],
+      ["issuedRaw", "document-info/date", input.issuedRaw !== null],
+      ["tags", "document-info/keywords", input.keywords.length > 0],
+      ["identifiers", "first-pages", input.identifiers.length > 0],
+    ]),
+    pdfAvailable: true,
+    pdfFileName: input.fileName,
+    pdfAttachmentCount: 1,
+  };
+}
+
 async function extractPdfMetadata(input: {
   readonly sourceKey: string;
   readonly fileName: string;
@@ -472,7 +513,7 @@ async function extractPdfMetadata(input: {
   );
   let title: string | null = fallbackTitle;
   let authors: ReadonlyArray<ScientSourceCreator> = [];
-  let subject: string | null = null;
+  let documentDescription: string | null = null;
   let keywords: ReadonlyArray<string> = [];
   let issuedRaw: string | null = null;
   let extractedText = "";
@@ -491,10 +532,16 @@ async function extractPdfMetadata(input: {
       try {
         const metadata = await document.getMetadata();
         const info = decodePdfInfo(metadata.info);
-        title = text(metadata.metadata?.get("dc:title")) ?? text(info.Title) ?? fallbackTitle;
+        title = selectEmbeddedPdfTitle({
+          xmpTitle: metadata.metadata?.get("dc:title"),
+          infoTitle: info.Title,
+          fallbackTitle,
+        });
         authors = embeddedCreators(metadata.metadata?.get("dc:creator") ?? info.Author);
-        subject = text(metadata.metadata?.get("dc:description")) ?? text(info.Subject);
-        issuedRaw = text(metadata.metadata?.get("dc:date")) ?? text(info.CreationDate);
+        documentDescription = text(metadata.metadata?.get("dc:description")) ?? text(info.Subject);
+        issuedRaw = normalizeEmbeddedPdfDate(
+          metadata.metadata?.get("dc:date") ?? info.CreationDate,
+        );
         keywords = (text(info.Keywords) ?? "")
           .split(/[,;]/u)
           .map((value) => value.trim())
@@ -526,59 +573,119 @@ async function extractPdfMetadata(input: {
     // A valid PDF can omit or expose unreadable metadata. The file still remains importable.
   }
 
-  const searchable = [title, subject, extractedText].filter(Boolean).join("\n");
+  const searchable = [title, documentDescription, extractedText].filter(Boolean).join("\n");
   const doi = uniqueDoi(searchable);
   const pmid = uniquePmid(searchable);
   const identifiers: ScientSourceIdentifier[] = [
     ...(doi ? [{ scheme: "doi", value: doi }] : []),
     ...(pmid ? [{ scheme: "pmid", value: pmid }] : []),
   ];
-  const fallback: ScientSourceCandidate = {
+  const fallback = candidateFromEmbeddedPdf({
     sourceKey: input.sourceKey,
-    type: "other",
-    customType: null,
+    fileName: input.fileName,
     title,
-    creators: authors,
+    authors,
     issuedRaw,
-    issuedYear: year(issuedRaw),
     identifiers,
-    abstract: subject,
-    containerTitle: null,
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: doi ? `https://doi.org/${doi}` : pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : null,
-    tags: keywords,
-    externalReferences: [],
-    fieldProvenance: provenance("local-pdf", [
-      ["title", "document-info/title", title !== null],
-      ["creators", "document-info/author", authors.length > 0],
-      ["issuedRaw", "document-info/date", issuedRaw !== null],
-      ["abstract", "document-info/subject", subject !== null],
-      ["tags", "document-info/keywords", keywords.length > 0],
-      ["identifiers", "first-pages", identifiers.length > 0],
-    ]),
-    pdfAvailable: true,
-    pdfFileName: input.fileName,
-    pdfAttachmentCount: 1,
-  };
+    keywords,
+  });
 
+  let candidate = fallback;
   if (doi) {
     const csl = await resolveDoi(doi);
-    if (csl)
-      return candidateFromCsl({
+    if (csl) {
+      candidate = candidateFromCsl({
         sourceKey: input.sourceKey,
         csl,
         fallback,
       });
+    }
   }
-  if (pmid) {
+  if (candidate === fallback && pmid) {
     const summary = await resolvePubmed(pmid);
-    if (summary) return candidateFromPubmed({ pmid, summary, fallback });
+    if (summary) candidate = candidateFromPubmed({ pmid, summary, fallback });
   }
-  return fallback;
+  return enrichScientSourceCandidate(candidate);
+}
+
+function candidateFromExistingRecord(record: ScientSourceRecord): ScientSourceCandidate {
+  const pdfAttachments = record.attachments.filter((attachment) => attachment.kind === "pdf");
+  return {
+    sourceKey: record.sourceId,
+    type: record.type,
+    customType: record.customType ?? null,
+    title: record.title,
+    creators: record.creators,
+    issuedRaw: record.issuedRaw,
+    issuedYear: record.issuedYear,
+    identifiers: record.identifiers,
+    abstract: record.abstract,
+    ...(record.abstractSections ? { abstractSections: record.abstractSections } : {}),
+    containerTitle: record.containerTitle,
+    publisher: record.publisher,
+    volume: record.volume,
+    issue: record.issue,
+    pages: record.pages,
+    language: record.language,
+    url: record.url,
+    tags: record.tags,
+    externalReferences: record.externalReferences,
+    fieldProvenance: record.fieldProvenance,
+    pdfAvailable: pdfAttachments.length > 0,
+    pdfFileName: pdfAttachments[0]?.fileName ?? null,
+    pdfAttachmentCount: pdfAttachments.length,
+  };
+}
+
+/**
+ * Re-runs the import-time metadata resolvers without staging or changing a
+ * project record. The caller owns comparison and explicit user acceptance.
+ */
+export async function refreshExistingSourceCandidate(input: {
+  readonly record: ScientSourceRecord;
+  readonly pdfPath: string | null;
+}): Promise<ScientSourceCandidate> {
+  const current = candidateFromExistingRecord(input.record);
+  const pdfAttachment = input.record.attachments.find((attachment) => attachment.kind === "pdf");
+  let candidate = input.pdfPath
+    ? await extractPdfMetadata({
+        sourceKey: input.record.sourceId,
+        fileName: pdfAttachment?.fileName ?? "source.pdf",
+        pdfPath: input.pdfPath,
+      })
+    : current;
+  const extractedIdentifierSchemes = new Set(
+    candidate.identifiers.map((value) => value.scheme.toLowerCase()),
+  );
+
+  const identifiers = deduplicateIdentifiers([
+    ...candidate.identifiers,
+    ...input.record.identifiers,
+  ]);
+  const tags = [...new Set([...candidate.tags, ...input.record.tags])];
+  candidate = {
+    ...candidate,
+    identifiers,
+    tags,
+    externalReferences: input.record.externalReferences,
+  };
+
+  const doi = identifiers.find((value) => value.scheme.toLowerCase() === "doi")?.value ?? null;
+  const pmid = identifiers.find((value) => value.scheme.toLowerCase() === "pmid")?.value ?? null;
+  if (doi && (!input.pdfPath || !extractedIdentifierSchemes.has("doi"))) {
+    const csl = await resolveDoi(doi);
+    if (csl) {
+      candidate = candidateFromCsl({
+        sourceKey: input.record.sourceId,
+        csl,
+        fallback: candidate,
+      });
+    }
+  } else if (!doi && pmid && (!input.pdfPath || !extractedIdentifierSchemes.has("pmid"))) {
+    const summary = await resolvePubmed(pmid);
+    if (summary) candidate = candidateFromPubmed({ pmid, summary, fallback: candidate });
+  }
+  return enrichScientSourceCandidate(candidate);
 }
 
 export async function prepareLocalPdfSource(input: {
@@ -631,9 +738,13 @@ export async function getLocalPdfImportMaterial(root: string, sourceKey: string)
 export { removeScientSourceStagedMaterial as discardLocalPdfImportMaterial };
 
 export const localPdfSourceInternals = {
+  candidateFromEmbeddedPdf,
   candidateFromCsl,
   candidateFromPubmed,
+  candidateFromExistingRecord,
   embeddedCreators,
+  normalizeEmbeddedPdfDate,
+  selectEmbeddedPdfTitle,
   uniqueDoi,
   uniquePmid,
 };

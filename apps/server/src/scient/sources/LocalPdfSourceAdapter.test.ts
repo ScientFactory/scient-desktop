@@ -14,6 +14,43 @@ describe("local PDF source adapter", () => {
     expect(localPdfSourceInternals.uniquePmid("An unrelated number 12345678")).toBeNull();
   });
 
+  it("recovers PDF text-item spacing inside a labelled DOI without broad text joining", () => {
+    expect(
+      localPdfSourceInternals.uniqueDoi(
+        "DOI: https:// doi. org/ 10. 1542/ peds. 2017- 4087 Accepted for publication",
+      ),
+    ).toBe("10.1542/peds.2017-4087");
+    expect(localPdfSourceInternals.uniqueDoi("Unlabelled 10. 1542/ peds. 2017- 4087")).toBeNull();
+    expect(
+      localPdfSourceInternals.uniqueDoi("DOI: 10. 1000/ first and DOI: 10. 1000/ second"),
+    ).toBeNull();
+  });
+
+  it("uses a human document-info title over a file-like XMP label", () => {
+    expect(
+      localPdfSourceInternals.selectEmbeddedPdfTitle({
+        xmpTitle: "PEDS_20174087 1..3",
+        infoTitle: "Timing and Location of Emergency Department Revisits",
+        fallbackTitle: "uploaded article",
+      }),
+    ).toBe("Timing and Location of Emergency Department Revisits");
+    expect(
+      localPdfSourceInternals.selectEmbeddedPdfTitle({
+        xmpTitle: "RNA_Seq Results in Clinical Cohorts",
+        infoTitle: "Older working title",
+        fallbackTitle: "uploaded article",
+      }),
+    ).toBe("RNA_Seq Results in Clinical Cohorts");
+  });
+
+  it("normalizes standard PDF dates without changing ordinary publication dates", () => {
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:20180330142756+05'30'")).toBe(
+      "2018",
+    );
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("2024-07-18")).toBe("2024-07-18");
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:not-a-date")).toBe("D:not-a-date");
+  });
+
   it("accepts PDF creator arrays without losing later metadata extraction", () => {
     expect(
       localPdfSourceInternals.embeddedCreators([
@@ -33,6 +70,23 @@ describe("local PDF source adapter", () => {
         "Claire Morley, Maria Unwin, Gregory M. Peterson, Jim Stankovich, Leigh Kinsman",
       ]),
     ).toHaveLength(5);
+  });
+
+  it("does not assign an abstract to generic embedded PDF metadata", () => {
+    const candidate = localPdfSourceInternals.candidateFromEmbeddedPdf({
+      sourceKey: "local_subject",
+      fileName: "article.pdf",
+      title: "A journal article",
+      authors: [],
+      issuedRaw: "2021",
+      identifiers: [],
+      keywords: [],
+    });
+
+    expect(candidate.abstract).toBeNull();
+    expect(candidate.fieldProvenance).not.toContainEqual(
+      expect.objectContaining({ field: "abstract" }),
+    );
   });
 
   it("merges exact DOI metadata while preserving local provenance and the PDF identity", () => {
@@ -70,6 +124,7 @@ describe("local PDF source adapter", () => {
         issued: { "date-parts": [[2026, 8, 12]] },
         DOI: "10.1000/example",
         ISSN: ["1234-5678"],
+        abstract: "<p>Resolved <strong>abstract</strong>.</p>",
         "container-title": "Journal of Reliable Sources",
       },
       fallback,
@@ -83,6 +138,8 @@ describe("local PDF source adapter", () => {
       pdfFileName: "paper.pdf",
       externalReferences: [],
       containerTitle: "Journal of Reliable Sources",
+      abstract: "Resolved abstract.",
+      abstractSections: [{ title: null, paragraphs: ["Resolved abstract."] }],
     });
     expect(candidate.identifiers).toEqual(
       expect.arrayContaining([

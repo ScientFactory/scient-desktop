@@ -12,11 +12,13 @@ import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
+  decodePersistedScientSourceRecord,
   importScientSource,
   inspectScientSourcePdf,
   inspectScientSources,
   listScientSourceRecords,
   readSourceImportOperation,
+  readScientSourceRecord,
   removeScientSource,
   SCIENT_SOURCES_DIRECTORY,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
@@ -130,6 +132,22 @@ afterEach(async () => {
 });
 
 describe("Scient source store", () => {
+  it("reads one source directly and rejects unknown persisted formats at one boundary", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const persisted = await writeSourceRecordFixture({
+      root,
+      sourceId: "source_direct",
+      title: "Direct lookup",
+    });
+
+    await expect(readScientSourceRecord(root, "source_direct")).resolves.toEqual(persisted);
+    await expect(readScientSourceRecord(root, "source_missing")).resolves.toBeNull();
+    expect(() => decodePersistedScientSourceRecord({ ...persisted, formatVersion: 99 })).toThrow(
+      "Source record format version 99 is not supported.",
+    );
+  });
+
   it("does not create source state in an ordinary folder", async () => {
     const root = await fixture();
 
@@ -165,6 +183,29 @@ describe("Scient source store", () => {
       "%PDF-1.7\nfixture\n",
     );
     expect(await listScientSourceRecords(root)).toHaveLength(1);
+  });
+
+  it("normalizes provider abstract markup before it reaches the project store", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        abstract:
+          "<jats:sec><jats:title>Objective</jats:title><jats:p>Store clean metadata.</jats:p></jats:sec>",
+      },
+    });
+
+    expect(imported.record?.abstract).toBe("Objective\n\nStore clean metadata.");
+    expect(imported.record?.abstractSections).toEqual([
+      { title: "Objective", paragraphs: ["Store clean metadata."] },
+    ]);
+    expect((await listScientSourceRecords(root))[0]?.abstract).toBe(
+      "Objective\n\nStore clean metadata.",
+    );
   });
 
   it("removes a source and its unshared content-addressed PDF", async () => {
@@ -395,6 +436,36 @@ describe("Scient source store", () => {
     expect(await listScientSourceRecords(root)).toHaveLength(1);
   });
 
+  it.each(["issn", "isbn"])("imports distinct works that share only a %s", async (scheme) => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const first = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        identifiers: [{ scheme, value: "shared-container-identifier" }],
+      },
+    });
+    const second = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        sourceKey: "SECOND-WORK",
+        title: "A different work in the same container",
+        issuedRaw: "2025",
+        issuedYear: 2025,
+        identifiers: [{ scheme, value: "shared-container-identifier" }],
+        externalReferences: [{ ...candidate.externalReferences[0]!, itemKey: "SECOND-WORK" }],
+      },
+    });
+
+    expect(first.outcome).toBe("imported");
+    expect(second.outcome).toBe("imported");
+    expect(await listScientSourceRecords(root)).toHaveLength(2);
+  });
+
   it("allows an explicit possible metadata match without overriding exact duplicates", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
@@ -479,7 +550,7 @@ describe("Scient source store", () => {
         issuedRaw: record.issuedRaw,
         issuedYear: record.issuedYear,
         identifiers: [{ scheme: "DOI", value: "https://doi.org/10.1000/CORRECTED" }],
-        abstract: record.abstract,
+        abstract: "<p>A <em>corrected</em> abstract.</p>",
         containerTitle: record.containerTitle,
         publisher: record.publisher,
         volume: record.volume,
@@ -499,6 +570,8 @@ describe("Scient source store", () => {
         customType: "Clinical guideline",
         title: "A corrected source",
         identifiers: [{ scheme: "doi", value: "10.1000/corrected" }],
+        abstract: "A corrected abstract.",
+        abstractSections: [{ title: null, paragraphs: ["A corrected abstract."] }],
         tags: ["reviewed"],
       },
     });
@@ -507,6 +580,7 @@ describe("Scient source store", () => {
         { field: "title", origin: "user", sourceField: null },
         { field: "customType", origin: "user", sourceField: null },
         { field: "identifiers", origin: "user", sourceField: null },
+        { field: "abstract", origin: "user", sourceField: null },
         { field: "tags", origin: "user", sourceField: null },
       ]),
     );

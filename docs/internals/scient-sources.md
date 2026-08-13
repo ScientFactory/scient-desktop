@@ -41,6 +41,23 @@ same Scient-owned panel. A source row opens details even when no attachment is
 present; an explicit PDF action opens a peer source-PDF surface. This keeps
 source identity and bibliographic information separate from document display
 without adding another host navigation concept or environment endpoint.
+Normal local-PDF and Zotero intake use one user action after selection:
+preflight runs as part of the import pipeline, new items are imported
+immediately, and a single completed source opens in the existing details state.
+The preflight surface is retained only for the weak possible-metadata-match
+decision that cannot be made safely on the researcher's behalf.
+
+Journal artwork is optional presentation, not source truth. A Sources-owned
+read endpoint may resolve a journal article's explicit publisher origin, fetch
+the conventional favicon and up to two larger first-party icons declared by the
+publisher's bounded public-HTTPS home page, validate raster bytes, preserve a
+smaller official icon when no better one succeeds, and cache the result under
+the environment state directory. The renderer uses
+the existing signed asset route and paints the generic book before lookup, on
+offline resolution, and on image failure. Resolution starts only for rows near
+the visible scroll region, so a large ledger does not create one network job per
+stored source. Icons never enter project records, block the list, or permit the
+renderer to contact arbitrary publisher URLs.
 
 ## Durable project store
 
@@ -59,7 +76,14 @@ their own subtree:
 ```
 
 There is deliberately no canonical mutable manifest. An overview is derived
-from validated records and operations. JSON writes use a temporary file,
+from validated records and operations. The overview contract returns bounded
+summaries only; complete abstracts, tags, provenance, and revision evidence are
+loaded through a direct source-ID detail endpoint when a researcher opens an
+item. Journal artwork uses the same direct record lookup, so rendering one row
+does not repeatedly decode the rest of a large ledger. Source-PDF preview keeps
+the existing host seam and resolves its content-addressed attachment only when
+the researcher opens it; avoiding another `ChatView`/right-panel state branch is
+the deliberate upstream-maintenance tradeoff. JSON writes use a temporary file,
 `fsync`, and atomic promotion. New source records use exclusive creation. PDF
 copies are size-bounded, require a regular non-symlinked `%PDF-` file, are
 hashed while copying, and are promoted before a source record can refer to
@@ -71,12 +95,15 @@ bounded multipart body rather than an Electron-only filesystem path or a
 base64/JSON copy. The environment server stages and hashes one file per request,
 which bounds memory and concurrency while the UI may still select a batch.
 Staged descriptors carry the normalized candidate and content identity so the
-reviewed item is the item later imported. Completion, failure, cancellation,
-and explicit review dismissal remove its staging material.
+item inspected during preflight is the item later imported. Completion,
+failure, cancellation, and explicit duplicate-review dismissal remove its
+staging material.
 
 Stored attachment paths use portable POSIX-relative syntax and are resolved
 only within `.scient/sources`. Records whose project identity does not match
-the current folder are rejected.
+the current folder are rejected. All durable record reads enter through one
+explicit format-version decoder; future migrations extend that boundary rather
+than scattering version checks through adapters and UI code.
 
 ## Source truth and provenance
 
@@ -85,19 +112,58 @@ bibliographic fields. The original Zotero library ID, item key, item version,
 and raw item type remain external provenance. Field provenance is recorded only
 for values actually supplied by Zotero.
 
+Abstracts use one provider-neutral representation: canonical plain text plus
+optional titled sections derived only from explicit source markup, never
+Zotero HTML, JATS XML, or provider presentation markup. The plain text remains
+the searchable, editable, citation-compatible value; the sections preserve
+structured-abstract meaning for presentation without guessing that a short
+line is a heading. Every adapter, metadata edit, and final store write passes
+through the same normalizer, so future source systems cannot accidentally
+persist provider markup. Older records are normalized when read for
+presentation without being silently rewritten; an explicit metadata edit
+stores the canonical value in a new revision. A leading provider wrapper named
+`Abstract` is discarded while its paragraphs are preserved, leaving only the
+actual structured headings in the canonical document.
+
 Direct PDF intake uses an immutable per-upload candidate key while keeping the
 content SHA-256 as the duplicate and storage identity. This prevents two
 simultaneous reviews of the same bytes from overwriting each other's staged
 metadata. It normalizes scalar and array-valued XMP fields independently, so a
 malformed optional field cannot discard already readable metadata or prevent
 first-page identifier extraction. It reads bounded document metadata and text
-from at most the first two pages. A single unambiguous DOI or explicitly labelled PMID may be resolved through the public
-DOI CSL JSON or NCBI ESummary endpoint. Responses are HTTPS-only, time- and
-size-bounded, and schema-decoded. Only the exact identifier leaves the project
-environment; the PDF never does. Resolution failure is a normal offline
-fallback, not an import failure. No OCR, fuzzy bibliographic search, or model
-inference is allowed in this adapter because those paths can silently attach
-the wrong scholarly identity.
+from at most the first two pages. A single unambiguous DOI or explicitly
+labelled PMID may be resolved through the public DOI CSL JSON or NCBI ESummary
+endpoint for bibliographic identity.
+
+After a Zotero or local-PDF adapter has built its candidate, a shared
+provider-neutral enrichment seam may fill a missing abstract using only that
+candidate's exact DOI or PMID. The bounded resolver prefers NCBI EFetch for a
+PMID, then Crossref `/works/{doi}`, with Europe PMC as an exact-identifier
+fallback. Resolvers run in authority order and stop after the first verified
+match; one shared deadline bounds the whole optional enrichment step instead
+of waiting for every service. An abstract already supplied by Zotero, DOI
+metadata, or a researcher is never replaced. Retrieved abstracts retain their
+service, exact identifier, source field, and retrieval time in field
+provenance.
+
+All NCBI E-utilities requests share one serialized, interval-limited lane.
+The lane remains owned until the active network request settles and releases
+in `finally`, preventing overlapping requests and avoiding a dead lane after a
+failure.
+
+All metadata responses are HTTPS-only, time- and size-bounded, and
+schema-decoded. Only the exact identifier leaves the project environment; the
+PDF never does. Resolution failure is a normal offline fallback, not an import
+failure. No visible-PDF abstract extraction, OCR, fuzzy bibliographic search,
+or model inference is part of this slice because those paths need separate
+identity and evidence safeguards before they can be trusted.
+
+Generic embedded PDF Subject and Dublin Core description values may help locate
+an exact DOI or PMID, but they are not treated as scholarly abstracts. Those
+fields commonly contain citation strings or arbitrary publisher descriptions.
+Scient stores an abstract only when an abstract-bearing source such as Zotero,
+PubMed, Crossref, Europe PMC, or DOI metadata supplies one; absence is
+preferable to presenting the wrong field as scientific content.
 
 Researchers may correct canonical bibliographic metadata without changing the
 source ID, project ID, external Zotero references, imported files, content
@@ -118,6 +184,14 @@ Concurrent edits are serialized by canonical project root within the owning
 environment server; an edit based on an older revision returns the current
 record as stale instead of overwriting it.
 
+Metadata refresh is an explicitly destructive operation guarded by a compact
+confirmation surface. The environment server re-runs the existing local-PDF
+and exact DOI/PMID resolvers, rechecks the record revision after asynchronous
+resolution, and writes only evidence-backed, non-empty candidate fields through
+the normal revisioned metadata-update path. The refresh may replace prior
+manual corrections, but it cannot change source identity, attachments, or the
+imported PDF.
+
 Source removal uses the same canonical-root write lane as imports and metadata
 edits. It requires the revision the researcher reviewed and is idempotent when
 a successful response is lost. The current record is removed before attachment
@@ -127,8 +201,10 @@ deleted only when no remaining source record references its portable relative
 path. Prior immutable metadata revisions remain valid project evidence; if the
 same external source is deliberately imported again later, its record continues
 after the last stored revision so a subsequent edit cannot collide with that
-history. The UI exposes removal only from a source's discreet actions menu and
-confirms that Zotero remains unchanged.
+history. The UI exposes removal only from discreet source actions on the row or
+details page and always confirms that Zotero remains unchanged. The row's
+secondary-click menu uses the existing host context-menu bridge; its actions and
+confirmation remain owned by the Sources surface.
 
 Metadata completeness is derived from the record rather than persisted as a
 possibly stale quality label. Missing title or creator produces a warning;
@@ -147,7 +223,7 @@ project-owned truth and derived output respectively.
 Duplicate assessment is ordered from strongest to weakest:
 
 1. exact external origin;
-2. normalized persistent identifier;
+2. normalized work-level identifier (DOI, PMID, PMCID, or arXiv);
 3. identical PDF SHA-256;
 4. possible normalized title/lead-creator/year match; and
 5. new source.
@@ -156,6 +232,12 @@ Possible metadata matches are never silently merged. They require a per-item
 `allowPossibleMetadataMatch` decision persisted in the import operation. The
 store permits that decision only for the weak metadata-match classification;
 same-origin, identifier, and PDF-content matches remain non-overridable.
+ISSN, ISBN, and unknown schemes are deliberately excluded from automatic work
+identity. Completed operation items retain their duplicate disposition so the
+web surface can report imported, already-present, and review-required counts
+without deriving semantics from presentation text. Operations written before
+that additive field remain readable.
+
 When a project already contains PDFs, preflight validates and hashes the
 selected local Zotero PDF before presenting the decision. Import revalidates
 and hashes while copying, so the review and durable write use the same content
@@ -177,6 +259,22 @@ the product does not invent that distinction.
 Library pagination advances by the number of raw Zotero items received, even
 when unsupported note or annotation items are filtered from the Scient view.
 Import re-fetches each selected item immediately before storing it.
+
+Zotero collections are treated only as adapter-side intake scopes; they never
+enter the canonical Scient source record. The UI exposes the flat Zotero
+collection graph as readable parent/child paths. Browsing and importing a
+selected collection uses Zotero's bounded server-side pagination for that
+exact collection; nested collections are selected explicitly. This avoids
+materializing an entire collection tree merely to render one page. **My
+Library** remains available as an explicit whole-library scope. Scope discovery
+is read-only, capped at 10,000 importable references per operation, and fails
+with a request to choose a smaller scope above that bound.
+
+Collection and whole-library actions deliberately skip a separate preflight
+screen. Each item is still re-fetched, validated, duplicate-assessed, and
+committed by the normal importer. Exact matches and possible metadata matches
+are safely skipped rather than overwriting project-owned corrections; selected
+single-item intake retains the explicit possible-match override workflow.
 
 Zotero items may have several PDF children. The adapter counts all of them and
 selects one deterministically by portable filename and item key. Preflight
@@ -200,6 +298,16 @@ pending items remain explicitly unprocessed in the cancellation receipt. An
 operation left running with no pending items is finalized during the next
 overview inspection. Recovery finalization re-reads and settles the operation
 under the same operation lock used by progress updates and cancellation.
+Long-running operations use a compact progress surface while leaving the
+project ledger visible and usable.
+
+The web continuation driver is independent of the mounted Sources panel. Once
+an operation begins, navigating away only detaches presentation updates; the
+same durable server operation continues to advance. A renderer-level registry
+deduplicates continuation attempts when Sources is reopened while that work is
+still active. If the renderer, app, or connection stops, no state is invented:
+the persisted running operation is shown on the next overview and can be
+resumed from its next pending item.
 
 Only one import operation may be running for a project in an environment
 server. Concurrent begin requests are serialized, same-ID replay remains
@@ -210,7 +318,7 @@ idempotent, and a new operation is accepted after completion or cancellation.
 This slice does not implement Zotero write-back or sync, source merging,
 automatic possible-duplicate merging, in-text citations, multi-source
 bibliographies, arbitrary CSL style installation, annotations, evidence claims,
-whole-library import, OCR, fuzzy metadata search, mobile UI, or a separate Studio route.
+OCR, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 
@@ -219,8 +327,9 @@ than add provider-shaped fields to the host application.
 Package regressions cover schema diagnostics, duplicate strength, project
 identity, idempotency, PDF integrity, cross-platform path safety, resumable
 progress, and cancellation receipts. Adapter regressions cover normalized
-metadata and field provenance, including a JSON round-trip through the public
-Zotero library response contract. Coordinator coverage proves attachment
+metadata, abstract markup removal, and field provenance, including a JSON
+round-trip through the public Zotero library response contract. Coordinator
+coverage proves legacy abstract normalization and attachment
 preview resolution without a persisted chat thread. Right-panel and General
 Chat policy tests cover the only inherited UI-state seam. Citation regressions
 prove the canonical CSL mapping and exact Vancouver and APA 7 output for a
