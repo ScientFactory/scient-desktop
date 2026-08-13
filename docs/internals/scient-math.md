@@ -5,75 +5,104 @@ Status: implemented in the T3-derived candidate; local rendering only.
 ## Ownership
 
 Scient owns `apps/web/src/scient/math`: remark-math configuration, delimiter
-normalization, the KaTeX runtime, the rendering components, and the stylesheet.
-`katex` (0.16.47) and `remark-math` (6.0.0) are exact-pinned in `apps/web`.
-KaTeX and its stylesheet/woff2 fonts ship in a lazily loaded chunk — no CDN
-request. Vite emits the fonts because `katex/dist/katex.min.css` references
-them through statically analyzable `url()` declarations; unlike pdf.js
-(`apps/web/scripts/scientPdfAssets.ts`), no custom asset plugin is needed.
+normalization, the math refinement plugin, the KaTeX runtime, the rendering
+components, and the stylesheet. `katex` (0.16.47) and `remark-math` (6.0.0)
+are exact-pinned in `apps/web`. KaTeX, its stylesheet, and its distributed
+fonts (WOFF2, WOFF, and TTF) ship in a lazily loaded chunk — no CDN request.
+Vite emits the fonts because `katex/dist/katex.min.css` references them
+through statically analyzable `url()` declarations; unlike pdf.js
+(`apps/web/scripts/scientPdfAssets.ts`), no asset-serving plugin is needed.
+The build does rewrite the stylesheet once:
+`apps/web/scripts/scientKatexFontDisplay.ts` injects `font-display: swap`
+into KaTeX's `@font-face` rules so math paints with fallback glyphs during a
+cold font load instead of staying invisible.
 
 ## ChatMarkdown seam
 
 The inherited-host seam is `ChatMarkdown.tsx` only: the import block for the
-three math modules, `remarkScientMath` added to both remark plugin arrays, one
-`useScientMathMarkdownText` call gated on `onTaskListChange === undefined`,
-and two `components` branches — `code` routes `language-math` nodes to
-`ScientInlineMath`, `pre` routes them to `ScientDisplayMath`. The gate exists
-because task-list toggling writes back through character offsets into the
-original message string, and rewriting delimiters would shift those offsets.
-`FilePreviewPanel.tsx` (rendered Markdown file previews) is the only caller
-that passes `onTaskListChange`, so delimiter rewriting is disabled exactly
-there; dollar-delimited math still renders in that surface, just without
-backslash-delimiter normalization.
+three math modules, `remarkScientMath` plus `remarkScientMathRefinements` in
+both remark plugin arrays, one unconditional `useScientMathMarkdownText`
+call, and two `components` branches — `code` routes `language-math` nodes to
+`ScientInlineMath`, `pre` routes them to `ScientDisplayMath`. Normalization
+is length-preserving (every rewrite swaps a two-character delimiter for the
+two-character `$$`), so character offsets never move and offset-based
+behavior — task-list toggling in rendered file previews, list-item positions
+— stays correct on every surface with no per-surface gating.
 
-## Delimiter policy
+## Recognition model
 
-Models emit `\(...\)` and `\[...\]`. `normalizeScientMathDelimiters` rewrites
-both to dollar forms outside fenced code blocks and inline code spans, which
-is where `useScientMathMarkdownText` runs before the raw text reaches
-react-markdown. remark-math only opens a display block when `$$` starts its
-own line, so an own-line `\[...\]` becomes a `$$` fence, replaying the
-opening line's indentation so the fence still nests correctly inside a list;
-a mid-sentence `\[...\]` instead degrades to inline `$...$`. Single-dollar
-math is enabled (`singleDollarTextMath: true`), and the currency guard
-(`shouldRenderMathAsCurrency`) renders digit-only and digit-led-prose TeX back
-as literal text at the component level, because the parser itself cannot tell
-a price like `$5 and $10` from an intended math span. The guard applies to
-inline math only; display math is always rendered as math, since `$$` around a
-bare number still means an equation.
+Recognition happens in two places, each at the altitude where its inputs are
+unambiguous:
+
+- **`normalizeScientMathDelimiters`** rewrites the backslash delimiters
+  models emit — `\(...\)` and `\[...\]` — into `$$` forms on the raw string,
+  because markdown escaping consumes backslashes before the tree exists. It
+  refuses to touch fenced code (backtick or tilde, including unclosed
+  fences), indented code lines, inline code spans, raw HTML `<code>`/`<pre>`
+  regions, escaped delimiters, unmatched openers, and empty pairs.
+- **`remarkScientMathRefinements`** runs on the parsed tree, where code,
+  links, images, and raw HTML are structurally excluded, in three steps.
+  First it downgrades incomplete or oversized math to its literal source: an
+  unclosed `$$` block or ` ```math ` fence (the streaming case) and TeX
+  longer than `MAX_SCIENT_TEX_LENGTH` render as plain literal blocks until a
+  closing delimiter arrives. Second, a paragraph holding exactly one
+  `$$...$$` span is promoted to display math — this is how own-line `\[...\]`
+  and `$$x$$` become block equations, since remark-math treats single-line
+  `$$...$$` as inline. Third, it recognizes single-dollar `$...$` spans in
+  ordinary text under strict token rules.
+
+`singleDollarTextMath` is deliberately off: parser-level `$...$` corrupts
+link labels and destinations, file paths, shell identifiers, and prices, and
+no component-level guard can repair structure the parser already destroyed.
+The refinement plugin's token rules are: the opener must not follow a word
+character, backslash, or dollar and must not precede whitespace; the closer
+must not follow whitespace and must not precede a digit (protecting
+`$5-$10`) or another dollar; the span must be single-line and within the
+length bound; all-caps identifiers (`$PATH$`, `$USD$`) stay text; spaced
+content must contain an operator or control sequence (`$5 and $10` stays
+text, `$a + b$` is math); compact numeric spans — `$42$`, `$1/2$`,
+`$12-15$` — are math. A text run containing an escaped `\$` opts out of
+recognition entirely, since escaping is invisible in node values.
 
 ## Detection
 
-The sanitize schema keeps only `language-*` classes on `code` elements
-(`hast-util-sanitize`'s default schema restricts `code` to
-`[['className', /^language-./]]`), so math code nodes are recognized by
-`language-math` alone — the `math-inline`/`math-display` classes remark-math
-also adds do not survive. Inline versus display is decided by the surrounding
-element instead: a bare `code` node is inline, one wrapped in `pre` is
-display. ` ```math ` fences render as display math, matching GitHub.
+The sanitize schema keeps only `language-*` classes on `code` elements, so
+math code nodes are recognized by `language-math` alone. Inline versus
+display is decided by the surrounding element: a bare `code` node is inline,
+one wrapped in `pre` is display. ` ```math ` fences render as display math,
+matching GitHub.
 
 ## Rendering
 
-`renderScientTexToHtml` calls `katex.renderToString(tex, { displayMode,
-throwOnError: false, strict: "ignore" })`, leaving `trust` (default `false`)
-and `output` (default `htmlAndMathml`) at their KaTeX defaults. Rendered HTML
-is cached in an LRU cache (500 entries / 5 MiB), with cache writes performed
-in an effect after render; cache reads and writes are skipped while the
-message is still streaming — matching the Shiki highlight cache — so the
-growing prefixes of an unclosed block never occupy entries.
-`RenderErrorBoundary` and `Suspense` both fall back to the literal dollar-form
-text — as a `<code>` element — while the KaTeX chunk is still loading or if
-rendering throws. Every rendered or fallback math element carries
-`data-markdown-copy` with its dollar-form source, so highlight-and-copy
-(`markdown-clipboard.ts`) round-trips math instead of serializing KaTeX's
-DOM.
+`renderScientTexToHtml` calls `katex.renderToString` with `throwOnError:
+true` inside a try/catch and returns null for TeX KaTeX cannot parse; the
+components then show the literal dollar-form source instead of KaTeX's red
+error markup, so the malformed-math fallback matches the loading and
+error-boundary fallbacks. `maxSize: 50` caps user-specified dimensions so a
+pathological `\rule{500em}{500em}` cannot distort the conversation;
+`maxExpand` stays at KaTeX's default 1000. `trust` (default false) and
+`output` (default htmlAndMathml) keep their safe defaults. Rendered HTML is
+cached in an LRU cache (500 entries / 5 MiB), with cache writes performed in
+an effect after render; cache reads and writes are skipped while the message
+is still streaming — matching the Shiki highlight cache — so the growing
+prefixes of an unclosed block never occupy entries. Every rendered or
+fallback math element carries `data-markdown-copy` with its dollar-form
+source, so highlight-and-copy (`markdown-clipboard.ts`) round-trips math
+instead of serializing KaTeX's DOM. The stylesheet resets the chat surface's
+aggressive `overflow-wrap`/`word-break` inside equations and keeps wide
+display math scrolling inside its own container.
 
 ## Verification
 
-Coverage is co-located unit tests (`remarkScientMath.test.ts`,
-`scientMathText.test.ts`, `ScientMath.test.ts`) plus
-`chatMarkdownMathSeam.test.ts`, a static source audit of the `ChatMarkdown.tsx`
-seam in the same style as `pdfFilePreviewSeam.test.ts`.
+Coverage is co-located unit tests (`scientMathText.test.ts` for the
+normalizer's protection and length-preservation properties,
+`remarkScientMath.test.ts` for the refinement plugin's tree transforms,
+`ScientMath.test.ts` for the KaTeX runtime and component fallbacks) plus
+`chatMarkdownMathSeam.test.ts`, which combines a static source audit of the
+`ChatMarkdown.tsx` seam (the `pdfFilePreviewSeam.test.ts` pattern) with
+pipeline regressions through the real plugin chain and sanitizer: dollar
+corruption cases, literal-region protection, streaming/oversized downgrades,
+task-list coexistence, and an RTL prose fixture.
 
 ## Mobile
 

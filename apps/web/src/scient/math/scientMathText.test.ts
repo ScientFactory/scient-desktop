@@ -3,107 +3,121 @@ import { describe, expect, it } from "vite-plus/test";
 import { normalizeScientMathDelimiters } from "./scientMathText";
 
 describe("normalizeScientMathDelimiters", () => {
-  it("rewrites inline delimiters and trims the expression", () => {
-    expect(normalizeScientMathDelimiters("The value \\( x^2 \\) grows.")).toBe(
-      "The value $x^2$ grows.",
+  it("rewrites inline pairs to double dollars, preserving length exactly", () => {
+    const input = "Euler: \\(e^{i\\pi} = -1\\) holds.";
+    const output = normalizeScientMathDelimiters(input);
+
+    expect(output).toBe("Euler: $$e^{i\\pi} = -1$$ holds.");
+    expect(output).toHaveLength(input.length);
+  });
+
+  it("rewrites display pairs in place, keeping every line untouched", () => {
+    const input = "\\[\nE = mc^2\n\\]";
+
+    expect(normalizeScientMathDelimiters(input)).toBe("$$\nE = mc^2\n$$");
+  });
+
+  it("rewrites a single-line display pair", () => {
+    expect(normalizeScientMathDelimiters("\\[x + y\\]")).toBe("$$x + y$$");
+  });
+
+  it("keeps interior padding, which remark-math strips like a code span", () => {
+    expect(normalizeScientMathDelimiters("a \\( x \\) b")).toBe("a $$ x $$ b");
+  });
+
+  it("keeps list indentation intact for nested display math", () => {
+    const input = "- item\n\n  \\[\n  x^2\n  \\]";
+
+    expect(normalizeScientMathDelimiters(input)).toBe("- item\n\n  $$\n  x^2\n  $$");
+  });
+
+  it("returns the same reference when no backslash delimiter is present", () => {
+    const input = "plain $x$ text";
+
+    expect(normalizeScientMathDelimiters(input)).toBe(input);
+  });
+
+  it("never rewrites inside backtick fences", () => {
+    const input = "```\n\\(x\\)\n```";
+
+    expect(normalizeScientMathDelimiters(input)).toBe(input);
+  });
+
+  it("never rewrites inside tilde fences", () => {
+    const input = "~~~\n\\(x\\)\n~~~";
+
+    expect(normalizeScientMathDelimiters(input)).toBe(input);
+  });
+
+  it("protects an unclosed fence through the end of the text", () => {
+    const input = "```math\n\\(x\\)\nstill inside";
+
+    expect(normalizeScientMathDelimiters(input)).toBe(input);
+  });
+
+  it("never rewrites indented code lines", () => {
+    const input = "text\n\n    \\(x\\)\n";
+
+    expect(normalizeScientMathDelimiters(input)).toBe(input);
+  });
+
+  it("never rewrites inside raw HTML code or pre regions", () => {
+    const code = "before <code>\\(x\\)</code> after";
+    const pre = "before <pre>\\[y\\]</pre> after";
+    const unclosed = "before <code>\\(x\\)";
+
+    expect(normalizeScientMathDelimiters(code)).toBe(code);
+    expect(normalizeScientMathDelimiters(pre)).toBe(pre);
+    expect(normalizeScientMathDelimiters(unclosed)).toBe(unclosed);
+  });
+
+  it("never rewrites inside inline code spans, including multi-backtick spans", () => {
+    const single = "use `\\(x\\)` here";
+    const double = "use ``a \\(x\\) b`` here";
+
+    expect(normalizeScientMathDelimiters(single)).toBe(single);
+    expect(normalizeScientMathDelimiters(double)).toBe(double);
+  });
+
+  it("leaves escaped and unmatched delimiters alone", () => {
+    expect(normalizeScientMathDelimiters("literal \\\\(x\\\\) parens")).toBe(
+      "literal \\\\(x\\\\) parens",
+    );
+    expect(normalizeScientMathDelimiters("an unmatched \\( opener")).toBe(
+      "an unmatched \\( opener",
     );
   });
 
-  it("keeps inline content verbatim apart from the outer whitespace", () => {
-    expect(normalizeScientMathDelimiters("\\(\\alpha_{i} + \\beta^{2}\\)")).toBe(
-      "$\\alpha_{i} + \\beta^{2}$",
-    );
+  it("leaves empty pairs alone", () => {
+    expect(normalizeScientMathDelimiters("empty \\(  \\) pair")).toBe("empty \\(  \\) pair");
   });
 
-  it("opens a display block when the expression stands on its own line", () => {
-    expect(normalizeScientMathDelimiters("Energy:\n\\[ E = mc^2 \\]\nas shown.")).toBe(
-      "Energy:\n$$\nE = mc^2\n$$\nas shown.",
-    );
-  });
-
-  it("preserves the line structure of multiline display math", () => {
-    const text = "\\[\na = b \\\\\nc = d\n\\]";
-
-    expect(normalizeScientMathDelimiters(text)).toBe("$$\na = b \\\\\nc = d\n$$");
-  });
-
-  it("keeps a display block inside the list item it was indented into", () => {
-    expect(normalizeScientMathDelimiters("- step:\n  \\[x\\]\n")).toBe(
-      "- step:\n  $$\n  x\n  $$\n",
-    );
-    expect(normalizeScientMathDelimiters("- step:\n  \\[\n  a = b\n  \\]\n")).toBe(
-      "- step:\n  $$\n  a = b\n  $$\n",
-    );
-  });
-
-  it("keeps display math embedded in a sentence on one line", () => {
-    expect(normalizeScientMathDelimiters("Given \\[ x \\] we continue.")).toBe(
-      "Given $$x$$ we continue.",
-    );
-  });
-
-  it("leaves fenced code blocks untouched", () => {
-    const text = "```tex\n\\( x \\)\n\\[ y \\]\n```\nthen \\( z \\)";
-
-    expect(normalizeScientMathDelimiters(text)).toBe("```tex\n\\( x \\)\n\\[ y \\]\n```\nthen $z$");
-  });
-
-  it("leaves an unterminated fence untouched to the end of the text", () => {
-    const text = "```\n\\( x \\)";
-
-    expect(normalizeScientMathDelimiters(text)).toBe(text);
-  });
-
-  it("leaves inline code spans untouched", () => {
-    expect(normalizeScientMathDelimiters("Write `\\(x\\)` to get \\(x\\).")).toBe(
-      "Write `\\(x\\)` to get $x$.",
-    );
-  });
-
-  it("leaves an escaped opener alone", () => {
-    expect(normalizeScientMathDelimiters("A literal \\\\(x\\\\) stays.")).toBe(
-      "A literal \\\\(x\\\\) stays.",
-    );
-  });
-
-  it("leaves unmatched openers alone", () => {
-    expect(normalizeScientMathDelimiters("\\( never closed")).toBe("\\( never closed");
-    expect(normalizeScientMathDelimiters("\\[ never closed")).toBe("\\[ never closed");
-  });
-
-  it("pairs delimiters non-greedily across several expressions", () => {
-    expect(normalizeScientMathDelimiters("\\(a\\) and \\(b\\)")).toBe("$a$ and $b$");
-  });
-
-  it("rewrites mixed inline and display math in one message", () => {
-    const text = [
-      "Given \\( a \\ne 0 \\), the roots are:",
-      "\\[",
-      "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
-      "\\]",
-      "```js",
-      "const s = \\(x\\);",
+  it("preserves length on mixed documents so no offset can drift", () => {
+    const input = [
+      "- [ ] solve \\(x^2 + 1 = 0\\)",
+      "",
       "```",
-      "and `\\(y\\)` stays code.",
+      "\\(protected\\)",
+      "```",
+      "",
+      "\\[",
+      "\\int_0^1 f",
+      "\\]",
+      "done 🎉 \\(y\\)",
     ].join("\n");
+    const output = normalizeScientMathDelimiters(input);
 
-    expect(normalizeScientMathDelimiters(text)).toBe(
-      [
-        "Given $a \\ne 0$, the roots are:",
-        "$$",
-        "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
-        "$$",
-        "```js",
-        "const s = \\(x\\);",
-        "```",
-        "and `\\(y\\)` stays code.",
-      ].join("\n"),
-    );
+    expect(output).toHaveLength(input.length);
+    expect(output).toContain("- [ ] solve $$x^2 + 1 = 0$$");
+    expect(output).toContain("```\n\\(protected\\)\n```");
+    expect(output).toContain("$$\n\\int_0^1 f\n$$");
+    expect(output).toContain("done 🎉 $$y$$");
+    expect(output.indexOf("[ ]")).toBe(input.indexOf("[ ]"));
   });
 
-  it("returns text without TeX delimiters unchanged", () => {
-    const text = "Plain prose with $5 and a \\ backslash.";
+  it("handles CRLF text without corrupting line structure", () => {
+    const input = "\\[\r\nE = mc^2\r\n\\]";
 
-    expect(normalizeScientMathDelimiters(text)).toBe(text);
+    expect(normalizeScientMathDelimiters(input)).toBe("$$\r\nE = mc^2\r\n$$");
   });
 });

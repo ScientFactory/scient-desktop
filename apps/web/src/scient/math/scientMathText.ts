@@ -1,75 +1,121 @@
 import { useMemo } from "react";
 
-// Same fence split ChatMarkdown uses, so a half-streamed fence still counts as code.
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-const INLINE_CODE_SPAN_PATTERN = /(`[^`\n]+`)/;
-// `\[...\]` before `\(...\)`, non-greedy, and never on an escaped `\\(` opener.
-const TEX_DELIMITER_PATTERN = /(?<!\\)\\\[([\s\S]*?)\\\]|(?<!\\)\\\(([\s\S]*?)\\\)/g;
-
-/** Drops the blank edges of the expression and keeps every line inside `indent`. */
-function displayBlockBody(tex: string, indent: string): string {
-  const lines = tex.split("\n");
-  const [firstLine] = lines;
-  // Only the opener's own line lost its indentation to the `$$` replacing it;
-  // later lines already carry the indentation of the block they sit in.
-  if (firstLine !== undefined && firstLine.trim() !== "") {
-    lines[0] = indent + firstLine.trim();
-  }
-  while (lines.length > 0 && (lines[0] ?? "").trim() === "") lines.shift();
-  while (lines.length > 0 && (lines.at(-1) ?? "").trim() === "") lines.pop();
-  return lines.join("\n");
-}
-
 /**
- * remark-math only opens a display block when `$$` starts its own line, so math
- * that already stands alone becomes a fenced block and math embedded in a
- * sentence stays on one line, where remark-math reads it as inline math.
+ * Rewrites the TeX delimiters models emit — `\(...\)` and `\[...\]` — into the
+ * `$$` forms remark-math parses. Every replacement swaps a two-character
+ * delimiter for the two-character `$$`, so the rewritten string is exactly the
+ * same length as the source and no character offset ever moves. Offset-based
+ * behavior (task-list toggling, list-item positions) therefore stays correct on
+ * every surface, with no per-surface gating.
+ *
+ * Mid-sentence pairs render as inline math; a pair alone in its paragraph is
+ * promoted to display math by `remarkScientMathRefinements`.
  */
-function displayDollars(text: string, index: number, length: number, tex: string): string {
-  const lineStart = text.lastIndexOf("\n", index - 1) + 1;
-  const indent = text.slice(lineStart, index);
-  const lineEnd = text.indexOf("\n", index + length);
-  const trailing = text.slice(index + length, lineEnd === -1 ? undefined : lineEnd);
-  if (indent.trim() !== "" || trailing.trim() !== "") {
-    return `$$${tex.trim()}$$`;
-  }
-  // The opening fence inherits the indentation already copied from the source.
-  return `$$\n${displayBlockBody(tex, indent)}\n${indent}$$`;
+
+interface ProtectedRange {
+  readonly start: number;
+  readonly end: number;
 }
 
-function rewriteDelimiters(text: string): string {
-  let rewritten = "";
-  let lastIndex = 0;
-  for (const match of text.matchAll(TEX_DELIMITER_PATTERN)) {
-    const [matched, displayTex, inlineTex] = match;
-    rewritten += text.slice(lastIndex, match.index);
-    rewritten +=
-      inlineTex === undefined
-        ? displayDollars(text, match.index, matched.length, displayTex ?? "")
-        : `$${inlineTex.trim()}$`;
-    lastIndex = match.index + matched.length;
+const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
+const INDENTED_CODE_LINE_PATTERN = /^(?: {4,}|\t)/;
+const INLINE_CODE_SPAN_PATTERN = /(`+)[^`][\s\S]*?\1(?!`)|``(?!`)/g;
+const RAW_CODE_REGION_PATTERN = /<(code|pre)(?:\s[^>]*)?>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+const TEX_DELIMITER_PAIR_PATTERN =
+  /(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]|(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g;
+
+/** Fenced blocks, line by line: ``` or ~~~ opens, an equal-or-longer run of the same marker closes, an unclosed fence protects to the end. */
+function collectFencedRanges(text: string, ranges: ProtectedRange[]): void {
+  let lineStart = 0;
+  let fenceStart = -1;
+  let fenceMarker = "";
+  let fenceLength = 0;
+
+  while (lineStart <= text.length) {
+    const lineEnd = text.indexOf("\n", lineStart);
+    const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+    if (fenceStart === -1) {
+      const opened = FENCE_OPEN_PATTERN.exec(line);
+      if (opened?.[1]) {
+        fenceStart = lineStart;
+        fenceMarker = opened[1][0] ?? "`";
+        fenceLength = opened[1].length;
+      }
+    } else {
+      const closed = FENCE_OPEN_PATTERN.exec(line);
+      if (
+        closed?.[1] &&
+        closed[1][0] === fenceMarker &&
+        closed[1].length >= fenceLength &&
+        line.trim() === closed[1].trim()
+      ) {
+        ranges.push({ start: fenceStart, end: lineEnd === -1 ? text.length : lineEnd });
+        fenceStart = -1;
+      }
+    }
+    if (lineEnd === -1) break;
+    lineStart = lineEnd + 1;
   }
-  return rewritten + text.slice(lastIndex);
+  if (fenceStart !== -1) {
+    ranges.push({ start: fenceStart, end: text.length });
+  }
 }
 
-/** Rewrites the TeX delimiters models emit into the dollar forms remark-math parses. */
+/** Indented code candidates: any line at four-plus spaces or a tab. Over-protects deeply indented list prose, which safely stays literal. */
+function collectIndentedLineRanges(text: string, ranges: ProtectedRange[]): void {
+  let lineStart = 0;
+  while (lineStart <= text.length) {
+    const lineEnd = text.indexOf("\n", lineStart);
+    const end = lineEnd === -1 ? text.length : lineEnd;
+    if (INDENTED_CODE_LINE_PATTERN.test(text.slice(lineStart, end))) {
+      ranges.push({ start: lineStart, end });
+    }
+    if (lineEnd === -1) break;
+    lineStart = lineEnd + 1;
+  }
+}
+
+function collectPatternRanges(text: string, pattern: RegExp, ranges: ProtectedRange[]): void {
+  for (const match of text.matchAll(pattern)) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+}
+
+function overlapsProtected(ranges: ProtectedRange[], start: number, end: number): boolean {
+  return ranges.some((range) => start < range.end && end > range.start);
+}
+
 export function normalizeScientMathDelimiters(text: string): string {
   if (!text.includes("\\[") && !text.includes("\\(")) {
     return text;
   }
 
-  const fenceSegments = text.split(FENCED_CODE_SEGMENT_PATTERN);
-  for (let index = 0; index < fenceSegments.length; index += 2) {
-    const codeSpanSegments = (fenceSegments[index] ?? "").split(INLINE_CODE_SPAN_PATTERN);
-    for (let spanIndex = 0; spanIndex < codeSpanSegments.length; spanIndex += 2) {
-      codeSpanSegments[spanIndex] = rewriteDelimiters(codeSpanSegments[spanIndex] ?? "");
-    }
-    fenceSegments[index] = codeSpanSegments.join("");
+  const protectedRanges: ProtectedRange[] = [];
+  collectFencedRanges(text, protectedRanges);
+  collectIndentedLineRanges(text, protectedRanges);
+  collectPatternRanges(text, INLINE_CODE_SPAN_PATTERN, protectedRanges);
+  collectPatternRanges(text, RAW_CODE_REGION_PATTERN, protectedRanges);
+
+  let characters: string[] | null = null;
+  for (const match of text.matchAll(TEX_DELIMITER_PAIR_PATTERN)) {
+    const content = match[1] ?? match[2] ?? "";
+    if (content.trim() === "") continue;
+    const start = match.index;
+    const end = start + match[0].length;
+    if (overlapsProtected(protectedRanges, start, end)) continue;
+
+    // split("") keeps UTF-16 code units, so indices stay aligned with the
+    // regex offsets even when the text contains astral characters.
+    characters ??= text.split("");
+    characters[start] = "$";
+    characters[start + 1] = "$";
+    characters[end - 2] = "$";
+    characters[end - 1] = "$";
   }
-  return fenceSegments.join("");
+  return characters === null ? text : characters.join("");
 }
 
 /** Memoized per message text, since streaming re-renders the same string repeatedly. */
-export function useScientMathMarkdownText(text: string, enabled: boolean): string {
-  return useMemo(() => (enabled ? normalizeScientMathDelimiters(text) : text), [enabled, text]);
+export function useScientMathMarkdownText(text: string): string {
+  return useMemo(() => normalizeScientMathDelimiters(text), [text]);
 }

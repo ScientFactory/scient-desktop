@@ -17,3 +17,12 @@
 .scient-math-inline .katex {
   font-size: inherit;
 }
+
+/* The chat surface applies aggressive word-breaking for prose; equations must
+   never fracture mid-token. KaTeX's own inter-fragment break opportunities
+   remain, and wide display math scrolls inside its container instead. */
+.scient-math-inline .katex,
+.scient-math-display .katex {
+  overflow-wrap: normal;
+  word-break: normal;
+}

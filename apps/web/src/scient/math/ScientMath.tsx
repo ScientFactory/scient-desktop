@@ -17,36 +17,8 @@ const MAX_MATH_CACHE_ENTRIES = 500;
 const MAX_MATH_CACHE_MEMORY_BYTES = 5 * 1024 * 1024;
 const renderedMathCache = new LRUCache<string>(MAX_MATH_CACHE_ENTRIES, MAX_MATH_CACHE_MEMORY_BYTES);
 
-const CURRENCY_TEXT_PATTERN = /^[\d\s.,;:!?+\-*/^%~()]+$/;
-const PROSE_WORD_PATTERN = /[a-zA-Z]{2,}/;
-const MATH_STRUCTURE_PATTERN = /[=^_{}]/;
-
-/**
- * Prices are the one thing single-dollar math gets wrong: `$5 and $10` reads to
- * remark-math as one math span whose TeX is `5 and `. Anything digit-only goes
- * back out literally, and so does digit-led prose — a word of two or more
- * letters with no control sequence or math structure around it.
- */
-export function isLikelyCurrencyText(tex: string): boolean {
-  if (!/\d/.test(tex) || tex.includes("\\")) {
-    return false;
-  }
-  if (CURRENCY_TEXT_PATTERN.test(tex)) {
-    return true;
-  }
-  return /^\s*\d/.test(tex) && PROSE_WORD_PATTERN.test(tex) && !MATH_STRUCTURE_PATTERN.test(tex);
-}
-
 function estimateRenderedMathSize(html: string, tex: string): number {
   return Math.max(html.length * 2, tex.length * 3);
-}
-
-/**
- * Display math is always intentional math — `$$` around a bare number still
- * means an equation. Only single-dollar inline spans are ambiguous with money.
- */
-export function shouldRenderMathAsCurrency(tex: string, displayMode: boolean): boolean {
-  return !displayMode && isLikelyCurrencyText(tex);
 }
 
 /**
@@ -64,17 +36,13 @@ interface ScientMathProps {
   isStreaming: boolean;
 }
 
+/** The fallback for loading, render failure, and unsupported TeX: the source as typed. */
 function ScientMathLiteral({ tex, displayMode }: Omit<ScientMathProps, "isStreaming">) {
   return (
     <code dir="ltr" data-markdown-copy={mathMarkdownCopySource(tex, displayMode)}>
       {displayMode ? `$$${tex}$$` : `$${tex}$`}
     </code>
   );
-}
-
-/** Currency reads as prose, so it goes back into the sentence unstyled. */
-function ScientMathCurrencyText({ tex }: { tex: string }) {
-  return <span dir="ltr">{`$${tex}$`}</span>;
 }
 
 function ScientMathHtml({
@@ -111,19 +79,19 @@ function UncachedScientMath({ cacheKey, displayMode, isStreaming, tex }: Uncache
   // A streaming message re-renders per token, so an unclosed block's growing
   // prefixes would each occupy an entry; only settled math is worth caching.
   useEffect(() => {
-    if (!isStreaming) {
+    if (html !== null && !isStreaming) {
       renderedMathCache.set(cacheKey, html, estimateRenderedMathSize(html, tex));
     }
   }, [cacheKey, html, isStreaming, tex]);
 
+  if (html === null) {
+    return <ScientMathLiteral tex={tex} displayMode={displayMode} />;
+  }
   return <ScientMathHtml html={html} tex={tex} displayMode={displayMode} />;
 }
 
 function ScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
   const literal = <ScientMathLiteral tex={tex} displayMode={displayMode} />;
-  if (shouldRenderMathAsCurrency(tex, displayMode)) {
-    return <ScientMathCurrencyText tex={tex} />;
-  }
 
   const cacheKey = `${displayMode}:${tex}`;
   const cachedHtml = isStreaming ? null : renderedMathCache.get(cacheKey);

@@ -110,7 +110,11 @@ import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import { MermaidDiagramCard } from "../scient/diagrams/MermaidDiagramCard";
-import { isScientMathCodeClassName, remarkScientMath } from "../scient/math/remarkScientMath";
+import {
+  isScientMathCodeClassName,
+  remarkScientMath,
+  remarkScientMathRefinements,
+} from "../scient/math/remarkScientMath";
 import { useScientMathMarkdownText } from "../scient/math/scientMathText";
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 
@@ -183,6 +187,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
   remarkScientMath,
+  remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
@@ -192,6 +197,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
   remarkScientMath,
+  remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
@@ -1360,9 +1366,9 @@ function ChatMarkdown({
   messageId,
   directionHint,
 }: ChatMarkdownProps) {
-  // Task-list toggling writes back through character offsets into the original
-  // string, so delimiter normalization only runs where no such writer exists.
-  const text = useScientMathMarkdownText(textProp, onTaskListChange === undefined);
+  // Delimiter normalization is length-preserving, so offset-based behavior
+  // (task-list toggling, list positions) stays correct on every surface.
+  const text = useScientMathMarkdownText(textProp);
   const scopedContentDirection = useContentDirection();
   const effectiveContentDirection = contentDirection ?? scopedContentDirection;
   const streamingDirectionRef = useRef<{
