@@ -3,15 +3,21 @@ import * as NodeHttp from "node:http";
 import * as NodeURL from "node:url";
 
 import {
+  normalizeScientSourceAbstractDocument,
   scientSourceTypeFromZotero,
   type ScientSourceCandidate,
   type ScientSourceCreator,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ZoteroCollection,
+  type ZoteroCollectionsResult,
   type ZoteroConnectionStatus,
+  type ZoteroImportScope,
   type ZoteroLibraryPage,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
+
+import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 
 const ZOTERO_HOST = "127.0.0.1";
 const ZOTERO_PORT = 23_119;
@@ -19,6 +25,7 @@ const ZOTERO_API_VERSION = 3;
 const REQUEST_TIMEOUT_MS = 4_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PAGE_SIZE = 100;
+const MAX_SCOPED_IMPORT_ITEMS = 10_000;
 const ITEM_KEY_PATTERN = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/u;
 
 const ZoteroRawCreator = Schema.Struct({
@@ -53,6 +60,7 @@ const ZoteroRawItemData = Schema.Struct({
   contentType: Schema.optionalKey(Schema.String),
   filename: Schema.optionalKey(Schema.String),
   linkMode: Schema.optionalKey(Schema.String),
+  dateModified: Schema.optionalKey(Schema.String),
 });
 
 const ZoteroRawItem = Schema.Struct({
@@ -69,6 +77,18 @@ const ZoteroRawItems = Schema.Array(ZoteroRawItem);
 const decodeZoteroRawItem = Schema.decodeUnknownSync(ZoteroRawItem);
 const decodeZoteroRawItems = Schema.decodeUnknownSync(ZoteroRawItems);
 type ZoteroRawItem = typeof ZoteroRawItem.Type;
+
+const ZoteroRawCollection = Schema.Struct({
+  key: Schema.String,
+  data: Schema.Struct({
+    key: Schema.String,
+    name: Schema.String,
+    parentCollection: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
+  }),
+});
+const ZoteroRawCollections = Schema.Array(ZoteroRawCollection);
+const decodeZoteroRawCollections = Schema.decodeUnknownSync(ZoteroRawCollections);
+type ZoteroRawCollection = typeof ZoteroRawCollection.Type;
 
 interface LocalResponse {
   readonly status: number;
@@ -194,6 +214,7 @@ function provenance(data: ZoteroRawItem["data"]): ReadonlyArray<ScientSourceFiel
 export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate {
   const data = raw.data;
   const type = scientSourceTypeFromZotero(data.itemType);
+  const abstract = normalizeScientSourceAbstractDocument(data.abstractNote);
   return {
     sourceKey: raw.key,
     type,
@@ -209,7 +230,8 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
     issuedRaw: text(data.date),
     issuedYear: publicationYear(data.date),
     identifiers: identifiers(data),
-    abstract: text(data.abstractNote),
+    abstract: abstract?.text ?? null,
+    ...(abstract ? { abstractSections: [...abstract.sections] } : {}),
     containerTitle: text(data.publicationTitle ?? data.bookTitle ?? data.proceedingsTitle),
     publisher: text(data.publisher),
     volume: text(data.volume),
@@ -237,6 +259,11 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
 function decodeItems(body: string): ReadonlyArray<ZoteroRawItem> {
   const value: unknown = JSON.parse(body);
   return decodeZoteroRawItems(value);
+}
+
+function decodeCollections(body: string): ReadonlyArray<ZoteroRawCollection> {
+  const value: unknown = JSON.parse(body);
+  return decodeZoteroRawCollections(value);
 }
 
 function assertReady(response: LocalResponse): void {
@@ -284,41 +311,208 @@ export async function inspectZoteroConnection(): Promise<ZoteroConnectionStatus>
   return { state: "ready", apiVersion: version, message: "Zotero is ready for local import." };
 }
 
+function collectionFromRaw(raw: ZoteroRawCollection): ZoteroCollection {
+  const parent = raw.data.parentCollection;
+  return {
+    key: raw.data.key || raw.key,
+    name: raw.data.name.trim() || "Untitled collection",
+    parentCollectionKey: typeof parent === "string" && parent.trim() ? parent : null,
+  };
+}
+
+async function listAllZoteroCollections(): Promise<ReadonlyArray<ZoteroCollection>> {
+  const collections: ZoteroCollection[] = [];
+  let start = 0;
+  while (true) {
+    const parameters = new URLSearchParams({
+      format: "json",
+      limit: String(MAX_PAGE_SIZE),
+      start: String(start),
+      sort: "title",
+      direction: "asc",
+    });
+    const response = await localRequest(`/api/users/0/collections?${parameters.toString()}`);
+    assertReady(response);
+    const page = decodeCollections(response.body).map(collectionFromRaw);
+    collections.push(...page);
+    if (collections.length > MAX_SCOPED_IMPORT_ITEMS) {
+      throw new Error("Zotero contains too many collections for one import session.");
+    }
+    const reportedTotal = Number.parseInt(
+      response.headers["total-results"] ?? String(collections.length),
+      10,
+    );
+    const total = Number.isFinite(reportedTotal) ? reportedTotal : collections.length;
+    start += page.length;
+    if (page.length === 0 || start >= total) break;
+  }
+  return collections;
+}
+
+export async function listZoteroCollections(): Promise<ZoteroCollectionsResult> {
+  return { collections: [...(await listAllZoteroCollections())] };
+}
+
+function scopePath(scope: ZoteroImportScope): string {
+  if (scope.kind === "library") return "/api/users/0/items/top";
+  if (!ITEM_KEY_PATTERN.test(scope.collectionKey)) {
+    throw new Error("The Zotero collection key is invalid.");
+  }
+  return `/api/users/0/collections/${scope.collectionKey}/items/top`;
+}
+
+function importableItems(items: ReadonlyArray<ZoteroRawItem>): ReadonlyArray<ZoteroRawItem> {
+  return items.filter(
+    (item) => item.data.itemType !== "note" && item.data.itemType !== "annotation",
+  );
+}
+
+async function readZoteroItemPage(input: {
+  readonly path: string;
+  readonly query: string;
+  readonly start: number;
+  readonly limit: number;
+}): Promise<{ readonly rawItems: ReadonlyArray<ZoteroRawItem>; readonly total: number }> {
+  const parameters = new URLSearchParams({
+    format: "json",
+    itemType: "-attachment",
+    limit: String(input.limit),
+    start: String(input.start),
+    sort: "dateModified",
+    direction: "desc",
+  });
+  const query = input.query.trim();
+  if (query) parameters.set("q", query);
+  const response = await localRequest(`${input.path}?${parameters.toString()}`);
+  assertReady(response);
+  const rawItems = decodeItems(response.body);
+  const reportedTotal = Number.parseInt(
+    response.headers["total-results"] ?? String(rawItems.length),
+    10,
+  );
+  return {
+    rawItems,
+    total: Number.isFinite(reportedTotal) && reportedTotal >= 0 ? reportedTotal : rawItems.length,
+  };
+}
+
+export function zoteroDescendantCollectionKeys(
+  collectionKey: string,
+  collections: ReadonlyArray<ZoteroCollection>,
+): ReadonlyArray<string> {
+  const result = new Set<string>([collectionKey]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const collection of collections) {
+      if (
+        collection.parentCollectionKey &&
+        result.has(collection.parentCollectionKey) &&
+        !result.has(collection.key)
+      ) {
+        result.add(collection.key);
+        changed = true;
+      }
+    }
+  }
+  return [...result];
+}
+
+async function readAllItemsAtPath(
+  path: string,
+  query: string,
+): Promise<ReadonlyArray<ZoteroRawItem>> {
+  const items: ZoteroRawItem[] = [];
+  let start = 0;
+  while (true) {
+    const page = await readZoteroItemPage({ path, query, start, limit: MAX_PAGE_SIZE });
+    items.push(...importableItems(page.rawItems));
+    start += page.rawItems.length;
+    if (items.length > MAX_SCOPED_IMPORT_ITEMS) {
+      throw new Error(
+        "This Zotero scope contains more than 10,000 references. Import a smaller collection.",
+      );
+    }
+    if (page.rawItems.length === 0 || start >= page.total) break;
+  }
+  return items;
+}
+
+async function readAllScopedItems(
+  scope: ZoteroImportScope,
+  query: string,
+): Promise<ReadonlyArray<ZoteroRawItem>> {
+  if (scope.kind === "library" || !scope.includeSubcollections) {
+    return readAllItemsAtPath(scopePath(scope), query);
+  }
+  const collections = await listAllZoteroCollections();
+  if (!collections.some((collection) => collection.key === scope.collectionKey)) {
+    throw new Error("The Zotero collection no longer exists.");
+  }
+  const keys = zoteroDescendantCollectionKeys(scope.collectionKey, collections);
+  const unique = new Map<string, ZoteroRawItem>();
+  for (let index = 0; index < keys.length; index += 4) {
+    const batch = await Promise.all(
+      keys
+        .slice(index, index + 4)
+        .map((key) => readAllItemsAtPath(`/api/users/0/collections/${key}/items/top`, query)),
+    );
+    for (const items of batch) {
+      for (const item of items) unique.set(item.key, item);
+    }
+    if (unique.size > MAX_SCOPED_IMPORT_ITEMS) {
+      throw new Error(
+        "This Zotero collection contains more than 10,000 references. Import a smaller collection.",
+      );
+    }
+  }
+  return [...unique.values()].sort((left, right) => {
+    const byDate = (right.data.dateModified ?? "").localeCompare(left.data.dateModified ?? "");
+    return byDate || left.key.localeCompare(right.key);
+  });
+}
+
 export async function listZoteroLibrary(input: {
+  readonly scope: ZoteroImportScope;
   readonly query: string;
   readonly start: number;
   readonly limit: number;
 }): Promise<ZoteroLibraryPage> {
   const start = Math.max(0, Math.trunc(input.start));
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(input.limit)));
-  const parameters = new URLSearchParams({
-    format: "json",
-    itemType: "-attachment",
-    limit: String(limit),
-    start: String(start),
-    sort: "dateModified",
-    direction: "desc",
+  if (input.scope.kind === "collection" && input.scope.includeSubcollections) {
+    const allItems = await readAllScopedItems(input.scope, input.query);
+    const items = allItems.slice(start, start + limit).map(zoteroItemToCandidate);
+    return {
+      scope: input.scope,
+      items,
+      start,
+      nextStart: start + items.length,
+      total: allItems.length,
+      hasMore: start + items.length < allItems.length,
+    };
+  }
+  const page = await readZoteroItemPage({
+    path: scopePath(input.scope),
+    query: input.query,
+    start,
+    limit,
   });
-  const query = input.query.trim();
-  if (query) parameters.set("q", query);
-  const response = await localRequest(`/api/users/0/items/top?${parameters.toString()}`);
-  assertReady(response);
-  const rawItems = decodeItems(response.body);
-  const items = rawItems
-    .filter((item) => item.data.itemType !== "note" && item.data.itemType !== "annotation")
-    .map(zoteroItemToCandidate);
-  const reportedTotal = Number.parseInt(
-    response.headers["total-results"] ?? String(items.length),
-    10,
-  );
-  const total = Number.isFinite(reportedTotal) && reportedTotal >= 0 ? reportedTotal : items.length;
+  const items = importableItems(page.rawItems).map(zoteroItemToCandidate);
   return {
+    scope: input.scope,
     items,
     start,
-    nextStart: start + rawItems.length,
-    total,
-    hasMore: start + rawItems.length < total,
+    nextStart: start + page.rawItems.length,
+    total: page.total,
+    hasMore: start + page.rawItems.length < page.total,
   };
+}
+
+export async function listZoteroScopeItemKeys(
+  scope: ZoteroImportScope,
+): Promise<ReadonlyArray<string>> {
+  return [...new Set((await readAllScopedItems(scope, "")).map((item) => item.key))];
 }
 
 async function readZoteroItemWithChildren(itemKey: string): Promise<{
@@ -391,7 +585,7 @@ export async function getZoteroImportMaterial(itemKey: string): Promise<{
   const { item, children } = await readZoteroItemWithChildren(itemKey);
   const pdfs = pdfAttachments(children);
   const pdf = pdfs[0];
-  const candidate = zoteroItemWithPdfsToCandidate(item, pdfs);
+  const candidate = await enrichScientSourceCandidate(zoteroItemWithPdfsToCandidate(item, pdfs));
   if (!pdf) return { candidate, pdfPath: null };
   const response = await localRequest(`/api/users/0/items/${pdf.key}/file/view/url`);
   assertReady(response);

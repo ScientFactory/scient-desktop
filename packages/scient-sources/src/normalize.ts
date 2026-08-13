@@ -87,6 +87,14 @@ export function normalizePersistentIdentifier(scheme: string, value: string): st
     normalizedValue = normalizedValue.replace(/[\s-]+/gu, "");
   } else if (normalizedScheme === "pmid") {
     normalizedValue = normalizedValue.replace(/^pmid:\s*/u, "").replace(/\s+/gu, "");
+  } else if (normalizedScheme === "pmcid") {
+    normalizedValue = normalizedValue.replace(/^pmcid:\s*/u, "").replace(/\s+/gu, "");
+  } else if (normalizedScheme === "arxiv") {
+    normalizedValue = normalizedValue
+      .replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\//u, "")
+      .replace(/\.pdf$/u, "")
+      .replace(/^arxiv:\s*/u, "")
+      .replace(/\s+/gu, "");
   }
   return `${normalizedScheme}:${normalizedValue}`;
 }

@@ -3,10 +3,15 @@ import {
   ScientSourceImportOperation,
   ScientSourceMetadataDiagnostic,
   ScientSourceMetadataUpdateResult,
+  ScientSourceRecord,
   ScientSourceRemovalResult,
+  ScientSourceSummary,
   ScientSourcePreflightItem,
   ScientSourcesOverview as ScientSourcesStoreOverview,
   ZoteroConnectionStatus,
+  ZoteroCollection,
+  ZoteroCollectionsResult,
+  ZoteroImportScope,
   ZoteroLibraryPage,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
@@ -22,6 +27,15 @@ const BoundedPageSize = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum:
 export const ScientSourcesOverviewRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSourcesOverviewRequest = typeof ScientSourcesOverviewRequest.Type;
 
+export const ScientSourceDetailRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+});
+export type ScientSourceDetailRequest = typeof ScientSourceDetailRequest.Type;
+
+export const ScientSourceDetailResult = ScientSourceRecord;
+export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
+
 export const ScientSourceAttachmentPreviewRequest = Schema.Struct({
   root: NonEmptyString,
   attachmentId: NonEmptyString,
@@ -34,6 +48,22 @@ export const ScientSourceAttachmentPreviewResult = Schema.Struct({
 });
 export type ScientSourceAttachmentPreviewResult = typeof ScientSourceAttachmentPreviewResult.Type;
 
+export const ScientSourceJournalIconRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+});
+export type ScientSourceJournalIconRequest = typeof ScientSourceJournalIconRequest.Type;
+
+export const ScientSourceJournalIconResult = Schema.Struct({
+  icon: Schema.NullOr(
+    Schema.Struct({
+      ...AssetCreateUrlResult.fields,
+      journalTitle: TrimmedNonEmptyString.check(Schema.isMaxLength(1_024)),
+    }),
+  ),
+});
+export type ScientSourceJournalIconResult = typeof ScientSourceJournalIconResult.Type;
+
 export const ScientSourceMetadataUpdateRequest = Schema.Struct({
   root: NonEmptyString,
   sourceId: NonEmptyString,
@@ -42,6 +72,21 @@ export const ScientSourceMetadataUpdateRequest = Schema.Struct({
   allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientSourceMetadataUpdateRequest = typeof ScientSourceMetadataUpdateRequest.Type;
+
+export const ScientSourceMetadataRefreshRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type ScientSourceMetadataRefreshRequest = typeof ScientSourceMetadataRefreshRequest.Type;
+
+export const ScientSourceMetadataRefreshResult = Schema.Struct({
+  outcome: Schema.Literals(["refreshed", "unchanged", "stale", "unavailable", "duplicate"]),
+  record: ScientSourceRecord,
+  changedFields: Schema.Array(NonEmptyString),
+  message: Schema.NullOr(Schema.String),
+});
+export type ScientSourceMetadataRefreshResult = typeof ScientSourceMetadataRefreshResult.Type;
 
 export const ScientSourceRemovalRequest = Schema.Struct({
   root: NonEmptyString,
@@ -54,11 +99,22 @@ export const ZoteroStatusRequest = Schema.Struct({});
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
 export const ZoteroLibraryRequest = Schema.Struct({
+  scope: ZoteroImportScope,
   query: Schema.String,
   start: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   limit: BoundedPageSize,
 });
 export type ZoteroLibraryRequest = typeof ZoteroLibraryRequest.Type;
+
+export const ZoteroCollectionsRequest = Schema.Struct({});
+export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
+
+export const ZoteroScopedImportRequest = Schema.Struct({
+  root: NonEmptyString,
+  operationId: NonEmptyString,
+  scope: ZoteroImportScope,
+});
+export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
 export const ScientSourcesPreflightRequest = Schema.Struct({
   root: NonEmptyString,
@@ -125,6 +181,9 @@ export {
   ScientSourceMetadataUpdateResult,
   ScientSourceRemovalResult,
   ZoteroConnectionStatus,
+  ZoteroCollection,
+  ZoteroCollectionsResult,
+  ZoteroImportScope,
   ZoteroLibraryPage,
 };
 export const ScientSourceRecordDiagnostics = Schema.Struct({
@@ -135,6 +194,7 @@ export type ScientSourceRecordDiagnostics = typeof ScientSourceRecordDiagnostics
 
 export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
+  records: Schema.Array(ScientSourceSummary),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;

@@ -7,6 +7,8 @@ import type {
   ScientSourceRecord,
 } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
+import { normalizeScientSourceAbstract } from "./abstract.ts";
+import { normalizeScientSourceAbstractDocument } from "./abstract.ts";
 
 export const SCIENT_SOURCE_EDITABLE_FIELDS = [
   "type",
@@ -115,7 +117,7 @@ export function normalizeScientSourceEditableMetadata(
     issuedRaw: nullableText(metadata.issuedRaw),
     issuedYear: metadata.issuedYear,
     identifiers,
-    abstract: nullableText(metadata.abstract),
+    abstract: normalizeScientSourceAbstract(metadata.abstract),
     containerTitle: nullableText(metadata.containerTitle),
     publisher: nullableText(metadata.publisher),
     volume: nullableText(metadata.volume),
@@ -202,11 +204,17 @@ export function applyEditableMetadata(input: {
   fieldProvenance.push(
     ...changed.map((field) => ({ field, origin: "user" as const, sourceField: null })),
   );
-  return {
+  const abstractChanged = changedSet.has("abstract");
+  const abstract = abstractChanged ? normalizeScientSourceAbstractDocument(next.abstract) : null;
+  const updated = {
     ...input.record,
     ...next,
     revision: input.record.revision + 1,
     fieldProvenance,
     updatedAt: input.updatedAt,
   };
+  if (!abstractChanged) return updated;
+  if (abstract) return { ...updated, abstractSections: [...abstract.sections] };
+  const { abstractSections: _removedAbstractSections, ...withoutAbstractSections } = updated;
+  return withoutAbstractSections;
 }
