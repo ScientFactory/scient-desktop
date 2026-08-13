@@ -9,6 +9,40 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.2",
+    publishedAt: "2026-08-13",
+    kicker: "Sources, citations, and stronger scientific documents",
+    headline: "Scient 0.6.2",
+    summary:
+      "This release introduces a project-owned Sources library and strengthens the foundations for reliable scientific documents.",
+    highlights: [
+      {
+        id: "project-sources",
+        title: "Keep research sources with your project",
+        description:
+          "Build a durable project library for papers and PDFs without making Zotero or another external service the source of truth.",
+      },
+      {
+        id: "zotero-and-local-import",
+        title: "Import from Zotero or local PDFs",
+        description:
+          "Bring references in from a local Zotero library or add PDFs directly, with duplicate review and recoverable import operations.",
+      },
+      {
+        id: "citations-and-metadata",
+        title: "Review metadata and copy citations",
+        description:
+          "Inspect and correct source details, resolve DOI and PMID metadata, open attached PDFs, and copy references in common citation styles.",
+      },
+      {
+        id: "scientific-document-foundation",
+        title: "Stronger scientific document foundations",
+        description:
+          "Adds governed generated-PDF artifacts and safer Markdown preview handling, alongside release and documentation reliability improvements.",
+      },
+    ],
+  },
+  {
     version: "0.6.1",
     publishedAt: "2026-08-12",
     kicker: "Pull requests, General Chat improvements, and reliability fixes",

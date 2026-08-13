@@ -223,14 +223,18 @@ validation profile passes and atomic publication completes.
   boundary;
 - cancellation, cleanup, and operation telemetry.
 
-`apps/desktop/src/scient/documentArtifacts/`
+`apps/server/src/scient/documentArtifacts/`
 
-- candidate-file and atomic-publication implementation;
-- generated-artifact catalog and bounded Browser-export storage;
-- host worker for the shared structural core plus Browser-specific
-  source-versus-output blank detection;
-- desktop `PdfSourceResolver` and source-scoped Save Copy/Reveal commands;
+- atomic publication into the server-owned state directory;
+- generated-artifact catalog and persisted document bindings shared by every
+  producer;
+- bounded host worker for the shared structural core;
+- environment-authorized, renewable signed URLs with range support; and
 - no Browser rendering, TeX build orchestration, or React reader logic.
+
+Browser-specific source-versus-output blank detection remains in the desktop
+export lane before it hands validated candidate bytes to this neutral server
+boundary. The web host supplies source-scoped Save Copy/Reveal commands.
 
 `apps/web/src/scient/documentExport/`
 
@@ -259,8 +263,9 @@ integration is limited to four narrow seams:
 
 1. The preview manager issues and validates an opaque lease for the active
    tab's current web contents.
-2. The desktop IPC registry mounts the separate document-artifact and
-   document-export services through one bounded registry seam.
+2. The existing server runtime/RPC and signed-asset boundary mounts the
+   document-artifact service through one generated-document variant; the
+   desktop IPC registry later mounts only the Browser renderer/export bridge.
 3. The browser chrome mounts one `ScientPreviewExportActions` component.
 4. The right-panel/PDF host accepts `PdfSourceDescriptor` and receives the
    host-supplied resolver/action capabilities without adding producer-specific
@@ -583,6 +588,24 @@ Initial retention policy (named, configurable implementation constants):
   new export with a visible storage-management error instead of silently
   deleting protected artifacts.
 
+The neutral store must not approximate this policy by deleting every revision
+except the newest one or two. An older immutable revision may still be open,
+serving byte-range requests through an unexpired signed URL, or referenced by
+durable product state. Safe pruning therefore requires the protected-lifetime
+and reference information above. Continuous-save producers such as LaTeX may
+integrate against the foundation contracts, but their production release is
+gated on this protected retention implementation; unbounded history and unsafe
+"keep N" deletion are both unacceptable shipping states.
+
+Integrity verification is performed when a renewable signed URL is issued,
+not for each HTTP byte-range request. The initial implementation re-hashes the
+immutable revision at that boundary; the client refreshes asset capabilities
+at a substantially lower frequency than PDF.js range reads. Do not replace the
+hash with a size/mtime-only cache: local content can be changed to the same
+length and timestamps can be restored. A future performance cache is valid
+only if it uses a platform-stable file identity/change signal and falls back to
+the full hash whenever that evidence changes or is unavailable.
+
 Slice 1 must test byte/count thresholds, protected-artifact pressure, startup
 GC, failed cleanup retries, and reader-open lifetime. The initial numbers may be
 raised only from measured artifact sizes and platform disk behavior.
@@ -644,7 +667,8 @@ It does not claim full visual equivalence for arbitrary third-party pages.
 
 Only after validation:
 
-- atomically rename the temporary file;
+- flush the temporary PDF and metadata, then atomically rename their revision
+  directory so bytes and metadata cannot become independently visible;
 - persist the final descriptor and receipt;
 - expose the artifact to the PDF reader;
 - report success.
@@ -704,7 +728,7 @@ callback-heavy component props.
 Initial source variants:
 
 1. Existing workspace file source, unchanged.
-2. Generated desktop artifact source, proven in the foundation PR with a
+2. Generated server-owned artifact source, proven in the foundation PR with a
    permanent multi-revision lifecycle fixture before the browser renderer
    exists.
 
@@ -717,10 +741,11 @@ workspace-file capabilities.
 
 - Logical document keys are stable, producer-defined, and namespaced by source
   authority so unrelated environments, projects, or producers cannot collide.
-- The host that owns the source bytes owns the authoritative binding. The
-  desktop artifact catalog owns Browser-export bindings; the LaTeX build
-  coordinator owns build-output bindings. The reader only observes a
-  descriptor and cannot declare a revision current by itself.
+- The server artifact catalog owns authoritative bindings for registered
+  generated PDFs, regardless of producer. Browser export and LaTeX build
+  coordinators advance those bindings through the same producer-neutral
+  service. The reader only observes a descriptor and cannot declare a revision
+  current by itself.
 - Every descriptor carries enough environment/host identity for capability
   routing. A resolver must reject a descriptor owned by another host rather
   than accidentally opening a same-named local path.
@@ -744,7 +769,10 @@ the same names:
 - the logical document key remains stable across revisions of the same
   document;
 - binding updates compare their monotonic generation so late/superseded
-  completions cannot replace a newer selected revision;
+  completions cannot replace a newer selected revision; the authoritative
+  store allocates generations under its binding lock and returns the resulting
+  production handle, rather than requiring each producer to read/increment a
+  shared counter;
 - the reader reloads only after the new PDF is complete and has passed its
   validation profile; partial producer output is never exposed;
 - a failed production leaves the last successful revision visible, marked
@@ -754,6 +782,17 @@ the same names:
 - search results are rebuilt against the new revision; and
 - revision-scoped auxiliary data (for example future SyncTeX mappings)
   identifies the exact artifact revision it belongs to.
+
+### Binding Change Notification Seam
+
+Refresh-in-place also needs one producer-neutral notification path. Before the
+first continuously rebuilding producer ships, add a narrow authenticated
+binding-change subscription keyed by authority and logical document key. Its
+payload is the new binding generation and descriptor (or an invalidation that
+causes `getDescriptor` to run); it is not a LaTeX-, Browser-, Typst-, or
+Quarto-specific event. Delivery may be coalesced, so the persisted binding
+remains authoritative and reconnect always re-reads it. Polling may be a
+temporary diagnostic fallback, not the product lifecycle.
 
 The foundation PR proves this lifecycle with permanent fixtures, not one static
 file: open revision A; publish validated revision B; preserve reader state while
@@ -1127,8 +1166,9 @@ Implement it from the foundations upward in one coherent slice:
 - Add `packages/scient-pdf-validation/` with the pinned structural core and its
   existing-load and producer-registration profiles, executable through a
   bounded host worker.
-- Add the desktop artifact publication/resolution boundary and host-injected
-  `PdfSourceResolver` plus source-scoped Save Copy/Reveal commands.
+- Add the server-owned artifact publication/resolution boundary, renewable
+  signed asset URLs, and host-injected `PdfSourceResolver` plus source-scoped
+  Save Copy/Reveal commands.
 - Generalize the existing reader to accept descriptors and injected host
   capabilities while preserving the current workspace-file source unchanged.
 - Preserve byte loading, cleanup, Save Copy, source switching, search, text,

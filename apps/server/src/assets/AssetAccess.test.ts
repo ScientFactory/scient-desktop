@@ -1,4 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactProducerId,
+  ArtifactRevisionId,
+  ContentSha256,
+  LogicalDocumentKey,
+  ProducingOperationId,
+} from "@scientfactory/document-artifacts";
 import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
@@ -6,6 +15,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
@@ -238,6 +248,99 @@ describe("AssetAccess", () => {
           refreshedSuffix.slice(refreshedSeparator + 1),
         ),
       ).toMatchObject({ revision: { size: 16 } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact renewable URLs for immutable generated PDF revisions", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const artifactId = ArtifactId.make("artifact-generated-pdf");
+      const revisionId = ArtifactRevisionId.make("revision-generated-pdf");
+      const generatedPath = path.join(
+        config.documentArtifactsDir,
+        "revisions",
+        artifactId,
+        `${revisionId}.pdf`,
+      );
+      const bytes = new TextEncoder().encode("%PDF-1.7\ngenerated");
+      yield* fileSystem.makeDirectory(path.dirname(generatedPath), { recursive: true });
+      yield* fileSystem.writeFile(generatedPath, bytes);
+      const info = yield* fileSystem.stat(generatedPath);
+      const generatedDocument = {
+        artifact: {
+          schemaVersion: 1 as const,
+          authority: ArtifactAuthority.make("environment-generated-pdf"),
+          logicalDocumentKey: LogicalDocumentKey.make("browser-export:generated-pdf"),
+          artifactId,
+          revisionId,
+          contentHash: ContentSha256.make("0".repeat(64)),
+          mediaType: "application/pdf" as const,
+          byteLength: bytes.byteLength,
+          createdAtEpochMs: 1,
+          provenance: {
+            kind: "browser-export" as const,
+            producerId: ArtifactProducerId.make("browser"),
+            operationId: ProducingOperationId.make("export-1"),
+          },
+        },
+        path: generatedPath,
+        fileName: "Generated report.pdf",
+        title: "Generated report",
+        revision: {
+          size: Number(info.size),
+          mtimeMs: Option.match(info.mtime, {
+            onNone: () => null,
+            onSome: (mtime) => mtime.getTime(),
+          }),
+        },
+      };
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "generated-document",
+          authority: generatedDocument.artifact.authority,
+          artifactId,
+          revisionId,
+        },
+        generatedDocument,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+      const canonicalGeneratedPath = yield* fileSystem.realPath(generatedPath);
+
+      expect(yield* resolveAsset(token, suffix.slice(separatorIndex + 1))).toEqual({
+        kind: "file",
+        path: canonicalGeneratedPath,
+        revision: generatedDocument.revision,
+      });
+      expect(yield* resolveAsset(token, "another.pdf")).toBeNull();
+
+      const mismatched = yield* issueAssetUrl({
+        resource: {
+          _tag: "generated-document",
+          authority: generatedDocument.artifact.authority,
+          artifactId,
+          revisionId: ArtifactRevisionId.make("another-revision"),
+        },
+        generatedDocument,
+      }).pipe(Effect.flip);
+      expect(mismatched._tag).toBe("AssetGeneratedDocumentNotFoundError");
+
+      const outsidePath = path.join(path.dirname(config.documentArtifactsDir), "outside.pdf");
+      yield* fileSystem.writeFile(outsidePath, bytes);
+      const outside = yield* issueAssetUrl({
+        resource: {
+          _tag: "generated-document",
+          authority: generatedDocument.artifact.authority,
+          artifactId,
+          revisionId,
+        },
+        generatedDocument: { ...generatedDocument, path: outsidePath },
+      }).pipe(Effect.flip);
+      expect(outside._tag).toBe("AssetGeneratedDocumentNotFoundError");
     }).pipe(Effect.provide(testLayer)),
   );
 

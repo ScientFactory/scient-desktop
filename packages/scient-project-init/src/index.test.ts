@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   initializeScientProject,
   inspectScientProject,
+  readScientProjectIdentity,
   SCIENT_AGENTS_FILE,
   SCIENT_IDENTITY_FILE,
   SCIENT_PREVIOUS_TRANSACTION_FILE,
@@ -109,6 +110,24 @@ describe("Scient project initialization", () => {
     expect(second.created).toEqual([]);
     expect(await NodeFSP.readFile(NodePath.join(root, SCIENT_IDENTITY_FILE), "utf8")).toBe(
       identity,
+    );
+  });
+
+  it("exposes the validated project identity to Scient-owned feature stores", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+
+    const identity = await readScientProjectIdentity(root);
+
+    expect(identity.formatVersion).toBe(1);
+    expect(identity.projectId).toMatch(/^[0-9a-f-]{36}$/u);
+  });
+
+  it("does not expose identity for an ordinary folder", async () => {
+    const root = await fixture();
+
+    await expect(readScientProjectIdentity(root)).rejects.toThrow(
+      "This folder is not an initialized Scient project.",
     );
   });
 

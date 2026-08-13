@@ -1,0 +1,385 @@
+name: Prepare scheduled stable candidate
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+      timezone: "Asia/Jerusalem"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate the candidate without promoting or starting release builds"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: scient-scheduled-stable-candidate
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare the next stable candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - id: run_mode
+        name: Record run mode and Jerusalem time
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_DRY_RUN: ${{ inputs.dry_run }}
+          TZ: Asia/Jerusalem
+        run: |
+          set -euo pipefail
+          local_time="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          dry_run=false
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUESTED_DRY_RUN" == "true" ]]; then
+            dry_run=true
+          fi
+
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+          echo "local_time=$local_time" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout current main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - id: candidate
+        name: Select the exact source and Latest stable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          git fetch origin main --tags
+          current_main="$(git rev-parse origin/main)"
+          if [[ "$source_sha" != "$current_main" ]]; then
+            echo "main moved from $source_sha to $current_main while the candidate was starting; rerun against the new head." >&2
+            exit 1
+          fi
+
+          active_releases="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow release.yml \
+            --limit 50 \
+            --json databaseId,status,url,createdAt,headSha)"
+          active_release="$(jq -c '[.[] | select(.status != "completed")] | sort_by(.databaseId) | last // empty' <<<"$active_releases")"
+          if [[ -n "$active_release" ]]; then
+            active_url="$(jq -r '.url' <<<"$active_release")"
+            {
+              echo "## Scheduled candidate skipped"
+              echo
+              echo "A stable release run is already active or awaiting production approval: $active_url"
+              echo
+              echo "Approve, reject, or cancel that immutable candidate before preparing another."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "should_prepare=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")"
+          latest_tag="$(jq -r '.tag_name' <<<"$latest_release")"
+          latest_release_url="$(jq -r '.html_url' <<<"$latest_release")"
+
+          git fetch origin "refs/tags/$latest_tag:refs/tags/$latest_tag"
+          latest_sha="$(git rev-list -n 1 "$latest_tag")"
+          if ! git merge-base --is-ancestor "$latest_sha" "$source_sha"; then
+            echo "Latest stable $latest_tag ($latest_sha) is not an ancestor of current main $source_sha." >&2
+            exit 1
+          fi
+          if [[ "$latest_sha" == "$source_sha" ]]; then
+            {
+              echo "## Scheduled candidate skipped"
+              echo
+              echo "Current main is already the published $latest_tag source ($source_sha)."
+              echo
+              echo "Release: $latest_release_url"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "should_prepare=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_prepare=true" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "latest_sha=$latest_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Vite+
+        if: steps.candidate.outputs.should_prepare == 'true'
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/shared...
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/web...
+
+      - id: version
+        name: Resolve and reserve the next stable identity
+        if: steps.candidate.outputs.should_prepare == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.candidate.outputs.latest_tag }}
+        run: |
+          set -euo pipefail
+          resolved="$(node scripts/resolve-next-scient-stable-version.ts --latest-tag "$LATEST_TAG")"
+          printf '%s\n' "$resolved" >> "$GITHUB_OUTPUT"
+          next_tag="$(sed -n 's/^tag=//p' <<<"$resolved")"
+          if [[ -z "$next_tag" ]]; then
+            echo "The next stable tag was not resolved." >&2
+            exit 1
+          fi
+          if gh release view "$next_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $next_tag already exists even though $LATEST_TAG is reported as Latest." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$next_tag" >/dev/null 2>&1; then
+            echo "Tag $next_tag already exists; refusing to reuse it." >&2
+            exit 1
+          fi
+
+      - name: Require approved notes for the next exact version
+        if: steps.candidate.outputs.should_prepare == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/scient-release-preflight.ts \
+            --version "$RELEASE_VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --release-sha "$SOURCE_SHA" \
+            --notes-output "$RUNNER_TEMP/scient-release-notes.md"
+
+      - name: Wait for successful CI on the exact current main commit
+        if: steps.candidate.outputs.should_prepare == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            runs="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow ci.yml \
+              --commit "$SOURCE_SHA" \
+              --limit 20 \
+              --json headSha,status,conclusion,url)"
+            if jq -e --arg sha "$SOURCE_SHA" \
+              'any(.[]; .headSha == $sha and .status == "completed" and .conclusion == "success")' \
+              <<<"$runs" >/dev/null; then
+              exit 0
+            fi
+            if jq -e --arg sha "$SOURCE_SHA" \
+              'any(.[]; .headSha == $sha and .status != "completed")' \
+              <<<"$runs" >/dev/null; then
+              sleep 60
+              continue
+            fi
+            if [[ "$attempt" -le 5 && "$(jq 'length' <<<"$runs")" -eq 0 ]]; then
+              sleep 60
+              continue
+            fi
+            echo "No successful or still-running CI workflow exists for exact current main $SOURCE_SHA." >&2
+            jq -r '.[] | "- \(.status) / \(.conclusion // "none"): \(.url)"' <<<"$runs" >&2
+            exit 1
+          done
+          echo "Timed out waiting for exact-main CI on $SOURCE_SHA." >&2
+          exit 1
+
+      - name: Report successful dry run
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          {
+            echo "## Scheduled candidate dry run passed"
+            echo
+            echo "- Proposed version: \`v$RELEASE_VERSION\`"
+            echo "- Exact source: \`$SOURCE_SHA\`"
+            echo "- CI: successful"
+            echo "- Release notes: approved"
+            echo
+            echo "No branch was promoted and no release build was started."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: promotion_marker
+        name: Record promotion run boundary
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          before_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow promote-release.yml \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // 0')"
+          echo "before_id=$before_id" >> "$GITHUB_OUTPUT"
+
+      - name: Promote exact main to release/stable
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          gh workflow run promote-release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f "source_sha=$SOURCE_SHA"
+
+      - id: promotion
+        name: Require successful exact-commit promotion
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+          BEFORE_ID: ${{ steps.promotion_marker.outputs.before_id }}
+        run: |
+          set -euo pipefail
+          for _attempt in $(seq 1 90); do
+            runs="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow promote-release.yml \
+              --event workflow_dispatch \
+              --limit 30 \
+              --json databaseId,headSha,status,conclusion,url)"
+            run="$(jq -c \
+              --arg sha "$SOURCE_SHA" \
+              --argjson before "$BEFORE_ID" \
+              '[.[] | select(.databaseId > $before and .headSha == $sha)] | sort_by(.databaseId) | first // empty' \
+              <<<"$runs")"
+            if [[ -z "$run" ]]; then
+              sleep 10
+              continue
+            fi
+            status="$(jq -r '.status' <<<"$run")"
+            url="$(jq -r '.url' <<<"$run")"
+            if [[ "$status" != "completed" ]]; then
+              sleep 10
+              continue
+            fi
+            conclusion="$(jq -r '.conclusion' <<<"$run")"
+            if [[ "$conclusion" != "success" ]]; then
+              echo "Exact-commit promotion failed: $url" >&2
+              exit 1
+            fi
+            promoted_sha="$(git ls-remote origin refs/heads/release/stable | awk 'NR == 1 { print $1 }')"
+            if [[ "$promoted_sha" != "$SOURCE_SHA" ]]; then
+              echo "release/stable is $promoted_sha after promotion, expected $SOURCE_SHA." >&2
+              exit 1
+            fi
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+            exit 0
+          done
+          echo "Timed out waiting for the exact-commit promotion workflow." >&2
+          exit 1
+
+      - id: release_marker
+        name: Record stable-release run boundary
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          before_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow release.yml \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // 0')"
+          echo "before_id=$before_id" >> "$GITHUB_OUTPUT"
+
+      - name: Start the immutable publishable candidate
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref release/stable \
+            -f "version=$RELEASE_VERSION" \
+            -f "source_sha=$SOURCE_SHA" \
+            -f "publish_release=true" \
+            -f "allow_note_free=false" \
+            -f "allow_unsigned_windows=true"
+
+      - id: release_run
+        name: Confirm the candidate workflow started
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+          BEFORE_ID: ${{ steps.release_marker.outputs.before_id }}
+        run: |
+          set -euo pipefail
+          for _attempt in $(seq 1 60); do
+            runs="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow release.yml \
+              --event workflow_dispatch \
+              --limit 30 \
+              --json databaseId,headSha,status,url)"
+            run="$(jq -c \
+              --arg sha "$SOURCE_SHA" \
+              --argjson before "$BEFORE_ID" \
+              '[.[] | select(.databaseId > $before and .headSha == $sha)] | sort_by(.databaseId) | first // empty' \
+              <<<"$runs")"
+            if [[ -n "$run" ]]; then
+              echo "url=$(jq -r '.url' <<<"$run")" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "The stable-release dispatch was accepted, but its workflow run could not be located." >&2
+          exit 1
+
+      - name: Summarize the pending production candidate
+        if: steps.candidate.outputs.should_prepare == 'true' && steps.run_mode.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+          PROMOTION_URL: ${{ steps.promotion.outputs.url }}
+          RELEASE_URL: ${{ steps.release_run.outputs.url }}
+          LOCAL_TIME: ${{ steps.run_mode.outputs.local_time }}
+        run: |
+          {
+            echo "## Stable candidate started"
+            echo
+            echo "- Version: \`v$RELEASE_VERSION\`"
+            echo "- Exact source: \`$SOURCE_SHA\`"
+            echo "- Scheduled time: $LOCAL_TIME"
+            echo "- Promotion: $PROMOTION_URL"
+            echo "- Candidate build: $RELEASE_URL"
+            echo "- Windows: explicitly permitted unsigned"
+            echo
+            echo "The release workflow will assemble and attest the exact candidate, then wait at the protected \`production\` environment. Nothing is public until Yaacov approves that deployment."
+          } >> "$GITHUB_STEP_SUMMARY"

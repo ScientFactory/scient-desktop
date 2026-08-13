@@ -1,6 +1,13 @@
+import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactRevisionId,
+} from "@scientfactory/document-artifacts";
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetGeneratedDocumentAuthorityMismatchError,
+  AssetGeneratedDocumentNotFoundError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -41,6 +48,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import type { ResolvedGeneratedDocumentRevision } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -90,6 +98,18 @@ const AssetClaimsSchema = Schema.Union([
     workspaceRoot: Schema.String,
     relativePath: Schema.NullOr(Schema.String),
     expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("generated-document"),
+    authority: ArtifactAuthority,
+    artifactId: ArtifactId,
+    revisionId: ArtifactRevisionId,
+    path: Schema.String,
+    fileName: Schema.String,
+    expiresAt: Schema.Number,
+    revisionSize: Schema.Number,
+    revisionMtimeMs: Schema.NullOr(Schema.Number),
   }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
@@ -177,6 +197,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
+  readonly generatedDocument?: ResolvedGeneratedDocumentRevision;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -396,6 +417,53 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       break;
     }
+    case "generated-document": {
+      if (!input.generatedDocument) {
+        return yield* new AssetGeneratedDocumentNotFoundError({ resource: input.resource });
+      }
+      if (input.generatedDocument.artifact.authority !== input.resource.authority) {
+        return yield* new AssetGeneratedDocumentAuthorityMismatchError({
+          resource: input.resource,
+        });
+      }
+      if (
+        input.generatedDocument.artifact.artifactId !== input.resource.artifactId ||
+        input.generatedDocument.artifact.revisionId !== input.resource.revisionId
+      ) {
+        return yield* new AssetGeneratedDocumentNotFoundError({ resource: input.resource });
+      }
+      const config = yield* ServerConfig.ServerConfig;
+      const [canonicalArtifactsRoot, canonicalGeneratedPath] = yield* Effect.all([
+        fileSystem.realPath(config.documentArtifactsDir),
+        fileSystem.realPath(input.generatedDocument.path),
+      ]).pipe(
+        Effect.mapError(
+          () => new AssetGeneratedDocumentNotFoundError({ resource: input.resource }),
+        ),
+      );
+      const generatedRelativePath = path.relative(canonicalArtifactsRoot, canonicalGeneratedPath);
+      if (
+        generatedRelativePath === "" ||
+        generatedRelativePath.startsWith("..") ||
+        path.isAbsolute(generatedRelativePath)
+      ) {
+        return yield* new AssetGeneratedDocumentNotFoundError({ resource: input.resource });
+      }
+      claims = {
+        version: 1,
+        kind: "generated-document",
+        authority: input.generatedDocument.artifact.authority,
+        artifactId: input.generatedDocument.artifact.artifactId,
+        revisionId: input.generatedDocument.artifact.revisionId,
+        path: canonicalGeneratedPath,
+        fileName: input.generatedDocument.fileName,
+        expiresAt,
+        revisionSize: input.generatedDocument.revision.size,
+        revisionMtimeMs: input.generatedDocument.revision.mtimeMs,
+      };
+      fileName = input.generatedDocument.fileName;
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -472,6 +540,19 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       relativePath: claims.relativePath,
     });
     return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "generated-document") {
+    const decodedPath = decodeRelativePath(relativePath);
+    if (decodedPath === null || decodedPath !== claims.fileName) return null;
+    return {
+      kind: "file",
+      path: claims.path,
+      revision: {
+        size: claims.revisionSize,
+        mtimeMs: claims.revisionMtimeMs,
+      },
+    } satisfies ResolvedAsset;
   }
 
   const decodedPath = decodeRelativePath(relativePath);

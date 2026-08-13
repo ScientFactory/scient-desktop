@@ -25,6 +25,8 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@scientfactory/document-artifacts": "workspace:*",
+    "@scientfactory/scient-sources": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
