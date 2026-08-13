@@ -1,4 +1,9 @@
 export const SCIENT_DEFAULT_RENDER_MARKDOWN = true;
+export const SCIENT_DEFAULT_FILE_EXPLORER_OPEN = false;
+
+export function resolveInitialFileExplorerOpen(savedPreference: boolean | null): boolean {
+  return savedPreference ?? SCIENT_DEFAULT_FILE_EXPLORER_OPEN;
+}
 
 /**
  * Files Scient opens in the integrated browser when the runtime supports it.
