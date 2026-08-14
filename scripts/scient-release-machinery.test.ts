@@ -94,14 +94,14 @@ describe("Scient release machinery", () => {
     assert.include(publish, "Stage, verify, and publish the immutable release");
   });
 
-  it("cancels superseded CI while retaining desktop validation", () => {
+  it("cancels superseded pull request CI while retaining pushed main validation", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/ci.yml"),
       "utf8",
     );
 
-    assert.include(workflow, "group: ci-${{ github.ref }}");
-    assert.include(workflow, "cancel-in-progress: true");
+    assert.include(workflow, "group: ci-${{ github.event.pull_request.number || github.sha }}");
+    assert.include(workflow, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     assert.include(workflow, "vp run build:desktop");
     assert.include(workflow, "Verify preload bundle output");
   });

@@ -13,8 +13,8 @@ on:
       - "**/*.md"
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -133,6 +133,50 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  test_web:
+    name: Test / Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Test web
+        working-directory: apps/web
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            vp test run \
+              --passWithNoTests \
+              --project unit \
+              --reporter=default \
+              --reporter=json \
+              --outputFile.json="${{ runner.temp }}/web-tests.json" \
+            2>&1 | tee "${{ runner.temp }}/web-tests.log"
+
+      - name: Upload web test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-test-diagnostics
+          path: |
+            ${{ runner.temp }}/web-tests.log
+            ${{ runner.temp }}/web-tests.json
+          if-no-files-found: warn
+          retention-days: 30
+
   test_workspace:
     name: Test / Workspace
     runs-on: ubuntu-24.04
@@ -159,19 +203,41 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
-      # The root script recursively runs every package and the server has its
-      # own lane above, so exclude both to avoid duplicate work.
+      # The root script recursively runs every package, while the server and
+      # web app have dedicated lanes above, so exclude all three to avoid
+      # duplicate work.
       - name: Test workspace packages
-        run: vp run --filter '!t3' --filter '!@t3tools/monorepo' --log grouped test
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            vp run \
+              --filter '!t3' \
+              --filter '!@t3tools/monorepo' \
+              --filter '!@t3tools/web' \
+              --fail-if-no-match \
+              --verbose \
+              --log grouped \
+              test \
+            2>&1 | tee "${{ runner.temp }}/workspace-tests.log"
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+      - name: Upload workspace test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: workspace-test-diagnostics
+          path: ${{ runner.temp }}/workspace-tests.log
+          if-no-files-found: warn
+          retention-days: 30
 
   test:
     name: Test
     if: always()
     needs:
       - test_server
+      - test_web
       - test_workspace
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -179,9 +245,11 @@ jobs:
       - name: Verify test suites
         env:
           SERVER_RESULT: ${{ needs.test_server.result }}
+          WEB_RESULT: ${{ needs.test_web.result }}
           WORKSPACE_RESULT: ${{ needs.test_workspace.result }}
         run: |
           test "$SERVER_RESULT" = "success"
+          test "$WEB_RESULT" = "success"
           test "$WORKSPACE_RESULT" = "success"
 
   mobile_native_static_analysis:
