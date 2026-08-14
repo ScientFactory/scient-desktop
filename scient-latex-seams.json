@@ -51,6 +51,11 @@
       "path": "packages/client-runtime/package.json",
       "anchor": "./state/scient-latex",
       "purpose": "Expose the Scient LaTeX HTTP client module through the package export map."
+    },
+    {
+      "path": "apps/server/vite.config.ts",
+      "anchor": "src/pdf.worker.ts",
+      "purpose": "Emit pdfjs' sibling fake-worker module so packaged PDF validation can load it."
     }
   ]
 }
