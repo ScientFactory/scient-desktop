@@ -213,6 +213,8 @@ import {
   AnalysisListRunsInput,
   AnalysisListRunsResult,
   AnalysisOperationError,
+  AnalysisPromoteRunInput,
+  AnalysisPromoteRunResult,
   AnalysisRunSnapshot,
   AnalysisRunStreamEvent,
   AnalysisRuntimeInspection,
@@ -246,6 +248,7 @@ export const WS_METHODS = {
   analysisStorageSummary: "analysis.storageSummary",
   analysisCleanupRun: "analysis.cleanupRun",
   analysisCleanupProject: "analysis.cleanupProject",
+  analysisPromoteRun: "analysis.promoteRun",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -813,6 +816,12 @@ export const WsAnalysisCleanupProjectRpc = Rpc.make(WS_METHODS.analysisCleanupPr
   error: AnalysisRpcError,
 });
 
+export const WsAnalysisPromoteRunRpc = Rpc.make(WS_METHODS.analysisPromoteRun, {
+  payload: AnalysisPromoteRunInput,
+  success: AnalysisPromoteRunResult,
+  error: AnalysisRpcError,
+});
+
 export const WsSubscribeAnalysisRunsRpc = Rpc.make(WS_METHODS.subscribeAnalysisRuns, {
   payload: AnalysisSubscribeRunsInput,
   success: AnalysisRunStreamEvent,
@@ -1218,6 +1227,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAnalysisStorageSummaryRpc,
   WsAnalysisCleanupRunRpc,
   WsAnalysisCleanupProjectRpc,
+  WsAnalysisPromoteRunRpc,
   WsSubscribeAnalysisRunsRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,

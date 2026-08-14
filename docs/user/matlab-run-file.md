@@ -29,9 +29,14 @@ adds a compact **Run file** panel.
    edge and corner. Download the FIG representation when you want to continue working in MATLAB.
 8. Select **Load older runs** to page through long local history without loading every receipt or
    output journal into memory.
-9. Use **Remove this run** or **Clean up project** when retained output and figure files are no
-   longer needed. Scient confirms the measured byte count and keeps status, diagnostics, hashes,
-   source/runtime provenance, and artifact descriptions in metadata-only history.
+9. Choose **Save to project** when a useful terminal run should travel with the project. Scient
+   creates a portable folder under `results/<source>/<run>/`, opens its `README.md`, and includes
+   readable output, figures and native continuation files, a notes section, and a machine-readable
+   `manifest.json` with source/runtime provenance and SHA-256 hashes. Repeating the action reopens
+   the same result without overwriting researcher edits.
+10. Use **Remove this run** or **Clean up project** when retained output and figure files are no
+    longer needed. Scient confirms the measured byte count and keeps status, diagnostics, hashes,
+    source/runtime provenance, and artifact descriptions in metadata-only history.
 
 On macOS, a typical executable is
 `/Applications/MATLAB_R2025b.app/bin/matlab`. Windows and Linux paths depend on the installed
@@ -51,7 +56,8 @@ If another program or an agent changes the open file, Scient rereads it automati
 edits are still pending, Scient does not silently replace either version: choose whether to reload
 the disk version or explicitly overwrite it with the local edits. Figure collection failure is
 reported separately, so a successful MATLAB calculation is not mislabeled as failed and a broken
-capture is not mistaken for “this run produced no figures.”
+capture is not mistaken for “this run produced no figures.” Saving a result is deliberate: hidden
+run data remains derived local state until the user promotes it into ordinary project files.
 
 This first candidate runs a complete `.m` file in noninteractive batch mode. Selection/section
 execution, variables, optional SVG/PDF/interactive figure exports, `.mlx` and `.mat` viewers,

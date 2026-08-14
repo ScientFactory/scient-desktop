@@ -342,4 +342,88 @@ describe("analysis service coordination", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.effect("promotes a persisted terminal run into its initialized project", () =>
+    Effect.gen(function* () {
+      const harness = yield* serviceTestLayer;
+      const runId = ExecutionRunId.make("promoted-run");
+      const run: AnalysisRunSnapshot = {
+        contractVersion: 1,
+        projectId: harness.projectId,
+        action: "run-file",
+        runtime: runtimeProfile("2026-08-14T10:00:00.000Z"),
+        source: {
+          cwd: harness.projectRoot,
+          relativePath: "promote.m",
+          revision: sourceRevision,
+        },
+        phase: "finished",
+        queuePosition: null,
+        diagnostics: [],
+        artifacts: [],
+        artifactReceipt: { status: "succeeded", failureMessage: null },
+        localStorage: {
+          status: "retained",
+          outputBytes: 9,
+          artifactBytes: 0,
+          totalBytes: 9,
+          removedAt: null,
+        },
+        receipt: {
+          runId,
+          status: "succeeded",
+          startedAt: "2026-08-14T10:00:00.000Z",
+          finishedAt: "2026-08-14T10:00:01.000Z",
+          exitCode: 0,
+          failureMessage: null,
+          cancellationRequested: false,
+          outputTruncated: false,
+          outputByteLength: 9,
+          outputContentHash: null,
+          output,
+        },
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* LocalAnalysisStore.LocalAnalysisStore;
+          yield* store.persistRun(run);
+          yield* Effect.forEach(
+            output,
+            (chunk) => store.appendOutput(harness.projectId, runId, chunk),
+            {
+              discard: true,
+            },
+          );
+        }).pipe(Effect.provide(harness.localStoreLayer)),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const promotedResults = yield* Effect.all(
+            [
+              service.promoteRun({ cwd: harness.projectRoot, runId }),
+              service.promoteRun({ cwd: harness.projectRoot, runId }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          expect(promotedResults.map((result) => result.reused).toSorted()).toEqual([false, true]);
+          const promoted = promotedResults[0]!;
+          expect(promoted).toMatchObject({
+            directoryRelativePath: "results/promote/20260814T100000Z-promoted-run",
+            artifactFileCount: 0,
+          });
+          const fs = yield* FileSystem.FileSystem;
+          expect(
+            yield* fs.readFileString(`${harness.projectRoot}/${promoted.readmeRelativePath}`),
+          ).toContain("MATLAB test runtime analysis result");
+          expect(
+            yield* fs.readFileString(
+              `${harness.projectRoot}/${promoted.directoryRelativePath}/output.txt`,
+            ),
+          ).toBe("partial output\n");
+        }).pipe(Effect.provide(harness.analysisLayer)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });

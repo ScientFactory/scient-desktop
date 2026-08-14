@@ -24,6 +24,7 @@ changes adapter sequencing, not the shared architecture or the later Python/R pa
 | Analysis specialization    | `packages/scient-analysis`                      | Runtime profiles, adapter contract/registry fields, source revisions, run actions, analysis receipts, stream events, and simulator                  |
 | Host execution             | `apps/server/src/scient/execution`              | No-shell process spawn, stdout/stderr transport, exit observation, and owned process-tree cancellation                                              |
 | Analysis coordination      | `apps/server/src/scient/analysis`               | Adapter inspection, source/revision checks, lifecycle, cancellation race handling, output bounds, local journal, recovery, history, and RPC service |
+| Result promotion           | analysis package + server analysis              | Runtime-neutral portable capsule, receipt redaction, artifact verification, and atomic project publication                                          |
 | Client projection          | `packages/client-runtime/src/state/analysis.ts` | Summary/snapshot/delta folding and bounded query/subscription lifetime                                                                              |
 | Scient file extension seam | `apps/web/src/scient/fileSurfaces`              | Routes format-specific auxiliary surfaces without teaching the inherited viewer about MATLAB or future runtimes                                     |
 | Shared file truth          | workspace read/write RPC                        | Content revision, conditional save, atomic replacement, truncated-save refusal, and permission preservation                                         |
@@ -145,6 +146,15 @@ Run metadata and NDJSON output live under the environment's derived
 by durable Scient project identity. Standard project source remains the authority; hidden state is
 not a replacement for `.m` files.
 
+A terminal retained run can be deliberately promoted into
+`results/<source>/<timestamp>-<run>/`. Publication uses a sibling staging directory and one final
+rename, verifies copied artifact size and SHA-256 against the canonical receipt, refuses symlinked
+or occupied destinations, and never overwrites project files. The deterministic destination makes
+retry idempotent and preserves edits to the generated `README.md`. The portable manifest omits
+executable paths, installation roots, machine identities, and private runtime details; diagnostics
+redact known local roots. This contract is runtime-neutral so Python, R, and later adapters can
+produce the same project-owned result without another storage or viewer system.
+
 ## PDF and artifact alignment
 
 This slice consumes the same project identity, workspace file truth, server state derivation, and
@@ -174,7 +184,8 @@ slice never infers artifacts by diffing the user's project tree.
 This candidate includes Run file, Stop, deterministic runtime-level FIFO queueing, stdout/stderr,
 explicit startup/license/Java/toolbox verification, structured clickable errors, durable indexed
 and keyset-paginated terminal history, crash recovery, revision-safe source execution, exact-file
-refresh, and bounded PNG/FIG figure capture with explicit artifact-collection status. It does not
+refresh, bounded PNG/FIG figure capture with explicit artifact-collection status, and deliberate
+portable project-result promotion. It does not
 yet include Run selection or section, variables, opt-in rich representations, tests, debugging,
 `.mlx`/`.mat` viewers, MATLAB MCP, Jupyter attachment, agent initiation, general project-output
 discovery, or automatic retention policy. Explicit metadata-preserving cleanup is included.
@@ -212,6 +223,8 @@ The focused suite covers:
   persistence, a 10,000-receipt projection rebuild, opaque cursor paging, stale-index repair,
   corruption visibility, and metadata-preserving cleanup recovery;
 - summary/snapshot/output-delta client folding;
+- deterministic result paths, portable manifest/report rendering, atomic publication,
+  artifact-tamper refusal, destination collision protection, and idempotent retry;
 - source-language correction, inherited-viewer seam containment, uninitialized-project Run state,
   and autosave revision coordination;
 - websocket success, stdout/stderr, runtime verification/cache refresh, strict cross-file FIFO,

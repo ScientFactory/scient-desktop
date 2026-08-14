@@ -98,6 +98,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.analysisStorageSummary]: AuthOrchestrationReadScope,
   [WS_METHODS.analysisCleanupRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.analysisCleanupProject]: AuthOrchestrationOperateScope,
+  [WS_METHODS.analysisPromoteRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
   [WS_METHODS.filesystemBrowse]: AuthOrchestrationReadScope,

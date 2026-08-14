@@ -18,6 +18,8 @@ import {
   type AnalysisInspectRuntimesInput,
   type AnalysisListRunsInput,
   type AnalysisListRunsResult,
+  type AnalysisPromoteRunInput,
+  type AnalysisPromoteRunResult,
   type AnalysisRunSnapshot,
   type AnalysisRunSummary,
   type AnalysisRunStreamEvent,
@@ -61,6 +63,7 @@ import * as Stream from "effect/Stream";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as AnalysisRunIndex from "./AnalysisRunIndex.ts";
+import { promoteAnalysisRun } from "./AnalysisRunPromotion.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
@@ -166,6 +169,9 @@ export class AnalysisService extends Context.Service<
     readonly cleanupProject: (
       input: AnalysisCleanupProjectInput,
     ) => Effect.Effect<AnalysisCleanupResult, AnalysisOperationError>;
+    readonly promoteRun: (
+      input: AnalysisPromoteRunInput,
+    ) => Effect.Effect<AnalysisPromoteRunResult, AnalysisOperationError>;
     readonly resolveArtifact: (input: {
       readonly projectId: string;
       readonly runId: ExecutionRunId;
@@ -195,6 +201,7 @@ const make = Effect.gen(function* () {
   const runIndex = yield* AnalysisRunIndex.AnalysisRunIndex;
   const executionScope = yield* Scope.make("sequential");
   const startLock = yield* Semaphore.make(1);
+  const promotionLock = yield* Semaphore.make(1);
   const projectLoadLock = yield* Semaphore.make(1);
   const runtimeSemaphores = new Map(
     yield* Effect.forEach(runtimeAdapters, (adapter) =>
@@ -1683,6 +1690,58 @@ const make = Effect.gen(function* () {
       return { cleanedRunCount, freedBytes, storage };
     });
 
+  const promoteRun = (input: AnalysisPromoteRunInput) =>
+    promotionLock.withPermits(1)(
+      Effect.gen(function* () {
+        const identity = yield* identityForCwd("promote", input.cwd);
+        yield* ensureProjectRunsLoaded(identity.projectId);
+        const run = yield* store
+          .loadRun(identity.projectId, input.runId)
+          .pipe(
+            Effect.mapError((cause) =>
+              analysisError(
+                "promote",
+                "persistence-failed",
+                "Unable to load the analysis run before saving it to the project.",
+                cause,
+              ),
+            ),
+          );
+        if (run === null) {
+          return yield* analysisError(
+            "promote",
+            "run-not-found",
+            "The analysis run no longer exists.",
+          );
+        }
+        if (!isTerminal(run.receipt.status)) {
+          return yield* analysisError(
+            "promote",
+            "run-already-active",
+            "Wait for this analysis run to finish before saving it to the project.",
+          );
+        }
+        const workspaceRoot = yield* workspacePaths
+          .normalizeWorkspaceRoot(input.cwd)
+          .pipe(
+            Effect.mapError((cause) =>
+              analysisError(
+                "promote",
+                "persistence-failed",
+                "Unable to resolve the project folder before saving the analysis result.",
+                cause,
+              ),
+            ),
+          );
+        const createdAt = yield* nowIso;
+        return yield* promoteAnalysisRun({ workspaceRoot, run, createdAt, store }).pipe(
+          Effect.mapError((cause) =>
+            analysisError("promote", cause.reason, cause.message, cause.cause),
+          ),
+        );
+      }),
+    );
+
   const resolveArtifact = (input: {
     readonly projectId: string;
     readonly runId: ExecutionRunId;
@@ -1770,6 +1829,7 @@ const make = Effect.gen(function* () {
     storageSummary,
     cleanupRun,
     cleanupProject,
+    promoteRun,
     resolveArtifact,
     subscribeRuns,
   });
