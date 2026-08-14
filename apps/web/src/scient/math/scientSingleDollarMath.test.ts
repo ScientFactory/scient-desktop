@@ -85,6 +85,37 @@ describe("isPlausibleScientSingleDollarTex", () => {
     expect(isPlausibleScientSingleDollarTex("a + b")).toBe(true);
   });
 
+  it("rejects quote-after-space endings but keeps primes on symbols", () => {
+    for (const content of ["FILE' -C '", "foo' my-file '", "URL' -O '"]) {
+      expect(isPlausibleScientSingleDollarTex(content)).toBe(false);
+    }
+    expect(isPlausibleScientSingleDollarTex("x'")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("f(x)'")).toBe(true);
+  });
+
+  it("rejects code glue: arrows, empty calls, unopened closers, shell flags in parens", () => {
+    for (const content of [
+      "x->{key}",
+      "a.b()",
+      "el.fadeOut()",
+      "a)",
+      "(date -u)",
+      "(date +%F)",
+      "{PREFIX:-app}",
+      "{a+b}",
+      "100%",
+    ]) {
+      expect(isPlausibleScientSingleDollarTex(content)).toBe(false);
+    }
+  });
+
+  it("keeps escaped percents, brace commands, and half-open intervals", () => {
+    expect(isPlausibleScientSingleDollarTex("100\\%")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("{a \\over b}")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("[0,1)")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("(a+b)^2")).toBe(true);
+  });
+
   it("rejects empty and oversized content", () => {
     expect(isPlausibleScientSingleDollarTex("")).toBe(false);
     expect(
@@ -214,5 +245,27 @@ describe("guarded single-dollar tokenizer", () => {
 
     expect(html).toContain("<em>");
     expect(html).not.toContain("language-math");
+  });
+
+  it("keeps quoted shell variables with flags literal", () => {
+    for (const markdown of [
+      "tar -xf '$FILE' -C '$DEST' extracts",
+      "wget '$URL' -O '$OUT' fetches",
+      'name="${PREFIX:-app}${SUFFIX}" here',
+      "run $(date -u)$(hostname) now",
+      "file is backup-$(date +%F)$(hostname).tar.gz",
+      'perl print "$x->{key}$y" here',
+      "php if ($a)$b = 1; end",
+      "then $el.fadeOut()$next.fadeIn() runs",
+      "It is $100%$ done",
+    ]) {
+      expect(render(markdown)).not.toContain("language-math");
+    }
+  });
+
+  it("still renders primes, escaped percents, and intervals", () => {
+    expect(render("derivative $x'$ here")).toContain(INLINE_MATH_SHAPE);
+    expect(render("share is $100\\%$ done")).toContain(INLINE_MATH_SHAPE);
+    expect(render("interval $[0,1)$ closed-open")).toContain(INLINE_MATH_SHAPE);
   });
 });

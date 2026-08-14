@@ -61,10 +61,36 @@ const COLON_SIGNAL_PATTERN = /[\\^_{}=<>]/;
 // `src/`, `a=`, `1,`, `h{`, `(pwd)/` — is two unrelated dollars gluing shell
 // or code together, never complete TeX.
 const CONTENT_END_PATTERN = /[\p{L}\p{N})\]}!'%]$/u;
+// A prime attaches to a symbol (`x'`, `f(x)'`); a quote after whitespace is
+// shell quoting (`'$FILE' -C '$DEST'` pairs into `FILE' -C '`).
+const PRIME_END_PATTERN = /[\p{L}\p{N})\]}]'$/u;
 const HTML_TAG_LIKE_PATTERN = /<\/?[a-zA-Z][^<>]*>/;
 const INTERPOLATION_SIGNAL_PATTERN = /[\\^_+\-*=<>|]/;
 const BARE_BRACKET_GROUP_PATTERN = /^!?\[[^\][]*\]$/;
 const DOMAIN_LIKE_PATTERN = /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+){2,}$/u;
+
+/**
+ * Closing parens or brackets the span never opened are glued code
+ * (`if ($a)$b`, `$el.fadeOut()$next`), never complete TeX. Content that
+ * opens with a bracket is exempt so half-open intervals (`[0,1)`) survive.
+ */
+function hasGluedClosers(content: string): boolean {
+  if (content.startsWith("(") || content.startsWith("[")) return false;
+  let parens = 0;
+  let brackets = 0;
+  for (const character of content) {
+    if (character === "(") parens += 1;
+    else if (character === ")") {
+      parens -= 1;
+      if (parens < 0) return true;
+    } else if (character === "[") brackets += 1;
+    else if (character === "]") {
+      brackets -= 1;
+      if (brackets < 0) return true;
+    }
+  }
+  return parens !== 0 || brackets !== 0;
+}
 
 function isDigitCode(code: Code): boolean {
   return code !== null && code >= 48 && code <= 57;
@@ -102,16 +128,27 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (IDENTIFIER_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
   if (!CONTENT_END_PATTERN.test(content)) return false;
+  if (content.endsWith("'") && !PRIME_END_PATTERN.test(content)) return false;
+  // An unescaped trailing % is a TeX comment and always renders wrong.
+  if (content.endsWith("%") && !content.endsWith("\\%")) return false;
   if (/\s/.test(content) && !SPACED_CONTENT_SIGNAL_PATTERN.test(content)) return false;
   if (content.includes(":") && !COLON_SIGNAL_PATTERN.test(content)) return false;
   if (content.includes("](") || content.includes("][") || content.includes("[^")) return false;
   if (BARE_BRACKET_GROUP_PATTERN.test(content) && !/[\d\\^_+\-*/=,]/.test(content)) return false;
   if (HTML_TAG_LIKE_PATTERN.test(content)) return false;
-  if (
-    (content.startsWith("(") || content.startsWith("{")) &&
-    !INTERPOLATION_SIGNAL_PATTERN.test(content)
-  ) {
-    return false;
+  // Dereference arrows (`$x->{key}$y`) and empty-paren calls (`$a.b()$c`)
+  // are code glue; TeX writes \to and functions take arguments.
+  if ((content.includes("->") || content.includes("=>")) && !content.includes("\\")) return false;
+  if (content.includes("()")) return false;
+  if (hasGluedClosers(content)) return false;
+  // A brace group in TeX always carries a command (`{a \over b}`); without a
+  // backslash a `{` start is interpolation (`${PREFIX:-app}`, `${row}`).
+  if (content.startsWith("{") && !content.includes("\\")) return false;
+  // A parenthesized span needs a TeX operator, and once it contains spaces a
+  // shell flag's `-`/`+` is not enough (`$(date -u)$`, `$(date +%F)$`).
+  if (content.startsWith("(")) {
+    const signal = /\s/.test(content) ? /[\\^_=]/ : /[\\^_+\-*/=]/;
+    if (!signal.test(content)) return false;
   }
   if (DOMAIN_LIKE_PATTERN.test(content) && !INTERPOLATION_SIGNAL_PATTERN.test(content)) {
     return false;
