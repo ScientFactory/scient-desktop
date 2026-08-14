@@ -110,11 +110,19 @@ const PdfSourceBase = {
   capabilities: PdfSourceCapabilities,
 } as const;
 
+const WorkspacePdfLegacyLocator = Schema.Struct({
+  threadId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  absolutePath: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+});
+
 export const PdfSourceDescriptor = Schema.Union([
   Schema.TaggedStruct("workspace-pdf", {
     ...PdfSourceBase,
-    threadId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
-    absolutePath: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+    workspaceRoot: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+    relativePath: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+    // Old servers resolve workspace assets through a thread. This compatibility
+    // hint never contributes to document identity and can be omitted by producers.
+    legacyLocator: Schema.optional(WorkspacePdfLegacyLocator),
   }),
   Schema.TaggedStruct("generated-pdf", {
     ...PdfSourceBase,

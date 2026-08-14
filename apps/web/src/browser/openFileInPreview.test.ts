@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { isBrowserPreviewFile, resolveWorkspaceFileLinkOpenTarget } from "./openFileInPreview";
+import {
+  isBrowserPreviewFile,
+  resolveWorkspaceFileLinkOpenTarget,
+  workspaceFilePreviewAssetResource,
+} from "./openFileInPreview";
 
 describe("workspace file link routing", () => {
   it.each(["paper.pdf", "sources/PAPER.PDF", "paper.pdf?download=1", "paper.pdf#page=4"])(
@@ -20,5 +26,25 @@ describe("workspace file link routing", () => {
 
   it("keeps ordinary workspace files on the file surface", () => {
     expect(resolveWorkspaceFileLinkOpenTarget("notes.md")).toBe("file");
+  });
+
+  it("roots browser assets independently of the compatibility thread", () => {
+    expect(
+      workspaceFilePreviewAssetResource({
+        workspaceRoot: "/workspace",
+        relativePath: "reports/demo.html",
+        threadRef: scopeThreadRef(
+          EnvironmentId.make("environment-1"),
+          ThreadId.make("draft-thread"),
+        ),
+        filePath: "/workspace/reports/demo.html",
+      }),
+    ).toEqual({
+      _tag: "workspace-file",
+      cwd: "/workspace",
+      relativePath: "reports/demo.html",
+      threadId: "draft-thread",
+      path: "/workspace/reports/demo.html",
+    });
   });
 });

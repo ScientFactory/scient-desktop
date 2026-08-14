@@ -154,12 +154,16 @@ type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  readonly workspaceRoot: string;
+  readonly relativePath: string;
   readonly absolutePath: string;
   readonly alt: string;
   readonly refreshKey: number;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, {
     _tag: "workspace-file",
+    cwd: props.workspaceRoot,
+    relativePath: props.relativePath,
     threadId: props.threadRef.threadId,
     path: props.absolutePath,
   });
@@ -955,8 +959,9 @@ export default function FilePreviewPanel({
         environmentId,
         relativePath,
         threadId: threadRef.threadId,
+        workspaceRoot: cwd,
       }),
-    [absolutePath, environmentId, relativePath, threadRef.threadId],
+    [absolutePath, cwd, environmentId, relativePath, threadRef.threadId],
   );
   const breadcrumbs = useMemo(
     () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
@@ -999,10 +1004,12 @@ export default function FilePreviewPanel({
   };
 
   const handleOpenInBrowser = useCallback(() => {
-    if (!absolutePath || !environmentHttpBaseUrl) return;
+    if (!absolutePath || !relativePath || !environmentHttpBaseUrl) return;
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
+        workspaceRoot: cwd,
+        relativePath,
         filePath: absolutePath,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
@@ -1020,7 +1027,15 @@ export default function FilePreviewPanel({
         }),
       );
     })();
-  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
+  }, [
+    absolutePath,
+    createAssetUrl,
+    cwd,
+    environmentHttpBaseUrl,
+    openPreview,
+    relativePath,
+    threadRef,
+  ]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1165,6 +1180,8 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              workspaceRoot={cwd}
+              relativePath={relativePath}
               absolutePath={absolutePath}
               alt={relativePath}
               refreshKey={viewerRefreshKey}

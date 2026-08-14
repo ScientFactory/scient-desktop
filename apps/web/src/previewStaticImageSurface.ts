@@ -17,7 +17,9 @@ export function previewStaticImageRevisionKey(image: PreviewStaticImageSurfaceDe
   const resource = image.resource;
   switch (resource._tag) {
     case "workspace-file":
-      return JSON.stringify([resource._tag, resource.threadId, resource.path]);
+      return resource.cwd !== undefined && resource.relativePath !== undefined
+        ? JSON.stringify([resource._tag, resource.cwd, resource.relativePath])
+        : JSON.stringify([resource._tag, resource.threadId, resource.path]);
     case "attachment":
       return JSON.stringify([resource._tag, resource.attachmentId]);
     case "project-favicon":

@@ -1495,8 +1495,8 @@ function ChatMarkdown({
     [openPreview, threadRef],
   );
   const openMarkdownFileInPreview = useCallback(
-    (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
+    (path: string, workspaceRelativePath: string) => {
+      if (!threadRef || !cwd || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
             Cause.fail(
@@ -1509,13 +1509,15 @@ function ChatMarkdown({
       }
       return openFileInPreview({
         threadRef,
+        workspaceRoot: cwd,
+        relativePath: workspaceRelativePath,
         filePath: path,
         httpBaseUrl: preparedConnection.value.httpBaseUrl,
         createAssetUrl,
         openPreview,
       });
     },
-    [createAssetUrl, openPreview, preparedConnection, threadRef],
+    [createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
   );
   /* eslint-disable react/no-unstable-nested-components -- ReactMarkdown requires component
    * renderers that close over this message's metadata. useMemo keeps them stable until that
@@ -1527,6 +1529,7 @@ function ChatMarkdown({
       className?: string,
     ) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+      const browserRelativePath = fileLinkMeta.workspaceRelativePath;
       const labelParts = [fileLinkMeta.basename];
       if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
         labelParts.push(parentSuffix);
@@ -1552,9 +1555,11 @@ function ChatMarkdown({
           onOpen={openInPreferredEditor}
           onOpenInBrowser={
             threadRef &&
+            cwd &&
+            browserRelativePath &&
             isPreviewSupportedInRuntime() &&
             resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"
-              ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+              ? () => openMarkdownFileInPreview(fileLinkMeta.filePath, browserRelativePath)
               : undefined
           }
           className={className}

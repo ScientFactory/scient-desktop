@@ -2100,6 +2100,16 @@ const makeWsRpcLayer = (
                     : {}),
                 });
               }
+              // SCIENT-WORKSPACE-ASSET: a workspace file is rooted in the
+              // authenticated environment, not in the lifecycle of a chat.
+              if (input.resource.cwd !== undefined && input.resource.relativePath !== undefined) {
+                return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource.threadId === undefined || input.resource.path === undefined) {
+                return yield* new AssetWorkspaceContextNotFoundError({
+                  resource: input.resource,
+                });
+              }
               const thread = yield* projectionSnapshotQuery
                 .getThreadShellById(input.resource.threadId)
                 .pipe(

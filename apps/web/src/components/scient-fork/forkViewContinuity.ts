@@ -190,12 +190,14 @@ export function restoreForkPdfContinuity(input: {
       environmentId: input.environmentId,
       relativePath,
       threadId: match.destinationThreadId,
+      workspaceRoot: match.originWorkspaceRoot,
     });
     const destination = workspacePdfSourceForPreview({
       absolutePath: destinationPath,
       environmentId: input.environmentId,
       relativePath,
       threadId: input.threadId,
+      workspaceRoot: input.destinationWorkspaceRoot,
     });
     if (source === null || destination === null) continue;
     pdfReaderSessionStore.copy(
