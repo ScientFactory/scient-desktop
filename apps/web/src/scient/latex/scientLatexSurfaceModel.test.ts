@@ -88,7 +88,16 @@ const toolchain = (kind: ScientLatexToolchainStatus["kind"]): ScientLatexToolcha
 });
 
 function status(overrides: Partial<LatexBuildStatus> = {}): LatexBuildStatus {
-  return { snapshot: null, toolchain: null, error: null, requesting: false, ...overrides };
+  return {
+    snapshot: null,
+    toolchain: null,
+    canInstallManaged: false,
+    managedInstall: null,
+    installRequesting: false,
+    error: null,
+    requesting: false,
+    ...overrides,
+  };
 }
 
 describe("latex preview mode persistence", () => {

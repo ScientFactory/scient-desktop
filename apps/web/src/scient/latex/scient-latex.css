@@ -242,3 +242,41 @@
   font-size: 12px;
   line-height: 18px;
 }
+
+.scient-latex-progress {
+  overflow: hidden;
+  width: 14rem;
+  max-width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.scient-latex-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  /* Steps arrive about once a second, so the bar eases between them instead
+     of repainting continuously. */
+  transition: width 300ms ease-out;
+}
+
+.scient-latex-setup-action {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+}
+
+.scient-latex-setup-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 88%, var(--foreground));
+}
+
+.scient-latex-setup-action:disabled {
+  opacity: 0.5;
+}

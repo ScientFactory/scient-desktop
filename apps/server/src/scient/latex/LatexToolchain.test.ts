@@ -1,13 +1,20 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import { LatexToolchain, make, parseLatexToolchainVersion } from "./LatexToolchain.ts";
+import { encodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
+import { TinyTexManifestRef, type TinyTexManifest } from "./tinytexManifest.ts";
 
 // Verbatim engine banners; the parser must survive their prose, not a fixture.
 const LATEXMK_BANNER = "\nLatexmk, John Collins, 27 Jan. 2023. Version 4.79\n";
@@ -33,17 +40,57 @@ const spawnFailure = (command: string) =>
     }),
   );
 
-interface RunnerHarness {
-  readonly layer: Layer.Layer<LatexToolchain>;
-  readonly calls: Ref.Ref<ReadonlyArray<string>>;
-}
+/** Only the win32 slot matters here: the tests pin the platform to match. */
+const MANAGED_EXECUTABLE_RELATIVE_PATH = "TinyTeX/bin/windows/latexmk.exe";
+const testManifest: TinyTexManifest = {
+  version: "2026.08",
+  assets: {
+    win32: {
+      fileName: "TinyTeX-1-windows.exe",
+      url: "https://github.com/rstudio/tinytex-releases/releases/download/v2026.08/TinyTeX-1-windows.exe",
+      sha256: "0".repeat(64),
+      sizeBytes: 1,
+      archive: "seven-zip-sfx",
+      executableRelativePath: MANAGED_EXECUTABLE_RELATIVE_PATH,
+    },
+    darwin: null,
+    linux: null,
+  },
+};
 
+/**
+ * Wires the probe over a fake process runner and an empty state directory, so
+ * a test decides both what PATH answers and whether a managed install is there.
+ */
 const harness = (
   respond: (
     command: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  options: { readonly managedInstall?: boolean } = {},
 ) =>
   Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-probe-" });
+    const config = ServerConfig.layerTest(baseDir, baseDir);
+    const latexDir = path.join(baseDir, "userdata", "latex");
+    const paths = managedLatexPaths({ latexDir, join: path.join });
+    const installRoot = path.join(paths.managedRoot, "tinytex-2026.08");
+    const managedExecutable = path.join(installRoot, MANAGED_EXECUTABLE_RELATIVE_PATH);
+
+    if (options.managedInstall === true) {
+      yield* fileSystem.makeDirectory(path.dirname(managedExecutable), { recursive: true });
+      yield* fileSystem.writeFileString(managedExecutable, "");
+      const contents = yield* encodeManagedLatexInstallRecord({
+        schemaVersion: 1,
+        version: "2026.08",
+        installedAtEpochMs: 1,
+        root: installRoot,
+      });
+      yield* fileSystem.makeDirectory(paths.managedRoot, { recursive: true });
+      yield* fileSystem.writeFileString(paths.statePath, contents);
+    }
+
     const calls = yield* Ref.make<ReadonlyArray<string>>([]);
     const runner = ProcessRunner.ProcessRunner.of({
       run: (input) =>
@@ -54,10 +101,22 @@ const harness = (
     return {
       layer: Layer.effect(LatexToolchain, make).pipe(
         Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
+        Layer.provide(config),
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+        Layer.provide(Layer.succeed(TinyTexManifestRef, testManifest)),
       ),
       calls,
-    } satisfies RunnerHarness;
+      /** Absolute path of the engine a managed install would leave behind. */
+      managedExecutable,
+    };
   });
+
+/** PATH has nothing; anything else the probe spawns is the managed copy. */
+const onlyManagedResponds = (command: string) =>
+  command === "latexmk" || command === "tectonic"
+    ? spawnFailure(command)
+    : Effect.succeed(output(LATEXMK_BANNER));
 
 describe("parseLatexToolchainVersion", () => {
   it("reads the version out of each engine's own banner", () => {
@@ -87,8 +146,9 @@ describe("LatexToolchain", () => {
       expect(status.kind).toBe("latexmk");
       expect(status.executable).toBe("latexmk");
       expect(status.version).toBe("4.79");
+      expect(status.source).toBe("system");
       expect(yield* Ref.get(calls)).toEqual(["latexmk"]);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("treats a spawn failure as an absent candidate and falls through to tectonic", () =>
@@ -103,8 +163,9 @@ describe("LatexToolchain", () => {
 
       expect(status.kind).toBe("tectonic");
       expect(status.version).toBe("0.15.0");
+      expect(status.source).toBe("system");
       expect(yield* Ref.get(calls)).toEqual(["latexmk", "tectonic"]);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("reports no toolchain when neither engine can be spawned", () =>
@@ -116,7 +177,42 @@ describe("LatexToolchain", () => {
       }).pipe(Effect.provide(layer));
 
       expect(status).toMatchObject({ kind: null, executable: null, version: null });
-    }),
+      expect(status.source).toBeUndefined();
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("falls back to the distribution Scient installed and says where it came from", () =>
+    Effect.gen(function* () {
+      const { layer, calls, managedExecutable } = yield* harness(onlyManagedResponds, {
+        managedInstall: true,
+      });
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+
+      expect(status.kind).toBe("latexmk");
+      expect(status.executable).toBe(managedExecutable);
+      expect(status.source).toBe("scient-managed");
+      // PATH is still asked first; the managed copy is the fallback, not the default.
+      expect(yield* Ref.get(calls)).toEqual(["latexmk", "tectonic", managedExecutable]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("ignores a recorded install whose engine is no longer on disk", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { layer, managedExecutable } = yield* harness(onlyManagedResponds, {
+        managedInstall: true,
+      });
+      yield* fileSystem.remove(managedExecutable, { force: true });
+      const status = yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        return yield* toolchain.probe(false);
+      }).pipe(Effect.provide(layer));
+
+      expect(status).toMatchObject({ kind: null, executable: null });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("spawns one probe for concurrent callers that all find no cached answer", () =>
@@ -130,14 +226,16 @@ describe("LatexToolchain", () => {
         const toolchain = yield* LatexToolchain;
         const [first, second] = yield* Effect.all(
           [toolchain.probe(false), toolchain.probe(false)],
-          { concurrency: "unbounded" },
+          {
+            concurrency: "unbounded",
+          },
         );
         // One spawn sequence, one answer: the loser of the gate read the cache.
         expect(yield* Ref.get(calls)).toEqual(["latexmk"]);
         expect(second.probedAtEpochMs).toBe(first.probedAtEpochMs);
         expect(second.kind).toBe("latexmk");
       }).pipe(Effect.provide(layer));
-    }),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("serves a cached answer inside the TTL and re-probes once it lapses", () =>
@@ -159,6 +257,6 @@ describe("LatexToolchain", () => {
         yield* toolchain.probe(true);
         expect(yield* Ref.get(calls)).toHaveLength(3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });

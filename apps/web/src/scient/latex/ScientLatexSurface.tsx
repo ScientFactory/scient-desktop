@@ -37,9 +37,11 @@ import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLangua
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import {
   cancelLatexBuild,
   requestLatexRebuild,
+  requestManagedLatexInstall,
   startWatchingLatexBuild,
   useLatexBuild,
   type LatexBuildTarget,
@@ -51,7 +53,6 @@ import {
   LATEX_PREVIEW_MODES,
   LATEX_SPLIT_RATIO_STORAGE_KEY,
   LATEX_TOOLCHAIN_MISSING_HINT,
-  LATEX_TOOLCHAIN_MISSING_TITLE,
   formatLatexDiagnosticLocation,
   latexDiagnosticRows,
   latexSplitFractionFromPointer,
@@ -576,6 +577,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const handleSaveFailure = useCallback((error: unknown) => {
     setSaveError(error instanceof Error ? error.message : "The file could not be saved.");
   }, []);
+  const handleInstallToolchain = useCallback(() => {
+    requestManagedLatexInstall(target);
+  }, [target]);
 
   const selectMode = useCallback((next: ScientLatexPreviewMode) => {
     setMode(next);
@@ -803,10 +807,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 <ScientPdfReader key={readerKey} source={descriptor} />
               </Suspense>
             ) : status.toolchainMissing ? (
-              <div className="scient-latex-placeholder">
-                <h2>{LATEX_TOOLCHAIN_MISSING_TITLE}</h2>
-                <p>{LATEX_TOOLCHAIN_MISSING_HINT}</p>
-              </div>
+              <LatexToolchainSetupCard status={build} onInstall={handleInstallToolchain} />
             ) : status.viewer === "diagnostics" ? (
               <div className="scient-latex-placeholder">
                 <CircleAlert className="size-5 text-destructive" aria-hidden="true" />

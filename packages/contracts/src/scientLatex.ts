@@ -8,13 +8,73 @@ const PathString = NonEmptyString.check(Schema.isMaxLength(4_096));
 export const ScientLatexToolchainKind = Schema.Literals(["latexmk", "tectonic"]);
 export type ScientLatexToolchainKind = typeof ScientLatexToolchainKind.Type;
 
+/**
+ * Where the engine came from. `system` is anything already on this computer's
+ * PATH; `scient-managed` is the distribution Scient installed and owns.
+ */
+export const ScientLatexToolchainSource = Schema.Literals(["system", "scient-managed"]);
+export type ScientLatexToolchainSource = typeof ScientLatexToolchainSource.Type;
+
 export const ScientLatexToolchainStatus = Schema.Struct({
   kind: Schema.NullOr(ScientLatexToolchainKind),
   executable: Schema.NullOr(Schema.String),
   version: Schema.NullOr(Schema.String),
   probedAtEpochMs: Schema.Number,
+  /** Absent when no engine was found, and on statuses that predate managed installs. */
+  source: Schema.optionalKey(ScientLatexToolchainSource),
 });
 export type ScientLatexToolchainStatus = typeof ScientLatexToolchainStatus.Type;
+
+/**
+ * One managed install, from the client's point of view. `downloading` is the
+ * only phase that carries progress, and only once the server has been told how
+ * many bytes to expect.
+ */
+export const ScientLatexManagedInstallPhase = Schema.Literals([
+  "idle",
+  "downloading",
+  "verifying",
+  "unpacking",
+  "ready",
+  "failed",
+]);
+export type ScientLatexManagedInstallPhase = typeof ScientLatexManagedInstallPhase.Type;
+
+/** Why an install stopped. Clients turn these into their own copy. */
+export const ScientLatexManagedInstallFailureReason = Schema.Literals([
+  "unsupported-platform",
+  "unsupported-archive",
+  "download-failed",
+  "checksum-mismatch",
+  "unpack-failed",
+  "install-failed",
+]);
+export type ScientLatexManagedInstallFailureReason =
+  typeof ScientLatexManagedInstallFailureReason.Type;
+
+export const ScientLatexManagedInstallState = Schema.Struct({
+  state: ScientLatexManagedInstallPhase,
+  /** The pinned distribution this install is placing, or the installed one. */
+  version: Schema.NullOr(Schema.String),
+  bytesReceived: Schema.NullOr(Schema.Number),
+  totalBytes: Schema.NullOr(Schema.Number),
+  failureReason: Schema.NullOr(ScientLatexManagedInstallFailureReason),
+  updatedAtEpochMs: Schema.Number,
+});
+export type ScientLatexManagedInstallState = typeof ScientLatexManagedInstallState.Type;
+
+/**
+ * What the toolchain endpoint answers: the probe result every build snapshot
+ * also carries, plus the managed-install facts only this endpoint reports.
+ */
+export const ScientLatexToolchainReport = Schema.Struct({
+  ...ScientLatexToolchainStatus.fields,
+  /** Scient has a pinned distribution it can install on this platform. */
+  canInstallManaged: Schema.Boolean,
+  /** Absent until this server has been asked to install one. */
+  managedInstall: Schema.optionalKey(ScientLatexManagedInstallState),
+});
+export type ScientLatexToolchainReport = typeof ScientLatexToolchainReport.Type;
 
 export const ScientLatexDiagnosticSeverity = Schema.Literals(["error", "warning"]);
 export type ScientLatexDiagnosticSeverity = typeof ScientLatexDiagnosticSeverity.Type;

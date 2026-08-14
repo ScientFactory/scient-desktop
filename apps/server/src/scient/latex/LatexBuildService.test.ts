@@ -76,6 +76,14 @@ const LATEXMK: ScientLatexToolchainStatus = {
   version: "4.79",
   probedAtEpochMs: 0,
 };
+/** What the probe reports once Scient has installed a distribution itself. */
+const MANAGED_LATEXMK: ScientLatexToolchainStatus = {
+  kind: "latexmk",
+  executable: "/state/userdata/latex/managed/tinytex-2026.08/TinyTeX/bin/windows/latexmk.exe",
+  version: "4.88",
+  probedAtEpochMs: 0,
+  source: "scient-managed",
+};
 const NO_TOOLCHAIN: ScientLatexToolchainStatus = {
   kind: null,
   executable: null,
@@ -212,6 +220,36 @@ const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildI
   });
 
 describe("LatexBuildService", () => {
+  it.live("leads the compiler's PATH with the distribution Scient installed", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("managed") }],
+        toolchain: MANAGED_LATEXMK,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const request = yield* Queue.take(harness.started);
+
+        expect(request.executable).toBe(MANAGED_LATEXMK.executable);
+        // latexmk drives pdflatex and biber by name, so the distribution's own
+        // bin directory has to lead the child's PATH or none of them resolve.
+        const pathKey = Object.keys(request.environment ?? {}).find(
+          (key) => key.toUpperCase() === "PATH",
+        );
+        expect(pathKey).toBeDefined();
+        expect(request.environment?.[pathKey ?? ""]).toContain(
+          path.dirname(MANAGED_LATEXMK.executable ?? ""),
+        );
+        // The TeX wrapping knobs survive the addition.
+        expect(request.environment).toMatchObject({ max_print_line: "1000" });
+
+        yield* awaitTerminal(service, harness.buildInput);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("publishes the produced PDF and keeps warnings from a successful compile", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

@@ -118,6 +118,25 @@ export const getEnvironmentLatexCancel = Effect.fn("clientRuntime.state.getEnvir
   },
 );
 
+export const getEnvironmentLatexInstallToolchain = Effect.fn(
+  "clientRuntime.state.getEnvironmentLatexInstallToolchain",
+)(function* (input: { readonly prepared: PreparedConnection }) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/latex/toolchain/install",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      // The server only starts the install and answers with the state it left
+      // behind, so this request is as short as the rest of the group.
+      context.client.scientLatex.installToolchain({ headers: context.headers }),
+    ),
+  );
+});
+
 export const getEnvironmentLatexToolchain = Effect.fn(
   "clientRuntime.state.getEnvironmentLatexToolchain",
 )(function* (input: {

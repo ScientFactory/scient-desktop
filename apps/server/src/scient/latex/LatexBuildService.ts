@@ -32,6 +32,7 @@ import type {
   ScientLatexDiagnostic,
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -54,7 +55,7 @@ import {
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
-import { buildLatexInvocation } from "./latexCommand.ts";
+import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
 import { parseLatexLog, summarizeLatexFailure } from "./latexLog.ts";
 import { resolveLatexRoot } from "./latexRoot.ts";
 
@@ -277,6 +278,8 @@ export const make = Effect.gen(function* () {
   const store = yield* GeneratedDocumentStore;
   const toolchainProbe = yield* LatexToolchain;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
   // Build fibers outlive the request that started them, so they are supervised
   // by the service instead of a request scope.
@@ -408,6 +411,7 @@ export const make = Effect.gen(function* () {
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
+    readonly environment: Readonly<Record<string, string>>;
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -416,7 +420,7 @@ export const make = Effect.gen(function* () {
           executable: input.command,
           args: input.args,
           cwd: input.cwd,
-          environment: TEX_OUTPUT_ENVIRONMENT,
+          environment: input.environment,
         });
         yield* updateEntry(input.key, (entry) => ({ ...entry, handle }));
         // A cancel that raced the spawn still has to reach this process tree.
@@ -555,6 +559,13 @@ export const make = Effect.gen(function* () {
         command: invocation.command,
         args: invocation.args,
         cwd: compileDirectory,
+        environment: latexEngineEnvironment({
+          base: TEX_OUTPUT_ENVIRONMENT,
+          hostEnvironment,
+          binDirectory:
+            toolchain.source === "scient-managed" ? path.dirname(toolchain.executable) : null,
+          pathDelimiter,
+        }),
       });
       // A cancel that landed while the engine ran already wrote the terminal
       // state and told the store; do not overwrite it with the kill's exit code.

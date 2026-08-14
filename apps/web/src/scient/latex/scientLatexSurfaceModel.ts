@@ -2,8 +2,11 @@ import type {
   ScientLatexBuildSnapshot,
   ScientLatexBuildState,
   ScientLatexDiagnostic,
+  ScientLatexManagedInstallState,
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
+
+import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 
 export const LATEX_PREVIEW_MODE_STORAGE_KEY = "scient.latexPreviewMode";
 export const LATEX_SPLIT_RATIO_STORAGE_KEY = "scient.latexSplitRatio";
@@ -24,6 +27,7 @@ export const MIN_LATEX_SPLIT_FRACTION = 0.2;
 
 export const LATEX_TOOLCHAIN_MISSING_TITLE = "No LaTeX toolchain found";
 export const LATEX_TOOLCHAIN_MISSING_HINT = "Install TeX Live, MiKTeX, or Tectonic to build PDFs.";
+export const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
 
 export function normalizeLatexPreviewMode(
   value: string | null | undefined,
@@ -56,6 +60,12 @@ export function latexSplitFractionFromPointer(input: {
 export interface LatexBuildStatus {
   readonly snapshot: ScientLatexBuildSnapshot | null;
   readonly toolchain: ScientLatexToolchainStatus | null;
+  /** This environment has a LaTeX distribution Scient can install for it. */
+  readonly canInstallManaged: boolean;
+  /** The managed install this environment is running, or last ran. */
+  readonly managedInstall: ScientLatexManagedInstallState | null;
+  /** An install this client asked for has not been answered yet. */
+  readonly installRequesting: boolean;
   /** Last transport failure. The previous snapshot stays readable beside it. */
   readonly error: string | null;
   /** A build or cancel this client asked for has not been answered yet. */
@@ -160,7 +170,8 @@ export function latexStatusStripModel(status: LatexBuildStatus): LatexStatusStri
   const snapshot = status.snapshot;
   const state = snapshot?.state ?? "idle";
   const active = isActiveLatexBuildState(state);
-  const busy = active || status.requesting;
+  const installing = status.installRequesting || isActiveLatexInstall(status.managedInstall);
+  const busy = active || status.requesting || installing;
   const counts = latexDiagnosticCounts(snapshot?.diagnostics ?? []);
   const descriptor = snapshot?.descriptor ?? null;
   const generated = descriptor !== null && descriptor._tag === "generated-pdf" ? descriptor : null;
@@ -174,13 +185,15 @@ export function latexStatusStripModel(status: LatexBuildStatus): LatexStatusStri
   return {
     state,
     busy,
-    label: toolchainMissing
-      ? LATEX_TOOLCHAIN_MISSING_TITLE
-      : busy
-        ? buildLabel(status.requesting && !active ? "running" : state)
-        : offline
-          ? "Build status unavailable"
-          : buildLabel(state),
+    label: installing
+      ? LATEX_INSTALLING_LABEL
+      : toolchainMissing
+        ? LATEX_TOOLCHAIN_MISSING_TITLE
+        : busy
+          ? buildLabel(status.requesting && !active ? "running" : state)
+          : offline
+            ? "Build status unavailable"
+            : buildLabel(state),
     errorCount: counts.errors,
     warningCount: counts.warnings,
     stale: generated?.bindingStatus === "stale",
@@ -188,7 +201,7 @@ export function latexStatusStripModel(status: LatexBuildStatus): LatexStatusStri
     toolchainMissing,
     offline,
     canCancel: active,
-    canRebuild: !status.requesting,
+    canRebuild: !status.requesting && !installing,
     firstDiagnosticLine:
       firstDiagnostic === null ? null : formatLatexDiagnosticLine(firstDiagnostic),
     viewer:

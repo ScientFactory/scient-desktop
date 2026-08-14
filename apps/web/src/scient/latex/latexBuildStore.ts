@@ -14,7 +14,9 @@ import {
   readLatexToolchain,
   requestLatexBuild,
   requestLatexCancel,
+  requestLatexToolchainInstall,
 } from "./client";
+import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 import { isActiveLatexBuildState, type LatexBuildStatus } from "./scientLatexSurfaceModel";
 
 export const LATEX_POLL_INTERVAL_MS = 1_500;
@@ -30,6 +32,9 @@ export interface LatexBuildTarget {
 const EMPTY_ENTRY: LatexBuildStatus = {
   snapshot: null,
   toolchain: null,
+  canInstallManaged: false,
+  managedInstall: null,
+  installRequesting: false,
   error: null,
   requesting: false,
 };
@@ -109,6 +114,12 @@ function schedulePoll(
   }, delayMs);
 }
 
+/** An install this loop still has to watch, whoever on this client started it. */
+function installUnderway(key: string): boolean {
+  const entry = useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY;
+  return entry.installRequesting || isActiveLatexInstall(entry.managedInstall);
+}
+
 function scheduleFollowUp(
   key: string,
   target: LatexBuildTarget,
@@ -117,7 +128,9 @@ function scheduleFollowUp(
 ): void {
   // The coordinator re-arms a coalesced rerun after writing the terminal
   // state, so a terminal snapshot with pendingRerun still has work coming.
-  if (!isActiveLatexBuildState(snapshot.state) && !snapshot.pendingRerun) return;
+  if (!isActiveLatexBuildState(snapshot.state) && !snapshot.pendingRerun && !installUnderway(key)) {
+    return;
+  }
   schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
 }
 
@@ -125,6 +138,12 @@ async function pollStatus(key: string, target: LatexBuildTarget, loop: WatchLoop
   if (loop.stopped || loop.polling) return;
   loop.polling = true;
   try {
+    // An install running on the environment is watched by the same loop, one
+    // poll ahead of the build status so a finished install rebuilds at once.
+    if (installUnderway(key)) {
+      await pollToolchain(key, target);
+      if (loop.stopped) return;
+    }
     const snapshot = await readLatexBuildStatus(target.environmentId, {
       workspaceRoot: target.cwd,
       relativePath: target.relativePath,
@@ -164,10 +183,26 @@ async function runRequest(
   }
 }
 
-async function probeToolchain(key: string, target: LatexBuildTarget): Promise<void> {
+/**
+ * Reads the toolchain endpoint, which answers with the probe result and what
+ * this environment can do about a missing engine. A finished install is the
+ * one transition worth acting on: the report only says `ready` once the probe
+ * behind it has already seen the installed engine, so the document can build.
+ */
+async function pollToolchain(key: string, target: LatexBuildTarget): Promise<void> {
   try {
-    const toolchain = await readLatexToolchain(target.environmentId, { refresh: false });
-    updateEntry(key, (current) => ({ ...current, toolchain }));
+    const report = await readLatexToolchain(target.environmentId, { refresh: false });
+    const managedInstall = report.managedInstall ?? null;
+    const justInstalled =
+      managedInstall?.state === "ready" &&
+      (useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY).managedInstall?.state !== "ready";
+    updateEntry(key, (current) => ({
+      ...current,
+      toolchain: report,
+      canInstallManaged: report.canInstallManaged,
+      managedInstall: managedInstall ?? current.managedInstall,
+    }));
+    if (justInstalled) requestLatexRebuild(target);
   } catch {
     // Build snapshots carry the toolchain too; a failed probe is not a build failure.
   }
@@ -187,7 +222,7 @@ export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
 
   const loop: WatchLoop = { watchers: 1, timer: null, polling: false, stopped: false };
   loops.set(key, loop);
-  void probeToolchain(key, target);
+  void pollToolchain(key, target);
   void runRequest(key, target, loop, () =>
     requestLatexBuild(target.environmentId, {
       workspaceRoot: target.cwd,
@@ -220,6 +255,43 @@ export function requestLatexRebuild(target: LatexBuildTarget): void {
       relativePath: target.relativePath,
     }),
   );
+}
+
+/**
+ * Ask the environment to install the LaTeX distribution Scient pins. The
+ * server answers with the state it left behind and the watch loop takes it
+ * from there, so this returns as soon as the install is under way.
+ */
+export function requestManagedLatexInstall(target: LatexBuildTarget): void {
+  const key = latexBuildKey(target);
+  const loop = loops.get(key);
+  if (!loop) return;
+  void runInstallRequest(key, target, loop);
+}
+
+async function runInstallRequest(
+  key: string,
+  target: LatexBuildTarget,
+  loop: WatchLoop,
+): Promise<void> {
+  if (loop.stopped) return;
+  clearTimer(loop);
+  updateEntry(key, (current) => ({ ...current, installRequesting: true, error: null }));
+  try {
+    const managedInstall = await requestLatexToolchainInstall(target.environmentId);
+    if (loop.stopped) return;
+    updateEntry(key, (current) => ({ ...current, managedInstall, installRequesting: false }));
+    schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
+  } catch (error) {
+    if (loop.stopped) return;
+    updateEntry(key, (current) => ({ ...current, installRequesting: false }));
+    applyTransportError(key, error);
+    schedulePoll(key, target, loop, LATEX_OFFLINE_POLL_INTERVAL_MS);
+  } finally {
+    updateEntry(key, (current) =>
+      current.installRequesting ? { ...current, installRequesting: false } : current,
+    );
+  }
 }
 
 export function cancelLatexBuild(target: LatexBuildTarget): void {

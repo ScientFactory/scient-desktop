@@ -5,16 +5,24 @@
  * absent — a missing engine is the normal state on a fresh machine, never a
  * defect — and the answer is cached so every build and every status poll does
  * not re-shell out.
+ *
+ * PATH wins. Someone who already runs TeX Live or MiKTeX keeps building with
+ * it, exactly as before; the distribution Scient installs is only consulted
+ * once PATH has turned up nothing, and says so through `source`.
  */
 import type { ScientLatexToolchainKind, ScientLatexToolchainStatus } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
+import { readManagedLatexInstall } from "./managedLatexInstall.ts";
 
 export class LatexToolchain extends Context.Service<
   LatexToolchain,
@@ -64,13 +72,23 @@ const absent = (probedAtEpochMs: number): ScientLatexToolchainStatus => ({
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  // The managed lookup reads app state, but `probe` must stay dependency-free
+  // for its callers, so its services are captured once here.
+  const managedContext = yield* Effect.context<
+    FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
+  >();
+  const findManagedInstall = readManagedLatexInstall().pipe(Effect.provideContext(managedContext));
   const cacheRef = yield* Ref.make<ScientLatexToolchainStatus | null>(null);
   // Every build and every status poll asks for the toolchain, so a lapsed TTL
   // would otherwise let a burst of pollers each shell out. One probe runs; the
   // rest queue here and read the answer it leaves in the cache.
   const probeGate = yield* Semaphore.make(1);
 
-  const probeCandidate = (candidate: ToolchainCandidate, probedAtEpochMs: number) =>
+  const probeCandidate = (
+    candidate: ToolchainCandidate,
+    probedAtEpochMs: number,
+    source: NonNullable<ScientLatexToolchainStatus["source"]> = "system",
+  ) =>
     processRunner
       .run({
         command: candidate.executable,
@@ -96,6 +114,7 @@ export const make = Effect.gen(function* () {
               executable: candidate.executable,
               version: parseLatexToolchainVersion(candidate.kind, banner),
               probedAtEpochMs,
+              source,
             } satisfies ScientLatexToolchainStatus;
           }),
         ),
@@ -107,6 +126,18 @@ export const make = Effect.gen(function* () {
     const probedAtEpochMs = yield* Clock.currentTimeMillis;
     for (const candidate of CANDIDATES) {
       const found = yield* probeCandidate(candidate, probedAtEpochMs);
+      if (found !== null) return found;
+    }
+    // Nothing on PATH. Scient may have installed a distribution of its own,
+    // which is still probed rather than trusted: a tree that no longer runs is
+    // the same as no engine at all.
+    const managed = yield* findManagedInstall;
+    if (managed !== null) {
+      const found = yield* probeCandidate(
+        { kind: "latexmk", executable: managed.executable, args: ["-v"] },
+        probedAtEpochMs,
+        "scient-managed",
+      );
       if (found !== null) return found;
     }
     return absent(probedAtEpochMs);

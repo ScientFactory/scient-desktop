@@ -93,9 +93,10 @@ import {
   ScientLatexBuildRequest,
   ScientLatexBuildSnapshot,
   ScientLatexCancelRequest,
+  ScientLatexManagedInstallState,
   ScientLatexStatusRequest,
+  ScientLatexToolchainReport,
   ScientLatexToolchainRequest,
-  ScientLatexToolchainStatus,
 } from "./scientLatex.ts";
 import {
   ScientAnalyticsDeletionResult,
@@ -151,6 +152,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_sources_operation_failed",
   "scient_latex_build_failed",
   "scient_latex_toolchain_failed",
+  "scient_latex_install_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
   "internal_error",
@@ -874,7 +876,16 @@ export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLate
     HttpApiEndpoint.post("toolchain", "/api/scient/latex/toolchain", {
       headers: OptionalBearerHeaders,
       payload: ScientLatexToolchainRequest,
-      success: ScientLatexToolchainStatus,
+      success: ScientLatexToolchainReport,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Begins the managed install and answers with the state it left behind; the
+    // toolchain endpoint is what clients poll to watch it finish.
+    HttpApiEndpoint.post("installToolchain", "/api/scient/latex/toolchain/install", {
+      headers: OptionalBearerHeaders,
+      success: ScientLatexManagedInstallState,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

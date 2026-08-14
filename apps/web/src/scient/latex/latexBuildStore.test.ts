@@ -1,19 +1,30 @@
-import { EnvironmentId, type ScientLatexBuildSnapshot } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ScientLatexBuildSnapshot,
+  type ScientLatexManagedInstallState,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { readLatexBuildStatus, readLatexToolchain, requestLatexBuild, requestLatexCancel } =
-  vi.hoisted(() => ({
-    readLatexBuildStatus: vi.fn(),
-    readLatexToolchain: vi.fn(),
-    requestLatexBuild: vi.fn(),
-    requestLatexCancel: vi.fn(),
-  }));
+const {
+  readLatexBuildStatus,
+  readLatexToolchain,
+  requestLatexBuild,
+  requestLatexCancel,
+  requestLatexToolchainInstall,
+} = vi.hoisted(() => ({
+  readLatexBuildStatus: vi.fn(),
+  readLatexToolchain: vi.fn(),
+  requestLatexBuild: vi.fn(),
+  requestLatexCancel: vi.fn(),
+  requestLatexToolchainInstall: vi.fn(),
+}));
 
 vi.mock("./client", () => ({
   readLatexBuildStatus,
   readLatexToolchain,
   requestLatexBuild,
   requestLatexCancel,
+  requestLatexToolchainInstall,
 }));
 
 import {
@@ -23,6 +34,7 @@ import {
   latexBuildKey,
   readLatexBuild,
   requestLatexRebuild,
+  requestManagedLatexInstall,
   resetLatexBuildsForTests,
   startWatchingLatexBuild,
 } from "./latexBuildStore";
@@ -52,6 +64,33 @@ function snapshot(
   };
 }
 
+function install(
+  state: ScientLatexManagedInstallState["state"],
+  overrides: Partial<ScientLatexManagedInstallState> = {},
+): ScientLatexManagedInstallState {
+  return {
+    state,
+    version: "2026.08",
+    bytesReceived: null,
+    totalBytes: null,
+    failureReason: null,
+    updatedAtEpochMs: 1,
+    ...overrides,
+  };
+}
+
+/** What the toolchain endpoint answers on a computer with no engine yet. */
+function missingToolchain(managedInstall?: ScientLatexManagedInstallState) {
+  return {
+    kind: null,
+    executable: null,
+    version: null,
+    probedAtEpochMs: 1,
+    canInstallManaged: true,
+    ...(managedInstall === undefined ? {} : { managedInstall }),
+  };
+}
+
 /** Let the mocked client promises settle without moving the poll clock. */
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
@@ -60,11 +99,13 @@ beforeEach(() => {
   requestLatexBuild.mockResolvedValue(snapshot("queued"));
   requestLatexCancel.mockResolvedValue(snapshot("cancelled"));
   readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+  requestLatexToolchainInstall.mockResolvedValue(install("downloading"));
   readLatexToolchain.mockResolvedValue({
     kind: "latexmk",
     executable: "latexmk",
     version: "4.83",
     probedAtEpochMs: 1,
+    canInstallManaged: false,
   });
 });
 
@@ -197,6 +238,83 @@ describe("latexBuildStore", () => {
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 5);
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(polls);
     stop();
+  });
+
+  it("watches a managed install on the same loop and rebuilds when it lands", async () => {
+    requestLatexBuild.mockResolvedValue(snapshot("failed"));
+    readLatexBuildStatus.mockResolvedValue(snapshot("failed"));
+    readLatexToolchain
+      .mockResolvedValueOnce(missingToolchain())
+      .mockResolvedValueOnce(
+        missingToolchain(install("downloading", { bytesReceived: 1024, totalBytes: 4096 })),
+      )
+      .mockResolvedValueOnce(missingToolchain(install("unpacking")))
+      .mockResolvedValue({
+        kind: "latexmk",
+        executable: "/state/latex/managed/tinytex-2026.08/TinyTeX/bin/windows/latexmk.exe",
+        version: "4.88",
+        probedAtEpochMs: 2,
+        source: "scient-managed",
+        canInstallManaged: true,
+        managedInstall: install("ready"),
+      });
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    expect(readLatexBuild(target).canInstallManaged).toBe(true);
+    expect(readLatexBuild(target).snapshot?.state).toBe("failed");
+
+    // A failed build alone leaves the loop quiet; the install is what re-arms it.
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 3);
+    expect(readLatexToolchain).toHaveBeenCalledTimes(1);
+
+    requestManagedLatexInstall(target);
+    await settle();
+    expect(requestLatexToolchainInstall).toHaveBeenCalledExactlyOnceWith(target.environmentId);
+    expect(readLatexBuild(target).managedInstall?.state).toBe("downloading");
+
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).managedInstall?.bytesReceived).toBe(1024);
+
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).managedInstall?.state).toBe("unpacking");
+
+    const buildsBefore = requestLatexBuild.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).managedInstall?.state).toBe("ready");
+    expect(readLatexBuild(target).toolchain?.kind).toBe("latexmk");
+    // The installed engine is only useful if the open document builds with it.
+    expect(requestLatexBuild.mock.calls.length).toBe(buildsBefore + 1);
+
+    // Nothing left to watch: the loop must go quiet again.
+    const pollsAfter = readLatexToolchain.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 5);
+    expect(readLatexToolchain).toHaveBeenCalledTimes(pollsAfter);
+    stop();
+  });
+
+  it("keeps the failure readable when the install request itself cannot be sent", async () => {
+    requestLatexBuild.mockResolvedValue(snapshot("failed"));
+    readLatexBuildStatus.mockResolvedValue(snapshot("failed"));
+    readLatexToolchain.mockResolvedValue(missingToolchain());
+    requestLatexToolchainInstall.mockRejectedValue(new Error("Failed to fetch"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    requestManagedLatexInstall(target);
+    await settle();
+
+    expect(readLatexBuild(target).installRequesting).toBe(false);
+    expect(readLatexBuild(target).error).toBe("Failed to fetch");
+    stop();
+  });
+
+  it("ignores an install request for a document nobody is watching", async () => {
+    requestManagedLatexInstall(target);
+    await settle();
+
+    expect(requestLatexToolchainInstall).not.toHaveBeenCalled();
   });
 
   it("keys build state by environment, workspace, and path", () => {

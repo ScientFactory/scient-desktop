@@ -13,6 +13,7 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { LatexBuildService } from "./LatexBuildService.ts";
+import { LatexManagedToolchain } from "./LatexManagedToolchain.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 
 function handle<A, E>(
@@ -34,6 +35,24 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const builds = yield* LatexBuildService;
     const toolchain = yield* LatexToolchain;
+    const managed = yield* LatexManagedToolchain;
+
+    /** The probe result plus what this server can do about a missing engine. */
+    const toolchainReport = (refresh: boolean) =>
+      Effect.gen(function* () {
+        // Read the install state first. A finished install drops the probe
+        // cache before it reports itself ready, so probing afterwards means a
+        // report that says `ready` has already seen the engine it installed —
+        // which is what lets the client rebuild the moment it reads that.
+        const managedInstall = yield* managed.status;
+        const status = yield* toolchain.probe(refresh);
+        return {
+          ...status,
+          canInstallManaged: managed.canInstall,
+          // An install nobody has started yet is not news for the client.
+          ...(managedInstall.state === "idle" ? {} : { managedInstall }),
+        };
+      });
 
     return handlers
       .handle("build", (args) =>
@@ -65,7 +84,15 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
           args.endpoint.name,
           AuthOrchestrationReadScope,
           "scient_latex_toolchain_failed",
-          toolchain.probe(args.payload.refresh),
+          toolchainReport(args.payload.refresh),
+        ),
+      )
+      .handle("installToolchain", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationOperateScope,
+          "scient_latex_install_failed",
+          managed.install,
         ),
       );
   }),

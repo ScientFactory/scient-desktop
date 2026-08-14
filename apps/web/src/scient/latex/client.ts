@@ -1,6 +1,7 @@
 import {
   getEnvironmentLatexBuild,
   getEnvironmentLatexCancel,
+  getEnvironmentLatexInstallToolchain,
   getEnvironmentLatexStatus,
   getEnvironmentLatexToolchain,
 } from "@t3tools/client-runtime/state/scient-latex";
@@ -45,5 +46,12 @@ export function readLatexToolchain(
 ) {
   return runtime.runPromise(
     getEnvironmentLatexToolchain({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+/** Asks the environment to install the LaTeX distribution Scient pins. */
+export function requestLatexToolchainInstall(environmentId: EnvironmentId) {
+  return runtime.runPromise(
+    getEnvironmentLatexInstallToolchain({ prepared: prepared(environmentId) }),
   );
 }

@@ -12,6 +12,36 @@
 
 export type LatexToolchainKind = "latexmk" | "tectonic";
 
+/**
+ * `latexmk` drives `pdflatex`, `biber`, and friends by name, so a distribution
+ * that is not on this machine's PATH — the one Scient installs into its own
+ * state directory — only works if its `bin` folder leads the child's PATH.
+ * This changes one subprocess, never the machine: nothing is written to the
+ * user's environment, and a system installation keeps its own resolution
+ * order because the managed folder is only prepended for the managed engine.
+ */
+export function latexEngineEnvironment(input: {
+  readonly base: Readonly<Record<string, string>>;
+  readonly hostEnvironment: NodeJS.ProcessEnv;
+  /** `null` for an engine already on PATH. */
+  readonly binDirectory: string | null;
+  readonly pathDelimiter: string;
+}): Readonly<Record<string, string>> {
+  if (input.binDirectory === null) return input.base;
+  // Windows spells it `Path`, and passing a second spelling alongside it would
+  // leave the child with two, so the existing name is reused.
+  const pathKey =
+    Object.keys(input.hostEnvironment).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const inherited = input.hostEnvironment[pathKey] ?? "";
+  return {
+    ...input.base,
+    [pathKey]:
+      inherited === ""
+        ? input.binDirectory
+        : `${input.binDirectory}${input.pathDelimiter}${inherited}`,
+  };
+}
+
 export interface DiscoveredLatexToolchain {
   readonly kind: LatexToolchainKind;
   readonly executable: string;

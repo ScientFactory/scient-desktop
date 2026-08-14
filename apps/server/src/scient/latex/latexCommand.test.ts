@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildLatexInvocation } from "./latexCommand.ts";
+import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
 
 describe("buildLatexInvocation", () => {
   it("builds a safe non-interactive latexmk invocation", () => {
@@ -62,5 +62,60 @@ describe("buildLatexInvocation", () => {
       "/home/u/paper/thesis.tex",
     ]);
     expect(invocation.pdfPath).toBe("/state/scient-latex/xyz/thesis.pdf");
+  });
+});
+
+describe("latexEngineEnvironment", () => {
+  const base = { max_print_line: "1000" } as const;
+
+  it("leaves the environment alone for an engine already on PATH", () => {
+    expect(
+      latexEngineEnvironment({
+        base,
+        hostEnvironment: { PATH: "/usr/bin" },
+        binDirectory: null,
+        pathDelimiter: ":",
+      }),
+    ).toBe(base);
+  });
+
+  it("leads PATH with the managed distribution so latexmk finds its own engines", () => {
+    expect(
+      latexEngineEnvironment({
+        base,
+        hostEnvironment: { PATH: "/usr/bin:/bin" },
+        binDirectory: "/state/latex/managed/tinytex-2026.08/TinyTeX/bin/x86_64-linux",
+        pathDelimiter: ":",
+      }),
+    ).toEqual({
+      max_print_line: "1000",
+      PATH: "/state/latex/managed/tinytex-2026.08/TinyTeX/bin/x86_64-linux:/usr/bin:/bin",
+    });
+  });
+
+  it("reuses the spelling Windows already has instead of adding a second one", () => {
+    const managedBin = String.raw`C:\state\latex\managed\tinytex\TinyTeX\bin\windows`;
+    const systemPath = String.raw`C:\Windows\system32`;
+    const environment = latexEngineEnvironment({
+      base,
+      hostEnvironment: { Path: systemPath },
+      binDirectory: managedBin,
+      pathDelimiter: ";",
+    });
+
+    expect(environment.Path).toBe(`${managedBin};${systemPath}`);
+    // A second spelling would leave the child process with two PATHs.
+    expect(Object.keys(environment)).not.toContain("PATH");
+  });
+
+  it("still leads with the managed distribution when the host has no PATH at all", () => {
+    expect(
+      latexEngineEnvironment({
+        base,
+        hostEnvironment: {},
+        binDirectory: "/opt/tinytex/bin",
+        pathDelimiter: ":",
+      }),
+    ).toEqual({ max_print_line: "1000", PATH: "/opt/tinytex/bin" });
   });
 });
