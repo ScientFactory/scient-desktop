@@ -110,6 +110,17 @@ import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import { MermaidDiagramCard } from "../scient/diagrams/MermaidDiagramCard";
+import {
+  isScientMathCodeClassName,
+  remarkScientMath,
+  remarkScientMathRefinements,
+} from "../scient/math/remarkScientMath";
+import { remarkScientSingleDollarMath } from "../scient/math/scientSingleDollarMath";
+import {
+  useScientMathMarkdownText,
+  useScientMathRemarkPlugins,
+} from "../scient/math/scientMathText";
+import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 
 interface ChatMarkdownProps {
   text: string;
@@ -179,6 +190,9 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkScientMath,
+  remarkScientSingleDollarMath,
+  remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
@@ -187,6 +201,9 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkScientMath,
+  remarkScientSingleDollarMath,
+  remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
@@ -1343,7 +1360,7 @@ function areMarkdownFileLinkPropsEqual(
 }
 
 function ChatMarkdown({
-  text,
+  text: textProp,
   cwd,
   threadRef,
   onTaskListChange,
@@ -1355,6 +1372,15 @@ function ChatMarkdown({
   messageId,
   directionHint,
 }: ChatMarkdownProps) {
+  // Delimiter normalization is length-preserving, so offset-based behavior
+  // (task-list toggling, list positions) stays correct on every surface. The
+  // original text rides along so the refinement plugin can recover each
+  // backslash pair's inline-versus-display intent after normalization.
+  const text = useScientMathMarkdownText(textProp);
+  const remarkPlugins = useScientMathRemarkPlugins(
+    lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
+    textProp,
+  );
   const scopedContentDirection = useContentDirection();
   const effectiveContentDirection = contentDirection ?? scopedContentDirection;
   const streamingDirectionRef = useRef<{
@@ -1685,6 +1711,9 @@ function ChatMarkdown({
         );
       },
       code({ node, children, className, ...props }) {
+        if (isScientMathCodeClassName(className)) {
+          return <ScientInlineMath tex={nodeToPlainText(children)} isStreaming={isStreaming} />;
+        }
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
           const fileLinkMeta =
@@ -1712,6 +1741,9 @@ function ChatMarkdown({
         const codeBlock = extractCodeBlock(children);
         if (!codeBlock) {
           return <pre {...props}>{children}</pre>;
+        }
+        if (isScientMathCodeClassName(codeBlock.className)) {
+          return <ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} />;
         }
 
         const language = extractFenceLanguage(codeBlock.className);
@@ -1790,9 +1822,7 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
+        remarkPlugins={remarkPlugins}
         rehypePlugins={[
           ...CHAT_MARKDOWN_REHYPE_PLUGINS,
           [

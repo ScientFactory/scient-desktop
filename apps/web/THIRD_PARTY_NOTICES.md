@@ -8,6 +8,19 @@ Scient renders diagrams with an unmodified, locally bundled
 
 - <https://github.com/mermaid-js/mermaid/blob/develop/LICENSE>
 
+## KaTeX and remark-math
+
+Scient renders mathematical notation with an unmodified, locally bundled
+[KaTeX](https://katex.org/), including its distributed fonts (WOFF2, WOFF, and
+TTF), and parses math syntax with
+[`remark-math`](https://github.com/remarkjs/remark-math). KaTeX is
+Copyright (c) 2013-2020 Khan Academy and other contributors, licensed under the
+MIT License; its bundled fonts derive from the Computer Modern typefaces.
+remark-math is Copyright (c) Titus Wormer, licensed under the MIT License.
+
+- <https://github.com/KaTeX/KaTeX/blob/main/LICENSE>
+- <https://github.com/remarkjs/remark-math/blob/main/license>
+
 ## vscode-icons
 
 The custom file icon symbols in `src/pierre-icons.ts` are adapted from the
