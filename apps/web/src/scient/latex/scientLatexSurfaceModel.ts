@@ -34,6 +34,15 @@ export const LATEX_TOOLCHAIN_MISSING_TITLE = "No LaTeX toolchain found";
 export const LATEX_TOOLCHAIN_MISSING_HINT = "Install TeX Live, MiKTeX, or Tectonic to build PDFs.";
 export const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
 
+/**
+ * What the strip says while a build waits for a package the document turned
+ * out to need. Naming the packages is the point: the build looks stalled
+ * otherwise, and this is the one pause that is not the compiler's.
+ */
+export function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
+  return `Installing LaTeX packages: ${packages.join(", ")}…`;
+}
+
 export function normalizeLatexPreviewMode(
   value: string | null | undefined,
 ): ScientLatexPreviewMode {
@@ -264,6 +273,14 @@ export function toolchainsEqual(
   );
 }
 
+function stringListsEqual(
+  left: ReadonlyArray<string> | undefined,
+  right: ReadonlyArray<string> | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function diagnosticsEqual(
   left: ReadonlyArray<ScientLatexDiagnostic>,
   right: ReadonlyArray<ScientLatexDiagnostic>,
@@ -299,6 +316,9 @@ export function latexSnapshotsEqual(
     left.failureSummary === right.failureSummary &&
     left.startedAtEpochMs === right.startedAtEpochMs &&
     left.finishedAtEpochMs === right.finishedAtEpochMs &&
+    // A build that stops to fetch a package stays `running` throughout, so
+    // this is the only field that says the strip has something new to show.
+    stringListsEqual(left.installingPackages, right.installingPackages) &&
     descriptorsEqual(left.descriptor, right.descriptor) &&
     toolchainsEqual(left.toolchain, right.toolchain) &&
     diagnosticsEqual(left.diagnostics, right.diagnostics)
@@ -332,6 +352,7 @@ export function latexStatusStripModel(
   const state = snapshot?.state ?? "idle";
   const active = isActiveLatexBuildState(state);
   const installing = status.installRequesting || isActiveLatexInstall(status.managedInstall);
+  const installingPackages = snapshot?.installingPackages ?? [];
   const busy = active || status.requesting || installing;
   const counts = latexDiagnosticCounts(snapshot?.diagnostics ?? []);
   const descriptor = snapshot?.descriptor ?? null;
@@ -348,13 +369,15 @@ export function latexStatusStripModel(
     busy,
     label: installing
       ? LATEX_INSTALLING_LABEL
-      : toolchainMissing
-        ? LATEX_TOOLCHAIN_MISSING_TITLE
-        : busy
-          ? buildLabel(status.requesting && !active ? "running" : state)
-          : offline
-            ? "Build status unavailable"
-            : buildLabel(state),
+      : installingPackages.length > 0
+        ? latexInstallingPackagesLabel(installingPackages)
+        : toolchainMissing
+          ? LATEX_TOOLCHAIN_MISSING_TITLE
+          : busy
+            ? buildLabel(status.requesting && !active ? "running" : state)
+            : offline
+              ? "Build status unavailable"
+              : buildLabel(state),
     errorCount: counts.errors,
     warningCount: counts.warnings,
     stale: generated?.bindingStatus === "stale",

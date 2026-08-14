@@ -54,9 +54,11 @@ import {
   type GeneratedDocumentProductionHandle,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
+import { LatexPackageInstaller, layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
 import { parseLatexLog, summarizeLatexFailure } from "./latexLog.ts";
+import { missingLatexPackages } from "./latexMissingPackages.ts";
 import { resolveLatexRoot } from "./latexRoot.ts";
 
 export interface LatexBuildInput {
@@ -103,6 +105,13 @@ const MAX_LOGICAL_DOCUMENT_KEY_LENGTH = 1_024;
 const ROOT_RESOLUTION_HEAD_BYTES = 8 * 1_024;
 /** A compile is CPU- and disk-bound; three at once keeps a laptop usable. */
 const MAX_CONCURRENT_COMPILES = 3;
+/**
+ * How many times one build may fetch packages and compile again. A document
+ * reveals what it is missing in layers — a package pulled in by the package
+ * that was just installed — so one round is not always enough; a third would
+ * mean a document that never stops building.
+ */
+const MAX_PACKAGE_RESOLUTION_ROUNDS = 2;
 
 /**
  * TeX wraps its own messages at 79 columns by default, which cuts file paths
@@ -129,6 +138,21 @@ const ACTIVE_STATES: ReadonlySet<ScientLatexBuildState> = new Set([
   "publishing",
 ]);
 
+/**
+ * What a build says about a package it cannot install itself. A TeX Live or
+ * MiKTeX installation is the user's own, so Scient names the package and the
+ * command that places it rather than reaching into an installation it does not
+ * own. The engine's own error stays alongside this.
+ */
+function missingPackageDiagnostic(packageName: string): ScientLatexDiagnostic {
+  return {
+    severity: "error",
+    file: null,
+    line: null,
+    message: `Missing LaTeX package '${packageName}'. Install it with your TeX distribution (tlmgr install ${packageName}, or the MiKTeX Console), then rebuild.`,
+  };
+}
+
 interface LatexBuildEntry {
   readonly logicalDocumentKey: string;
   /** Absolute, resolved workspace root; every path a client sees is relative to it. */
@@ -142,6 +166,8 @@ interface LatexBuildEntry {
   readonly finishedAtEpochMs: number | null;
   readonly pendingRerun: boolean;
   readonly cancelRequested: boolean;
+  /** Non-null only while this build is fetching packages the compile asked for. */
+  readonly installingPackages: ReadonlyArray<string> | null;
   /** Live only while a build owns the binding; cleared on every terminal state. */
   readonly production: GeneratedDocumentProductionHandle | null;
   readonly handle: ExecutionProcessHandle | null;
@@ -277,6 +303,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const store = yield* GeneratedDocumentStore;
   const toolchainProbe = yield* LatexToolchain;
+  const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
   const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
@@ -348,6 +375,8 @@ export const make = Effect.gen(function* () {
     finishedAtEpochMs: entry.finishedAtEpochMs,
     toolchain,
     pendingRerun: entry.pendingRerun,
+    // Absent unless a fetch is running, so an ordinary poll carries nothing new.
+    ...(entry.installingPackages === null ? {} : { installingPackages: entry.installingPackages }),
   });
 
   const withToolchain = (entry: LatexBuildEntry) =>
@@ -369,6 +398,7 @@ export const make = Effect.gen(function* () {
         finishedAtEpochMs,
         production: null,
         handle: null,
+        installingPackages: null,
       }));
     });
 
@@ -504,6 +534,36 @@ export const make = Effect.gen(function* () {
         );
     });
 
+  /**
+   * Fetches what the last compile said it was missing, with the snapshot saying
+   * so while it runs. The state stays `running`, so a client polls exactly as
+   * it already does. Answers whether anything new landed, which is the only
+   * reason to compile again.
+   */
+  const installMissingPackages = (input: {
+    readonly key: string;
+    readonly packages: ReadonlyArray<string>;
+    readonly binDirectory: string;
+  }) =>
+    Effect.gen(function* () {
+      yield* updateEntry(input.key, (entry) => ({
+        ...entry,
+        installingPackages: input.packages,
+      }));
+      const outcome = yield* packageInstaller.install({
+        packages: input.packages,
+        binDirectory: input.binDirectory,
+      });
+      yield* updateEntry(input.key, (entry) => ({ ...entry, installingPackages: null }));
+      if (outcome.failed.length > 0) {
+        yield* Effect.logDebug("latex packages could not be installed", {
+          logicalDocumentKey: input.key,
+          packages: outcome.failed,
+        });
+      }
+      return outcome.installed.length > 0;
+    });
+
   const compileAndPublish = (key: string) =>
     Effect.gen(function* () {
       const entry = yield* getEntry(key);
@@ -544,66 +604,105 @@ export const make = Effect.gen(function* () {
         workDirectory,
       });
 
-      // The work directory outlives a single build, so the previous run's PDF
-      // is still sitting at `pdfPath`. Drop it first: afterwards "a PDF is
-      // there" means "this run produced one", which is what lets a run that
-      // exits non-zero still publish honestly.
-      yield* fileSystem.remove(invocation.pdfPath, { force: true }).pipe(Effect.ignoreCause());
-
       // TeX resolves `\input{sections/intro}` against the working directory,
       // not against the root document, so a root under `paper/` only builds
       // when the engine runs from `paper/`.
       const compileDirectory = path.dirname(rootAbsolutePath);
-      const outcome = yield* runProcess({
-        key,
-        command: invocation.command,
-        args: invocation.args,
-        cwd: compileDirectory,
-        environment: latexEngineEnvironment({
-          base: TEX_OUTPUT_ENVIRONMENT,
-          hostEnvironment,
-          binDirectory:
-            toolchain.source === "scient-managed" ? path.dirname(toolchain.executable) : null,
-          pathDelimiter,
-        }),
+      // Non-null only for the distribution Scient installed, which is the only
+      // one it may extend: `tlmgr` lives beside the engine in that tree.
+      const managedBinDirectory =
+        toolchain.source === "scient-managed" ? path.dirname(toolchain.executable) : null;
+      const environment = latexEngineEnvironment({
+        base: TEX_OUTPUT_ENVIRONMENT,
+        hostEnvironment,
+        binDirectory: managedBinDirectory,
+        pathDelimiter,
       });
-      // A cancel that landed while the engine ran already wrote the terminal
-      // state and told the store; do not overwrite it with the kill's exit code.
-      if (yield* isCancelled(key)) return;
+      // Every package this build has already asked for, so one no repository
+      // has cannot send the same document round the loop again.
+      const attempted = new Set<string>();
 
-      const diagnostics = rebaseDiagnostics({
-        workspaceRoot: entry.workspaceRoot,
-        compileDirectory,
-        diagnostics: parseLatexLog(outcome.transcript),
-      });
-      if (outcome.exitCode === null) {
-        yield* recordFailure({ key, production, summary: TIMEOUT_SUMMARY, diagnostics });
-        return;
-      }
-      // Overleaf parity: a document with errors that still typeset a PDF is
-      // published, with the errors alongside it. Only an empty-handed run
-      // fails, because then there is nothing new for the viewer to show.
-      const producedBytes = yield* fileSystem.stat(invocation.pdfPath).pipe(
-        Effect.map((info) => Number(info.size)),
-        Effect.orElseSucceed(() => 0),
-      );
-      if (producedBytes <= 0) {
-        yield* recordFailure({
+      for (let round = 0; ; round += 1) {
+        // The work directory outlives a single build, so the previous run's PDF
+        // is still sitting at `pdfPath`. Drop it first: afterwards "a PDF is
+        // there" means "this run produced one", which is what lets a run that
+        // exits non-zero still publish honestly.
+        yield* fileSystem.remove(invocation.pdfPath, { force: true }).pipe(Effect.ignoreCause());
+
+        const outcome = yield* runProcess({
+          key,
+          command: invocation.command,
+          args: invocation.args,
+          cwd: compileDirectory,
+          environment,
+        });
+        // A cancel that landed while the engine ran already wrote the terminal
+        // state and told the store; do not overwrite it with the kill's exit code.
+        if (yield* isCancelled(key)) return;
+
+        const parsed = rebaseDiagnostics({
+          workspaceRoot: entry.workspaceRoot,
+          compileDirectory,
+          diagnostics: parseLatexLog(outcome.transcript),
+        });
+        if (outcome.exitCode === null) {
+          yield* recordFailure({ key, production, summary: TIMEOUT_SUMMARY, diagnostics: parsed });
+          return;
+        }
+
+        // A missing `.sty` usually aborts the commands that package defines, so
+        // this is read whether or not the run managed to typeset something.
+        const missingPackages = missingLatexPackages(outcome.transcript);
+        const wanted =
+          managedBinDirectory === null
+            ? []
+            : missingPackages.filter((packageName) => !attempted.has(packageName));
+        if (
+          managedBinDirectory !== null &&
+          wanted.length > 0 &&
+          round < MAX_PACKAGE_RESOLUTION_ROUNDS
+        ) {
+          for (const packageName of wanted) attempted.add(packageName);
+          const placed = yield* installMissingPackages({
+            key,
+            packages: wanted,
+            binDirectory: managedBinDirectory,
+          });
+          // A cancel during the fetch already wrote the terminal state.
+          if (yield* isCancelled(key)) return;
+          if (placed) continue;
+        }
+        const diagnostics =
+          managedBinDirectory === null && missingPackages.length > 0
+            ? [...parsed, ...missingPackages.map(missingPackageDiagnostic)]
+            : parsed;
+
+        // Overleaf parity: a document with errors that still typeset a PDF is
+        // published, with the errors alongside it. Only an empty-handed run
+        // fails, because then there is nothing new for the viewer to show.
+        const producedBytes = yield* fileSystem.stat(invocation.pdfPath).pipe(
+          Effect.map((info) => Number(info.size)),
+          Effect.orElseSucceed(() => 0),
+        );
+        if (producedBytes <= 0) {
+          yield* recordFailure({
+            key,
+            production,
+            summary:
+              outcome.exitCode === 0 ? MISSING_PDF_SUMMARY : summarizeLatexFailure(diagnostics),
+            diagnostics,
+          });
+          return;
+        }
+        yield* publish({
           key,
           production,
-          summary:
-            outcome.exitCode === 0 ? MISSING_PDF_SUMMARY : summarizeLatexFailure(diagnostics),
+          pdfPath: invocation.pdfPath,
+          title: documentTitle(entry.rootRelativePath),
           diagnostics,
         });
         return;
       }
-      yield* publish({
-        key,
-        production,
-        pdfPath: invocation.pdfPath,
-        title: documentTitle(entry.rootRelativePath),
-        diagnostics,
-      });
     });
 
   /**
@@ -650,6 +749,7 @@ export const make = Effect.gen(function* () {
           pendingRerun: false,
           production: null,
           handle: null,
+          installingPackages: null,
         });
         return [true, next] as const;
       });
@@ -795,6 +895,7 @@ export const make = Effect.gen(function* () {
           cancelRequested: false,
           production: null,
           handle: null,
+          installingPackages: null,
         });
         return [true, next] as const;
       });
@@ -843,4 +944,11 @@ export const make = Effect.gen(function* () {
   return LatexBuildService.of({ requestBuild, status, cancel });
 });
 
-export const layer = Layer.effect(LatexBuildService, make);
+/**
+ * The package installer is owned here rather than asked for: it is only ever
+ * pointed at the distribution this service already resolved, and nothing else
+ * on the server has a use for it.
+ */
+export const layer = Layer.effect(LatexBuildService, make).pipe(
+  Layer.provide(packageInstallerLayer),
+);

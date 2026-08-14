@@ -31,9 +31,14 @@ import {
   appendBoundedTranscript,
   emptyTranscript,
   escapesWorkspaceRoot,
-  layer as buildServiceLayer,
+  make as makeBuildService,
   renderTranscript,
 } from "./LatexBuildService.ts";
+import {
+  LatexPackageInstaller,
+  type LatexPackageInstallInput,
+  type LatexPackageInstallResult,
+} from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
@@ -98,6 +103,16 @@ const WARNING_TRANSCRIPT =
   "This is pdfTeX\nLaTeX Warning: Reference `fig:1' undefined on input line 12.\n";
 const ERROR_TRANSCRIPT = "./main.tex:12: Undefined control sequence.\nl.12 \\nosuchmacro\n";
 
+/** What a base TinyTeX prints for the first document that uses `mathtools`. */
+const missingPackageTranscript = (packageName: string) =>
+  [
+    "This is pdfTeX, Version 3.141592653-2.6-1.40.26",
+    `./main.tex:3: LaTeX Error: File \`${packageName}.sty' not found.`,
+    "",
+    "! Emergency stop.",
+    "",
+  ].join("\n");
+
 interface FakeCompile {
   readonly transcript: string;
   readonly exitCode: number;
@@ -126,6 +141,10 @@ const makeHarness = (input: {
   readonly files?: Readonly<Record<string, string>>;
   /** The document `buildInput` points at; defaults to the root-level `main.tex`. */
   readonly relativePath?: string;
+  /** Everything asked for is placed unless a test says otherwise. */
+  readonly install?: (
+    request: LatexPackageInstallInput,
+  ) => Effect.Effect<LatexPackageInstallResult>;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -182,7 +201,21 @@ const makeHarness = (input: {
         }),
     };
 
-    const serviceLayer = buildServiceLayer.pipe(
+    const installRequests = yield* Queue.unbounded<LatexPackageInstallInput>();
+    const installCount = yield* Ref.make(0);
+    const installer = LatexPackageInstaller.of({
+      install: (request) =>
+        Effect.gen(function* () {
+          yield* Ref.update(installCount, (count) => count + 1);
+          yield* Queue.offer(installRequests, request);
+          return yield* (
+            input.install ?? ((asked) => Effect.succeed({ installed: asked.packages, failed: [] }))
+          )(request);
+        }),
+    });
+
+    const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
+      Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
       Layer.provide(
         Layer.succeed(
@@ -200,6 +233,8 @@ const makeHarness = (input: {
       started,
       startCount,
       cancelCount,
+      installRequests,
+      installCount,
       workspaceRoot,
       inputFor: (relativePath: string): LatexBuildInput => ({ workspaceRoot, relativePath }),
       buildInput: {
@@ -246,6 +281,149 @@ describe("LatexBuildService", () => {
         expect(request.environment).toMatchObject({ max_print_line: "1000" });
 
         yield* awaitTerminal(service, harness.buildInput);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("installs a package the managed distribution was missing and compiles again", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const hold = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          { transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("resolved") },
+        ],
+        install: (request) =>
+          Deferred.await(hold).pipe(Effect.as({ installed: request.packages, failed: [] })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const asked = yield* Queue.take(harness.installRequests);
+
+        expect(asked.packages).toEqual(["mathtools"]);
+        // tlmgr lives beside the engine inside the distribution Scient placed.
+        expect(asked.binDirectory).toBe(path.dirname(MANAGED_LATEXMK.executable ?? ""));
+
+        // The fetch is not a state of its own: the build is still running, and
+        // the snapshot says what it is waiting for so the strip can too.
+        const waiting = yield* service.status(harness.buildInput);
+        expect(waiting.state).toBe("running");
+        expect(waiting.installingPackages).toEqual(["mathtools"]);
+
+        yield* Deferred.succeed(hold, undefined);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.installingPackages).toBeUndefined();
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+        expect(yield* Ref.get(harness.installCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("stops after two rounds however many packages a document keeps revealing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          { transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null },
+          { transcript: missingPackageTranscript("siunitx"), exitCode: 1, pdf: null },
+          { transcript: missingPackageTranscript("booktabs"), exitCode: 1, pdf: null },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        // Two fetches, three compiles, and then the engine's own error stands.
+        expect(yield* Ref.get(harness.installCount)).toBe(2);
+        expect(yield* Ref.get(harness.startCount)).toBe(3);
+        expect(finished.failureSummary).toContain("booktabs.sty");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never asks twice for a package one build has already tried", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          { transcript: missingPackageTranscript("nosuchpkg"), exitCode: 1, pdf: null },
+          { transcript: missingPackageTranscript("nosuchpkg"), exitCode: 1, pdf: null },
+        ],
+        // A repository can answer "installed" for something that does not fix
+        // the build; the document must still stop asking.
+        install: (request) => Effect.succeed({ installed: request.packages, failed: [] }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        expect(yield* Ref.get(harness.installCount)).toBe(1);
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("names the package for a TeX installation Scient does not own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        // A system TeX Live or MiKTeX belongs to the user; Scient says which
+        // package is missing instead of reaching into it.
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        expect(finished.diagnostics[0]).toMatchObject({ file: "main.tex", line: 3 });
+        expect(finished.diagnostics.at(-1)).toMatchObject({
+          severity: "error",
+          file: null,
+          message:
+            "Missing LaTeX package 'mathtools'. Install it with your TeX distribution (tlmgr install mathtools, or the MiKTeX Console), then rebuild.",
+        });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("stays cancelled when the cancel lands while packages are installing", () =>
+    Effect.gen(function* () {
+      const hold = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          { transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("never-runs") },
+        ],
+        install: (request) =>
+          Deferred.await(hold).pipe(Effect.as({ installed: request.packages, failed: [] })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Queue.take(harness.installRequests);
+
+        const cancelled = yield* service.cancel(harness.buildInput);
+        expect(cancelled.state).toBe("cancelled");
+        expect(cancelled.installingPackages).toBeUndefined();
+
+        yield* Deferred.succeed(hold, undefined);
+        const settled = yield* awaitTerminal(service, harness.buildInput);
+        expect(settled.state).toBe("cancelled");
+        // The retry the fetch was for never happens.
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

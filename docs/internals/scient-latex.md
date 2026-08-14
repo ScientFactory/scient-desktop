@@ -1,8 +1,11 @@
 # Scient LaTeX build
 
 Status: Scient-owned server and desktop feature. A build runs entirely on the
-local server against the shared PDF foundation; the only network request this
-lane ever makes is the optional one-time TinyTeX install. It is not an
+local server against the shared PDF foundation; the only network requests this
+lane ever makes belong to the distribution Scient installs — the optional
+one-time TinyTeX download, the collections that install fetches, and the
+packages a later build finds missing. A system TeX installation is never
+touched. It is not an
 upstream T3 subsystem and does not change T3 provider, thread, project,
 persistence, cloud, or mobile contracts.
 
@@ -115,6 +118,52 @@ it. Only a run that produces no bytes at all (`producedBytes <= 0`) is treated
 as a failure — `MISSING_PDF_SUMMARY` if the engine claimed success anyway, or
 the first parsed error otherwise (`summarizeLatexFailure`).
 
+**Missing packages.** TinyTeX ships TeX Live's infrastructure plus a base set
+and expects everything else to be fetched on demand, so without this step any
+document using a package outside that set fails with "LaTeX Error: File
+mathtools.sty not found." `latexMissingPackages.ts` reads the missing inputs
+out of the transcript — the LaTeX and tectonic "not found" wordings, TeX's own
+"I can't find file", and latexmk's "Missing input file:" summary — bounded to
+ten and deduplicated, and maps only `.sty`/`.cls` names to packages: a missing
+`.tex`, `.bib`, or image is the author's own file and is deliberately mapped to
+nothing.
+
+What happens next depends on who owns the engine. For
+`toolchain.source === "scient-managed"`, `LatexBuildService` sets
+`installingPackages` on the snapshot, runs `LatexPackageInstaller`, and — if
+anything landed — compiles again inside the same production handle, without
+beginning a second binding attempt. The state stays `running` throughout, so
+the client's existing poll continuation needs no new predicate and only the
+strip's label changes. Resolution is bounded twice over:
+`MAX_PACKAGE_RESOLUTION_ROUNDS = 2` per pass (a document can reveal packages in
+layers, but a third round means a build that never ends), and a per-build set
+of already-attempted names, so a package no repository has cannot send the same
+document round the loop again. Both bounds are checked before the fetch, and a
+cancel that lands during one is honored before the retry. This is the only
+place a build reaches the network, and only for the distribution the user
+explicitly asked Scient to install.
+
+For a system TeX Live, MiKTeX, or tectonic, nothing is installed: that
+installation is the user's own and Scient does not reach into it. Instead each
+missing package gets a synthesized `error` diagnostic — "Missing LaTeX package
+'mathtools'. Install it with your TeX distribution (tlmgr install mathtools, or
+the MiKTeX Console), then rebuild." — appended after the engine's own error,
+which is kept.
+
+`LatexPackageInstaller` runs `tlmgr install <pkg…>` through `ProcessRunner`
+(bounded output, 180-second default timeout, the same PATH-prepended
+environment `latexEngineEnvironment` builds for a compile) against the `tlmgr`
+inside the given `bin` directory — `tlmgr.bat` on Windows, which
+`resolveSpawnCommand` runs in shell mode as it does for any `.bat`. The verdict
+is read out of the output rather than the exit code, whose meaning has changed
+across TeX Live releases. A package `tlmgr` reports as absent from the
+repository gets one fallback: `tlmgr search --global --file /<name>.` maps the
+file to the package that actually ships it (`algorithm.sty` comes from
+`algorithms`), and that package is installed instead. The service never fails —
+a repository that cannot be reached, a `tlmgr` that will not run, a timeout all
+come back as `failed` names — so a build keeps the compiler error it already
+had rather than gaining a second one about the fetch.
+
 **Producer-registration validation.** `GeneratedDocumentStore.publishPdf`
 validates every compiled PDF through the `producer-registration` profile of
 the shared `@scientfactory/pdf-validation` runtime: structural checks only, no
@@ -196,11 +245,28 @@ removed inline:
 its engine may be running, and on Windows a partial removal of a locked tree
 followed by a failed rename is exactly how a working installation becomes no
 installation. Superseded roots are left to the deferred GC. The whole run also
-sits under one 25-minute ceiling — above the sum of the per-phase budgets, so
-it only cuts what they cannot — and a download that stalls before its body
-ever streams (the redirect and header exchange the phase timeouts do not
-cover) fails as `install-failed` and releases the single-flight gate rather
-than leaving the state saying an install is forever in flight.
+sits under one 45-minute ceiling — above the sum of the per-phase budgets (ten
+minutes of download plus fifteen of package collections, plus the expansion
+between them), so it only cuts what they cannot — and a download that stalls
+before its body ever streams (the redirect and header exchange the phase
+timeouts do not cover) fails as `install-failed` and releases the single-flight
+gate rather than leaving the state saying an install is forever in flight.
+
+**Eagerly installed collections.** Promotion is not the last step. Once the
+state file names the new root — that is, once the engine is installed and
+discoverable — the run enters the `installing-packages` phase and asks
+`LatexPackageInstaller` for `collection-latexrecommended` and
+`collection-fontsrecommended` under a 15-minute bound. TinyTeX-1's base set
+holds neither `mathtools` nor `siunitx` nor most fonts, so without this a first
+build almost always stops on a missing `.sty` and waits for the per-build
+resolver to fetch one package at a time. The step can only ever add to a
+working install: any outcome other than clean success — an offline machine, a
+mirror having a bad day, a fetch cut short by shutdown — is recorded as the
+optional `packagesWarning` on the install state, and the install still reports
+`ready`, because the engine works and every build resolves what it turns out to
+need. The setup card renders that note subtly beside a finished install instead
+of a failure with a retry button, and `installing-packages` counts as an active
+phase on both sides so the client keeps polling through it.
 `latexEngineEnvironment` prepends the managed install's `bin`
 directory to `PATH` only for the spawned compiler subprocess, and only when
 `toolchain.source === "scient-managed"` — the user's real environment and any
@@ -240,7 +306,11 @@ managed-PATH construction), `latexLog.test.ts` (diagnostics parsing),
 `LatexManagedToolchain.test.ts` and `LatexArchiveUnpacker.test.ts` (the
 install pipeline, including `artifactUrlRejection`, unpack argument and
 unpacker-path construction, and that a second install lands beside the first
-rather than over it), `managedLatexInstall.test.ts` (install-root naming and
+rather than over it), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
+shapes, and the deliberate `null` for the author's own files),
+`LatexPackageInstaller.test.ts` (the `tlmgr` invocation, the unknown-package
+search fallback, and a timeout or unspawnable `tlmgr` reported as failed rather
+than raised), `managedLatexInstall.test.ts` (install-root naming and
 the containment rule that keeps a tampered state file from pointing the engine
 outside the managed directory), and `tinytexManifest.test.ts` (manifest shape
 and pinned-asset resolution) — plus `LatexBuildService.test.ts` for the

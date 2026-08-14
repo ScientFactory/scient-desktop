@@ -5,6 +5,7 @@ import * as NodeHttp from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -25,6 +26,11 @@ import {
   artifactUrlRejection,
   make as makeManagedToolchain,
 } from "./LatexManagedToolchain.ts";
+import {
+  LatexPackageInstaller,
+  type LatexPackageInstallInput,
+  type LatexPackageInstallResult,
+} from "./LatexPackageInstaller.ts";
 import { LatexToolchain, make as makeToolchain } from "./LatexToolchain.ts";
 import { decodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
 import { TinyTexManifestRef, type TinyTexManifest } from "./tinytexManifest.ts";
@@ -177,6 +183,10 @@ const makeHarness = (input: {
   readonly manifest: TinyTexManifest;
   readonly platform?: NodeJS.Platform;
   readonly unsupportedArchive?: boolean;
+  /** The eager collections fetch; everything asked for lands unless a test says otherwise. */
+  readonly installPackages?: (
+    request: LatexPackageInstallInput,
+  ) => Effect.Effect<LatexPackageInstallResult>;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -186,8 +196,25 @@ const makeHarness = (input: {
     const paths = managedLatexPaths({ latexDir, join: path.join });
     const seen = yield* Ref.make<ReadonlyArray<LatexArchiveUnpackInput>>([]);
     const unpackedBytes = yield* Ref.make<string | null>(null);
+    const packageRequests = yield* Ref.make<ReadonlyArray<LatexPackageInstallInput>>([]);
 
     const serviceLayer = Layer.effect(LatexManagedToolchain, makeManagedToolchain).pipe(
+      Layer.provide(
+        Layer.succeed(
+          LatexPackageInstaller,
+          LatexPackageInstaller.of({
+            install: (request) =>
+              Ref.update(packageRequests, (previous) => [...previous, request]).pipe(
+                Effect.andThen(
+                  (
+                    input.installPackages ??
+                    ((asked) => Effect.succeed({ installed: asked.packages, failed: [] }))
+                  )(request),
+                ),
+              ),
+          }),
+        ),
+      ),
       Layer.provide(
         unpackerLayer({
           seen,
@@ -204,7 +231,7 @@ const makeHarness = (input: {
       Layer.provide(Layer.succeed(TinyTexManifestRef, input.manifest)),
     );
 
-    return { serviceLayer, paths, seen, unpackedBytes, latexDir };
+    return { serviceLayer, paths, seen, unpackedBytes, latexDir, packageRequests };
   });
 
 const awaitInstall = (managed: LatexManagedToolchain["Service"]) =>
@@ -297,6 +324,96 @@ describe("LatexManagedToolchain", () => {
         expect(after.kind).toBe("latexmk");
         expect(after.source).toBe("scient-managed");
         expect(after.executable?.replaceAll("\\", "/")).toBe(installedEngine.replaceAll("\\", "/"));
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("fetches the recommended collections before it reports itself ready", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const hold = yield* Deferred.make<void>();
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({
+        manifest: manifestFor({ url: server.handle.url }),
+        installPackages: (request) =>
+          Deferred.await(hold).pipe(Effect.as({ installed: request.packages, failed: [] })),
+      });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+
+        // The phase is reached only after the tree is in place and recorded,
+        // so everything from here on can only add to a working install.
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          if ((yield* managed.status).state === "installing-packages") break;
+          yield* Effect.sleep(Duration.millis(5));
+        }
+        const installing = yield* managed.status;
+        expect(installing.state).toBe("installing-packages");
+        expect(yield* fileSystem.exists(harness.paths.statePath)).toBe(true);
+
+        const installRoot = yield* currentInstallRoot(harness.paths.statePath);
+        expect(yield* Ref.get(harness.packageRequests)).toEqual([
+          {
+            packages: ["collection-latexrecommended", "collection-fontsrecommended"],
+            binDirectory: path.dirname(path.join(installRoot, EXECUTABLE_RELATIVE_PATH)),
+            timeout: "15 minutes",
+          },
+        ]);
+
+        yield* Deferred.succeed(hold, undefined);
+        const finished = yield* awaitInstall(managed);
+        expect(finished.state).toBe("ready");
+        expect(finished.packagesWarning).toBeUndefined();
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("still reports ready when the collections cannot be fetched", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({
+        manifest: manifestFor({ url: server.handle.url }),
+        installPackages: (request) => Effect.succeed({ installed: [], failed: request.packages }),
+      });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        const toolchain = yield* LatexToolchain;
+        yield* managed.install;
+        const finished = yield* awaitInstall(managed);
+
+        // The engine works, and every build installs what it turns out to need,
+        // so an unreachable repository is a note rather than a failed install.
+        expect(finished.state).toBe("ready");
+        expect(finished.failureReason).toBeNull();
+        expect(finished.packagesWarning).toBe(
+          "Common packages could not be preinstalled; missing ones will install on first use.",
+        );
+        expect((yield* toolchain.probe(false)).source).toBe("scient-managed");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("treats a fetch cut short the same way, rather than as a failed install", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({
+        manifest: manifestFor({ url: server.handle.url }),
+        // What a shutdown mid-fetch looks like from here.
+        installPackages: () => Effect.interrupt,
+      });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+        const finished = yield* awaitInstall(managed);
+
+        expect(finished.state).toBe("ready");
+        expect(finished.failureReason).toBeNull();
+        expect(finished.packagesWarning).toContain("install on first use");
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

@@ -40,6 +40,9 @@ export function LatexToolchainSetupCard(props: {
       ) : null}
       <h2>{model.title}</h2>
       <p role={model.kind === "failed" ? "alert" : undefined}>{model.body}</p>
+      {model.warning === null ? null : (
+        <p className="scient-latex-placeholder-note">{model.warning}</p>
+      )}
       {model.progressPercent === null ? null : (
         <div
           className="scient-latex-progress"

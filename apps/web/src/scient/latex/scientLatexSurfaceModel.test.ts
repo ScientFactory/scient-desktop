@@ -324,6 +324,26 @@ describe("latexSnapshotsEqual", () => {
         snapshot("succeeded", { rootRelativePath: "paper/main.tex" }),
       ),
     ).toBe(false);
+    // A build that stops to fetch a package never leaves `running`, so this is
+    // the only field that says the strip has something new to show.
+    expect(
+      latexSnapshotsEqual(
+        snapshot("running"),
+        snapshot("running", { installingPackages: ["mathtools"] }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("running", { installingPackages: ["mathtools"] }),
+        snapshot("running", { installingPackages: ["siunitx"] }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("running", { installingPackages: ["mathtools"] }),
+        snapshot("running", { installingPackages: ["mathtools"] }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -359,6 +379,24 @@ describe("latexStatusStripModel", () => {
     expect(latexStatusStripModel(status({ snapshot: snapshot("publishing") })).label).toBe(
       "Publishing…",
     );
+  });
+
+  it("says which packages a build is waiting on instead of just Building…", () => {
+    const model = latexStatusStripModel(
+      status({ snapshot: snapshot("running", { installingPackages: ["mathtools"] }) }),
+    );
+
+    // Nothing about the build state changes, so the strip keeps spinning and
+    // the Cancel button keeps working; only what it says changes.
+    expect(model.label).toBe("Installing LaTeX packages: mathtools…");
+    expect(model.busy).toBe(true);
+    expect(model.canCancel).toBe(true);
+
+    expect(
+      latexStatusStripModel(
+        status({ snapshot: snapshot("running", { installingPackages: ["mathtools", "siunitx"] }) }),
+      ).label,
+    ).toBe("Installing LaTeX packages: mathtools, siunitx…");
   });
 
   it("is busy while this client's own request is unanswered", () => {

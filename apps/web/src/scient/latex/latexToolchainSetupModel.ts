@@ -22,6 +22,11 @@ export interface LatexSetupCardModel {
   readonly busy: boolean;
   /** `null` outside an install; otherwise 0–100 for the progress bar. */
   readonly progressPercent: number | null;
+  /**
+   * A note beside a finished install, not a failure: the engine works and the
+   * packages it did not preinstall arrive on first use.
+   */
+  readonly warning: string | null;
 }
 
 export interface LatexSetupCardInput {
@@ -43,6 +48,7 @@ const ACTIVE_INSTALL_PHASES: ReadonlySet<ScientLatexManagedInstallState["state"]
   "downloading",
   "verifying",
   "unpacking",
+  "installing-packages",
 ]);
 
 /** The phases with work still to watch; `ready` and `failed` are done. */
@@ -58,7 +64,9 @@ const OFFER_BODY = `Scient can install TinyTeX (${TINYTEX_DOWNLOAD_LABEL}), a sm
  * number while the label changes.
  */
 const VERIFYING_PERCENT = 90;
-const UNPACKING_PERCENT = 96;
+const UNPACKING_PERCENT = 93;
+/** The packages are a real download of their own, so they own real bar. */
+const INSTALLING_PACKAGES_PERCENT = 97;
 const DOWNLOAD_MAX_PERCENT = 85;
 const DOWNLOAD_MIN_PERCENT = 4;
 
@@ -102,7 +110,19 @@ export function latexInstallFailureMessage(
   }
 }
 
+/**
+ * The card, plus the one thing it says that does not come from the phase: an
+ * install that finished without its packages is still a finished install, so
+ * the note rides along beside whatever the phase already decided.
+ */
 export function latexSetupCardModel(input: LatexSetupCardInput): LatexSetupCardModel {
+  return {
+    ...latexSetupCardPhase(input),
+    warning: input.install?.packagesWarning ?? null,
+  };
+}
+
+function latexSetupCardPhase(input: LatexSetupCardInput): Omit<LatexSetupCardModel, "warning"> {
   if (!input.canInstallManaged) {
     return {
       kind: "instructions",
@@ -119,7 +139,7 @@ export function latexSetupCardModel(input: LatexSetupCardInput): LatexSetupCardM
     title: string,
     body: string,
     progressPercent: number,
-  ): LatexSetupCardModel => ({
+  ): Omit<LatexSetupCardModel, "warning"> => ({
     kind: "installing",
     title,
     body,
@@ -139,6 +159,12 @@ export function latexSetupCardModel(input: LatexSetupCardInput): LatexSetupCardM
       return installing("Installing TinyTeX", "Checking the download…", VERIFYING_PERCENT);
     case "unpacking":
       return installing("Installing TinyTeX", "Unpacking the distribution…", UNPACKING_PERCENT);
+    case "installing-packages":
+      return installing(
+        "Installing TinyTeX",
+        "Installing common LaTeX packages…",
+        INSTALLING_PACKAGES_PERCENT,
+      );
     case "ready":
       // The engine is in place; the surface flips to the build flow as soon as
       // the next toolchain poll sees it. Unless the poll has already answered

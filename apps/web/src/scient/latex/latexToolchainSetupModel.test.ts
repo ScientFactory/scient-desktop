@@ -69,10 +69,33 @@ describe("latexSetupCardModel", () => {
     // Each later phase moves the bar, so it never parks while the label changes.
     const verifying = latexSetupCardModel(card({ install: install({ state: "verifying" }) }));
     const unpacking = latexSetupCardModel(card({ install: install({ state: "unpacking" }) }));
+    const packages = latexSetupCardModel(
+      card({ install: install({ state: "installing-packages" }) }),
+    );
     expect(verifying.progressPercent).toBeGreaterThan(downloading.progressPercent ?? 0);
     expect(unpacking.progressPercent).toBeGreaterThan(verifying.progressPercent ?? 0);
+    expect(packages.progressPercent).toBeGreaterThan(unpacking.progressPercent ?? 0);
     expect(verifying.body).toBe("Checking the download…");
     expect(unpacking.body).toBe("Unpacking the distribution…");
+    expect(packages.kind).toBe("installing");
+    expect(packages.body).toBe("Installing common LaTeX packages…");
+  });
+
+  it("carries a finished install's package note without calling it a failure", () => {
+    const warning =
+      "Common packages could not be preinstalled; missing ones will install on first use.";
+    const model = latexSetupCardModel(
+      card({
+        install: install({ state: "ready", packagesWarning: warning }),
+        toolchainMissing: false,
+      }),
+    );
+
+    // The engine works; the note is a note, and the card still reads as done.
+    expect(model.kind).toBe("installing");
+    expect(model.progressPercent).toBe(100);
+    expect(model.warning).toBe(warning);
+    expect(latexSetupCardModel(card({ install: install({ state: "ready" }) })).warning).toBeNull();
   });
 
   it("keeps the bar moving before the server has reported any bytes", () => {
@@ -148,6 +171,8 @@ describe("isActiveLatexInstall", () => {
     expect(isActiveLatexInstall(install({ state: "downloading" }))).toBe(true);
     expect(isActiveLatexInstall(install({ state: "verifying" }))).toBe(true);
     expect(isActiveLatexInstall(install({ state: "unpacking" }))).toBe(true);
+    // The eager package fetch is work the loop still has to watch.
+    expect(isActiveLatexInstall(install({ state: "installing-packages" }))).toBe(true);
     expect(isActiveLatexInstall(install({ state: "ready" }))).toBe(false);
     expect(isActiveLatexInstall(install({ state: "failed" }))).toBe(false);
   });

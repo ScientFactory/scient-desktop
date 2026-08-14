@@ -37,6 +37,7 @@ import * as Stream from "effect/Stream";
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import * as ServerConfig from "../../config.ts";
 import * as LatexArchiveUnpacker from "./LatexArchiveUnpacker.ts";
+import { LatexPackageInstaller, layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import {
   encodeManagedLatexInstallRecord,
@@ -73,16 +74,36 @@ const DOWNLOAD_TIMEOUT = "10 minutes";
  * never ends is worse than a failed one: the state it leaves behind says an
  * install is in flight, and the single-flight gate then refuses every later
  * attempt for the life of the process. The ceiling sits above the sum of the
- * per-phase budgets, so it only ever cuts a run the phases could not.
+ * per-phase budgets — ten minutes of download plus fifteen of package
+ * collections, plus the expansion between them — so it only ever cuts a run
+ * the phases could not.
  */
-const INSTALL_TIMEOUT = "25 minutes";
+const INSTALL_TIMEOUT = "45 minutes";
 /** Progress is republished per megabyte; a poll every 1.5s cannot see finer. */
 const PROGRESS_STEP_BYTES = 1024 * 1024;
+
+/**
+ * The two collections that make an ordinary paper compile on the first try.
+ * TinyTeX-1 is TeX Live's infrastructure plus roughly a hundred packages,
+ * which is not what a real document uses: `mathtools`, `siunitx`, and most of
+ * the fonts live in these. Fetching them once, here, is the difference between
+ * a first build that works and a first build that stops on a missing `.sty`
+ * while the per-build resolver catches up one package at a time.
+ */
+const RECOMMENDED_COLLECTIONS: ReadonlyArray<string> = [
+  "collection-latexrecommended",
+  "collection-fontsrecommended",
+];
+/** Two collections over a slow connection; the ceiling above accommodates it. */
+const COLLECTIONS_TIMEOUT = "15 minutes";
+const COLLECTIONS_WARNING =
+  "Common packages could not be preinstalled; missing ones will install on first use.";
 
 const ACTIVE_PHASES: ReadonlySet<ScientLatexManagedInstallState["state"]> = new Set([
   "downloading",
   "verifying",
   "unpacking",
+  "installing-packages",
 ]);
 
 export function isActiveManagedInstallPhase(
@@ -153,6 +174,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const unpacker = yield* LatexArchiveUnpacker.LatexArchiveUnpacker;
   const toolchain = yield* LatexToolchain;
+  const packageInstaller = yield* LatexPackageInstaller;
   const platform = yield* HostProcessPlatform;
   const asset = resolveTinyTexAsset(platform, manifest);
   const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
@@ -390,11 +412,35 @@ export const make = Effect.gen(function* () {
       yield* writeFileStringAtomically({ filePath: paths.statePath, contents }).pipe(
         Effect.provideContext(fileContext),
       );
+      return installRoot;
     }).pipe(
       Effect.catchTag("PlatformError", (cause) =>
         failInstall("install-failed", `Scient could not finish the install: ${cause.message}`),
       ),
     );
+
+  /**
+   * Fetches the collections an ordinary document needs, while the card still
+   * says the install is running. Everything here is best effort: the engine is
+   * already in place and every build resolves what it is missing on its own, so
+   * a repository that cannot be reached — an offline machine, a mirror having a
+   * bad day, a shutdown mid-fetch — costs a note on a finished install rather
+   * than the install itself. Answers the note, or `null` when there is none.
+   */
+  const preinstallCollections = (binDirectory: string) =>
+    Effect.gen(function* () {
+      yield* phase("installing-packages");
+      const outcome = yield* packageInstaller.install({
+        packages: RECOMMENDED_COLLECTIONS,
+        binDirectory,
+        timeout: COLLECTIONS_TIMEOUT,
+      });
+      if (outcome.failed.length === 0) return null;
+      yield* Effect.logWarning("scient latex collections could not be preinstalled", {
+        packages: outcome.failed,
+      });
+      return COLLECTIONS_WARNING;
+    }).pipe(Effect.catchCause(() => Effect.succeed(COLLECTIONS_WARNING)));
 
   const runInstall = (installable: TinyTexAsset) =>
     Effect.gen(function* () {
@@ -410,7 +456,12 @@ export const make = Effect.gen(function* () {
         yield* download({ asset: installable, destination: archivePath });
         yield* verify({ asset: installable, archivePath });
         yield* unpack({ asset: installable, archivePath, payloadPath });
-        yield* promote({ payloadPath, version: manifest.version });
+        const installRoot = yield* promote({ payloadPath, version: manifest.version });
+        // The engine is in place and recorded from here on; everything after
+        // this point can only add to a working install.
+        return yield* preinstallCollections(
+          path.dirname(path.join(installRoot, installable.executableRelativePath)),
+        );
       }).pipe(
         // Whatever happened, the half-finished copy does not survive it.
         Effect.ensuring(
@@ -421,7 +472,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTag("PlatformError", (cause) =>
         failInstall("install-failed", `Scient could not prepare the install: ${cause.message}`),
       ),
-      Effect.flatMap(() =>
+      Effect.flatMap((packagesWarning) =>
         Effect.gen(function* () {
           // The probe caches its answer, so the newly installed engine only
           // becomes visible once that cache is dropped. Do it before the state
@@ -435,6 +486,7 @@ export const make = Effect.gen(function* () {
             bytesReceived: null,
             totalBytes: null,
             failureReason: null,
+            ...(packagesWarning === null ? {} : { packagesWarning }),
           }));
         }),
       ),
@@ -499,6 +551,8 @@ export const make = Effect.gen(function* () {
         bytesReceived: null,
         totalBytes: null,
         failureReason: null,
+        // Whatever the last run had to say about packages is not this run's news.
+        packagesWarning: undefined,
       }));
       yield* Effect.forkIn(runInstall(asset), installScope);
       return claimed;
@@ -514,4 +568,5 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(LatexManagedToolchain, make).pipe(
   Layer.provide(LatexArchiveUnpacker.layer),
+  Layer.provide(packageInstallerLayer),
 );

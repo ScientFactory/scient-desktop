@@ -28,13 +28,16 @@ export type ScientLatexToolchainStatus = typeof ScientLatexToolchainStatus.Type;
 /**
  * One managed install, from the client's point of view. `downloading` is the
  * only phase that carries progress, and only once the server has been told how
- * many bytes to expect.
+ * many bytes to expect. `installing-packages` is the eager fetch of the
+ * collections an ordinary document needs, which runs after the distribution is
+ * in place and can only ever end in `ready`.
  */
 export const ScientLatexManagedInstallPhase = Schema.Literals([
   "idle",
   "downloading",
   "verifying",
   "unpacking",
+  "installing-packages",
   "ready",
   "failed",
 ]);
@@ -60,6 +63,12 @@ export const ScientLatexManagedInstallState = Schema.Struct({
   totalBytes: Schema.NullOr(Schema.Number),
   failureReason: Schema.NullOr(ScientLatexManagedInstallFailureReason),
   updatedAtEpochMs: Schema.Number,
+  /**
+   * Present only on an install that finished with its eager package fetch
+   * unfinished. The engine works either way, so this is a note beside a
+   * `ready` install, never a reason to offer another one.
+   */
+  packagesWarning: Schema.optional(Schema.String),
 });
 export type ScientLatexManagedInstallState = typeof ScientLatexManagedInstallState.Type;
 
@@ -118,6 +127,12 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   toolchain: Schema.NullOr(ScientLatexToolchainStatus),
   /** A rebuild was requested while this one was still running and will follow it. */
   pendingRerun: Schema.Boolean,
+  /**
+   * Present only while this build is fetching packages the last compile said
+   * were missing. The state stays `running` throughout, so a client polls as
+   * it already does and only the label it shows changes.
+   */
+  installingPackages: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ScientLatexBuildSnapshot = typeof ScientLatexBuildSnapshot.Type;
 
