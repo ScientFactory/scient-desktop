@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260813-97db94c9.md`](docs/internals/t3-upstream-sync-20260813-97db94c9.md)
+[`docs/internals/t3-upstream-sync-20260814-5304f3e9.md`](docs/internals/t3-upstream-sync-20260814-5304f3e9.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `97db94c9bf6fa5d83f94c8fff85566d7fc96276e` into the refresh
-branch, preserving the next clean commit after the previously integrated tip
-`5015d7cf9f98fe551115b625031f01e3f022cd2d`. Later observed T3
+checkpoint `5304f3e9d4c912bfa0eb2f5f41fa109b3646236b` into the refresh
+branch, preserving the complete contiguous range after the previously
+integrated tip `97db94c9bf6fa5d83f94c8fff85566d7fc96276e`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -126,14 +126,20 @@ the new command subtitle for projectless General Chat and gives the Scient
 Sources surface a launcher shortcut. T3's contributor-trust change remains in
 ancestry without changing the Scient trust list.
 
-The next 2026-08-13 sync advances the literal T3 ancestry through `97db94c9`.
+The next 2026-08-13 sync advanced the literal T3 ancestry through `97db94c9`.
 It adopts the bounded pull-request-panel viewport fix and its regression test
-without changing any Scient-owned seam. The following three official commits
-remain outside the integration base: the next commit overlaps Scient's
-repository-local trust policy, the latency-tracker fix follows it in the
-official ancestry, and the final commit overlaps this repository's governing
-instructions. They must be reconciled in a separate conscious alignment rather
-than cherry-picked around the policy commit.
+without changing any Scient-owned seam. Its record preserved the exact
+remaining range that required conscious trust and instruction reconciliation.
+
+The 2026-08-14 sync through `5304f3e9` receives that complete remainder plus
+the following mobile and web improvements. It keeps T3's contributor and
+process commits in literal ancestry while preserving Scient's trust list and
+stricter rebase rule. T3's new mobile task-sheet architecture becomes the base
+implementation, with General Chat restored only through its existing
+projectless/environment contract. Scient's sidebar row remains shared between
+project and projectless threads while adopting the new configurable
+auto-settle-on-merge behavior. The approved Scient wordmark and stage artwork
+remain authoritative at the identity conflicts.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
