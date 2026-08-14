@@ -51,8 +51,20 @@ export const MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH = 300;
 
 const IDENTIFIER_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const IDENTIFIER_PATH_PATTERN = /^[A-Z][A-Z0-9_]*[/:.]/;
-const SPACED_CONTENT_SIGNAL_PATTERN = /[\\^_{}=+\-*<>|]/;
+// `*` is deliberately absent: in spaced prose an asterisk is almost always
+// the author's emphasis delimiter, and letting it qualify a span would let
+// `*a $b* c$` destroy the emphasis and render "b* c" as a formula.
+const SPACED_CONTENT_SIGNAL_PATTERN = /[\\^_{}=+\-<>|]/;
 const COLON_SIGNAL_PATTERN = /[\\^_{}=<>]/;
+// Every plausible formula ends in an alphanumeric (any script), a closing
+// bracket, factorial, prime, or percent. Content ending in a bare binder —
+// `src/`, `a=`, `1,`, `h{`, `(pwd)/` — is two unrelated dollars gluing shell
+// or code together, never complete TeX.
+const CONTENT_END_PATTERN = /[\p{L}\p{N})\]}!'%]$/u;
+const HTML_TAG_LIKE_PATTERN = /<\/?[a-zA-Z][^<>]*>/;
+const INTERPOLATION_SIGNAL_PATTERN = /[\\^_+\-*=<>|]/;
+const BARE_BRACKET_GROUP_PATTERN = /^!?\[[^\][]*\]$/;
+const DOMAIN_LIKE_PATTERN = /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+){2,}$/u;
 
 function isDigitCode(code: Code): boolean {
   return code !== null && code >= 48 && code <= 57;
@@ -70,21 +82,40 @@ function isWhitespaceCode(code: Code): boolean {
 }
 
 /**
- * Whether an accepted candidate reads as TeX rather than prose or shell.
+ * Whether an accepted candidate reads as TeX rather than prose or code.
  * Shell identifiers (`$PATH$`) and identifier paths (`$HOME/bin:` between two
- * shell variables) stay text; spaced prose needs an operator or control
+ * shell variables) stay text; content must end the way formulas end (an
+ * alphanumeric, `)]}`, `!`, `'`, `%`), which rejects the glued-variable class
+ * (`$src/$dst`, `$a=$b`, `awk '$1==$NF'`); interpolation-shaped content
+ * starting with `(` or `{` needs a TeX operator (`$(a+b)^2$` has one,
+ * `$(pwd)$` and `${row}$` do not); spaced prose needs an operator or control
  * sequence; a colon needs a strong TeX signal (`f: X \to Y` has one,
- * `HOME/bin:` does not); the `](` sequence is a markdown link boundary and
- * can never be math content. Compact spans — `$42$`, `$1/2$`, `$f(x)$`,
- * `$a*b*c$` — are math.
+ * `HOME/bin:` does not); markdown structure is never math content — the `](`
+ * inline-link and `][` reference-link boundaries, bare reference labels
+ * (`[foo]`, but `[0,1]` intervals stay math), footnote references (`[^1]`),
+ * and HTML-tag or autolink shapes (`</b>`, `<https://…>`); and bare
+ * domain-like content (`www.x.test`) is prose. Compact spans — `$42$`,
+ * `$1/2$`, `$f(x)$`, `$a*b*c$` — are math.
  */
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
   if (IDENTIFIER_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
+  if (!CONTENT_END_PATTERN.test(content)) return false;
   if (/\s/.test(content) && !SPACED_CONTENT_SIGNAL_PATTERN.test(content)) return false;
   if (content.includes(":") && !COLON_SIGNAL_PATTERN.test(content)) return false;
-  if (content.includes("](")) return false;
+  if (content.includes("](") || content.includes("][") || content.includes("[^")) return false;
+  if (BARE_BRACKET_GROUP_PATTERN.test(content) && !/[\d\\^_+\-*/=,]/.test(content)) return false;
+  if (HTML_TAG_LIKE_PATTERN.test(content)) return false;
+  if (
+    (content.startsWith("(") || content.startsWith("{")) &&
+    !INTERPOLATION_SIGNAL_PATTERN.test(content)
+  ) {
+    return false;
+  }
+  if (DOMAIN_LIKE_PATTERN.test(content) && !INTERPOLATION_SIGNAL_PATTERN.test(content)) {
+    return false;
+  }
   return true;
 }
 
@@ -111,7 +142,10 @@ function scientSingleDollarMathText(): Construct {
     ok: State,
     nok: State,
   ): State {
-    const self = this;
+    // Both are settled before the attempt starts, so capturing them here
+    // avoids aliasing `this` into the state closures.
+    const openerPrevious = this.previous;
+    const openerPreviousEventType = this.events[this.events.length - 1]?.[1].type;
     let content = "";
     let previousCode: Code = CODE_DOLLAR;
     return start;
@@ -120,12 +154,10 @@ function scientSingleDollarMathText(): Construct {
       // The opener must not follow a word character (`file$x$`, `US$5$`) or
       // an unescaped dollar. Characters beyond ASCII stay conservative: a
       // dollar glued to non-ASCII text reads as prose, not an opener.
-      const before = self.previous;
       if (
-        isAsciiAlphanumericCode(before) ||
-        (before !== null && before > 127) ||
-        (before === CODE_DOLLAR &&
-          self.events[self.events.length - 1]?.[1].type !== "characterEscape")
+        isAsciiAlphanumericCode(openerPrevious) ||
+        (openerPrevious !== null && openerPrevious > 127) ||
+        (openerPrevious === CODE_DOLLAR && openerPreviousEventType !== "characterEscape")
       ) {
         return nok(code);
       }
@@ -197,6 +229,7 @@ export function remarkScientSingleDollarMath(this: UnifiedProcessorLike): void {
   // remark-parse reads `micromarkExtensions` from the processor's data; the
   // unified `Data` shape is module-augmented, so it is widened here instead
   // of depending on which augmentations this compilation happens to load.
+  // oxlint-disable-next-line oxc/no-this-in-exported-function -- unified invokes plugins with the processor bound as `this`; that is the plugin contract.
   const data = this.data() as { micromarkExtensions?: unknown[] };
   const extensions = (data.micromarkExtensions ??= []);
   extensions.push({ text: { [CODE_DOLLAR]: scientSingleDollarMathText() } });

@@ -85,9 +85,16 @@ unescaped dollar and must not precede whitespace; the closer must not follow
 whitespace or a backslash and must not precede a digit (`$5-$10`) or another
 dollar; spans are single-line and capped at 300 characters (streaming
 half-formulas stay literal); shell identifiers (`$PATH$`) and identifier
-paths (`HOME/bin:`) stay text; spaced content needs an operator or control
-sequence; a colon needs a strong TeX signal; and the `](` link boundary is
-never math content. One micromark caveat is load-bearing: when several
+paths (`HOME/bin:`) stay text; content must end the way formulas end — an
+alphanumeric, `)]}`, `!`, `'`, or `%` — which rejects the glued-variable
+class (`$src/$dst`, `$a=$b`, `awk '$1==$NF'`); interpolation-shaped content
+starting with `(` or `{` needs a TeX operator (`$(a+b)^2$` yes, `$(pwd)$`
+and `${row}$` no); spaced content needs an operator or control sequence, and
+an asterisk does not qualify (it is usually the author's emphasis
+delimiter); a colon needs a strong TeX signal; markdown structure is never
+math content — the `](` and `][` link boundaries, bare reference labels
+(`[foo]`, while `[0,1]` intervals stay math), footnote references (`[^1]`),
+HTML-tag and autolink shapes; and bare domain-like content stays prose. One micromark caveat is load-bearing: when several
 constructs share a character code, an attempt runs them all regardless of
 their individual `previous` hooks, so every Scient guard lives inside
 `tokenize`, not in the `previous` hook.
