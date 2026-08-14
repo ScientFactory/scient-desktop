@@ -9,6 +9,8 @@ import {
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
+import { createMemoryStorage } from "~/lib/storage";
+
 import {
   pdfSourceAssetResource,
   usePdfSourceState,
@@ -16,6 +18,7 @@ import {
   workspacePdfSource,
   workspacePdfSourceForPreview,
 } from "./pdfSource";
+import { createPdfReaderSessionStore, pdfReaderSessionDocumentKey } from "./pdfReaderSessionStore";
 
 describe("PDF source resolution", () => {
   it("exposes the web resolver through the neutral host capability", () => {
@@ -34,6 +37,45 @@ describe("PDF source resolution", () => {
       threadId: "thread-1",
       path: "/workspace/reports/paper.pdf",
     });
+  });
+
+  it("shares reader state across authorizing threads but isolates environments", () => {
+    const sourceForThread = (environmentId: string, threadId: string) =>
+      workspacePdfSource({
+        absolutePath: "/workspace/reports/paper.pdf",
+        environmentId: EnvironmentId.make(environmentId),
+        fileName: "paper.pdf",
+        threadId: ThreadId.make(threadId),
+      });
+    const original = sourceForThread("environment-1", "thread-1");
+    const fork = sourceForThread("environment-1", "thread-2");
+    const otherEnvironment = sourceForThread("environment-2", "thread-3");
+    const store = createPdfReaderSessionStore({
+      storage: createMemoryStorage(),
+      writeDelayMs: 0,
+    });
+
+    store.updateSidebar(pdfReaderSessionDocumentKey(original), "outline");
+
+    expect(original.logicalDocumentKey).toBe(fork.logicalDocumentKey);
+    expect(store.get(pdfReaderSessionDocumentKey(fork)).sidebar).toBe("outline");
+    expect(store.get(pdfReaderSessionDocumentKey(otherEnvironment)).sidebar).toBe("closed");
+    expect(pdfSourceAssetResource(original)).toMatchObject({ threadId: "thread-1" });
+    expect(pdfSourceAssetResource(fork)).toMatchObject({ threadId: "thread-2" });
+  });
+
+  it("normalizes Windows workspace paths for reader identity", () => {
+    const sourceForPath = (absolutePath: string) =>
+      workspacePdfSource({
+        absolutePath,
+        environmentId: EnvironmentId.make("environment-1"),
+        fileName: "paper.pdf",
+        threadId: ThreadId.make("thread-1"),
+      });
+
+    expect(sourceForPath("C:\\Workspace\\Reports\\Paper.pdf").logicalDocumentKey).toBe(
+      sourceForPath("c:/workspace/reports/paper.pdf").logicalDocumentKey,
+    );
   });
 
   it.each(["README.md", "analysis.m", "figure.png", "data.txt"])(

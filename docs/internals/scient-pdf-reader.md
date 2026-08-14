@@ -27,8 +27,7 @@ Unsupported multi-range requests safely fall back to a full response. This
 changes transport only; it does not weaken path containment or binary-file
 protection. Exact PDF capabilities also carry the file revision they authorize;
 the server refuses later ranges if that file changes, and the client's normal
-capability renewal reloads the document without losing its page, rotation, or
-zoom.
+capability renewal reloads the document without losing its reading state.
 
 PDF.js `PDFViewer` owns visible-page rendering, text and annotation layers,
 internal destinations, bounded canvases, and cleanup. The reader additionally
@@ -43,6 +42,30 @@ maintain a second text index.
 
 External outline URLs are accepted only for `http` and `https` and are opened
 through Scient's desktop shell. Internal destinations remain inside the reader.
+
+## Durable reading state
+
+The reader stores page, PDF scroll coordinates, zoom or fit mode, rotation, and
+sidebar mode in the client. Sessions are keyed by artifact authority plus logical
+document key, never by a renewable asset URL or generated revision. Consequently,
+an authorized-URL renewal or generated-document rebuild preserves the reading
+state for the same logical document. A workspace PDF's current logical key also
+uses its normalized absolute source path. The authorizing thread remains on the
+source descriptor only for exact asset resolution, so the same path in the same
+environment shares one reader session across threads while identical paths in
+different environments remain isolated. Independent worktrees with different
+paths remain distinct until a later fork feature explicitly maps them.
+
+The versioned store retains the 100 most recently used document sessions. Writes
+are coalesced and flushed on reader unmount and page teardown. Corrupt entries are
+ignored, and unavailable browser storage degrades to in-memory state without
+blocking the reader. Search queries, passwords, resolved asset URLs, and PDF
+contents are not persisted.
+
+PDF.js can emit transient view-area events while initial rotation and scale are
+being applied. The reader ignores those events until the saved destination has
+been restored and the following frame has begun, preventing initial page-one
+layout from replacing a valid saved viewport.
 
 ## Product boundary
 

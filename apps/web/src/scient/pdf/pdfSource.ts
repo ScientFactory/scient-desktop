@@ -8,8 +8,15 @@ import {
 } from "@scientfactory/document-artifacts";
 import { EnvironmentId, ThreadId, type AssetResource } from "@t3tools/contracts";
 import { isWorkspacePdfPreviewPath } from "@t3tools/shared/filePreview";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 import { useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
+
+function workspacePdfIdentityPath(absolutePath: string): string {
+  return isWindowsAbsolutePath(absolutePath)
+    ? absolutePath.replaceAll("/", "\\").toLowerCase()
+    : absolutePath;
+}
 
 export function workspacePdfSource(input: {
   readonly absolutePath: string;
@@ -21,7 +28,7 @@ export function workspacePdfSource(input: {
     _tag: "workspace-pdf",
     authority: ArtifactAuthority.make(input.environmentId),
     logicalDocumentKey: LogicalDocumentKey.make(
-      `workspace:${input.threadId}:${input.absolutePath}`,
+      `workspace:${workspacePdfIdentityPath(input.absolutePath)}`,
     ),
     title: input.fileName,
     fileName: input.fileName,

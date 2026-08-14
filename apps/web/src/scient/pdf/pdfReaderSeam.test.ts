@@ -11,4 +11,14 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("PdfSourceDescriptor");
     expect(source).toContain("PdfSourceResolver");
   });
+
+  it("keeps the persisted viewport lifecycle wired to PDF.js view events", () => {
+    const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
+    expect(source).toContain('eventBus.on("pagesinit"');
+    expect(source).toContain('eventBus.on("updateviewarea"');
+    expect(source).toContain("viewportSession.restore(");
+    expect(source).toContain("viewportSession.completeRestore()");
+    expect(source).toContain("viewportSession.snapshot(");
+    expect(source).toContain("viewportSession.flush()");
+  });
 });
