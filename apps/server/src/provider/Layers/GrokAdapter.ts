@@ -84,6 +84,13 @@ export interface GrokAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  /** Deterministic lifecycle gates used only by adapter cancellation tests. */
+  readonly testHooks?: {
+    readonly afterPromptRpcSucceeded?: (
+      threadId: ThreadId,
+      turnId: TurnId,
+    ) => Effect.Effect<void, never>;
+  };
 }
 
 interface PendingApproval {
@@ -1079,7 +1086,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 Effect.all([
                   Ref.set(promptRpcSucceeded, true),
                   Ref.set(promptResultRef, promptResult),
-                ]),
+                ]).pipe(
+                  Effect.andThen(
+                    options?.testHooks?.afterPromptRpcSucceeded?.(
+                      input.threadId,
+                      prepared.turnId,
+                    ) ?? Effect.void,
+                  ),
+                ),
               ),
               Effect.tapError((error) =>
                 Ref.set(
