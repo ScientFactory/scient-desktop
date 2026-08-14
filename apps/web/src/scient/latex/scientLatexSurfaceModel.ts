@@ -36,6 +36,12 @@ export const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
 
 /** Past this many names the count says more than the list the strip can show. */
 const MAX_NAMED_INSTALLING_PACKAGES = 2;
+/**
+ * A first build names more of them, because there the list is the explanation:
+ * a document that has never built fetches its whole preamble at once, and
+ * "and 6 more" after two names reads as a stall rather than as progress.
+ */
+const MAX_NAMED_FIRST_BUILD_PACKAGES = 6;
 
 /**
  * What the strip says while a build waits for a package the document turned
@@ -50,6 +56,24 @@ export function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): s
   }
   const named = packages.slice(0, MAX_NAMED_INSTALLING_PACKAGES).join(", ");
   return `Installing ${String(packages.length)} LaTeX packages: ${named}…`;
+}
+
+/**
+ * And what it says the first time, before this document has ever produced a
+ * PDF. A first build against a distribution Scient installed fetches every
+ * package the preamble names in one go, which is the slowest thing this
+ * feature ever does and the only time the wait is measured in minutes. Saying
+ * so is the difference between a reader waiting and a reader deciding the app
+ * has hung; every later build is fast, and says the ordinary thing.
+ */
+export function latexFirstBuildInstallingLabel(packages: ReadonlyArray<string>): string {
+  const named =
+    packages.length <= MAX_NAMED_FIRST_BUILD_PACKAGES
+      ? packages.join(", ")
+      : `${packages.slice(0, MAX_NAMED_FIRST_BUILD_PACKAGES).join(", ")} and ${String(
+          packages.length - MAX_NAMED_FIRST_BUILD_PACKAGES,
+        )} more`;
+  return `First build: installing LaTeX packages (this can take a few minutes) — ${named}`;
 }
 
 export function normalizeLatexPreviewMode(
@@ -379,7 +403,12 @@ export function latexStatusStripModel(
     label: installing
       ? LATEX_INSTALLING_LABEL
       : installingPackages.length > 0
-        ? latexInstallingPackagesLabel(installingPackages)
+        ? // No descriptor means this document has never produced a PDF here, so
+          // this fetch is the one standing between the reader and their first
+          // one — and the only one worth setting expectations for.
+          descriptor === null
+          ? latexFirstBuildInstallingLabel(installingPackages)
+          : latexInstallingPackagesLabel(installingPackages)
         : toolchainMissing
           ? LATEX_TOOLCHAIN_MISSING_TITLE
           : busy

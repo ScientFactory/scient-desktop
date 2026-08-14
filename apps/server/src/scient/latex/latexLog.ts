@@ -177,6 +177,94 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
   return diagnostics;
 }
 
+/**
+ * `latexmk` collects what went wrong under this heading and indents each
+ * entry. It is the only thing it prints when it decides not to run the engine
+ * at all — "pdflatex: gave an error in previous invocation of latexmk." — and
+ * that decision is exactly the case where there is no engine transcript to
+ * parse, so this is the reason or there is none.
+ */
+const ERROR_SUMMARY_HEADING_PATTERN = /^Collected error summary/iu;
+const INDENTED_ENTRY_PATTERN = /^\s+(\S.*?)\s*$/u;
+
+/**
+ * Lines that are the tooling talking about itself. They are the last thing a
+ * failed run prints often enough that a naive "show the tail" would show only
+ * these, which is how a build ends up reporting a console code page instead of
+ * an error.
+ */
+const TRANSCRIPT_NOISE_PATTERNS: ReadonlyArray<RegExp> = [
+  /^Initial Win CP for/iu,
+  /^I changed them all to/iu,
+  /^Reverting Windows console CPs/iu,
+  /^Rc files read/iu,
+  /^NONE$/iu,
+  /^Latexmk: This is Latexmk/iu,
+  /command failed with exit code/iu,
+  /^perl(?:\.exe)?\s/iu,
+  /^\[transcript truncated\]$/u,
+];
+
+/** How many trailing lines are worth quoting when nothing else identified itself. */
+const MAX_TAIL_LINES = 3;
+
+function isTranscriptNoise(line: string): boolean {
+  return TRANSCRIPT_NOISE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+/** `latexmk`'s own collected error summary, joined, or `null` when it printed none. */
+export function latexmkErrorSummary(transcript: string): string | null {
+  const lines = transcript.split(/\r?\n/u);
+  const entries: string[] = [];
+  let collecting = false;
+  for (const line of lines) {
+    if (ERROR_SUMMARY_HEADING_PATTERN.test(line.trim())) {
+      collecting = true;
+      continue;
+    }
+    if (!collecting) continue;
+    const entry = INDENTED_ENTRY_PATTERN.exec(line);
+    if (entry?.[1] === undefined) {
+      if (line.trim().length === 0) continue;
+      break;
+    }
+    if (!isTranscriptNoise(entry[1])) entries.push(entry[1]);
+  }
+  return entries.length === 0 ? null : clampMessage(entries.join(" "));
+}
+
+/**
+ * The reason a run failed when it left no diagnostic behind.
+ *
+ * A compile that never reaches TeX has no `file:line:` anywhere in it — the
+ * ordinary case is `latexmk` refusing to redo a target it already failed on,
+ * which prints its own prose and exits non-zero — and reporting that as
+ * nothing at all is how a build tells its reader only that it failed. So the
+ * run's own last words are read instead: its collected error summary if it
+ * printed one, otherwise the tail of what it did say, otherwise the status it
+ * exited with, which is at least true.
+ */
+export function transcriptFailureDiagnostic(input: {
+  readonly transcript: string;
+  readonly exitCode: number | null;
+}): LatexDiagnostic {
+  const message =
+    latexmkErrorSummary(input.transcript) ??
+    (() => {
+      const meaningful = input.transcript
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !isTranscriptNoise(line));
+      return meaningful.length === 0
+        ? null
+        : clampMessage(meaningful.slice(-MAX_TAIL_LINES).join(" "));
+    })() ??
+    (input.exitCode === null
+      ? "The LaTeX engine was stopped before it reported anything."
+      : `The LaTeX engine exited with status ${String(input.exitCode)} and reported nothing.`);
+  return { severity: "error", file: null, line: null, message };
+}
+
 /** The one-line failure summary recorded on a stale binding. */
 export function summarizeLatexFailure(diagnostics: readonly LatexDiagnostic[]): string {
   const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");

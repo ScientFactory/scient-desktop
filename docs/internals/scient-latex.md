@@ -118,15 +118,46 @@ it. Only a run that produces no bytes at all (`producedBytes <= 0`) is treated
 as a failure — `MISSING_PDF_SUMMARY` if the engine claimed success anyway, or
 the first parsed error otherwise (`summarizeLatexFailure`).
 
-**Missing packages.** TinyTeX ships TeX Live's infrastructure plus a base set
-and expects everything else to be fetched on demand, so without this step any
-document using a package outside that set fails with "LaTeX Error: File
-mathtools.sty not found." `latexMissingPackages.ts` reads the missing inputs
-out of the transcript — the LaTeX and tectonic "not found" wordings, TeX's own
-"I can't find file", and latexmk's "Missing input file:" summary — bounded to
-ten and deduplicated, and maps only `.sty`/`.cls` names to packages: a missing
-`.tex`, `.bib`, or image is the author's own file and is deliberately mapped to
-nothing.
+**Forced reprocessing.** Every `latexmk` invocation carries `-g`. The work
+directory outlives a build, and `latexmk` keeps its own decision state there in
+`.fdb_latexmk`: both that the last run failed and which files it could not
+find, recorded at the paths it looked in — for a missing package, a path inside
+the output directory. Placing `microtype.sty` in the distribution's `texmf`
+tree therefore changes nothing `latexmk` is watching, so the retry prints
+"Nothing to do", never runs the engine, and exits non-zero. Since the service
+deletes the expected PDF before every compile and every build here was
+explicitly asked for, there is no run `-g` wrongly forces and one whole class of
+"the build says it has nothing to do" failures it removes. tectonic keeps no
+cross-run decision state and takes no equivalent flag.
+
+**Missing packages, before the first compile.** TinyTeX ships TeX Live's
+infrastructure plus a base set and expects everything else to be fetched on
+demand, so without this step any document using a package outside that set
+fails with "LaTeX Error: File mathtools.sty not found."
+
+The first resolution round is upfront and reads the document rather than a
+transcript, because a transcript can only ever reveal one name: LaTeX takes an
+emergency stop at the _first_ input it cannot find. Before the first compile of
+a build against a managed distribution, `latexPreamble.ts` reads
+`\usepackage`/`\RequirePackage` names out of a bounded 64 KiB head of the root
+document plus 16 KiB heads of up to eight files it `\input`s or `\include`s
+(comments stripped, names held to the package-name pattern, include paths that
+would leave the document's own directory dropped). Those names are dropped to
+the ones `kpsewhich` cannot already find, and whatever is left is fetched in
+_one_ `tlmgr` invocation, with every name in `installingPackages` so the strip
+can say so. A distribution that already has them pays a few probes and no
+fetch. The reactive loop below still runs afterwards, for the packages a
+package pulls in.
+
+**Missing packages, reactively.** `latexMissingPackages.ts` reads the missing
+inputs out of the transcript — the LaTeX and tectonic "not found" wordings,
+TeX's own "I can't find file", and latexmk's "Missing input file:" summary —
+bounded to ten and deduplicated, and maps only `.sty`/`.cls` names to packages:
+a missing `.tex`, `.bib`, or image is the author's own file and is deliberately
+mapped to nothing. `missingLatexPackageInputs` keeps each package paired with
+the file it was asked for, because the package name alone does not say whether
+to look for a `.sty` or a `.cls` afterwards — and "can the engine see it now"
+is the question that ends the round.
 
 The transcript is only read for missing packages when the run needs it: a
 compile that exited `0` and wrote a PDF resolves nothing, so a working document
@@ -178,13 +209,28 @@ rather than implied by the digest pin one section above. Names are still
 filtered through the package-name pattern before they reach argv, because a
 transcript is untrusted text and `tlmgr` reads a leading dash as an option.
 
-`LatexPackageInstaller` runs `tlmgr install <pkg…>` through `ProcessRunner`
-(bounded output, 180-second default timeout, the same PATH-prepended
-environment `latexEngineEnvironment` builds for a compile) against the `tlmgr`
-inside the given `bin` directory — `tlmgr.bat` on Windows, which
-`resolveSpawnCommand` runs in shell mode as it does for any `.bat`; a lane test
-pins that routing so a future change to the inherited shell helper breaks a
-Scient test rather than Windows installs. Every run takes a single permit, so
+`LatexPackageInstaller` runs `tlmgr install <pkg…>` through the same
+`ExecutionProcess` port the compiler uses, not through `ProcessRunner`, with a
+10-minute budget per invocation and output bounded to a 512 KiB tail (the
+verdict is the last thing `tlmgr` says). The port's `cancel` is a process-tree
+kill — `taskkill /T /F` on Windows — and that is the whole reason for the
+change: `ProcessRunner` kills only the process it spawned, so a fetch that
+outran its budget lost its shim and kept its `perl`, which finished the install
+minutes later and rebuilt the distribution's file index underneath a build that
+had already been told nothing was placed. Short read-only probes (`kpsewhich`)
+stay on `ProcessRunner`, which is what it is for.
+
+On Windows the invocation is the `perl` script, not the shim.
+`texliveScriptInvocation` encodes what `tlmgr.bat` does — derive the
+installation root from the `bin` directory, put `tlpkg/tlperl/bin` and the
+distribution's `bin` at the head of PATH, point `PERL5LIB` at the bundled
+library, run `tlpkg/tlperl/bin/perl.exe texmf-dist/scripts/texlive/tlmgr.pl` —
+because a `.bat` cannot be spawned without a shell, and that shell is both an
+extra process to lose track of and a layer of argument quoting between Scient
+and `tlmgr`. (The shim's remaining job is running a self-update script left by
+`tlmgr update --self`, which this lane never asks for.) `mktexlsr` is a real
+`.exe` in the same directory, and on macOS/Linux both are ordinary executable
+scripts, so only Windows `tlmgr` needs the substitution. Every run takes a single permit, so
 two of them never touch one distribution's package database at once — three
 documents compile concurrently and the install's eager collections fetch can
 overlap a first build, which is why `server.ts` mounts one
@@ -202,6 +248,25 @@ repository query on every save. The service never fails —
 a repository that cannot be reached, a `tlmgr` that will not run, a timeout all
 come back as `failed` names — so a build keeps the compiler error it already
 had rather than gaining a second one about the fetch.
+
+**Finished is not visible.** `tlmgr` unpacks the files first and rebuilds the
+distribution's `ls-R` file index afterwards, as a post-action, and a compile
+started between the two searches an index that does not yet mention what was
+just placed. That is the same "File `microtype.sty' not found" the round was
+fetching for, from a tree that already has it, and it is what made the failure
+this section exists to prevent look like a package problem rather than a timing
+one. So a round that placed something does not report it placed until it can be
+seen: the caller passes `expectedFiles`— the exact names the compile stopped
+on — the installer asks`kpsewhich`(a 20-second`ProcessRunner`probe in the
+managed environment), runs`mktexlsr`once through the port (120 seconds, tree-
+safe) if the answer is no, and asks again. Names whose file is still invisible
+move from`installed`to`failed`, and if nothing at all became visible
+`installed`is emptied, so the caller does not recompile against a
+half-registered tree — the F3 unresolved-package diagnostic says so instead. A
+probe that cannot answer at all (no`kpsewhich`, a timeout) counts as "found":
+a distribution whose probe will not run must not be one where nothing is ever
+visible, or no build could ever recompile. `LatexManagedToolchain`'s collections
+fetch passes no `expectedFiles` and is unaffected.
 
 **Producer-registration validation.** `GeneratedDocumentStore.publishPdf`
 validates every compiled PDF through the `producer-registration` profile of
@@ -235,6 +300,22 @@ client could open it anyway. Every invocation also sets `max_print_line=1000`,
 documented `texmf.cnf` knobs — because TeX wraps its own messages at 79
 columns by default, which otherwise cuts file paths and error text in half
 before the parser ever sees them.
+
+**A failed build always says why.** Every terminal failure the build loop
+records goes through `withFailureReason`, which appends an `error` diagnostic
+carrying the failure summary when the list has none. This closes a gap that was
+reachable in production, and was: `latexmk` declining to redo a target it had
+already failed prints only its own prose — no `file:line:`, no `!`, no missing
+file, and its one `file:line:`-shaped line is the `runscript.tlu` wrapper noise
+the parser deliberately drops — so `parseLatexLog` returned nothing, and the
+build recorded an empty diagnostics list under `summarizeLatexFailure`'s bare
+"LaTeX build failed." The reader was told only that it had failed, on a run
+that had plenty to say. `transcriptFailureDiagnostic` now reads that run's own
+last words: its `Collected error summary` entries if it printed any, otherwise
+the tail of what it did print with the tooling's self-narration (console code
+pages, `Rc files read`, the latexmk banner, the wrapper's exit-code line)
+filtered out, otherwise the status it exited with. The summary is then computed
+from the augmented list, so it is never the bare fallback either.
 
 ## Toolchain discovery
 
@@ -353,15 +434,24 @@ managed-PATH construction), `latexLog.test.ts` (diagnostics parsing),
 install pipeline, including `artifactUrlRejection`, unpack argument and
 unpacker-path construction, and that a second install lands beside the first
 rather than over it), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
-shapes, and the deliberate `null` for the author's own files),
-`LatexPackageInstaller.test.ts` (the `tlmgr` invocation, the unknown-package
-search fallback, and a timeout or unspawnable `tlmgr` reported as failed rather
-than raised), `managedLatexInstall.test.ts` (install-root naming and
+shapes, the file/package pairing, and the deliberate `null` for the author's own
+files), `latexPreamble.test.ts` (comment stripping, package and include
+extraction, the bounds, and the paths deliberately not followed),
+`LatexPackageInstaller.test.ts` (the perl-direct `tlmgr` invocation shape, the
+unknown-package search fallback, the `kpsewhich` visibility gate with its one
+`mktexlsr` refresh, the fail-open probe, the tail-keeping output bound, and — on
+a `TestClock` — that a `tlmgr` outliving its budget is cancelled through the
+port rather than left running), `managedLatexInstall.test.ts` (install-root naming and
 the containment rule that keeps a tampered state file from pointing the engine
 outside the managed directory), and `tinytexManifest.test.ts` (manifest shape
 and pinned-asset resolution) — plus `LatexBuildService.test.ts` for the
-coordinator's lifecycle, coalescing, admission, and cancel/supersession
-behavior. Two suites self-skip at collection time when the machine cannot run
+coordinator's lifecycle, coalescing, admission, cancel/supersession behavior,
+the upfront preamble batch (one install call carrying every unresolvable name,
+then a single compile) against the reactive loop that still handles what only a
+compile could reveal, and two diagnostics invariants: that no shape of build
+failure leaves the diagnostics list empty or the summary at the bare fallback,
+and the exact observed production sequence — failed install round, rebuild,
+`latexmk` refusing to rerun — as a regression. Two suites self-skip at collection time when the machine cannot run
 them: `LatexArchiveUnpacker.test.ts`'s last case expands a real archive
 through the resolved system `tar`, which is the only coverage of the actual
 spawn the stubs stand in for, and `LatexRealEngine.test.ts` runs a real TeX

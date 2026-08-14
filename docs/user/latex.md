@@ -19,7 +19,10 @@ install TinyTeX for you — a small distribution, about 70 MB, that lives with
 Scient and needs no administrator access. That install includes the packages
 most documents need, and anything still missing installs automatically the
 first time a document uses it; with your own TeX distribution, the error names
-the package to install. Installing a package needs a network connection: when
+the package to install. The first build of a document can therefore take a few
+minutes while those packages arrive — Scient says so, and names them, while it
+waits. Later builds of the same document are as fast as any other compile.
+Installing a package needs a network connection: when
 you're offline, or when no package by that name can be found, the build stops
 and the error says which one it was. You can also install TeX Live,
 MiKTeX, or Tectonic yourself, and Scient will use it instead; an existing

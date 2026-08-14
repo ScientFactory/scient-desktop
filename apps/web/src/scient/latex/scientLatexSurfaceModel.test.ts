@@ -383,7 +383,14 @@ describe("latexStatusStripModel", () => {
 
   it("says which packages a build is waiting on instead of just Building…", () => {
     const model = latexStatusStripModel(
-      status({ snapshot: snapshot("running", { installingPackages: ["mathtools"] }) }),
+      status({
+        snapshot: snapshot("running", {
+          installingPackages: ["mathtools"],
+          // This document has built here before, so the fetch is an ordinary
+          // pause rather than the wait before a first PDF.
+          descriptor: generatedDescriptor(),
+        }),
+      }),
     );
 
     // Nothing about the build state changes, so the strip keeps spinning and
@@ -394,7 +401,12 @@ describe("latexStatusStripModel", () => {
 
     expect(
       latexStatusStripModel(
-        status({ snapshot: snapshot("running", { installingPackages: ["mathtools", "siunitx"] }) }),
+        status({
+          snapshot: snapshot("running", {
+            installingPackages: ["mathtools", "siunitx"],
+            descriptor: generatedDescriptor(),
+          }),
+        }),
       ).label,
     ).toBe("Installing LaTeX packages: mathtools, siunitx…");
   });
@@ -407,10 +419,62 @@ describe("latexStatusStripModel", () => {
         status({
           snapshot: snapshot("running", {
             installingPackages: ["mathtools", "siunitx", "booktabs", "microtype"],
+            descriptor: generatedDescriptor(),
           }),
         }),
       ).label,
     ).toBe("Installing 4 LaTeX packages: mathtools, siunitx…");
+  });
+
+  it("sets expectations the first time, when the wait is minutes and not seconds", () => {
+    // A document with no PDF yet is fetching its whole preamble at once, which
+    // is the slowest thing this feature ever does. Without saying so the strip
+    // is indistinguishable from a hang, and it is the one place where naming
+    // the packages is the explanation rather than a detail.
+    expect(
+      latexStatusStripModel(
+        status({
+          snapshot: snapshot("running", { installingPackages: ["mathtools", "siunitx"] }),
+        }),
+      ).label,
+    ).toBe(
+      "First build: installing LaTeX packages (this can take a few minutes) — mathtools, siunitx",
+    );
+
+    // And every later build says the ordinary thing, because it is fast.
+    expect(
+      latexStatusStripModel(
+        status({
+          snapshot: snapshot("running", {
+            installingPackages: ["mathtools", "siunitx"],
+            descriptor: generatedDescriptor({ bindingStatus: "stale" }),
+          }),
+        }),
+      ).label,
+    ).toBe("Installing LaTeX packages: mathtools, siunitx…");
+  });
+
+  it("still fits a first build's whole preamble onto one line", () => {
+    expect(
+      latexStatusStripModel(
+        status({
+          snapshot: snapshot("running", {
+            installingPackages: [
+              "mathtools",
+              "siunitx",
+              "booktabs",
+              "microtype",
+              "amsthm",
+              "geometry",
+              "hyperref",
+              "cleveref",
+            ],
+          }),
+        }),
+      ).label,
+    ).toBe(
+      "First build: installing LaTeX packages (this can take a few minutes) — mathtools, siunitx, booktabs, microtype, amsthm, geometry and 2 more",
+    );
   });
 
   it("is busy while this client's own request is unanswered", () => {

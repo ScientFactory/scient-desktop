@@ -57,8 +57,9 @@ import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
-import { parseLatexLog, summarizeLatexFailure } from "./latexLog.ts";
-import { missingLatexPackages } from "./latexMissingPackages.ts";
+import { parseLatexLog, summarizeLatexFailure, transcriptFailureDiagnostic } from "./latexLog.ts";
+import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
+import { latexPreambleIncludes, latexPreamblePackages } from "./latexPreamble.ts";
 import { resolveLatexRoot } from "./latexRoot.ts";
 
 export interface LatexBuildInput {
@@ -103,6 +104,20 @@ const MAX_LOGICAL_DOCUMENT_KEY_LENGTH = 1_024;
  * a status poll on a multi-megabyte source reads one block instead of all of it.
  */
 const ROOT_RESOLUTION_HEAD_BYTES = 8 * 1_024;
+/**
+ * How much of the root document the upfront package scan reads. A preamble is
+ * the first page or two of a file, but a document that defines its own macros
+ * before the last `\usepackage` can push one a long way down, and this read is
+ * paid once per build rather than per poll.
+ */
+const PREAMBLE_SCAN_HEAD_BYTES = 64 * 1_024;
+/**
+ * And of each file the root pulls in. A chapter's own `\usepackage` lines sit
+ * at its top or not at all, and there are up to eight of these reads.
+ */
+const INCLUDED_PREAMBLE_SCAN_HEAD_BYTES = 16 * 1_024;
+/** Across the root and everything it pulls in, after deduplication. */
+const MAX_PREAMBLE_PACKAGES_PER_BUILD = 40;
 /** A compile is CPU- and disk-bound; three at once keeps a laptop usable. */
 const MAX_CONCURRENT_COMPILES = 3;
 /**
@@ -173,6 +188,31 @@ function unresolvedPackageDiagnostic(packageName: string): ScientLatexDiagnostic
     line: null,
     message: `Scient tried to install '${packageName}' automatically and could not. If this is your own file, check its path; otherwise retry when online.`,
   };
+}
+
+/**
+ * A failed build always says why.
+ *
+ * Every terminal failure below goes through here, because the one thing a
+ * reader cannot act on is a build that reports nothing. The gap this closes is
+ * real and was reachable in production: `latexmk` declining to redo a target it
+ * had already failed prints only its own prose, `parseLatexLog` finds no
+ * `file:line:` in it and returns nothing, and the build then recorded an empty
+ * diagnostics list under `summarizeLatexFailure`'s bare fallback — the reader
+ * was told "LaTeX build failed." and given nothing else, on a run that had
+ * plenty to say.
+ */
+function withFailureReason(
+  diagnostics: ReadonlyArray<ScientLatexDiagnostic>,
+  reason: string | (() => ScientLatexDiagnostic),
+): ReadonlyArray<ScientLatexDiagnostic> {
+  if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) return diagnostics;
+  return [
+    ...diagnostics,
+    typeof reason === "string"
+      ? { severity: "error" as const, file: null, line: null, message: reason }
+      : reason(),
+  ];
 }
 
 interface LatexBuildEntry {
@@ -346,12 +386,12 @@ export const make = Effect.gen(function* () {
   // waits, which is what keeps the `queued` state honest.
   const admission = yield* Semaphore.make(MAX_CONCURRENT_COMPILES);
 
-  /** Reads only the head of a source file; see `ROOT_RESOLUTION_HEAD_BYTES`. */
-  const readSourceHead = (absolutePath: string) =>
+  /** Reads only the head of a source file; never the whole of a large one. */
+  const readSourceHead = (absolutePath: string, maxBytes: number) =>
     Effect.scoped(
       Effect.gen(function* () {
         const file = yield* fileSystem.open(absolutePath, { flag: "r" });
-        const chunk = yield* file.readAlloc(ROOT_RESOLUTION_HEAD_BYTES);
+        const chunk = yield* file.readAlloc(maxBytes);
         return Option.isNone(chunk) ? "" : new TextDecoder().decode(chunk.value);
       }),
     );
@@ -487,11 +527,14 @@ export const make = Effect.gen(function* () {
       const descriptor = yield* store
         .getDescriptor(LogicalDocumentKey.make(input.key))
         .pipe(Effect.orElseSucceed(() => null));
+      // Last line of defence for the invariant: whatever else a caller passed,
+      // the summary itself is a reason and belongs in the list.
+      const diagnostics = withFailureReason(input.diagnostics, input.summary);
       yield* finishBuild(input.key, input.generation, (entry) => ({
         ...entry,
         state: "failed",
         failureSummary: input.summary,
-        diagnostics: input.diagnostics,
+        diagnostics,
         descriptor: descriptor ?? entry.descriptor,
       }));
     });
@@ -588,7 +631,7 @@ export const make = Effect.gen(function* () {
                 ...entry,
                 state: "failed",
                 failureSummary: error.detail,
-                diagnostics: input.diagnostics,
+                diagnostics: withFailureReason(input.diagnostics, error.detail),
               }));
             }
             return recordFailure({
@@ -612,6 +655,8 @@ export const make = Effect.gen(function* () {
     readonly key: string;
     readonly generation: number;
     readonly packages: ReadonlyArray<string>;
+    /** What each package was fetched for; the installer holds the fetch to these. */
+    readonly files: ReadonlyArray<string>;
     readonly binDirectory: string;
   }) =>
     Effect.gen(function* () {
@@ -622,6 +667,7 @@ export const make = Effect.gen(function* () {
       const outcome = yield* packageInstaller.install({
         packages: input.packages,
         binDirectory: input.binDirectory,
+        expectedFiles: input.files,
       });
       yield* updateOwnEntry(input.key, input.generation, (entry) => ({
         ...entry,
@@ -634,6 +680,51 @@ export const make = Effect.gen(function* () {
         });
       }
       return outcome.installed.length > 0;
+    });
+
+  /**
+   * Everything the document says it needs that this distribution does not
+   * already have, read before the first compile.
+   *
+   * The reactive resolver can only ever learn one name per compile, because
+   * LaTeX stops at the first input it cannot find. A first build of an
+   * ordinary paper against a fresh TinyTeX therefore spends a compile and a
+   * `tlmgr` run per package — minutes of a progress strip naming one package
+   * at a time — for information that was sitting in the preamble the whole
+   * time. This reads it: the root's own `\usepackage`/`\RequirePackage` names
+   * plus those of the files it pulls in one level down, dropped to the ones
+   * `kpsewhich` cannot already find, so a distribution that has them pays a
+   * few probes and no fetch. The reactive loop still runs afterwards, for the
+   * packages a package pulls in.
+   */
+  const preamblePackagesToFetch = (input: {
+    readonly rootAbsolutePath: string;
+    readonly binDirectory: string;
+  }) =>
+    Effect.gen(function* () {
+      const head = yield* readSourceHead(input.rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
+        Effect.orElseSucceed(() => ""),
+      );
+      const names = [...latexPreamblePackages(head)];
+      const rootDirectory = path.dirname(input.rootAbsolutePath);
+      for (const include of latexPreambleIncludes(head)) {
+        const includedHead = yield* readSourceHead(
+          path.resolve(rootDirectory, include),
+          INCLUDED_PREAMBLE_SCAN_HEAD_BYTES,
+        ).pipe(Effect.orElseSucceed(() => ""));
+        names.push(...latexPreamblePackages(includedHead));
+      }
+      // Nine files' worth of preambles is more names than any real document
+      // has; the cap is what stops a generated one becoming a giant argv.
+      const requested = [...new Set(names)].slice(0, MAX_PREAMBLE_PACKAGES_PER_BUILD);
+      if (requested.length === 0) return [];
+      const unresolved = new Set(
+        (yield* packageInstaller.unresolvedFiles({
+          files: requested.map((name) => `${name}.sty`),
+          binDirectory: input.binDirectory,
+        })).map((fileName) => fileName.toLowerCase()),
+      );
+      return requested.filter((name) => unresolved.has(`${name.toLowerCase()}.sty`));
     });
 
   const compileAndPublish = (key: string, generation: number) =>
@@ -650,6 +741,7 @@ export const make = Effect.gen(function* () {
           ...current,
           state: "failed",
           failureSummary: NO_TOOLCHAIN_SUMMARY,
+          diagnostics: withFailureReason([], NO_TOOLCHAIN_SUMMARY),
         }));
         return;
       }
@@ -674,6 +766,12 @@ export const make = Effect.gen(function* () {
         },
         rootAbsolutePath,
         workDirectory,
+        // The work directory outlives a build and `latexmk` keeps its own
+        // decision state in it, which is state about a run whose inputs this
+        // service has since changed underneath it. Every build here is a build
+        // that was asked for and whose PDF has just been deleted, so there is
+        // no run this would wrongly force.
+        forceReprocess: true,
       });
 
       // TeX resolves `\input{sections/intro}` against the working directory,
@@ -693,6 +791,25 @@ export const make = Effect.gen(function* () {
       // Every package this build has already asked for, so one no repository
       // has cannot send the same document round the loop again.
       const attempted = new Set<string>();
+
+      // One fetch for everything the document already says it wants, so the
+      // reactive loop below only has to cover what a package pulls in.
+      if (managedBinDirectory !== null) {
+        const upfront = yield* preamblePackagesToFetch({
+          rootAbsolutePath,
+          binDirectory: managedBinDirectory,
+        });
+        if (upfront.length > 0) {
+          yield* installMissingPackages({
+            key,
+            generation,
+            packages: upfront,
+            files: upfront.map((packageName) => `${packageName}.sty`),
+            binDirectory: managedBinDirectory,
+          });
+          if (yield* isSuperseded(key, generation)) return;
+        }
+      }
 
       for (let round = 0; ; round += 1) {
         // The work directory outlives a single build, so the previous run's PDF
@@ -724,7 +841,9 @@ export const make = Effect.gen(function* () {
             generation,
             production,
             summary: TIMEOUT_SUMMARY,
-            diagnostics: parsed,
+            diagnostics: withFailureReason(parsed, () =>
+              transcriptFailureDiagnostic({ transcript: outcome.transcript, exitCode: null }),
+            ),
           });
           return;
         }
@@ -742,24 +861,28 @@ export const make = Effect.gen(function* () {
         // missing packages, because a missing `.sty` usually aborts the
         // commands that package defines whether or not the engine typeset
         // something.
-        const missingPackages =
+        const missing =
           producedBytes > 0 && outcome.exitCode === 0
             ? []
-            : missingLatexPackages(outcome.transcript);
+            : missingLatexPackageInputs(outcome.transcript);
         const wanted =
           managedBinDirectory === null
             ? []
-            : missingPackages.filter((packageName) => !attempted.has(packageName));
+            : missing.filter((entryMissing) => !attempted.has(entryMissing.packageName));
         if (
           managedBinDirectory !== null &&
           wanted.length > 0 &&
           round < MAX_PACKAGE_RESOLUTION_ROUNDS
         ) {
-          for (const packageName of wanted) attempted.add(packageName);
+          for (const entryMissing of wanted) attempted.add(entryMissing.packageName);
           const placed = yield* installMissingPackages({
             key,
             generation,
-            packages: wanted,
+            packages: wanted.map((entryMissing) => entryMissing.packageName),
+            // The installer only reports these placed once the engine can find
+            // the very files this compile stopped on, so a retry never runs
+            // against a tree that has the bytes but not yet the index.
+            files: wanted.map((entryMissing) => entryMissing.fileName),
             binDirectory: managedBinDirectory,
           });
           // A cancel during the fetch already wrote the terminal state, and a
@@ -771,25 +894,38 @@ export const make = Effect.gen(function* () {
         // either Scient does not own this distribution, or it owns it and
         // could not place them. Both need saying, in the voice that fits.
         const diagnostics =
-          missingPackages.length === 0
+          missing.length === 0
             ? parsed
             : [
                 ...parsed,
-                ...missingPackages.map((packageName) =>
+                ...missing.map((entryMissing) =>
                   managedBinDirectory === null
-                    ? missingPackageDiagnostic(packageName)
-                    : unresolvedPackageDiagnostic(packageName),
+                    ? missingPackageDiagnostic(entryMissing.packageName)
+                    : unresolvedPackageDiagnostic(entryMissing.packageName),
                 ),
               ];
 
         if (producedBytes <= 0) {
+          // A run that produced nothing always has a reason, even when it
+          // never reached TeX and so printed nothing TeX-shaped.
+          const failureDiagnostics =
+            outcome.exitCode === 0
+              ? withFailureReason(diagnostics, MISSING_PDF_SUMMARY)
+              : withFailureReason(diagnostics, () =>
+                  transcriptFailureDiagnostic({
+                    transcript: outcome.transcript,
+                    exitCode: outcome.exitCode,
+                  }),
+                );
           yield* recordFailure({
             key,
             generation,
             production,
             summary:
-              outcome.exitCode === 0 ? MISSING_PDF_SUMMARY : summarizeLatexFailure(diagnostics),
-            diagnostics,
+              outcome.exitCode === 0
+                ? MISSING_PDF_SUMMARY
+                : summarizeLatexFailure(failureDiagnostics),
+            diagnostics: failureDiagnostics,
           });
           return;
         }
@@ -827,6 +963,10 @@ export const make = Effect.gen(function* () {
               ...current,
               state: "failed",
               failureSummary: UNEXPECTED_FAILURE_SUMMARY,
+              // Without this the snapshot keeps whatever the last finished
+              // build said — nothing, on a first build — and the reader is
+              // left with a generic sentence and an empty list.
+              diagnostics: withFailureReason(current.diagnostics, UNEXPECTED_FAILURE_SUMMARY),
             }));
           }),
         ),
@@ -910,7 +1050,10 @@ export const make = Effect.gen(function* () {
         });
       };
 
-      const contents = yield* readSourceHead(path.resolve(workspaceRoot, requestedRelative)).pipe(
+      const contents = yield* readSourceHead(
+        path.resolve(workspaceRoot, requestedRelative),
+        ROOT_RESOLUTION_HEAD_BYTES,
+      ).pipe(
         Effect.map(Option.some),
         Effect.orElseSucceed(() => Option.none<string>()),
       );

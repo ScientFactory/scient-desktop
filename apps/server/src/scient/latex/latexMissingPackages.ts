@@ -89,15 +89,35 @@ export function packageNameForMissingInput(fileName: string): string | null {
   return PACKAGE_NAME_PATTERN.test(name) ? name : null;
 }
 
-/** The installable packages one transcript asks for, deduplicated and bounded. */
-export function missingLatexPackages(transcript: string): string[] {
-  const packages: string[] = [];
+export interface MissingLatexPackage {
+  /** The file the engine could not find, extension included: `mathtools.sty`. */
+  readonly fileName: string;
+  /** The package that would supply it: `mathtools`. */
+  readonly packageName: string;
+}
+
+/**
+ * The installable packages one transcript asks for, deduplicated and bounded,
+ * each paired with the file it was asked for. The pairing is what lets a
+ * caller check afterwards that the fetch actually made the file visible: the
+ * package name alone does not say whether to look for a `.sty` or a `.cls`.
+ */
+export function missingLatexPackageInputs(transcript: string): ReadonlyArray<MissingLatexPackage> {
+  const packages: MissingLatexPackage[] = [];
   const seen = new Set<string>();
   for (const input of extractMissingLatexInputs(transcript)) {
     const name = packageNameForMissingInput(input);
     if (name === null || seen.has(name)) continue;
     seen.add(name);
-    packages.push(name);
+    packages.push({
+      fileName: input.replaceAll("\\", "/").split("/").at(-1) ?? input,
+      packageName: name,
+    });
   }
   return packages;
+}
+
+/** The installable packages one transcript asks for, deduplicated and bounded. */
+export function missingLatexPackages(transcript: string): string[] {
+  return missingLatexPackageInputs(transcript).map((missing) => missing.packageName);
 }

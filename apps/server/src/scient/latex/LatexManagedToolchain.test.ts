@@ -212,6 +212,9 @@ const makeHarness = (input: {
                   )(request),
                 ),
               ),
+            // The collections fetch names no file, so the visibility gate is
+            // never reached from here.
+            unresolvedFiles: () => Effect.succeed([]),
           }),
         ),
       ),

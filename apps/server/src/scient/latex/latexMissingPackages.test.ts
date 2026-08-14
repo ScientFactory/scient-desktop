@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   extractMissingLatexInputs,
+  missingLatexPackageInputs,
   missingLatexPackages,
   packageNameForMissingInput,
 } from "./latexMissingPackages.ts";
@@ -100,5 +101,22 @@ describe("missingLatexPackages", () => {
     ].join("\n");
 
     expect(missingLatexPackages(transcript)).toEqual(["mathtools", "revtex4-2"]);
+  });
+
+  it("keeps the file each package was asked for, extension and all", () => {
+    // The package name alone does not say whether to look for a `.sty` or a
+    // `.cls` afterwards, and "did the fetch make this file visible" is the
+    // only question that closes the gap between tlmgr finishing and the engine
+    // being able to see what it placed.
+    const transcript = [
+      "! LaTeX Error: File `mathtools.sty' not found.",
+      "! LaTeX Error: File `revtex4-2.cls' not found.",
+      "! I can't find file `chapters/intro.tex'.",
+    ].join("\n");
+
+    expect(missingLatexPackageInputs(transcript)).toEqual([
+      { fileName: "mathtools.sty", packageName: "mathtools" },
+      { fileName: "revtex4-2.cls", packageName: "revtex4-2" },
+    ]);
   });
 });

@@ -46,6 +46,32 @@ describe("buildLatexInvocation", () => {
     expect(invocation.pdfPath).toBe("/state/scient-latex/abc/main.pdf");
   });
 
+  it("forces latexmk to reprocess a target it has already failed on", () => {
+    // `latexmk` records in the work directory's `.fdb_latexmk` both that the
+    // last run failed and which files it could not find, at the paths it
+    // looked in. Installing the package puts the file somewhere else entirely,
+    // so nothing `latexmk` watches has changed: without `-g` the retry reports
+    // "Nothing to do", never runs the engine, and exits non-zero with only its
+    // own prose — a document that was just given its package looking exactly
+    // like one that still has not got it.
+    const forced = buildLatexInvocation({
+      toolchain: { kind: "latexmk", executable: "latexmk", version: "4.88" },
+      rootAbsolutePath: "/home/u/paper/main.tex",
+      workDirectory: "/state/scient-latex/abc",
+      forceReprocess: true,
+    });
+    expect(forced.args).toContain("-g");
+    expect(forced.args.at(-1)).toBe("/home/u/paper/main.tex");
+
+    expect(
+      buildLatexInvocation({
+        toolchain: { kind: "latexmk", executable: "latexmk", version: "4.88" },
+        rootAbsolutePath: "/home/u/paper/main.tex",
+        workDirectory: "/state/scient-latex/abc",
+      }).args,
+    ).not.toContain("-g");
+  });
+
   it("builds an untrusted tectonic invocation", () => {
     const invocation = buildLatexInvocation({
       toolchain: { kind: "tectonic", executable: "tectonic", version: "0.15" },
@@ -62,6 +88,16 @@ describe("buildLatexInvocation", () => {
       "/home/u/paper/thesis.tex",
     ]);
     expect(invocation.pdfPath).toBe("/state/scient-latex/xyz/thesis.pdf");
+
+    // tectonic keeps no cross-run decision state, so there is nothing to force.
+    expect(
+      buildLatexInvocation({
+        toolchain: { kind: "tectonic", executable: "tectonic", version: "0.15" },
+        rootAbsolutePath: "/home/u/paper/thesis.tex",
+        workDirectory: "/state/scient-latex/xyz",
+        forceReprocess: true,
+      }).args,
+    ).toEqual(invocation.args);
   });
 });
 

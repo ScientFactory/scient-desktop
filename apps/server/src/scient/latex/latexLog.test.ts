@@ -1,6 +1,37 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseLatexLog, summarizeLatexFailure } from "./latexLog.ts";
+import {
+  latexmkErrorSummary,
+  parseLatexLog,
+  summarizeLatexFailure,
+  transcriptFailureDiagnostic,
+} from "./latexLog.ts";
+
+/**
+ * What `latexmk` prints — verbatim, from the machine this was diagnosed on —
+ * when it decides not to redo a target whose last run failed. It is the whole
+ * of a failed compile's output: nothing here is `file:line:` shaped, nothing
+ * here starts with `!`, and nothing here names a missing file. A build that
+ * only reads TeX-shaped lines therefore reads this run as having said nothing
+ * at all, which is exactly what happened in production.
+ */
+const REFUSED_RERUN_TRANSCRIPT = [
+  "Initial Win CP for (console input, console output, system): (CP437, CP437, CP1252)",
+  "I changed them all to CP1252",
+  "Rc files read (in order):",
+  "  NONE",
+  "Latexmk: This is Latexmk, John Collins, 9 March 2026. Version 4.88.",
+  "Latexmk: Nothing to do for 'C:/work/paper/main.tex'.",
+  "Latexmk: All targets (C:/state/builds/abc/main.pdf) are up-to-date",
+  "Collected error summary (may duplicate other messages):",
+  "  pdflatex: gave an error in previous invocation of latexmk.",
+  "",
+  "Latexmk: Sometimes, the -f option can be used to get latexmk",
+  "  to try to force complete processing.",
+  "Reverting Windows console CPs to (in,out) = (437,437)",
+  "C:/state/TinyTeX/bin/windows/runscript.tlu:933: command failed with exit code 12:",
+  "perl.exe c:\\state\\TinyTeX\\texmf-dist\\scripts\\latexmk\\latexmk.pl -pdf C:/work/paper/main.tex",
+].join("\n");
 
 describe("parseLatexLog", () => {
   it("parses file-line errors with one continuation line", () => {
@@ -148,6 +179,53 @@ describe("parseLatexLog", () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toBe(message);
     expect((diagnostics[0]?.message ?? "").length).toBeGreaterThan(79);
+  });
+});
+
+describe("latexmkErrorSummary", () => {
+  it("reads the driver's own verdict, which is all a refused rerun prints", () => {
+    expect(latexmkErrorSummary(REFUSED_RERUN_TRANSCRIPT)).toBe(
+      "pdflatex: gave an error in previous invocation of latexmk.",
+    );
+    expect(latexmkErrorSummary("This is pdfTeX\nOutput written on main.pdf (3 pages).")).toBeNull();
+  });
+});
+
+describe("transcriptFailureDiagnostic", () => {
+  it("gives a run that printed nothing TeX-shaped a reason anyway", () => {
+    // The regression: this transcript parses to no diagnostics at all, and the
+    // build used to record that as an empty list under "LaTeX build failed."
+    expect(parseLatexLog(REFUSED_RERUN_TRANSCRIPT)).toEqual([]);
+    expect(
+      transcriptFailureDiagnostic({ transcript: REFUSED_RERUN_TRANSCRIPT, exitCode: 12 }),
+    ).toEqual({
+      severity: "error",
+      file: null,
+      line: null,
+      message: "pdflatex: gave an error in previous invocation of latexmk.",
+    });
+  });
+
+  it("quotes the tail when the run printed no summary of its own", () => {
+    const diagnostic = transcriptFailureDiagnostic({
+      transcript: ["Initial Win CP for (console input): (CP437)", "sh: pdflatex: killed"].join(
+        "\n",
+      ),
+      exitCode: 137,
+    });
+
+    // The console chatter is the tooling talking about itself; the line that
+    // says what happened is the one worth carrying.
+    expect(diagnostic.message).toBe("sh: pdflatex: killed");
+  });
+
+  it("names the status when the run said nothing at all", () => {
+    expect(transcriptFailureDiagnostic({ transcript: "", exitCode: 1 }).message).toBe(
+      "The LaTeX engine exited with status 1 and reported nothing.",
+    );
+    expect(transcriptFailureDiagnostic({ transcript: "   \n\n", exitCode: null }).message).toBe(
+      "The LaTeX engine was stopped before it reported anything.",
+    );
   });
 });
 

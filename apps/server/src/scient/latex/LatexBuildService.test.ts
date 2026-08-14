@@ -113,6 +113,40 @@ const missingPackageTranscript = (packageName: string) =>
     "",
   ].join("\n");
 
+/**
+ * What `latexmk` prints — verbatim, from the machine this was diagnosed on —
+ * when it declines to redo a target whose last run failed. Nothing in it is
+ * `file:line:` shaped, starts with `!`, or names a missing file, so a build
+ * that only reads TeX-shaped lines reads this run as having said nothing.
+ */
+const REFUSED_RERUN_TRANSCRIPT = [
+  "Initial Win CP for (console input, console output, system): (CP437, CP437, CP1252)",
+  "Rc files read (in order):",
+  "  NONE",
+  "Latexmk: This is Latexmk, John Collins, 9 March 2026. Version 4.88.",
+  "Latexmk: Nothing to do for 'C:/work/paper/main.tex'.",
+  "Latexmk: All targets (C:/state/builds/abc/main.pdf) are up-to-date",
+  "Collected error summary (may duplicate other messages):",
+  "  pdflatex: gave an error in previous invocation of latexmk.",
+  "",
+  "Reverting Windows console CPs to (in,out) = (437,437)",
+  "C:/state/TinyTeX/bin/windows/runscript.tlu:933: command failed with exit code 12:",
+  "perl.exe c:\\state\\TinyTeX\\texmf-dist\\scripts\\latexmk\\latexmk.pl -pdf C:/work/paper/main.tex",
+].join("\n");
+
+/** A preamble that wants more than one package the distribution does not carry. */
+const MULTI_PACKAGE_SOURCE = [
+  "\\documentclass{article}",
+  "\\usepackage[utf8]{inputenc}",
+  "\\usepackage{mathtools,siunitx}",
+  "% \\usepackage{neverwanted}",
+  "\\input{sections/intro}",
+  "\\begin{document}",
+  "hello",
+  "\\end{document}",
+  "",
+].join("\n");
+
 interface FakeCompile {
   readonly transcript: string;
   readonly exitCode: number;
@@ -145,6 +179,12 @@ const makeHarness = (input: {
   readonly install?: (
     request: LatexPackageInstallInput,
   ) => Effect.Effect<LatexPackageInstallResult>;
+  /**
+   * Files this distribution cannot find, lowercased. Everything else resolves,
+   * which is what keeps a document whose preamble is already satisfied from
+   * fetching anything.
+   */
+  readonly missingFiles?: ReadonlyArray<string>;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -203,15 +243,32 @@ const makeHarness = (input: {
 
     const installRequests = yield* Queue.unbounded<LatexPackageInstallInput>();
     const installCount = yield* Ref.make(0);
+    // What the distribution cannot find. An install places the files it was
+    // asked for, so a name fetched once stops being missing — which is what
+    // lets a test watch the upfront batch and the reactive loop interact.
+    const missingFiles = yield* Ref.make(
+      new Set((input.missingFiles ?? []).map((file) => file.toLowerCase())),
+    );
     const installer = LatexPackageInstaller.of({
       install: (request) =>
         Effect.gen(function* () {
           yield* Ref.update(installCount, (count) => count + 1);
           yield* Queue.offer(installRequests, request);
-          return yield* (
+          const outcome = yield* (
             input.install ?? ((asked) => Effect.succeed({ installed: asked.packages, failed: [] }))
           )(request);
+          yield* Ref.update(missingFiles, (files) => {
+            const next = new Set(files);
+            for (const packageName of outcome.installed)
+              next.delete(`${packageName.toLowerCase()}.sty`);
+            return next;
+          });
+          return outcome;
         }),
+      unresolvedFiles: (request) =>
+        Ref.get(missingFiles).pipe(
+          Effect.map((files) => request.files.filter((file) => files.has(file.toLowerCase()))),
+        ),
     });
 
     const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
@@ -320,6 +377,128 @@ describe("LatexBuildService", () => {
         expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
         expect(yield* Ref.get(harness.startCount)).toBe(2);
         expect(yield* Ref.get(harness.installCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("fetches everything the preamble names in one round before compiling at all", () =>
+    Effect.gen(function* () {
+      // The reactive resolver can only learn one name per compile, because
+      // LaTeX stops at the first input it cannot find. A first build of an
+      // ordinary paper would therefore spend a compile and a tlmgr run per
+      // package; the preamble already said all of it.
+      const hold = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        files: {
+          "main.tex": MULTI_PACKAGE_SOURCE,
+          "sections/intro.tex": "\\usepackage{booktabs}\nThe introduction.\n",
+        },
+        // `inputenc` is in every base distribution; the other three are not.
+        missingFiles: ["mathtools.sty", "siunitx.sty", "booktabs.sty"],
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("batched") }],
+        install: (request) =>
+          Deferred.await(hold).pipe(Effect.as({ installed: request.packages, failed: [] })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const asked = yield* Queue.take(harness.installRequests);
+
+        // One invocation, every name, including the one a chapter asked for.
+        expect(asked.packages).toEqual(["mathtools", "siunitx", "booktabs"]);
+        expect(asked.expectedFiles).toEqual(["mathtools.sty", "siunitx.sty", "booktabs.sty"]);
+        // The strip names all of them, so a first build reads as progress
+        // rather than as a stall, and nothing has compiled yet.
+        const waiting = yield* service.status(harness.buildInput);
+        expect(waiting.state).toBe("running");
+        expect(waiting.installingPackages).toEqual(["mathtools", "siunitx", "booktabs"]);
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
+
+        yield* Deferred.succeed(hold, undefined);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(yield* Ref.get(harness.installCount)).toBe(1);
+        // One compile, not four.
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("fetches nothing upfront for a preamble this distribution already satisfies", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        files: { "main.tex": MULTI_PACKAGE_SOURCE },
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("nothing-to-do") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("succeeded");
+        // Every name resolved, so the scan cost a few probes and no fetch.
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("still resolves reactively what only a compile could have revealed", () =>
+    Effect.gen(function* () {
+      // `mathtools` loads `mhsetup`; no preamble mentions it, and only the
+      // compile that gets that far can say so.
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        files: { "main.tex": MULTI_PACKAGE_SOURCE },
+        missingFiles: ["mathtools.sty"],
+        compiles: [
+          { transcript: missingPackageTranscript("mhsetup"), exitCode: 1, pdf: null },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("transitive") },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const upfront = yield* Queue.take(harness.installRequests);
+        expect(upfront.packages).toEqual(["mathtools"]);
+
+        const reactive = yield* Queue.take(harness.installRequests);
+        expect(reactive.packages).toEqual(["mhsetup"]);
+        // The reactive round carries the file the compile actually stopped on.
+        expect(reactive.expectedFiles).toEqual(["mhsetup.sty"]);
+
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never recompiles for a fetch whose files the engine still cannot see", () =>
+    Effect.gen(function* () {
+      // `tlmgr` unpacks first and rebuilds the file index afterwards. The
+      // installer holds the round to what is visible; a caller that trusted
+      // "installed" would compile against a tree that has the bytes and not
+      // the index, and fail on the very file it just fetched.
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [{ transcript: missingPackageTranscript("microtype"), exitCode: 1, pdf: null }],
+        install: (request) => Effect.succeed({ installed: [], failed: request.packages }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        expect(yield* Ref.get(harness.installCount)).toBe(1);
+        // No retry against a half-registered tree.
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        expect(finished.diagnostics.at(-1)?.message).toContain(
+          "Scient tried to install 'microtype'",
+        );
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -998,6 +1177,93 @@ describe("LatexBuildService", () => {
         }
         expect(yield* Ref.get(harness.startCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never reports a failed build without saying why", () =>
+    Effect.gen(function* () {
+      // The regression, as it happened. A first compile stops on
+      // `microtype.sty`; the fetch reports failure (in production, a `tlmgr`
+      // whose shim was killed at the budget while its perl kept going); the
+      // reader rebuilds; and `latexmk` — holding, in the work directory that
+      // outlives a build, both the record that the last run failed and the
+      // paths it looked for the missing file in — declines to rerun the engine
+      // at all. Its refusal is prose: no `file:line:`, no `!`, no missing file.
+      // The build recorded that as an empty diagnostics list under the bare
+      // "LaTeX build failed.", which is the one thing a reader cannot act on.
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          { transcript: missingPackageTranscript("microtype"), exitCode: 1, pdf: null },
+          { transcript: REFUSED_RERUN_TRANSCRIPT, exitCode: 12, pdf: null },
+        ],
+        install: (request) => Effect.succeed({ installed: [], failed: request.packages }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const first = yield* awaitTerminal(service, harness.buildInput);
+        expect(first.state).toBe("failed");
+
+        yield* service.requestBuild(harness.buildInput);
+        const second = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(second.state).toBe("failed");
+        expect(second.diagnostics.length).toBeGreaterThan(0);
+        expect(second.failureSummary).not.toBe("LaTeX build failed.");
+        // The driver's own verdict, which is everything that run had to say.
+        expect(second.diagnostics.at(-1)?.message).toBe(
+          "pdflatex: gave an error in previous invocation of latexmk.",
+        );
+        expect(second.failureSummary).toBe(
+          "pdflatex: gave an error in previous invocation of latexmk.",
+        );
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("carries a reason on every shape of failure a build can reach", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<{
+        readonly name: string;
+        readonly harness: Parameters<typeof makeHarness>[0];
+      }> = [
+        {
+          name: "no engine at all",
+          harness: { compiles: [], toolchain: NO_TOOLCHAIN },
+        },
+        {
+          name: "an engine that said nothing and produced nothing",
+          harness: { compiles: [{ transcript: "", exitCode: 1, pdf: null }] },
+        },
+        {
+          name: "an engine that claimed success and produced nothing",
+          harness: { compiles: [{ transcript: "", exitCode: 0, pdf: null }] },
+        },
+        {
+          name: "a driver that refused to rerun",
+          harness: {
+            compiles: [{ transcript: REFUSED_RERUN_TRANSCRIPT, exitCode: 12, pdf: null }],
+          },
+        },
+      ];
+      for (const testCase of cases) {
+        const harness = yield* makeHarness(testCase.harness);
+        yield* Effect.gen(function* () {
+          const service = yield* LatexBuildService;
+          yield* service.requestBuild(harness.buildInput);
+          const finished = yield* awaitTerminal(service, harness.buildInput);
+
+          expect(finished.state, testCase.name).toBe("failed");
+          // The invariant: a reader is never told only that it failed.
+          expect(finished.diagnostics.length, testCase.name).toBeGreaterThan(0);
+          expect(
+            finished.diagnostics.some((diagnostic) => diagnostic.severity === "error"),
+            testCase.name,
+          ).toBe(true);
+          expect(finished.failureSummary, testCase.name).not.toBe("LaTeX build failed.");
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

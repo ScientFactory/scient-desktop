@@ -64,12 +64,25 @@ export function buildLatexInvocation(input: {
   readonly toolchain: DiscoveredLatexToolchain;
   readonly rootAbsolutePath: string;
   readonly workDirectory: string;
+  /**
+   * Run the engine even where the driver believes nothing has changed. Set for
+   * the compile that follows a package install: `latexmk` remembers, in the
+   * `.fdb_latexmk` it keeps in the work directory, both that the last run
+   * failed and which files were missing — recorded at the paths it looked in,
+   * one of which is the output directory. Placing `microtype.sty` in the
+   * distribution's own tree therefore changes nothing `latexmk` is watching, so
+   * on the retry it reports "Nothing to do", refuses to rerun the engine, and
+   * exits non-zero with only its own prose. That looks exactly like a document
+   * that still cannot find the package it was just given.
+   */
+  readonly forceReprocess?: boolean | undefined;
 }): LatexInvocation {
   const pdfPath = `${input.workDirectory}/${pdfBaseName(
     input.rootAbsolutePath.replaceAll("\\", "/"),
   )}.pdf`;
 
   if (input.toolchain.kind === "tectonic") {
+    // tectonic keeps no cross-run decision state of its own; every run is a run.
     return {
       command: input.toolchain.executable,
       args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootAbsolutePath],
@@ -85,6 +98,7 @@ export function buildLatexInvocation(input: {
       "-file-line-error",
       "-no-shell-escape",
       "-synctex=1",
+      ...(input.forceReprocess === true ? ["-g"] : []),
       `-outdir=${input.workDirectory}`,
       input.rootAbsolutePath,
     ],
