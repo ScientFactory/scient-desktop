@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronDown, Globe, History, RadioTower } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -15,31 +15,30 @@ import {
 } from "./useDiscoveredLocalServers";
 
 interface Props {
+  threadRef: ScopedThreadRef;
   environmentId: EnvironmentId;
   threadId: string;
   environmentHttpBaseUrl?: string | null | undefined;
   configuredUrls?: ReadonlyArray<string> | undefined;
-  recentlySeenUrls?: ReadonlyArray<string> | undefined;
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
   onOpenUrl: (url: string) => void;
 }
 
 export function PreviewEmptyState({
+  threadRef,
   environmentId,
   threadId,
   environmentHttpBaseUrl,
   configuredUrls,
-  recentlySeenUrls,
   recentEntries,
   onRemoveRecent,
   onOpenUrl,
 }: Props) {
-  const [showOtherListening, setShowOtherListening] = useState(false);
+  const [showOtherServers, setShowOtherServers] = useState(false);
   const servers = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
-    recentlySeenUrls,
   });
   const groups = useMemo(
     () => groupPreviewServers({ servers, threadId, environmentHttpBaseUrl }),
@@ -59,11 +58,11 @@ export function PreviewEmptyState({
   const recentLocalKeys = new Set(
     recents.map((entry) => localUrlKey(entry.url)).filter((key): key is string => key !== null),
   );
-  const otherListening = groups.otherListening.filter(
+  const otherServers = groups.other.filter(
     (server) => !recentLocalKeys.has(localServerKey(server)),
   );
 
-  if (groups.relevant.length === 0 && recents.length === 0 && otherListening.length === 0) {
+  if (groups.relevant.length === 0 && recents.length === 0 && otherServers.length === 0) {
     return (
       <Empty>
         <EmptyMedia variant="icon">
@@ -71,7 +70,7 @@ export function PreviewEmptyState({
         </EmptyMedia>
         <EmptyTitle>No preview yet</EmptyTitle>
         <EmptyDescription>
-          Type a URL above, or run a project dev script. Relevant local previews will show up here
+          Type a URL above, or run a dev script. Browser-ready localhost servers will show up here
           automatically.
         </EmptyDescription>
       </Empty>
@@ -80,7 +79,7 @@ export function PreviewEmptyState({
 
   return (
     <div className="flex h-full min-h-0 overflow-y-auto px-5 py-8">
-      <div className="m-auto flex w-full max-w-xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
         {groups.relevant.length > 0 ? (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -91,6 +90,7 @@ export function PreviewEmptyState({
               {groups.relevant.map((server) => (
                 <PreviewLocalServerCard
                   key={`${server.host}:${server.port}`}
+                  threadRef={threadRef}
                   server={server}
                   onOpen={() => onOpenUrl(server.requestedUrl)}
                 />
@@ -108,6 +108,7 @@ export function PreviewEmptyState({
               {recents.map((entry) => (
                 <PreviewRecentUrlCard
                   key={entry.url}
+                  threadRef={threadRef}
                   entry={entry}
                   onOpen={() => onOpenUrl(entry.url)}
                   onRemove={() => onRemoveRecent(entry.url)}
@@ -116,34 +117,35 @@ export function PreviewEmptyState({
             </div>
           </div>
         ) : null}
-        {otherListening.length > 0 ? (
+        {otherServers.length > 0 ? (
           <div className="flex flex-col gap-3">
             <button
               type="button"
-              aria-expanded={showOtherListening}
-              onClick={() => setShowOtherListening((current) => !current)}
+              aria-expanded={showOtherServers}
+              onClick={() => setShowOtherServers((current) => !current)}
               className="flex w-fit items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <RadioTower className="size-4 shrink-0" />
               <span>Find another local server</span>
-              <span className="text-xs tabular-nums">{otherListening.length}</span>
+              <span className="text-xs tabular-nums">{otherServers.length}</span>
               <ChevronDown
-                className={`size-3.5 transition-transform ${showOtherListening ? "rotate-180" : ""}`}
+                className={`size-3.5 transition-transform ${showOtherServers ? "rotate-180" : ""}`}
               />
             </button>
-            {showOtherListening ? (
+            {showOtherServers ? (
               <>
                 <div className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-background">
-                  {otherListening.map((server) => (
+                  {otherServers.map((server) => (
                     <PreviewLocalServerCard
                       key={`${server.host}:${server.port}`}
+                      threadRef={threadRef}
                       server={server}
                       onOpen={() => onOpenUrl(server.requestedUrl)}
                     />
                   ))}
                 </div>
                 <p className="px-1 text-xs text-muted-foreground">
-                  Other listening ports on this environment may not be web apps.
+                  Other browser-ready servers detected in this environment.
                 </p>
               </>
             ) : null}

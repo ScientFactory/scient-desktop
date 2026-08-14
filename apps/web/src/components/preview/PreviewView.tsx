@@ -712,11 +712,11 @@ export function PreviewView({
         ) : null}
         {showEmptyState ? (
           <PreviewEmptyState
+            threadRef={threadRef}
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
             environmentHttpBaseUrl={environmentHttpBaseUrl}
             configuredUrls={configuredUrls}
-            recentlySeenUrls={previewState.recentlySeenUrls}
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}

@@ -4,15 +4,10 @@ import { useMemo } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { useDiscoveredPorts } from "~/portDiscoveryState";
+import { useDiscoveredPortsState } from "~/portDiscoveryState";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
-  source: "scanner" | "configured" | "recent";
-  /**
-   * True when the port scanner currently sees this server listening. A
-   * `configured` entry can also be `listening` when the scan enriched it.
-   */
-  listening: boolean;
+  source: "scanner" | "configured";
   /**
    * Pre-resolution loopback url. `url` is the resolved navigation target
    * (volatile on a remote environment); history must key off this instead.
@@ -22,105 +17,68 @@ export interface PreviewableServer extends DiscoveredLocalServer {
 
 export interface PreviewServerGroups {
   relevant: ReadonlyArray<PreviewableServer>;
-  otherListening: ReadonlyArray<PreviewableServer>;
+  other: ReadonlyArray<PreviewableServer>;
 }
 
 interface UseDiscoveredLocalServersInput {
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
-  recentlySeenUrls?: ReadonlyArray<string> | undefined;
 }
 
 /**
- * Merge the environment-level port snapshot with configured / recently-seen
+ * Enrich the environment-level live server snapshot with matching configured
  * URLs and return a stable sorted list.
  */
 export function useDiscoveredLocalServers(
   input: UseDiscoveredLocalServersInput,
 ): ReadonlyArray<PreviewableServer> {
-  const scannerSnapshot = useDiscoveredPorts(input.environmentId);
+  const scannerState = useDiscoveredPortsState(input.environmentId, input.configuredUrls);
 
   return useMemo(
     () =>
       mergeServers({
-        scanner: scannerSnapshot.map((server) => ({
+        scanner: scannerState.servers.map((server) => ({
           ...server,
           url: resolveDiscoveredServerUrl(input.environmentId, server.url),
           requestedUrl: server.url,
         })),
         configuredUrls: input.configuredUrls ?? [],
-        recentlySeenUrls: input.recentlySeenUrls ?? [],
+        configuredUrlProbing: scannerState.configuredUrlProbing,
       }),
-    [input.environmentId, scannerSnapshot, input.configuredUrls, input.recentlySeenUrls],
+    [input.environmentId, scannerState, input.configuredUrls],
   );
 }
 
 export function mergeServers(input: {
   scanner: ReadonlyArray<DiscoveredLocalServer & { requestedUrl: string }>;
   configuredUrls: ReadonlyArray<string>;
-  recentlySeenUrls: ReadonlyArray<string>;
+  configuredUrlProbing?: boolean;
 }): ReadonlyArray<PreviewableServer> {
-  const seen = new Map<string, PreviewableServer>();
+  const configuredByServer = new Map<string, { host: string; port: number; url: string }>();
 
   for (const url of input.configuredUrls) {
     const parsed = parseLocalUrl(url);
     if (!parsed) continue;
     const key = canonicalKey(parsed.host, parsed.port);
-    if (seen.has(key)) continue;
-    seen.set(key, {
-      host: parsed.host,
-      port: parsed.port,
-      url: parsed.url,
-      requestedUrl: parsed.url,
-      processName: null,
-      pid: null,
-      terminal: null,
-      source: "configured",
-      listening: false,
-    });
+    if (!configuredByServer.has(key)) configuredByServer.set(key, parsed);
   }
 
+  const live: PreviewableServer[] = [];
   for (const server of input.scanner) {
     const key = canonicalKey(server.host, server.port);
-    const existing = seen.get(key);
-    if (existing) {
-      // Enrich a configured entry with live process metadata; flip
-      // `listening` so it pulses green like a scanner-discovered entry.
-      seen.set(key, {
-        ...existing,
-        processName: server.processName ?? existing.processName,
-        pid: server.pid ?? existing.pid,
-        terminal: server.terminal ?? existing.terminal,
-        listening: true,
-      });
-      continue;
-    }
-    seen.set(key, { ...server, source: "scanner", listening: true });
-  }
-
-  for (const url of input.recentlySeenUrls) {
-    const parsed = parseLocalUrl(url);
-    if (!parsed) continue;
-    const key = canonicalKey(parsed.host, parsed.port);
-    if (seen.has(key)) continue;
-    seen.set(key, {
-      host: parsed.host,
-      port: parsed.port,
-      url: parsed.url,
-      requestedUrl: parsed.url,
-      processName: null,
-      pid: null,
-      terminal: null,
-      source: "recent",
-      listening: false,
+    const configured = configuredByServer.get(key);
+    live.push({
+      ...server,
+      requestedUrl:
+        configured && input.configuredUrlProbing === false ? configured.url : server.requestedUrl,
+      source: configured ? "configured" : "scanner",
     });
   }
 
-  return Array.from(seen.values()).toSorted((a, b) => {
+  return live.toSorted((a, b) => {
     const sourceOrder: Record<PreviewableServer["source"], number> = {
       configured: 0,
       scanner: 1,
-      recent: 2,
     };
     if (sourceOrder[a.source] !== sourceOrder[b.source]) {
       return sourceOrder[a.source] - sourceOrder[b.source];
@@ -130,10 +88,8 @@ export function mergeServers(input: {
 }
 
 /**
- * Keep the Browser empty state relevant to the active thread. The environment
- * scanner intentionally sees every listening port, including databases and
- * application-internal services; those remain available only through the
- * explicit secondary discovery control.
+ * Keep the Browser empty state focused on the active thread without hiding
+ * other browser-ready servers discovered in the environment.
  */
 export function groupPreviewServers(input: {
   servers: ReadonlyArray<PreviewableServer>;
@@ -142,22 +98,18 @@ export function groupPreviewServers(input: {
 }): PreviewServerGroups {
   const environmentPort = portFromUrl(input.environmentHttpBaseUrl);
   const relevant: PreviewableServer[] = [];
-  const otherListening: PreviewableServer[] = [];
+  const other: PreviewableServer[] = [];
 
   for (const server of input.servers) {
     if (server.source !== "configured" && server.port === environmentPort) continue;
-    if (
-      server.source === "configured" ||
-      server.source === "recent" ||
-      server.terminal?.threadId === input.threadId
-    ) {
+    if (server.source === "configured" || server.terminal?.threadId === input.threadId) {
       relevant.push(server);
       continue;
     }
-    if (server.source === "scanner") otherListening.push(server);
+    other.push(server);
   }
 
-  return { relevant, otherListening };
+  return { relevant, other };
 }
 
 export function localServerKey(server: Pick<PreviewableServer, "host" | "port">): string {
