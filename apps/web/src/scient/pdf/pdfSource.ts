@@ -12,29 +12,48 @@ import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 import { useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
 
-function workspacePdfIdentityPath(absolutePath: string): string {
-  return isWindowsAbsolutePath(absolutePath)
-    ? absolutePath.replaceAll("/", "\\").toLowerCase()
-    : absolutePath;
+function workspacePdfIdentityPath(workspaceRoot: string, relativePath: string): string {
+  const joined = `${workspaceRoot.replace(/[\\/]+$/u, "")}/${relativePath.replace(/^[\\/]+/u, "")}`;
+  return isWindowsAbsolutePath(workspaceRoot) ? joined.replaceAll("/", "\\").toLowerCase() : joined;
+}
+
+export function workspacePdfRelativePath(
+  workspaceRoot: string,
+  absolutePath: string,
+): string | null {
+  const normalizedRoot = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/u, "");
+  const normalizedPath = absolutePath.replaceAll("\\", "/");
+  const rootPrefix = normalizedRoot.length === 0 ? "/" : `${normalizedRoot}/`;
+  const caseInsensitive = isWindowsAbsolutePath(workspaceRoot);
+  const comparableRoot = caseInsensitive ? rootPrefix.toLowerCase() : rootPrefix;
+  const comparablePath = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
+  if (!comparablePath.startsWith(comparableRoot)) return null;
+  const relativePath = normalizedPath.slice(rootPrefix.length);
+  return relativePath.length > 0 ? relativePath : null;
 }
 
 export function workspacePdfSource(input: {
-  readonly absolutePath: string;
   readonly environmentId: EnvironmentId;
   readonly fileName: string;
-  readonly threadId: string;
+  readonly workspaceRoot: string;
+  readonly relativePath: string;
+  readonly legacyLocator?: {
+    readonly absolutePath: string;
+    readonly threadId: string;
+  };
 }): PdfSourceDescriptorType {
   return PdfSourceDescriptor.make({
     _tag: "workspace-pdf",
     authority: ArtifactAuthority.make(input.environmentId),
     logicalDocumentKey: LogicalDocumentKey.make(
-      `workspace:${workspacePdfIdentityPath(input.absolutePath)}`,
+      `workspace:${workspacePdfIdentityPath(input.workspaceRoot, input.relativePath)}`,
     ),
     title: input.fileName,
     fileName: input.fileName,
     capabilities: { canSaveCopy: true, canRevealSource: false },
-    threadId: input.threadId,
-    absolutePath: input.absolutePath,
+    workspaceRoot: input.workspaceRoot,
+    relativePath: input.relativePath,
+    ...(input.legacyLocator ? { legacyLocator: input.legacyLocator } : {}),
   });
 }
 
@@ -44,6 +63,7 @@ export function workspacePdfSourceForPreview(input: {
   readonly environmentId: EnvironmentId;
   readonly relativePath: string | null;
   readonly threadId: string;
+  readonly workspaceRoot: string;
 }): PdfSourceDescriptorType | null {
   if (
     input.absolutePath === null ||
@@ -64,10 +84,11 @@ export function workspacePdfSourceForPreview(input: {
   const fileName = relativeSourcePath.split(/[\\/]/).at(-1) ?? relativeSourcePath;
 
   return workspacePdfSource({
-    absolutePath: sourcePath,
     environmentId: input.environmentId,
     fileName,
-    threadId: input.threadId,
+    workspaceRoot: input.workspaceRoot,
+    relativePath: relativeSourcePath,
+    legacyLocator: { absolutePath: sourcePath, threadId: input.threadId },
   });
 }
 
@@ -83,8 +104,14 @@ export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetRe
   return source._tag === "workspace-pdf"
     ? {
         _tag: "workspace-file",
-        threadId: ThreadId.make(source.threadId),
-        path: source.absolutePath,
+        cwd: source.workspaceRoot,
+        relativePath: source.relativePath,
+        ...(source.legacyLocator
+          ? {
+              threadId: ThreadId.make(source.legacyLocator.threadId),
+              path: source.legacyLocator.absolutePath,
+            }
+          : {}),
       }
     : {
         _tag: "generated-document",

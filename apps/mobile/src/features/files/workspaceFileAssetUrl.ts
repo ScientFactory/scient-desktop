@@ -20,11 +20,14 @@ export function useWorkspaceFileAssetUrl(props: {
 
   return useAssetUrl(
     props.environmentId,
-    absolutePath !== null && props.threadId !== null
+    props.cwd !== null && props.relativePath !== null
       ? {
           _tag: "workspace-file",
-          threadId: props.threadId,
-          path: absolutePath,
+          cwd: props.cwd,
+          relativePath: props.relativePath,
+          ...(absolutePath !== null && props.threadId !== null
+            ? { threadId: props.threadId, path: absolutePath }
+            : {}),
         }
       : null,
   );

@@ -223,12 +223,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
   switch (input.resource._tag) {
     case "workspace-file": {
-      if (!input.workspaceRoot) {
+      const hasRootedLocator =
+        input.resource.cwd !== undefined && input.resource.relativePath !== undefined;
+      const workspaceRootInput = hasRootedLocator ? input.resource.cwd : input.workspaceRoot;
+      const resourcePath = hasRootedLocator ? input.resource.relativePath : input.resource.path;
+      if (!workspaceRootInput || !resourcePath) {
         return yield* new AssetWorkspaceContextNotFoundError({
           resource: input.resource,
         });
       }
-      const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.workspaceRoot).pipe(
+      const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRootInput).pipe(
         Effect.mapError(
           (cause) =>
             new AssetWorkspaceRootNormalizationError({
@@ -237,9 +241,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      const relativePath = path.isAbsolute(input.resource.path)
-        ? path.relative(workspaceRoot, input.resource.path)
-        : input.resource.path;
+      if (hasRootedLocator && path.isAbsolute(resourcePath)) {
+        return yield* new AssetWorkspacePathValidationError({
+          resource: input.resource,
+          cause: new Error("A rooted workspace-file locator must use a relative path."),
+        });
+      }
+      const relativePath = path.isAbsolute(resourcePath)
+        ? path.relative(workspaceRoot, resourcePath)
+        : resourcePath;
       const resolved = yield* workspacePaths
         .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
         .pipe(
@@ -324,6 +334,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               expiresAt,
             };
       fileName = path.basename(resolved.relativePath);
+      sourcePath = resolved.relativePath;
       break;
     }
     case "attachment": {

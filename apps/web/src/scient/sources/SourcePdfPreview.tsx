@@ -1,10 +1,10 @@
 import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AssetUrlState } from "../../assets/assetUrls";
-import { workspacePdfSource } from "../pdf/pdfSource";
+import { workspacePdfRelativePath, workspacePdfSource } from "../pdf/pdfSource";
 import { readScientSourceAttachmentPreview } from "./client";
 
 import "../pdf/scientPdfReader.css";
@@ -23,7 +23,6 @@ export function SourcePdfPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly fileName: string;
   readonly root: string;
-  readonly threadRef: ScopedThreadRef;
 }) {
   const requestKey = `${props.environmentId}\0${props.root}\0${props.attachmentId}`;
   const [request, setRequest] = useState(0);
@@ -64,18 +63,25 @@ export function SourcePdfPreview(props: {
 
   const currentAsset: SourcePreviewAssetState =
     asset.requestKey === requestKey ? asset : { _tag: "Loading", requestKey, refresh };
+  const sourceRelativePath =
+    currentAsset._tag === "Success"
+      ? (currentAsset.sourcePath ??
+        (currentAsset.absolutePath
+          ? workspacePdfRelativePath(props.root, currentAsset.absolutePath)
+          : null))
+      : null;
 
   const source = useMemo(
     () =>
-      currentAsset._tag === "Success" && currentAsset.absolutePath
+      currentAsset._tag === "Success" && sourceRelativePath
         ? workspacePdfSource({
-            absolutePath: currentAsset.absolutePath,
             environmentId: props.environmentId,
             fileName: props.fileName,
-            threadId: props.threadRef.threadId,
+            workspaceRoot: props.root,
+            relativePath: sourceRelativePath,
           })
         : null,
-    [currentAsset, props.environmentId, props.fileName, props.threadRef.threadId],
+    [currentAsset._tag, props.environmentId, props.fileName, props.root, sourceRelativePath],
   );
   const resolver = useMemo<PdfSourceResolver>(
     () => ({ useResolve: () => currentAsset }),

@@ -6480,7 +6480,6 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           fileName={activeRightPanelSurface.fileName}
           root={activeWorkspaceRoot}
-          threadRef={activeThreadRef}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "scient" &&

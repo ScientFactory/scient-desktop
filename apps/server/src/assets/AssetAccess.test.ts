@@ -150,6 +150,63 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues a rooted Unicode PDF URL without any thread context", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-rooted-asset-",
+      });
+      const relativePath = "ילדים/מבואות ילדים/סיכום גיל בעריכת שחר.pdf";
+      const pdfPath = path.join(root, relativePath);
+      yield* fileSystem.makeDirectory(path.dirname(pdfPath), { recursive: true });
+      yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF-1.7\n"));
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", cwd: root, relativePath },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(result.sourcePath).toBe(relativePath);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toMatchObject({
+        kind: "file",
+        path: yield* fileSystem.realPath(pdfPath),
+        revision: { size: 9 },
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects malformed and escaping rooted workspace locators", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-rooted-root-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-rooted-outside-",
+      });
+      const outsidePdf = path.join(outside, "outside.pdf");
+      yield* fileSystem.writeFile(outsidePdf, new TextEncoder().encode("%PDF-1.7\n"));
+      yield* fileSystem.symlink(outsidePdf, path.join(root, "linked.pdf"));
+
+      const absolutePathError = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", cwd: root, relativePath: outsidePdf },
+      }).pipe(Effect.flip);
+      const traversalError = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", cwd: root, relativePath: "../outside.pdf" },
+      }).pipe(Effect.flip);
+      const symlinkError = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", cwd: root, relativePath: "linked.pdf" },
+      }).pipe(Effect.flip);
+
+      expect(absolutePathError._tag).toBe("AssetWorkspacePathValidationError");
+      expect(traversalError._tag).toBe("AssetWorkspacePathValidationError");
+      expect(symlinkError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -50,6 +50,23 @@ export type OpenPreviewMutation<E = unknown> = (input: {
   readonly input: PreviewOpenInput;
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
+export function workspaceFilePreviewAssetResource(input: {
+  readonly workspaceRoot: string;
+  readonly relativePath: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly filePath: string;
+}): AssetResource {
+  return {
+    _tag: "workspace-file",
+    cwd: input.workspaceRoot,
+    relativePath: input.relativePath,
+    // Retain the legacy pair so this client can still open persisted-thread
+    // previews when it is connected to an older server.
+    threadId: input.threadRef.threadId,
+    path: input.filePath,
+  };
+}
+
 export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
@@ -68,6 +85,8 @@ export async function openUrlInPreview<E>(input: {
 
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
+  readonly workspaceRoot: string;
+  readonly relativePath: string;
   readonly filePath: string;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
@@ -88,11 +107,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
   const assetResult = await input.createAssetUrl({
     environmentId: input.threadRef.environmentId,
     input: {
-      resource: {
-        _tag: "workspace-file",
-        threadId: input.threadRef.threadId,
-        path: input.filePath,
-      },
+      resource: workspaceFilePreviewAssetResource(input),
     },
   });
   if (assetResult._tag === "Failure") {

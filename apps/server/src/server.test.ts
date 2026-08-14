@@ -6042,6 +6042,51 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("opens a rooted workspace PDF before its draft thread exists", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-draft-pdf-",
+      });
+      const relativePath = "ילדים/מבואות ילדים/סיכום גיל בעריכת שחר.pdf";
+      const pdfPath = path.join(workspaceRoot, relativePath);
+      const bytes = new TextEncoder().encode("%PDF-1.7\nrooted draft");
+      yield* fileSystem.makeDirectory(path.dirname(pdfPath), { recursive: true });
+      yield* fileSystem.writeFile(pdfPath, bytes);
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.die("Rooted workspace assets must not resolve a thread."),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const asset = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.assetsCreateUrl]({
+            resource: {
+              _tag: "workspace-file",
+              cwd: workspaceRoot,
+              relativePath,
+              threadId: ThreadId.make("client-only-draft"),
+              path: pdfPath,
+            },
+          }),
+        ),
+      );
+      const response = yield* fetchEffect(`${yield* getHttpServerUrl()}${asset.relativeUrl}`);
+
+      assert.equal(asset.sourcePath, relativePath);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-type"], "application/pdf");
+      assert.deepEqual(new Uint8Array(yield* response.arrayBuffer), bytes);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc orchestration methods", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

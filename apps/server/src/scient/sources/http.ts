@@ -2,7 +2,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -78,13 +77,13 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
+            const path = yield* Path.Path;
             const asset = yield* issueAssetUrl({
               resource: {
                 _tag: "workspace-file",
-                threadId: ThreadId.make(`scient-source:${args.payload.attachmentId}`),
-                path: material.absolutePath,
+                cwd: args.payload.root,
+                relativePath: path.relative(args.payload.root, material.absolutePath),
               },
-              workspaceRoot: args.payload.root,
             }).pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
@@ -113,10 +112,9 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             const asset = yield* issueAssetUrl({
               resource: {
                 _tag: "workspace-file",
-                threadId: ThreadId.make(`scient-journal-icon:${args.payload.sourceId}`),
-                path: material.absolutePath,
+                cwd: material.cacheRoot,
+                relativePath: path.relative(material.cacheRoot, material.absolutePath),
               },
-              workspaceRoot: material.cacheRoot,
             }).pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("scient_sources_operation_failed", cause),

@@ -15,6 +15,7 @@ import {
   pdfSourceAssetResource,
   usePdfSourceState,
   webPdfSourceResolver,
+  workspacePdfRelativePath,
   workspacePdfSource,
   workspacePdfSourceForPreview,
 } from "./pdfSource";
@@ -25,27 +26,51 @@ describe("PDF source resolution", () => {
     expect(webPdfSourceResolver.useResolve).toBe(usePdfSourceState);
   });
 
-  it("preserves the existing exact workspace-file asset contract", () => {
+  it("authorizes a workspace PDF from its root while retaining a legacy fallback", () => {
     const source = workspacePdfSource({
-      absolutePath: "/workspace/reports/paper.pdf",
       environmentId: EnvironmentId.make("environment-1"),
       fileName: "paper.pdf",
-      threadId: ThreadId.make("thread-1"),
+      workspaceRoot: "/workspace",
+      relativePath: "reports/paper.pdf",
+      legacyLocator: {
+        threadId: ThreadId.make("thread-1"),
+        absolutePath: "/workspace/reports/paper.pdf",
+      },
     });
     expect(pdfSourceAssetResource(source)).toEqual({
       _tag: "workspace-file",
+      cwd: "/workspace",
+      relativePath: "reports/paper.pdf",
       threadId: "thread-1",
       path: "/workspace/reports/paper.pdf",
+    });
+  });
+
+  it("does not require a thread compatibility locator", () => {
+    const source = workspacePdfSource({
+      environmentId: EnvironmentId.make("environment-1"),
+      fileName: "paper.pdf",
+      workspaceRoot: "/workspace",
+      relativePath: "reports/paper.pdf",
+    });
+    expect(pdfSourceAssetResource(source)).toEqual({
+      _tag: "workspace-file",
+      cwd: "/workspace",
+      relativePath: "reports/paper.pdf",
     });
   });
 
   it("shares reader state across authorizing threads but isolates environments", () => {
     const sourceForThread = (environmentId: string, threadId: string) =>
       workspacePdfSource({
-        absolutePath: "/workspace/reports/paper.pdf",
         environmentId: EnvironmentId.make(environmentId),
         fileName: "paper.pdf",
-        threadId: ThreadId.make(threadId),
+        workspaceRoot: "/workspace",
+        relativePath: "reports/paper.pdf",
+        legacyLocator: {
+          threadId: ThreadId.make(threadId),
+          absolutePath: "/workspace/reports/paper.pdf",
+        },
       });
     const original = sourceForThread("environment-1", "thread-1");
     const fork = sourceForThread("environment-1", "thread-2");
@@ -65,17 +90,27 @@ describe("PDF source resolution", () => {
   });
 
   it("normalizes Windows workspace paths for reader identity", () => {
-    const sourceForPath = (absolutePath: string) =>
+    const sourceForPath = (workspaceRoot: string, relativePath: string) =>
       workspacePdfSource({
-        absolutePath,
         environmentId: EnvironmentId.make("environment-1"),
         fileName: "paper.pdf",
-        threadId: ThreadId.make("thread-1"),
+        workspaceRoot,
+        relativePath,
       });
 
-    expect(sourceForPath("C:\\Workspace\\Reports\\Paper.pdf").logicalDocumentKey).toBe(
-      sourceForPath("c:/workspace/reports/paper.pdf").logicalDocumentKey,
+    expect(sourceForPath("C:\\Workspace", "Reports\\Paper.pdf").logicalDocumentKey).toBe(
+      sourceForPath("c:/workspace", "reports/paper.pdf").logicalDocumentKey,
     );
+  });
+
+  it("recovers root-relative paths from older Sources responses", () => {
+    expect(workspacePdfRelativePath("/workspace", "/workspace/sources/דוח.pdf")).toBe(
+      "sources/דוח.pdf",
+    );
+    expect(workspacePdfRelativePath("C:\\Workspace", "c:/workspace/Sources/Paper.pdf")).toBe(
+      "Sources/Paper.pdf",
+    );
+    expect(workspacePdfRelativePath("/workspace", "/another/paper.pdf")).toBeNull();
   });
 
   it.each(["README.md", "analysis.m", "figure.png", "data.txt"])(
@@ -87,6 +122,7 @@ describe("PDF source resolution", () => {
           environmentId: EnvironmentId.make("environment-1"),
           relativePath,
           threadId: ThreadId.make("thread-1"),
+          workspaceRoot: "/workspace",
         }),
       ).toBeNull();
     },
@@ -99,6 +135,7 @@ describe("PDF source resolution", () => {
         environmentId: EnvironmentId.make("environment-1"),
         relativePath: null,
         threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/workspace",
       }),
     ).toBeNull();
   });
@@ -110,12 +147,17 @@ describe("PDF source resolution", () => {
         environmentId: EnvironmentId.make("environment-1"),
         relativePath: "reports/PAPER.PDF",
         threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/workspace",
       }),
     ).toMatchObject({
       _tag: "workspace-pdf",
-      absolutePath: "/workspace/reports/PAPER.PDF",
       fileName: "PAPER.PDF",
-      threadId: "thread-1",
+      workspaceRoot: "/workspace",
+      relativePath: "reports/PAPER.PDF",
+      legacyLocator: {
+        threadId: "thread-1",
+        absolutePath: "/workspace/reports/PAPER.PDF",
+      },
     });
   });
 
@@ -126,10 +168,12 @@ describe("PDF source resolution", () => {
         environmentId: EnvironmentId.make("environment-1"),
         relativePath: "reports/paper.pdf?download=1",
         threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/workspace",
       }),
     ).toMatchObject({
-      absolutePath: "/workspace/reports/paper.pdf",
+      relativePath: "reports/paper.pdf",
       fileName: "paper.pdf",
+      legacyLocator: { absolutePath: "/workspace/reports/paper.pdf" },
     });
   });
 
@@ -140,9 +184,11 @@ describe("PDF source resolution", () => {
         environmentId: EnvironmentId.make("environment-1"),
         relativePath: "reports/paper.pdf",
         threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/workspace/Project #1",
       }),
     ).toMatchObject({
-      absolutePath: "/workspace/Project #1/reports/paper.pdf",
+      workspaceRoot: "/workspace/Project #1",
+      relativePath: "reports/paper.pdf",
       fileName: "paper.pdf",
     });
   });
