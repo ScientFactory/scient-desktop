@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1597,6 +1598,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const firstMissing = `t3code_codex_first_`;
           const secondMissing = `t3code_codex_second_`;
           const spawnedCommands: Array<string> = [];
+          const updatedExecutableProbesFinished = yield* Deferred.make<void>();
           const spawnedCodexCommands = () =>
             spawnedCommands.filter((command) => command.startsWith("t3code_codex_"));
           const serverSettings = yield* makeMutableServerSettingsService(
@@ -1634,8 +1636,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
-                spawnedCommands.push((command as { readonly command: string }).command);
-                return spawner.spawn(command);
+                const executable = (command as { readonly command: string }).command;
+                spawnedCommands.push(executable);
+                const isSecondProbe =
+                  executable === secondMissing &&
+                  spawnedCommands.filter((spawned) => spawned === secondMissing).length === 2;
+                const spawn = spawner.spawn(command);
+                return isSecondProbe
+                  ? spawn.pipe(
+                      Effect.ensuring(Deferred.succeed(updatedExecutableProbesFinished, undefined)),
+                    )
+                  : spawn;
               }),
             ),
             Layer.provideMerge(NodeServices.layer),
@@ -1647,34 +1658,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            // Boot-time checks: managed-runtime resolution first verifies the
-            // configured executable, then the provider status probe checks the
-            // same executable's protocol. Both yield ENOENT for `firstMissing`,
-            // and the resulting snapshot should be `status: "error"`.
-            let initialProviders = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
-              initialProviders.find((provider) => provider.instanceId === "codex")?.status !==
-                "error";
-              attempts += 1
-            ) {
-              yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
-              initialProviders = yield* registry.getProviders;
-            }
-            const initialCodex = initialProviders.find(
-              (provider) => provider.instanceId === "codex",
-            );
-            assert.strictEqual(initialCodex?.status, "error");
-            assert.strictEqual(initialCodex?.installed, false);
-            assert.deepStrictEqual(spawnedCodexCommands(), [firstMissing, firstMissing]);
-
-            // Drive a settings change. The Hydration layer's
-            // `SettingsWatcherLive` consumes this via `streamChanges`,
-            // calls `reconcile`, which rebuilds the codex instance (the
-            // envelope changed because `binaryPath` differs → `entryEqual`
-            // is false). The registry's `Stream.runForEach(
+            // Drive an immediate settings change. The Hydration layer's
+            // `SettingsWatcherLive` consumes this via its synchronously
+            // acquired settings subscription and calls `reconcile`, which
+            // rebuilds the codex instance (the envelope changed because
+            // `binaryPath` differs → `entryEqual` is false). The registry's
+            // `Stream.runForEach(
             // instanceRegistry.streamChanges, () => syncLiveSources)`
             // fires `syncLiveSources`, which subscribes and launches a fresh
             // background refresh on the rebuilt instance.
@@ -1684,35 +1673,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               },
             });
 
-            // Poll until both the runtime-health check and provider-status
-            // probe observe the new executable. Waiting for only the first
-            // spawn can return the still-cached pre-change error snapshot.
-            // This verifies the public settings-to-probe behavior without
-            // depending on timestamps assigned by TestClock.
-            const refreshed = yield* Effect.gen(function* () {
-              for (let attempts = 0; attempts < 60; attempts += 1) {
-                const providers = yield* registry.getProviders;
-                const codex = providers.find((provider) => provider.instanceId === "codex");
-                if (
-                  codex !== undefined &&
-                  codex.status === "error" &&
-                  spawnedCommands.filter((command) => command === secondMissing).length === 2
-                ) {
-                  return providers;
-                }
-                yield* TestClock.adjust("50 millis");
-                yield* Effect.yieldNow;
-              }
-              return yield* registry.getProviders;
-            });
+            // Wait for the observable event this regression cares about:
+            // both the runtime-health check and provider-status probe have
+            // finished spawning the new executable. A bounded live-clock
+            // wait avoids coupling this assertion to Vitest worker load or
+            // to a fixed number of virtual-clock scheduler yields.
+            yield* Deferred.await(updatedExecutableProbesFinished).pipe(
+              Effect.timeout("5 seconds"),
+              TestClock.withLive,
+            );
+            yield* Effect.yieldNow;
+            const refreshed = yield* registry.getProviders;
 
             const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
-            assert.deepStrictEqual(spawnedCodexCommands(), [
-              firstMissing,
-              firstMissing,
-              secondMissing,
-              secondMissing,
-            ]);
+            assert.strictEqual(
+              spawnedCodexCommands().filter((command) => command === secondMissing).length,
+              2,
+            );
             assert.strictEqual(reprobedCodex?.status, "error");
             assert.strictEqual(reprobedCodex?.installed, false);
           }).pipe(Effect.provide(runtimeServices));
