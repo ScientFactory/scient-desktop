@@ -20,6 +20,7 @@ import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 import {
   isActiveLatexBuildState,
   latexSnapshotsEqual,
+  toolchainsEqual,
   type LatexBuildStatus,
 } from "./scientLatexSurfaceModel";
 
@@ -78,7 +79,14 @@ function updateEntry(key: string, update: (current: LatexBuildStatus) => LatexBu
 
 function applySnapshot(key: string, snapshot: ScientLatexBuildSnapshot): void {
   updateEntry(key, (current) => {
-    const toolchain = snapshot.toolchain ?? current.toolchain;
+    // The report the server sends is rebuilt for every poll, so keeping the
+    // one already held whenever the two say the same thing is what lets the
+    // equal-snapshot return below fire at all.
+    const incoming = snapshot.toolchain;
+    const toolchain =
+      incoming === null || toolchainsEqual(current.toolchain, incoming)
+        ? current.toolchain
+        : incoming;
     // Every poll of a running build answers the same thing. Replacing the
     // entry with an equal one would re-render the surface and the PDF beside
     // it once a second for no news.
@@ -265,9 +273,13 @@ function runBuild(key: string, target: LatexBuildTarget, loop: WatchLoop): void 
  * one transition worth acting on: the report only says `ready` once the probe
  * behind it has already seen the installed engine, so the document can build.
  */
-async function pollToolchain(key: string, target: LatexBuildTarget): Promise<void> {
+async function pollToolchain(
+  key: string,
+  target: LatexBuildTarget,
+  refresh = false,
+): Promise<void> {
   try {
-    const report = await readLatexToolchain(target.environmentId, { refresh: false });
+    const report = await readLatexToolchain(target.environmentId, { refresh });
     const managedInstall = report.managedInstall ?? null;
     const justInstalled =
       managedInstall?.state === "ready" &&
@@ -325,8 +337,17 @@ function releaseWatcher(key: string, loop: WatchLoop): void {
  * request for a document nobody watches any more — the save a closing editor
  * flushed on its way out — is remembered for the next watcher instead of
  * being dropped.
+ *
+ * `reprobeToolchain` belongs to the Rebuild button. Someone who went and
+ * installed TeX Live themselves has no other way to tell this environment: the
+ * probe's answer is cached for five minutes, the loop is quiet after the build
+ * that failed for want of an engine, and nothing else on this client ever asks
+ * for a fresh probe. Pressing Rebuild is that request.
  */
-export function requestLatexRebuild(target: LatexBuildTarget): void {
+export function requestLatexRebuild(
+  target: LatexBuildTarget,
+  options: { readonly reprobeToolchain?: boolean } = {},
+): void {
   const key = latexBuildKey(target);
   const loop = loops.get(key);
   if (!loop) {
@@ -334,6 +355,31 @@ export function requestLatexRebuild(target: LatexBuildTarget): void {
     return;
   }
   pendingRebuilds.delete(key);
+  const entry = useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY;
+  if (
+    options.reprobeToolchain === true &&
+    entry.toolchain !== null &&
+    entry.toolchain.kind === null
+  ) {
+    void reprobeThenBuild(key, target, loop);
+    return;
+  }
+  runBuild(key, target, loop);
+}
+
+/** The build waits for the probe: an engine found now is one this build can use. */
+async function reprobeThenBuild(
+  key: string,
+  target: LatexBuildTarget,
+  loop: WatchLoop,
+): Promise<void> {
+  setRequesting(key, true);
+  try {
+    await pollToolchain(key, target, true);
+  } finally {
+    setRequesting(key, false);
+  }
+  if (loop.stopped) return;
   runBuild(key, target, loop);
 }
 

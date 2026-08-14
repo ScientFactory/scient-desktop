@@ -101,8 +101,10 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.flatMap((result) =>
           Effect.gen(function* () {
-            // Windows resolves `latexmk` through a shell, so a missing engine
-            // surfaces as a shell diagnostic rather than a spawn failure.
+            // A missing engine fails to spawn and is caught below. This is the
+            // other Windows case: a `.cmd`/`.bat` shim that does resolve, runs
+            // through cmd.exe, and cannot find what it wraps — which exits
+            // 9009 with a diagnostic instead of failing to start.
             const notFound = yield* ProcessRunner.isWindowsCommandNotFound(
               result.code,
               result.stderr,

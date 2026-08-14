@@ -18,7 +18,10 @@ If Scient can't find a LaTeX installation on your computer, it offers to
 install TinyTeX for you — a small distribution, about 70 MB, that lives with
 Scient and needs no administrator access. You can also install TeX Live,
 MiKTeX, or Tectonic yourself, and Scient will use it instead; an existing
-installation always keeps precedence over Scient's own.
+installation always keeps precedence over Scient's own. If you install one
+while a document is already open, select Rebuild: asking for a build by hand
+also makes Scient look for an engine again, so the one you just installed is
+picked up without reopening the file or restarting.
 
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.

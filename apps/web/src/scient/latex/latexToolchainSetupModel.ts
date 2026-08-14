@@ -29,6 +29,12 @@ export interface LatexSetupCardInput {
   readonly install: ScientLatexManagedInstallState | null;
   /** This client asked for an install and has not been answered yet. */
   readonly requesting: boolean;
+  /**
+   * The toolchain probe still reports no engine. A finished install that
+   * leaves this true installed something this computer cannot run, which is a
+   * different card from one still waiting for the next poll.
+   */
+  readonly toolchainMissing: boolean;
 }
 
 export const TINYTEX_DOWNLOAD_LABEL = "about 70 MB";
@@ -135,8 +141,20 @@ export function latexSetupCardModel(input: LatexSetupCardInput): LatexSetupCardM
       return installing("Installing TinyTeX", "Unpacking the distribution…", UNPACKING_PERCENT);
     case "ready":
       // The engine is in place; the surface flips to the build flow as soon as
-      // the next toolchain poll sees it.
-      return installing("TinyTeX is installed", "Preparing the first build…", 100);
+      // the next toolchain poll sees it. Unless the poll has already answered
+      // and still finds nothing runnable — the server drops the probe cache
+      // before it reports `ready`, so that answer is not going to change on
+      // its own, and a card that spins forever is worse than one that says so.
+      return input.toolchainMissing
+        ? {
+            kind: "offer",
+            title: "TinyTeX is installed, but no engine answered",
+            body: "The download finished and unpacked, but Scient still cannot run LaTeX from it — the files may be incomplete, or something on this computer may be blocking them. Installing again replaces the copy.",
+            actionLabel: "Install again",
+            busy: false,
+            progressPercent: null,
+          }
+        : installing("TinyTeX is installed", "Preparing the first build…", 100);
     case "failed":
       return {
         kind: "failed",

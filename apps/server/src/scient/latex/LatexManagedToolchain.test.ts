@@ -26,7 +26,7 @@ import {
   make as makeManagedToolchain,
 } from "./LatexManagedToolchain.ts";
 import { LatexToolchain, make as makeToolchain } from "./LatexToolchain.ts";
-import { managedLatexPaths } from "./managedLatexInstall.ts";
+import { decodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
 import { TinyTexManifestRef, type TinyTexManifest } from "./tinytexManifest.ts";
 
 const VERSION = "2026.08";
@@ -223,6 +223,17 @@ const stagingEntries = (stagingRoot: string) =>
     return yield* fileSystem.readDirectory(stagingRoot).pipe(Effect.orElseSucceed(() => []));
   });
 
+/** The install discovery would use: the state file is the only thing that says. */
+const currentInstallRoot = (statePath: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const contents = yield* fileSystem.readFileString(statePath).pipe(Effect.orDie);
+    const record = yield* decodeManagedLatexInstallRecord(contents).pipe(Effect.orDie);
+    return record.root;
+  });
+
+const forwardSlashes = (value: string) => value.replaceAll("\\", "/");
+
 describe("artifactUrlRejection", () => {
   it("accepts the pinned release host and refuses anything else", () => {
     expect(
@@ -246,6 +257,7 @@ describe("LatexManagedToolchain", () => {
   it.live("installs the pinned distribution and makes it the toolchain", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const server = yield* startArtifactServer();
       const harness = yield* makeHarness({ manifest: manifestFor({ url: server.handle.url }) });
 
@@ -269,9 +281,14 @@ describe("LatexManagedToolchain", () => {
 
         expect(yield* Ref.get(harness.unpackedBytes)).toBe(new TextDecoder().decode(ARTIFACT_BODY));
 
-        const installedEngine = `${harness.paths.managedRoot}/tinytex-${VERSION}/${EXECUTABLE_RELATIVE_PATH}`;
-        expect(yield* fileSystem.exists(installedEngine)).toBe(true);
         expect(yield* fileSystem.exists(harness.paths.statePath)).toBe(true);
+        const installRoot = yield* currentInstallRoot(harness.paths.statePath);
+        // One directory per install, under the managed root and nowhere else.
+        const rootPrefix = `${forwardSlashes(harness.paths.managedRoot)}/tinytex-${VERSION}-`;
+        expect(forwardSlashes(installRoot).startsWith(rootPrefix)).toBe(true);
+        expect(forwardSlashes(installRoot).slice(rootPrefix.length)).toMatch(/^[0-9a-f]{8}$/u);
+        const installedEngine = path.join(installRoot, EXECUTABLE_RELATIVE_PATH);
+        expect(yield* fileSystem.exists(installedEngine)).toBe(true);
         expect(yield* stagingEntries(harness.paths.stagingRoot)).toEqual([]);
 
         // The install dropped the probe cache before reporting itself ready, so
@@ -280,6 +297,34 @@ describe("LatexManagedToolchain", () => {
         expect(after.kind).toBe("latexmk");
         expect(after.source).toBe("scient-managed");
         expect(after.executable?.replaceAll("\\", "/")).toBe(installedEngine.replaceAll("\\", "/"));
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("puts a second install beside the first instead of over it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({ manifest: manifestFor({ url: server.handle.url }) });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+        expect((yield* awaitInstall(managed)).state).toBe("ready");
+        const first = yield* currentInstallRoot(harness.paths.statePath);
+
+        yield* managed.install;
+        expect((yield* awaitInstall(managed)).state).toBe("ready");
+        const second = yield* currentInstallRoot(harness.paths.statePath);
+
+        // Reusing the path would mean removing a tree an engine may be running
+        // out of — a removal Windows refuses halfway, leaving no install at
+        // all. The old one is left whole and the state file is what moves.
+        expect(second).not.toBe(first);
+        expect(yield* fileSystem.exists(path.join(first, EXECUTABLE_RELATIVE_PATH))).toBe(true);
+        expect(yield* fileSystem.exists(path.join(second, EXECUTABLE_RELATIVE_PATH))).toBe(true);
+        expect(yield* stagingEntries(harness.paths.stagingRoot)).toEqual([]);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

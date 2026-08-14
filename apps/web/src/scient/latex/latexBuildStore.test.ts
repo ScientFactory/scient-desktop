@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   type ScientLatexBuildSnapshot,
   type ScientLatexManagedInstallState,
+  type ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -45,6 +46,19 @@ const target = {
   relativePath: "main.tex",
 };
 
+/**
+ * Every snapshot the server sends carries the toolchain, decoded into a new
+ * object each time. Fixtures that left it `null` hid the one thing the equal-
+ * snapshot guard has to survive.
+ */
+function foundToolchain(): ScientLatexToolchainStatus {
+  return { kind: "latexmk", executable: "latexmk", version: "4.83", probedAtEpochMs: 1 };
+}
+
+function missingProbe(): ScientLatexToolchainStatus {
+  return { kind: null, executable: null, version: null, probedAtEpochMs: 1 };
+}
+
 function snapshot(
   state: ScientLatexBuildSnapshot["state"],
   overrides: Partial<ScientLatexBuildSnapshot> = {},
@@ -58,7 +72,7 @@ function snapshot(
     failureSummary: null,
     startedAtEpochMs: null,
     finishedAtEpochMs: null,
-    toolchain: null,
+    toolchain: foundToolchain(),
     pendingRerun: false,
     ...overrides,
   };
@@ -82,10 +96,7 @@ function install(
 /** What the toolchain endpoint answers on a computer with no engine yet. */
 function missingToolchain(managedInstall?: ScientLatexManagedInstallState) {
   return {
-    kind: null,
-    executable: null,
-    version: null,
-    probedAtEpochMs: 1,
+    ...missingProbe(),
     canInstallManaged: true,
     ...(managedInstall === undefined ? {} : { managedInstall }),
   };
@@ -108,13 +119,7 @@ beforeEach(() => {
   requestLatexCancel.mockResolvedValue(snapshot("cancelled"));
   readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
   requestLatexToolchainInstall.mockResolvedValue(install("downloading"));
-  readLatexToolchain.mockResolvedValue({
-    kind: "latexmk",
-    executable: "latexmk",
-    version: "4.83",
-    probedAtEpochMs: 1,
-    canInstallManaged: false,
-  });
+  readLatexToolchain.mockResolvedValue({ ...foundToolchain(), canInstallManaged: false });
 });
 
 afterEach(() => {
@@ -333,6 +338,49 @@ describe("latexBuildStore", () => {
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 2);
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
     expect(readLatexBuild(target).snapshot?.pendingRerun).toBe(true);
+    stop();
+  });
+
+  it("re-probes before a hand-asked rebuild when this environment found no engine", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("failed", { toolchain: missingProbe() }));
+    readLatexToolchain.mockResolvedValue(missingToolchain());
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    expect(readLatexToolchain).toHaveBeenCalledExactlyOnceWith(target.environmentId, {
+      refresh: false,
+    });
+
+    // TeX Live was installed by hand while this document sat here. The probe's
+    // answer is cached for five minutes and the loop is quiet, so Rebuild is
+    // the only thing that can go and look again.
+    readLatexToolchain.mockResolvedValue({ ...foundToolchain(), canInstallManaged: false });
+    // The build that follows runs on a server whose probe has just seen it.
+    requestLatexBuild.mockResolvedValue(snapshot("queued"));
+    requestLatexRebuild(target, { reprobeToolchain: true });
+    await settle();
+
+    expect(readLatexToolchain).toHaveBeenLastCalledWith(target.environmentId, { refresh: true });
+    expect(readLatexBuild(target).toolchain?.kind).toBe("latexmk");
+    // And the build the reader asked for still runs, after the fresh probe.
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("does not re-probe for a rebuild on an environment that already has one", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    requestLatexRebuild(target, { reprobeToolchain: true });
+    await settle();
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+
+    // A save-driven rebuild never re-probes either, engine or no engine.
+    requestLatexRebuild(target);
+    await settle();
+    expect(readLatexToolchain).toHaveBeenCalledTimes(1);
     stop();
   });
 

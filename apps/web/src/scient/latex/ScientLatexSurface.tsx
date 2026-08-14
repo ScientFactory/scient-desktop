@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ScientLatexBuildSnapshot,
   type ScientLatexDiagnostic,
+  type ScientLatexManagedInstallState,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
@@ -54,7 +55,6 @@ import {
   normalizeLatexPreviewMode,
   normalizeLatexSplitFraction,
   nudgeLatexSplitFraction,
-  type LatexBuildStatus,
   type LatexViewerState,
   type ScientLatexPreviewMode,
 } from "./scientLatexSurfaceModel";
@@ -234,13 +234,21 @@ function LatexReadOnlyHalf(props: {
   );
 }
 
+/**
+ * Only what the viewer half actually renders. Handing it the whole build entry
+ * would put `requesting` and `error` — which change on every rebuild and every
+ * lost poll — inside the memo's comparison, and the point of the memo is that
+ * none of that reaches the PDF reader.
+ */
 interface LatexViewerPaneProps {
   readonly descriptor: LatexPdfDescriptor;
   readonly readerKey: string | null;
   readonly viewer: LatexViewerState;
   readonly toolchainMissing: boolean;
   readonly failureLine: string | null;
-  readonly status: LatexBuildStatus;
+  readonly canInstallManaged: boolean;
+  readonly managedInstall: ScientLatexManagedInstallState | null;
+  readonly installRequesting: boolean;
   readonly onInstall: () => void;
 }
 
@@ -255,7 +263,9 @@ const LatexViewerPane = memo(function LatexViewerPane({
   viewer,
   toolchainMissing,
   failureLine,
-  status,
+  canInstallManaged,
+  managedInstall,
+  installRequesting,
   onInstall,
 }: LatexViewerPaneProps) {
   return (
@@ -265,7 +275,13 @@ const LatexViewerPane = memo(function LatexViewerPane({
           <ScientPdfReader key={readerKey} source={descriptor} />
         </Suspense>
       ) : toolchainMissing ? (
-        <LatexToolchainSetupCard status={status} onInstall={onInstall} />
+        <LatexToolchainSetupCard
+          canInstallManaged={canInstallManaged}
+          managedInstall={managedInstall}
+          installRequesting={installRequesting}
+          toolchainMissing={toolchainMissing}
+          onInstall={onInstall}
+        />
       ) : viewer === "diagnostics" ? (
         <div className="scient-latex-placeholder">
           <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
@@ -515,7 +531,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             type="button"
             className="scient-latex-action"
             disabled={!status.canRebuild}
-            onClick={() => requestLatexRebuild(target)}
+            // By hand is the one rebuild that re-probes: a TeX installed while
+            // this document sat here has no other way to be noticed.
+            onClick={() => requestLatexRebuild(target, { reprobeToolchain: true })}
           >
             <RotateCw className="size-3.5" aria-hidden="true" />
             Rebuild
@@ -618,7 +636,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             viewer={status.viewer}
             toolchainMissing={status.toolchainMissing}
             failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-            status={build}
+            canInstallManaged={build.canInstallManaged}
+            managedInstall={build.managedInstall}
+            installRequesting={build.installRequesting}
             onInstall={handleInstallToolchain}
           />
         ) : null}

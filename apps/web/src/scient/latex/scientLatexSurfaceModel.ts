@@ -244,7 +244,13 @@ function descriptorsEqual(left: LatexPdfDescriptor, right: LatexPdfDescriptor): 
   );
 }
 
-function toolchainsEqual(
+/**
+ * Whether two toolchain reports say the same thing. Identity says nothing
+ * here: a snapshot decoded off the wire carries a freshly built object every
+ * poll, so anything comparing toolchains by reference compares two different
+ * objects describing one unchanged engine.
+ */
+export function toolchainsEqual(
   left: ScientLatexToolchainStatus | null,
   right: ScientLatexToolchainStatus | null,
 ): boolean {

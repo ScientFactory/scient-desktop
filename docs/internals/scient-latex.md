@@ -19,15 +19,15 @@ the web store calls through).
 Everything else this feature touches is a declared, narrow mount into
 inherited T3 code:
 
-| Inherited file                                       | Anchor                 | Purpose                                                                        |
-| ---------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------ |
-| `apps/server/src/config.ts`                          | `latexDir`             | Derive the server-owned LaTeX build state from the configured state root.      |
-| `apps/server/src/server.ts`                          | `LatexBuildService`    | Provide the build coordinator and toolchain probe to the shared server layer.  |
-| `apps/web/src/components/files/filePreviewMode.ts`   | `isLatexPreviewFile`   | Recognize LaTeX sources in the inherited file preview mode selection.          |
-| `apps/web/src/components/files/FilePreviewPanel.tsx` | `ScientLatexSurface`   | Mount the additive LaTeX build surface in the inherited file viewer.           |
-| `packages/contracts/src/environmentHttp.ts`          | `scientLatex`          | Register the LaTeX endpoint group in the shared environment HTTP API.          |
-| `packages/contracts/src/index.ts`                    | `./scientLatex.ts`     | Export the additive Scient LaTeX contract from the inherited contract package. |
-| `packages/client-runtime/package.json`               | `./state/scient-latex` | Expose the Scient LaTeX HTTP client module through the package export map.     |
+| Inherited file                                       | Anchor                                | Purpose                                                                                                                                                                                                      |
+| ---------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/config.ts`                          | `latexDir`                            | Derive the server-owned LaTeX build state from the configured state root.                                                                                                                                    |
+| `apps/server/src/server.ts`                          | `LatexBuildService`                   | Provide the build coordinator and toolchain probe to the shared server layer.                                                                                                                                |
+| `apps/web/src/components/files/filePreviewMode.ts`   | `isLatexPreviewFile`                  | Recognize LaTeX sources in the inherited file preview mode selection.                                                                                                                                        |
+| `apps/web/src/components/files/FilePreviewPanel.tsx` | `export function EditableFileSurface` | Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination. |
+| `packages/contracts/src/environmentHttp.ts`          | `scientLatex`                         | Register the LaTeX endpoint group in the shared environment HTTP API.                                                                                                                                        |
+| `packages/contracts/src/index.ts`                    | `./scientLatex.ts`                    | Export the additive Scient LaTeX contract from the inherited contract package.                                                                                                                               |
+| `packages/client-runtime/package.json`               | `./state/scient-latex`                | Expose the Scient LaTeX HTTP client module through the package export map.                                                                                                                                   |
 
 `scripts/verify-scient-latex-seams.mjs` (`pnpm latex:seams:check`) checks the
 manifest itself (schema version, owner), that every owned root/file and mount
@@ -150,9 +150,13 @@ exactly as it did before this feature existed. Only when nothing on `PATH`
 answers does the probe fall back to a Scient-managed install, still probed
 rather than trusted (a tree that no longer runs counts as no engine), and the
 result carries `source: "scient-managed"` so callers can tell the two apart.
-Windows resolves missing executables through a shell, so a missing engine
-surfaces as a shell diagnostic rather than a spawn failure; the probe detects
-that case explicitly rather than misreading it as "found."
+A missing engine is an ordinary spawn failure on every platform: `ProcessRunner`
+resolves the executable itself through `resolveSpawnCommand`, which uses shell
+mode only for a resolved `.cmd`/`.bat` shim, so a bare `latexmk` that resolves
+nowhere fails with `ENOENT` and the probe reads that as absent. The Windows
+"is not recognized…"/exit-9009 check (`isWindowsCommandNotFound`) covers the
+other case — a shim that does resolve but cannot find what it wraps — so that
+its diagnostic is not misread as "found."
 
 The probe result is cached for `PROBE_CACHE_TTL_MS = 5 minutes` per server
 process. Every build and every status poll asks for the toolchain, so the
@@ -168,18 +172,36 @@ both `null` until their per-architecture digests are pinned, so
 `LatexManagedToolchain.canInstall` is `false` on those platforms today and the
 setup card falls back to plain install-it-yourself instructions. Upstream
 ships the Windows bundle as a 7-Zip self-extracting `.exe`; Scient never runs
-that stub. `LatexArchiveUnpacker` shells out to `tar` (bsdtar/libarchive on
-Windows 10+ and macOS, GNU tar on Linux), which reads the SFX file as an
-ordinary archive and extracts its payload directly. The install downloads to a
-staging directory under `<latexDir>/managed/.staging` (streamed with a
-declared-size check, a hard byte ceiling, and a post-download SHA-256
-comparison against the pinned digest), unpacks there, and only then is
-promoted: any existing install directory for that version is removed, the
-staging payload is renamed into place at
-`<latexDir>/managed/tinytex-<version>`, and a small atomic JSON record
-(`managed-state.json`) is written recording the version, install time, and
-root. Nothing is visible or usable under the final path until that rename
-succeeds. `latexEngineEnvironment` prepends the managed install's `bin`
+that stub. `LatexArchiveUnpacker` shells out to `tar`, which reads the SFX file
+as an ordinary archive and extracts its payload directly. Only libarchive's tar
+does that, though, so which `tar` cannot be left to `PATH` on Windows, where
+Git for Windows and MSYS2 both place a GNU tar that rejects the bundle: the
+unpacker resolves `%SystemRoot%\System32\tar.exe` (the bsdtar Windows 10+
+ships) by absolute path and fails with `unpacker-unavailable` if it is not
+there, which also keeps PATH — the one input on this path a user's other
+software can rewrite — out of the install entirely. Elsewhere the command
+stays `tar`: macOS ships bsdtar under that name, and Linux only ever reads the
+`.tar.xz` asset.
+
+The install downloads to a staging directory under
+`<latexDir>/managed/.staging` (streamed with a declared-size check, a hard byte
+ceiling, and a post-download SHA-256 comparison against the pinned digest),
+unpacks there, and only then is promoted. Promotion renames the staged payload
+into a directory no install has used before,
+`<latexDir>/managed/tinytex-<version>-<8 hex>`, and then writes
+`managed-state.json` — one atomic write recording version, install time, and
+root — which is the install's single commit point, because that file is the
+only thing that says which root is current. An earlier install root is never
+removed inline:
+its engine may be running, and on Windows a partial removal of a locked tree
+followed by a failed rename is exactly how a working installation becomes no
+installation. Superseded roots are left to the deferred GC. The whole run also
+sits under one 25-minute ceiling — above the sum of the per-phase budgets, so
+it only cuts what they cannot — and a download that stalls before its body
+ever streams (the redirect and header exchange the phase timeouts do not
+cover) fails as `install-failed` and releases the single-flight gate rather
+than leaving the state saying an install is forever in flight.
+`latexEngineEnvironment` prepends the managed install's `bin`
 directory to `PATH` only for the spawned compiler subprocess, and only when
 `toolchain.source === "scient-managed"` — the user's real environment and any
 system TeX installation's own resolution order are never touched. Downloads
@@ -216,13 +238,19 @@ Server-side coverage is co-located unit tests per module —
 managed-PATH construction), `latexLog.test.ts` (diagnostics parsing),
 `LatexToolchain.test.ts` (discovery, caching, version parsing),
 `LatexManagedToolchain.test.ts` and `LatexArchiveUnpacker.test.ts` (the
-install pipeline, including `artifactUrlRejection` and unpack argument
-construction), and `tinytexManifest.test.ts` (manifest shape and pinned-asset
-resolution) — plus `LatexBuildService.test.ts` for the coordinator's
-lifecycle, coalescing, admission, and cancel/supersession behavior.
-`LatexRealEngine.test.ts` is the one test that runs a real TeX engine; it
-self-skips at collection time unless `latexmk` or `tectonic` actually resolves
-on `PATH` (the normal state of a machine and of CI), and where an engine does
+install pipeline, including `artifactUrlRejection`, unpack argument and
+unpacker-path construction, and that a second install lands beside the first
+rather than over it), `managedLatexInstall.test.ts` (install-root naming and
+the containment rule that keeps a tampered state file from pointing the engine
+outside the managed directory), and `tinytexManifest.test.ts` (manifest shape
+and pinned-asset resolution) — plus `LatexBuildService.test.ts` for the
+coordinator's lifecycle, coalescing, admission, and cancel/supersession
+behavior. Two suites self-skip at collection time when the machine cannot run
+them: `LatexArchiveUnpacker.test.ts`'s last case expands a real archive
+through the resolved system `tar`, which is the only coverage of the actual
+spawn the stubs stand in for, and `LatexRealEngine.test.ts` runs a real TeX
+engine. The latter skips unless `latexmk` or `tectonic` actually resolves on
+`PATH` (the normal state of a machine and of CI), and where an engine does
 exist it proves the two things only a real compile can: that the built argv
 actually produces a PDF, and that a root document living in a subdirectory
 still finds what it `\input`s and `\include`s.
@@ -255,10 +283,12 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   transition — "this attempt stopped" without implying "the content is now
   known bad" — is a shared-foundation contract request against
   `@scientfactory/document-artifacts`, not a private workaround in this lane.
-- **Build-dir and superseded-managed-version GC.** Neither
-  `<latexDir>/builds/<digest>` work directories nor a superseded
-  `<latexDir>/managed/tinytex-<old-version>` tree (after a future manifest
-  version bump) are ever cleaned up automatically today.
+- **Build-dir and superseded-install GC.** Neither `<latexDir>/builds/<digest>`
+  work directories nor a superseded `<latexDir>/managed/tinytex-<version>-<8
+hex>` tree are ever cleaned up automatically today. Every install now leaves
+  the previous root in place deliberately (see Managed TinyTeX install), so
+  this is the collector that owes it: a reinstall, or a future manifest version
+  bump, leaves a full distribution behind on disk.
 - **Restart reconciliation of in-flight bindings.** Build state lives only in
   an in-memory `Ref`. If the server exits mid-build, the on-disk binding can
   be left in `producing` (no `lastSuccessfulRevision` yet) or `stale`

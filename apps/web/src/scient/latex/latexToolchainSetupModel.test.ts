@@ -1,7 +1,11 @@
 import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isActiveLatexInstall, latexSetupCardModel } from "./latexToolchainSetupModel";
+import {
+  isActiveLatexInstall,
+  latexSetupCardModel,
+  type LatexSetupCardInput,
+} from "./latexToolchainSetupModel";
 
 function install(
   overrides: Partial<ScientLatexManagedInstallState> = {},
@@ -17,13 +21,20 @@ function install(
   };
 }
 
+/** The card is only on screen while the probe reports no engine. */
+function card(overrides: Partial<LatexSetupCardInput> = {}): LatexSetupCardInput {
+  return {
+    canInstallManaged: true,
+    install: null,
+    requesting: false,
+    toolchainMissing: true,
+    ...overrides,
+  };
+}
+
 describe("latexSetupCardModel", () => {
   it("offers the managed install when the environment can place one", () => {
-    const model = latexSetupCardModel({
-      canInstallManaged: true,
-      install: null,
-      requesting: false,
-    });
+    const model = latexSetupCardModel(card());
 
     expect(model.kind).toBe("offer");
     expect(model.actionLabel).toBe("Install TinyTeX");
@@ -33,11 +44,7 @@ describe("latexSetupCardModel", () => {
   });
 
   it("keeps the manual instructions where Scient has nothing to install", () => {
-    const model = latexSetupCardModel({
-      canInstallManaged: false,
-      install: null,
-      requesting: false,
-    });
+    const model = latexSetupCardModel(card({ canInstallManaged: false }));
 
     expect(model.kind).toBe("instructions");
     expect(model.actionLabel).toBeNull();
@@ -45,31 +52,23 @@ describe("latexSetupCardModel", () => {
   });
 
   it("shows the download's own progress and the phases after it", () => {
-    const downloading = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({
-        state: "downloading",
-        bytesReceived: 35 * 1024 * 1024,
-        totalBytes: 70 * 1024 * 1024,
+    const downloading = latexSetupCardModel(
+      card({
+        install: install({
+          state: "downloading",
+          bytesReceived: 35 * 1024 * 1024,
+          totalBytes: 70 * 1024 * 1024,
+        }),
       }),
-      requesting: false,
-    });
+    );
     expect(downloading.kind).toBe("installing");
     expect(downloading.body).toBe("Downloading TinyTeX — 35 MB of 70 MB.");
     expect(downloading.progressPercent).toBe(43);
     expect(downloading.actionLabel).toBeNull();
 
     // Each later phase moves the bar, so it never parks while the label changes.
-    const verifying = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "verifying" }),
-      requesting: false,
-    });
-    const unpacking = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "unpacking" }),
-      requesting: false,
-    });
+    const verifying = latexSetupCardModel(card({ install: install({ state: "verifying" }) }));
+    const unpacking = latexSetupCardModel(card({ install: install({ state: "unpacking" }) }));
     expect(verifying.progressPercent).toBeGreaterThan(downloading.progressPercent ?? 0);
     expect(unpacking.progressPercent).toBeGreaterThan(verifying.progressPercent ?? 0);
     expect(verifying.body).toBe("Checking the download…");
@@ -77,68 +76,64 @@ describe("latexSetupCardModel", () => {
   });
 
   it("keeps the bar moving before the server has reported any bytes", () => {
-    const requested = latexSetupCardModel({
-      canInstallManaged: true,
-      install: null,
-      requesting: true,
-    });
+    const requested = latexSetupCardModel(card({ requesting: true }));
     expect(requested.kind).toBe("installing");
     expect(requested.progressPercent).toBeGreaterThan(0);
 
-    const started = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "downloading" }),
-      requesting: false,
-    });
+    const started = latexSetupCardModel(card({ install: install({ state: "downloading" }) }));
     expect(started.progressPercent).toBeGreaterThan(0);
     expect(started.body).toBe("Downloading TinyTeX…");
   });
 
   it("stays on the finished install until the toolchain poll catches up", () => {
-    const model = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "ready" }),
-      requesting: false,
-    });
+    const model = latexSetupCardModel(
+      card({ install: install({ state: "ready" }), toolchainMissing: false }),
+    );
 
     expect(model.kind).toBe("installing");
     expect(model.progressPercent).toBe(100);
   });
 
+  it("offers another install when a finished one left nothing that runs", () => {
+    const model = latexSetupCardModel(card({ install: install({ state: "ready" }) }));
+
+    // The server drops the probe cache before reporting `ready`, so a probe
+    // that still finds nothing will keep finding nothing: a card that spun
+    // here would spin for the life of the window with nothing to press.
+    expect(model.busy).toBe(false);
+    expect(model.progressPercent).toBeNull();
+    expect(model.actionLabel).toBe("Install again");
+    expect(model.body).toContain("cannot run LaTeX");
+  });
+
   it("explains a failure in the reader's terms and offers a retry", () => {
-    const mismatch = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "failed", failureReason: "checksum-mismatch" }),
-      requesting: false,
-    });
+    const mismatch = latexSetupCardModel(
+      card({ install: install({ state: "failed", failureReason: "checksum-mismatch" }) }),
+    );
 
     expect(mismatch.kind).toBe("failed");
     expect(mismatch.actionLabel).toBe("Try again");
     expect(mismatch.busy).toBe(false);
     expect(mismatch.body).toContain("discarded");
 
-    const offline = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "failed", failureReason: "download-failed" }),
-      requesting: false,
-    });
+    const offline = latexSetupCardModel(
+      card({ install: install({ state: "failed", failureReason: "download-failed" }) }),
+    );
     expect(offline.body).toContain("connection");
     // No reason is a shipped state too: the message must still read as English.
     expect(
-      latexSetupCardModel({
-        canInstallManaged: true,
-        install: install({ state: "failed", failureReason: null }),
-        requesting: false,
-      }).body,
+      latexSetupCardModel(card({ install: install({ state: "failed", failureReason: null }) }))
+        .body,
     ).toBe("The installation could not be finished.");
   });
 
   it("shows a retry as progress again once the request is in flight", () => {
-    const model = latexSetupCardModel({
-      canInstallManaged: true,
-      install: install({ state: "failed", failureReason: "download-failed" }),
-      requesting: true,
-    });
+    const model = latexSetupCardModel(
+      card({
+        install: install({ state: "failed", failureReason: "download-failed" }),
+        requesting: true,
+      }),
+    );
 
     // The previous failure is still the server's state, but this client has
     // already asked again, so the card must not read as failed.

@@ -8,11 +8,20 @@
  * Windows bundle (a 7-Zip archive behind an executable stub) as an archive, so
  * Scient extracts the payload instead of running the downloaded installer.
  *
+ * Which `tar` is not a detail on Windows: only the OS bsdtar reads the 7-Zip
+ * stub, and a bare `tar` resolves through PATH, where Git for Windows and
+ * MSYS2 both place a GNU tar that rejects the bundle outright. So on Windows
+ * the unpacker is pinned to `%SystemRoot%\System32\tar.exe` and refuses if
+ * that is absent, which also keeps PATH — the one thing on this path a user's
+ * other software can rewrite — out of the install entirely.
+ *
  * The extraction runs behind this port so the installer can be tested without
  * a real archive.
  */
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
@@ -22,7 +31,7 @@ import type { TinyTexArchiveKind } from "./tinytexManifest.ts";
 export class LatexArchiveUnpackError extends Schema.TaggedErrorClass<LatexArchiveUnpackError>()(
   "LatexArchiveUnpackError",
   {
-    reason: Schema.Literals(["unsupported-archive", "unpack-failed"]),
+    reason: Schema.Literals(["unsupported-archive", "unpacker-unavailable", "unpack-failed"]),
     detail: Schema.String,
   },
 ) {
@@ -59,8 +68,23 @@ export function tinyTexUnpackArguments(input: LatexArchiveUnpackInput): Readonly
   return ["-x", "-f", input.archivePath, "-C", input.destination];
 }
 
+/**
+ * The bsdtar Windows ships with, by absolute path. `SystemRoot` is what names
+ * the Windows directory on a machine that does not use `C:\Windows`; its
+ * absence is not a case worth failing over, so the default stands in.
+ */
+export function windowsSystemTarPath(env: NodeJS.ProcessEnv): string {
+  return `${env.SystemRoot ?? "C:\\Windows"}\\System32\\tar.exe`;
+}
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcessPlatform;
+  const environment = yield* HostProcessEnvironment;
+  // Everywhere but Windows the PATH `tar` is the right one: macOS ships
+  // bsdtar as `tar`, and Linux only ever reads the `.tar.xz` asset.
+  const command = platform === "win32" ? windowsSystemTarPath(environment) : "tar";
 
   const unpack: LatexArchiveUnpacker["Service"]["unpack"] = (input) =>
     Effect.gen(function* () {
@@ -70,9 +94,18 @@ export const make = Effect.gen(function* () {
           detail: `Scient cannot expand a ${String(input.archive)} bundle.`,
         });
       }
+      if (platform === "win32") {
+        const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
+        if (!present) {
+          return yield* new LatexArchiveUnpackError({
+            reason: "unpacker-unavailable",
+            detail: `This computer has no ${command}, which Scient needs to expand the download.`,
+          });
+        }
+      }
       const result = yield* processRunner
         .run({
-          command: "tar",
+          command,
           args: tinyTexUnpackArguments(input),
           timeout: UNPACK_TIMEOUT,
           maxOutputBytes: UNPACK_MAX_OUTPUT_BYTES,
@@ -97,8 +130,8 @@ export const make = Effect.gen(function* () {
       const missingTar = yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr);
       if (missingTar) {
         return yield* new LatexArchiveUnpackError({
-          reason: "unpack-failed",
-          detail: "This computer has no tar command, which Scient needs to expand the download.",
+          reason: "unpacker-unavailable",
+          detail: `This computer has no ${command}, which Scient needs to expand the download.`,
         });
       }
       if (result.code !== 0) {

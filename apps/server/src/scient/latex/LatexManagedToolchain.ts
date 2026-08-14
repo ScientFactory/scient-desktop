@@ -65,6 +65,17 @@ const MAX_REDIRECTS = 5;
 /** Well above the largest bundle the manifest can name, and far below a disk. */
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT = "10 minutes";
+/**
+ * The ceiling over the whole run, phases and the gaps between them alike. The
+ * body stream has `DOWNLOAD_TIMEOUT` and the expansion has its own, but the
+ * redirect and header exchange before either — a `fetch` against a server that
+ * accepts the connection and then says nothing — has none, and a run that
+ * never ends is worse than a failed one: the state it leaves behind says an
+ * install is in flight, and the single-flight gate then refuses every later
+ * attempt for the life of the process. The ceiling sits above the sum of the
+ * per-phase budgets, so it only ever cuts a run the phases could not.
+ */
+const INSTALL_TIMEOUT = "25 minutes";
 /** Progress is republished per megabyte; a poll every 1.5s cannot see finer. */
 const PROGRESS_STEP_BYTES = 1024 * 1024;
 
@@ -348,17 +359,25 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  /** Swaps the finished tree into place, then records where it went. */
+  /**
+   * Moves the finished tree beside any earlier one and records it as current.
+   *
+   * The earlier install is never touched. Removing it to reuse its path is how
+   * a working installation gets destroyed: an engine running out of that tree
+   * holds its files open, the removal gets halfway, the rename onto the
+   * wreckage fails, and what was a working TeX is now neither. So each install
+   * lands in a directory of its own and the state file — one atomic write, the
+   * only thing discovery reads — is the single moment the switch happens.
+   * Superseded trees are the deferred GC's problem, not this path's.
+   */
   const promote = (input: { readonly payloadPath: string; readonly version: string }) =>
     Effect.gen(function* () {
       const installRoot = managedLatexInstallRoot({
         managedRoot: paths.managedRoot,
         version: input.version,
+        unique: NodeCrypto.randomUUID().slice(0, 8),
         join: path.join,
       });
-      yield* fileSystem
-        .remove(installRoot, { recursive: true, force: true })
-        .pipe(Effect.ignoreCause());
       yield* fileSystem.makeDirectory(paths.managedRoot, { recursive: true });
       yield* fileSystem.rename(input.payloadPath, installRoot);
       const installedAtEpochMs = yield* Clock.currentTimeMillis;
@@ -418,6 +437,15 @@ export const make = Effect.gen(function* () {
             failureReason: null,
           }));
         }),
+      ),
+      Effect.timeoutOption(INSTALL_TIMEOUT),
+      Effect.flatMap((finished) =>
+        Option.isSome(finished)
+          ? Effect.void
+          : failInstall(
+              "install-failed",
+              "The LaTeX installation took too long and was stopped. Try again.",
+            ),
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {

@@ -15,7 +15,12 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../../config.ts";
 import { TinyTexManifestRef, resolveTinyTexAsset } from "./tinytexManifest.ts";
 
-/** Written once, atomically, after the unpacked tree is in its final place. */
+/**
+ * Written once, atomically, after the unpacked tree is in place. This write is
+ * the install's commit point: discovery reads nothing but this file, so until
+ * it names a tree that tree is invisible, and the moment it does the swap has
+ * already happened whole.
+ */
 export const ManagedLatexInstallRecord = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   version: Schema.String.check(Schema.isNonEmpty()),
@@ -60,23 +65,39 @@ export function managedLatexPaths(input: {
   };
 }
 
+/**
+ * Where one unpacked distribution lives. Every install gets its own directory,
+ * suffixed with a value nothing else will pick: an install must never write
+ * over — or remove — the tree a running engine is executing from, and on
+ * Windows it could not if it tried, because the loaded `latexmk.exe` is locked
+ * for as long as it runs. The previous tree is simply left behind for the
+ * deferred GC, and `managed-state.json` is what decides which one is current.
+ */
 export function managedLatexInstallRoot(input: {
   readonly managedRoot: string;
   readonly version: string;
+  readonly unique: string;
   readonly join: (...segments: ReadonlyArray<string>) => string;
 }): string {
-  return input.join(input.managedRoot, `tinytex-${input.version}`);
+  return input.join(input.managedRoot, `tinytex-${input.version}-${input.unique}`);
 }
 
 /**
  * An install root outside the managed directory is rejected rather than
  * probed, so a tampered state file cannot point the engine at an arbitrary
- * executable on this computer.
+ * executable on this computer. Both paths are resolved first: a prefix test
+ * alone reads `<managedRoot>\..\..\..` as contained, which is the whole
+ * escape.
  */
-export function isManagedInstallRootContained(root: string, managedRoot: string): boolean {
-  const normalizedRoot = root.replaceAll("\\", "/");
-  const normalizedManagedRoot = managedRoot.replaceAll("\\", "/").replace(/\/$/u, "");
-  return normalizedRoot.startsWith(`${normalizedManagedRoot}/`);
+export function isManagedInstallRootContained(input: {
+  readonly root: string;
+  readonly managedRoot: string;
+  /** `path.resolve`, which is what collapses the `..` segments. */
+  readonly resolve: (path: string) => string;
+}): boolean {
+  const root = input.resolve(input.root).replaceAll("\\", "/");
+  const managedRoot = input.resolve(input.managedRoot).replaceAll("\\", "/").replace(/\/$/u, "");
+  return root.startsWith(`${managedRoot}/`);
 }
 
 /**
@@ -105,7 +126,14 @@ export const readManagedLatexInstall = Effect.fn("scient.latex.readManagedLatexI
     const record = yield* decodeManagedLatexInstallRecord(contents).pipe(
       Effect.orElseSucceed(() => null),
     );
-    if (record === null || !isManagedInstallRootContained(record.root, paths.managedRoot)) {
+    if (
+      record === null ||
+      !isManagedInstallRootContained({
+        root: record.root,
+        managedRoot: paths.managedRoot,
+        resolve: path.resolve,
+      })
+    ) {
       return null;
     }
 

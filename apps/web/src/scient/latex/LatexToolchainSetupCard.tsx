@@ -3,25 +3,30 @@
  * engine: an offer to install the one Scient pins, the progress of that
  * install, or — where Scient has nothing to offer — what to install by hand.
  */
+import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
 import { Download, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 
 import { latexSetupCardModel } from "./latexToolchainSetupModel";
-import type { LatexBuildStatus } from "./scientLatexSurfaceModel";
 
 export function LatexToolchainSetupCard(props: {
-  readonly status: LatexBuildStatus;
+  readonly canInstallManaged: boolean;
+  readonly managedInstall: ScientLatexManagedInstallState | null;
+  readonly installRequesting: boolean;
+  /** The probe still finds no engine, which is why this card is on screen. */
+  readonly toolchainMissing: boolean;
   readonly onInstall: () => void;
 }) {
-  const { canInstallManaged, managedInstall, installRequesting } = props.status;
+  const { canInstallManaged, managedInstall, installRequesting, toolchainMissing } = props;
   const model = useMemo(
     () =>
       latexSetupCardModel({
         canInstallManaged,
         install: managedInstall,
         requesting: installRequesting,
+        toolchainMissing,
       }),
-    [canInstallManaged, installRequesting, managedInstall],
+    [canInstallManaged, installRequesting, managedInstall, toolchainMissing],
   );
 
   return (
