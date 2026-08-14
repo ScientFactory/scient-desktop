@@ -198,4 +198,29 @@ describe("environment commands", () => {
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
+
+  it.effect("dispatches a user-message fork without converting it to an assistant boundary", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* forkThread({
+        originThreadId: ThreadId.make("thread-origin"),
+        newThreadId: ThreadId.make("thread-user-fork"),
+        sourceUserMessageId: MessageId.make("user-3"),
+        workspaceMode: "local",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.fork",
+          commandId: "client:thread-fork:thread-user-fork",
+          originThreadId: "thread-origin",
+          newThreadId: "thread-user-fork",
+          sourceUserMessageId: "user-3",
+          workspaceMode: "local",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
 });

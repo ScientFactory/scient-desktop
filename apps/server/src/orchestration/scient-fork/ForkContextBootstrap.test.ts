@@ -95,7 +95,11 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     return sql;
   });
 
-  const insertFork = (status = "ready", forkPointTurnCount = 2) =>
+  const insertFork = (
+    status = "ready",
+    forkPointTurnCount = 2,
+    baselineAssistantMessageId: string | null = forkPointTurnCount === 0 ? null : "assistant-1",
+  ) =>
     Effect.gen(function* () {
       const sql = yield* reset;
       yield* sql`
@@ -103,6 +107,7 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
           thread_id,
           forked_from_thread_id,
           fork_point_turn_count,
+          baseline_assistant_message_id,
           workspace_mode,
           provider_mode,
           provider_bootstrap_status,
@@ -117,6 +122,7 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
           ${THREAD},
           'origin-thread',
           ${forkPointTurnCount},
+          ${baselineAssistantMessageId},
           'local',
           'transcript-bootstrap',
           'pending',
@@ -146,6 +152,8 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
         input: "Continue",
         attachments: [],
         bootstrapPending: false,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       });
     }),
   );
@@ -172,7 +180,11 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       assert.match(first.input, /The evidence is consistent/);
       assert.match(first.input, /"latestUserMessage":"What next\?"/);
 
-      yield* service.markAccepted(THREAD);
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: current.id,
+      });
+      yield* service.markAccepted({ threadId: THREAD, messageId: current.id });
       const second = yield* service.prepareTurn({
         thread: forkThread,
         currentMessageId: current.id,
@@ -183,7 +195,37 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
         input: "What next?",
         attachments: [],
         bootstrapPending: false,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       });
+    }),
+  );
+
+  it.effect("uses the immutable baseline and excludes messages added to the source afterward", () =>
+    Effect.gen(function* () {
+      yield* insertFork("ready", 1, "assistant-1");
+      const service = yield* ScientForkContextBootstrap;
+      const current = message({ id: "current", role: "user", text: "Continue the fork" });
+      const prepared = yield* service.prepareTurn({
+        thread: thread([
+          message({ id: "user-1", role: "user", text: "Retained request" }),
+          message({ id: "assistant-1", role: "assistant", text: "Retained answer" }),
+          message({ id: "source-user-later", role: "user", text: "Do not inherit this" }),
+          message({
+            id: "source-assistant-later",
+            role: "assistant",
+            text: "Do not inherit this answer",
+          }),
+          current,
+        ]),
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+
+      assert.match(prepared.input, /Retained request/);
+      assert.match(prepared.input, /Retained answer/);
+      assert.notMatch(prepared.input, /Do not inherit this/);
     }),
   );
 
@@ -208,13 +250,15 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
         input: "Start a different approach",
         attachments: [currentAttachment],
         bootstrapPending: true,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       });
     }),
   );
 
   it.effect("retains recent context as valid JSON within the input budget", () =>
     Effect.gen(function* () {
-      yield* insertFork();
+      yield* insertFork("ready", 2, "prior-39");
       const service = yield* ScientForkContextBootstrap;
       const prior = Array.from({ length: 40 }, (_, index) =>
         message({
@@ -246,7 +290,7 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
 
   it.effect("prioritizes the latest message images without exceeding the provider limit", () =>
     Effect.gen(function* () {
-      yield* insertFork();
+      yield* insertFork("ready", 2, "prior-9");
       const service = yield* ScientForkContextBootstrap;
       const prior = Array.from({ length: 10 }, (_, index) =>
         message({
@@ -345,8 +389,12 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       });
       assert.strictEqual(first.bootstrapPending, true);
 
-      // markAccepted completes the durable marker.
-      yield* service.markAccepted(THREAD);
+      // Delivery is reserved before the external provider call, then accepted.
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: current.id,
+      });
+      yield* service.markAccepted({ threadId: THREAD, messageId: current.id });
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
       `;
@@ -363,6 +411,8 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
         input: "What next?",
         attachments: [],
         bootstrapPending: false,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       });
     }),
   );
@@ -371,9 +421,13 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork();
       const service = yield* ScientForkContextBootstrap;
-      yield* service.markAccepted(THREAD);
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: "current",
+      });
+      yield* service.markAccepted({ threadId: THREAD, messageId: "current" });
       // Second call is a no-op (provider_bootstrap_status already completed).
-      yield* service.markAccepted(THREAD);
+      yield* service.markAccepted({ threadId: THREAD, messageId: "current" });
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}
@@ -383,10 +437,10 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
   );
 
   // -------------------------------------------------------------------------
-  // VAL-PERSIST-009: Provider bootstrap crash recovery is at-least-once
+  // VAL-PERSIST-009: Provider bootstrap crash recovery is conservative
   // -------------------------------------------------------------------------
 
-  it.effect("crash after acceptance but before markAccepted retries on restart", () =>
+  it.effect("crash before the provider attempt safely retries on restart", () =>
     Effect.gen(function* () {
       yield* insertFork();
       const service = yield* ScientForkContextBootstrap;
@@ -412,7 +466,7 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       `;
       assert.strictEqual(marker[0]!.provider_bootstrap_status, "pending");
 
-      // Restart: prepareTurn again injects the transcript (at-least-once).
+      // Restart: no external send began, so prepareTurn can safely inject again.
       const retried = yield* service.prepareTurn({
         thread: forkThread,
         currentMessageId: current.id,
@@ -421,8 +475,12 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       });
       assert.strictEqual(retried.bootstrapPending, true);
 
-      // Now markAccepted persists the receipt.
-      yield* service.markAccepted(THREAD);
+      // Once the provider call begins, the attempt is explicitly reserved.
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: current.id,
+      });
+      yield* service.markAccepted({ threadId: THREAD, messageId: current.id });
 
       // After receipt is persisted, restart injects nothing again.
       const after = yield* service.prepareTurn({
@@ -433,6 +491,121 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       });
       assert.strictEqual(after.bootstrapPending, false);
     }),
+  );
+
+  it.effect("does not silently reinject after an ambiguous provider send", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      const current = message({ id: "current", role: "user", text: "What next?" });
+      const forkThread = thread([
+        message({ id: "user-1", role: "user", text: "Inspect the evidence" }),
+        message({ id: "assistant-1", role: "assistant", text: "The evidence is consistent." }),
+        current,
+      ]);
+      yield* service.prepareTurn({
+        thread: forkThread,
+        currentMessageId: current.id,
+        messageText: current.text,
+        attachments: [],
+      });
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: current.id,
+      });
+      yield* service.markAmbiguous({ threadId: THREAD, messageId: current.id });
+
+      const result = yield* Effect.result(
+        service.prepareTurn({
+          thread: forkThread,
+          currentMessageId: current.id,
+          messageText: current.text,
+          attachments: [],
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.include(result.failure.detail, "cannot prove");
+      }
+    }),
+  );
+
+  it.effect("rejects an ambiguous marker for a different message and keeps the reservation", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* ScientForkContextBootstrap;
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: "reserved-message",
+      });
+
+      const result = yield* Effect.result(
+        service.markAmbiguous({ threadId: THREAD, messageId: "different-message" }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+      const rows = yield* sql<{
+        readonly provider_bootstrap_status: string;
+        readonly provider_bootstrap_message_id: string | null;
+      }>`
+        SELECT provider_bootstrap_status, provider_bootstrap_message_id
+        FROM scient_thread_lineage
+        WHERE thread_id = ${THREAD}
+      `;
+      assert.deepStrictEqual(rows[0], {
+        provider_bootstrap_status: "sending",
+        provider_bootstrap_message_id: "reserved-message",
+      });
+
+      yield* service.markAmbiguous({ threadId: THREAD, messageId: "reserved-message" });
+      yield* service.markAmbiguous({ threadId: THREAD, messageId: "reserved-message" });
+    }),
+  );
+
+  it.effect(
+    "reconciles an ambiguous send when a completed assistant response proves acceptance",
+    () =>
+      Effect.gen(function* () {
+        yield* insertFork();
+        const service = yield* ScientForkContextBootstrap;
+        const attempted = message({ id: "attempted", role: "user", text: "What next?" });
+        yield* service.prepareTurn({
+          thread: thread([
+            message({ id: "user-1", role: "user", text: "Inspect the evidence" }),
+            message({ id: "assistant-1", role: "assistant", text: "The evidence is consistent." }),
+            attempted,
+          ]),
+          currentMessageId: attempted.id,
+          messageText: attempted.text,
+          attachments: [],
+        });
+        yield* service.beginAttempt({
+          threadId: THREAD,
+          messageId: attempted.id,
+        });
+        yield* service.markAmbiguous({ threadId: THREAD, messageId: attempted.id });
+
+        const current = message({ id: "current", role: "user", text: "Follow up" });
+        const reconciled = yield* service.prepareTurn({
+          thread: thread([
+            message({ id: "user-1", role: "user", text: "Inspect the evidence" }),
+            message({ id: "assistant-1", role: "assistant", text: "The evidence is consistent." }),
+            attempted,
+            message({ id: "accepted-response", role: "assistant", text: "Accepted" }),
+            current,
+          ]),
+          currentMessageId: current.id,
+          messageText: current.text,
+          attachments: [],
+        });
+        assert.deepStrictEqual(reconciled, {
+          input: "Follow up",
+          attachments: [],
+          bootstrapPending: false,
+          omittedMessageCount: 0,
+          omittedAttachmentCount: 0,
+        });
+      }),
   );
 
   // -------------------------------------------------------------------------
@@ -498,7 +671,9 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* reset;
       const service = yield* ScientForkContextBootstrap;
-      const result = yield* Effect.result(service.markAccepted(THREAD));
+      const result = yield* Effect.result(
+        service.markAccepted({ threadId: THREAD, messageId: "current" }),
+      );
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
         assert.strictEqual(result.failure.detail, "The fork context state was not found.");
@@ -510,7 +685,9 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("pending");
       const service = yield* ScientForkContextBootstrap;
-      const result = yield* Effect.result(service.markAccepted(THREAD));
+      const result = yield* Effect.result(
+        service.markAccepted({ threadId: THREAD, messageId: "current" }),
+      );
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
         assert.strictEqual(
@@ -530,7 +707,9 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("provisioning");
       const service = yield* ScientForkContextBootstrap;
-      const result = yield* Effect.result(service.markAccepted(THREAD));
+      const result = yield* Effect.result(
+        service.markAccepted({ threadId: THREAD, messageId: "current" }),
+      );
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
         assert.strictEqual(
@@ -550,7 +729,9 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("failed");
       const service = yield* ScientForkContextBootstrap;
-      const result = yield* Effect.result(service.markAccepted(THREAD));
+      const result = yield* Effect.result(
+        service.markAccepted({ threadId: THREAD, messageId: "current" }),
+      );
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
         assert.strictEqual(
@@ -570,7 +751,9 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("abandoned");
       const service = yield* ScientForkContextBootstrap;
-      const result = yield* Effect.result(service.markAccepted(THREAD));
+      const result = yield* Effect.result(
+        service.markAccepted({ threadId: THREAD, messageId: "current" }),
+      );
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
         assert.strictEqual(
@@ -590,7 +773,11 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
     Effect.gen(function* () {
       yield* insertFork("ready");
       const service = yield* ScientForkContextBootstrap;
-      yield* service.markAccepted(THREAD);
+      yield* service.beginAttempt({
+        threadId: THREAD,
+        messageId: "current",
+      });
+      yield* service.markAccepted({ threadId: THREAD, messageId: "current" });
       const sql = yield* SqlClient.SqlClient;
       const marker = yield* sql<{ readonly provider_bootstrap_status: string }>`
         SELECT provider_bootstrap_status FROM scient_thread_lineage WHERE thread_id = ${THREAD}

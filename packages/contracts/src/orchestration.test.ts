@@ -547,6 +547,54 @@ it.effect("decodes preserved Claude fork events with conservative new defaults",
   }),
 );
 
+it.effect("accepts exactly one assistant or user fork source", () =>
+  Effect.gen(function* () {
+    const assistant = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-assistant",
+      originThreadId: "origin-thread",
+      newThreadId: "assistant-fork",
+      sourceAssistantMessageId: "assistant-3",
+      workspaceMode: "local",
+    });
+    const user = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-user",
+      originThreadId: "origin-thread",
+      newThreadId: "user-fork",
+      sourceUserMessageId: "user-3",
+      workspaceMode: "local",
+    });
+
+    assert.strictEqual(assistant.type, "thread.fork");
+    assert.strictEqual(user.type, "thread.fork");
+
+    const neither = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.fork",
+        commandId: "cmd-fork-neither",
+        originThreadId: "origin-thread",
+        newThreadId: "invalid-fork-neither",
+        workspaceMode: "local",
+      }),
+    );
+    const both = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.fork",
+        commandId: "cmd-fork-both",
+        originThreadId: "origin-thread",
+        newThreadId: "invalid-fork-both",
+        sourceAssistantMessageId: "assistant-3",
+        sourceUserMessageId: "user-3",
+        workspaceMode: "local",
+      }),
+    );
+
+    assert.strictEqual(neither._tag, "Failure");
+    assert.strictEqual(both._tag, "Failure");
+  }),
+);
+
 it.effect("decodes thread settled and unsettled events", () =>
   Effect.gen(function* () {
     const settled = yield* decodeOrchestrationEvent({

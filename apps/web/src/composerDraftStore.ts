@@ -3602,6 +3602,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
 export const useComposerDraftStore = composerDraftStore;
 
+/** Flush a deliberately staged composer draft before a cross-thread action. */
+export function flushComposerDraftPersistence(): void {
+  composerDebouncedStorage.flush();
+}
+
 export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): void {
   useComposerDraftStore.setState((state) => {
     const removedThreadKeys = new Set<string>();

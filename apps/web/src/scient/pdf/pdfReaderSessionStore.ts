@@ -65,6 +65,7 @@ interface PdfReaderSessionStoreOptions {
 
 export interface PdfReaderSessionStore {
   readonly get: (documentKey: string) => PdfReaderSession;
+  readonly copy: (sourceDocumentKey: string, destinationDocumentKey: string) => void;
   readonly updateViewport: (documentKey: string, viewport: PdfReaderViewport) => void;
   readonly updateSidebar: (documentKey: string, sidebar: PdfSidebarMode) => void;
   readonly flush: () => void;
@@ -354,6 +355,15 @@ export function createPdfReaderSessionStore(
 
   return {
     get: (documentKey) => sessions[documentKey] ?? EMPTY_SESSION,
+    copy: (sourceDocumentKey, destinationDocumentKey) => {
+      if (!isDocumentKey(sourceDocumentKey) || !isDocumentKey(destinationDocumentKey)) return;
+      const source = sessions[sourceDocumentKey];
+      if (source === undefined || sourceDocumentKey === destinationDocumentKey) return;
+      update(destinationDocumentKey, () => ({
+        viewport: source.viewport,
+        sidebar: source.sidebar,
+      }));
+    },
     updateViewport: (documentKey, viewport) => {
       const normalized = normalizePdfReaderViewport(viewport);
       if (normalized === null) return;

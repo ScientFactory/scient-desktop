@@ -4,8 +4,9 @@
  * Provider-native fork APIs generally clone the provider thread's current tip,
  * which is incorrect when a user forks an older message. Scient therefore
  * starts an independent provider session and injects the retained transcript
- * exactly once with the first post-fork user turn. The pending/completed marker
- * is durable so app restarts cannot silently lose the bootstrap.
+ * with the first post-fork user turn. Provider delivery is an external side
+ * effect, so Scient records pending/sending/completed/ambiguous states and
+ * never silently reinjects after an uncertain outcome.
  */
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -27,7 +28,9 @@ const MIN_BOOTSTRAP_CHARS = 512;
 
 const ForkBootstrapRow = Schema.Struct({
   status: Schema.Literals(["pending", "provisioning", "failed", "abandoned", "ready"]),
-  provider_bootstrap_status: Schema.Literals(["pending", "completed"]),
+  provider_bootstrap_status: Schema.Literals(["pending", "sending", "completed", "ambiguous"]),
+  provider_bootstrap_message_id: Schema.NullOr(Schema.String),
+  baseline_assistant_message_id: Schema.NullOr(Schema.String),
   fork_point_turn_count: NonNegativeInt,
 });
 const decodeForkBootstrapRow = Schema.decodeUnknownEffect(ForkBootstrapRow);
@@ -53,6 +56,8 @@ export interface PreparedForkTurn {
   readonly input: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly bootstrapPending: boolean;
+  readonly omittedMessageCount: number;
+  readonly omittedAttachmentCount: number;
 }
 
 function truncateText(value: string, maxChars: number): string {
@@ -62,12 +67,15 @@ function truncateText(value: string, maxChars: number): string {
 
 function transcriptMessages(
   thread: Pick<OrchestrationThread, "messages">,
-  currentMessageId: string,
+  baselineAssistantMessageId: string | null,
 ): ReadonlyArray<OrchestrationMessage> {
-  const currentIndex = thread.messages.findIndex((message) => message.id === currentMessageId);
-  if (currentIndex < 0) return [];
+  if (baselineAssistantMessageId === null) return [];
+  const baselineIndex = thread.messages.findIndex(
+    (message) => message.id === baselineAssistantMessageId,
+  );
+  if (baselineIndex < 0) return [];
   return thread.messages
-    .slice(0, currentIndex)
+    .slice(0, baselineIndex + 1)
     .filter(
       (message) =>
         (message.role === "user" || message.role === "assistant") && message.streaming === false,
@@ -206,9 +214,18 @@ export interface ScientForkContextBootstrapShape {
     readonly messageText: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
   }) => Effect.Effect<PreparedForkTurn, ScientForkContextBootstrapError>;
-  readonly markAccepted: (
-    threadId: ThreadId,
-  ) => Effect.Effect<void, ScientForkContextBootstrapError>;
+  readonly markAccepted: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: string;
+  }) => Effect.Effect<void, ScientForkContextBootstrapError>;
+  readonly beginAttempt: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: string;
+  }) => Effect.Effect<void, ScientForkContextBootstrapError>;
+  readonly markAmbiguous: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: string;
+  }) => Effect.Effect<void, ScientForkContextBootstrapError>;
 }
 
 export class ScientForkContextBootstrap extends Context.Service<
@@ -223,7 +240,12 @@ const make = Effect.gen(function* () {
     "prepareScientForkTurn",
   )(function* (input) {
     const rows = yield* sql<Record<string, unknown>>`
-      SELECT status, provider_bootstrap_status, fork_point_turn_count
+      SELECT
+        status,
+        provider_bootstrap_status,
+        provider_bootstrap_message_id,
+        baseline_assistant_message_id,
+        fork_point_turn_count
       FROM scient_thread_lineage
       WHERE thread_id = ${input.thread.id}
       LIMIT 1
@@ -243,6 +265,8 @@ const make = Effect.gen(function* () {
         input: input.messageText,
         attachments: input.attachments,
         bootstrapPending: false,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       };
     }
     const state = yield* decodeForkBootstrapRow(row).pipe(
@@ -260,12 +284,59 @@ const make = Effect.gen(function* () {
         input: input.messageText,
         attachments: input.attachments,
         bootstrapPending: false,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       };
     }
     if (state.status !== "ready") {
       return yield* new ScientForkContextBootstrapError({
         threadId: input.thread.id,
         detail: "The fork workspace is not ready yet.",
+      });
+    }
+    if (
+      state.provider_bootstrap_status === "sending" ||
+      state.provider_bootstrap_status === "ambiguous"
+    ) {
+      const attemptMessageId = state.provider_bootstrap_message_id;
+      const attemptIndex =
+        attemptMessageId === null
+          ? -1
+          : input.thread.messages.findIndex((message) => message.id === attemptMessageId);
+      const providerResponseExists =
+        attemptIndex >= 0 &&
+        input.thread.messages
+          .slice(attemptIndex + 1)
+          .some((message) => message.role === "assistant" && message.streaming === false);
+      if (providerResponseExists) {
+        const updatedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* sql`
+          UPDATE scient_thread_lineage
+          SET provider_bootstrap_status = 'completed', updated_at = ${updatedAt}
+          WHERE thread_id = ${input.thread.id}
+            AND provider_bootstrap_status IN ('sending', 'ambiguous')
+        `.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ScientForkContextBootstrapError({
+                threadId: input.thread.id,
+                detail: "Unable to reconcile the accepted fork context.",
+                cause,
+              }),
+          ),
+        );
+        return {
+          input: input.messageText,
+          attachments: input.attachments,
+          bootstrapPending: false,
+          omittedMessageCount: 0,
+          omittedAttachmentCount: 0,
+        };
+      }
+      return yield* new ScientForkContextBootstrapError({
+        threadId: input.thread.id,
+        detail:
+          "Scient cannot prove whether the retained fork context was accepted. To avoid duplicating the request, create a new fork and continue there.",
       });
     }
 
@@ -294,13 +365,15 @@ const make = Effect.gen(function* () {
           "The latest message is too long to include the retained fork context. Shorten it and retry.",
       });
     }
-    const priorMessages = transcriptMessages(input.thread, input.currentMessageId);
+    const priorMessages = transcriptMessages(input.thread, state.baseline_assistant_message_id);
     if (priorMessages.length === 0) {
       if (state.fork_point_turn_count === 0) {
         return {
           input: input.messageText,
           attachments: currentAttachments,
           bootstrapPending: true,
+          omittedMessageCount: 0,
+          omittedAttachmentCount: 0,
         };
       }
       return yield* new ScientForkContextBootstrapError({
@@ -335,23 +408,23 @@ const make = Effect.gen(function* () {
       input: `${contextHeader}${context}${latestHeader}${latestMessageJson}`,
       attachments: retainedAttachments.attachments,
       bootstrapPending: true,
+      omittedMessageCount: priorMessages.length - selectedMessages.length,
+      omittedAttachmentCount: retainedAttachments.omittedCount,
     };
   });
 
-  const markAccepted: ScientForkContextBootstrapShape["markAccepted"] = Effect.fn(
-    "markScientForkContextAccepted",
-  )(function* (threadId) {
+  const beginAttempt: ScientForkContextBootstrapShape["beginAttempt"] = Effect.fn(
+    "beginScientForkContextAttempt",
+  )(function* (input) {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    // markAccepted can only complete bootstrap for a ready fork with pending
-    // bootstrap status. Non-ready forks (pending, provisioning, failed,
-    // abandoned) must never reach a completed acceptance marker. The
-    // provider_mode compatibility column is not checked here; the canonical
-    // model guarantees transcript-bootstrap through insertPendingFork and
-    // migration 3 normalization.
     const updated = yield* sql<{ readonly thread_id: string }>`
       UPDATE scient_thread_lineage
-      SET provider_bootstrap_status = 'completed', updated_at = ${updatedAt}
-      WHERE thread_id = ${threadId}
+      SET
+        provider_bootstrap_status = 'sending',
+        provider_bootstrap_message_id = ${input.messageId},
+        provider_bootstrap_started_at = ${updatedAt},
+        updated_at = ${updatedAt}
+      WHERE thread_id = ${input.threadId}
         AND status = 'ready'
         AND provider_bootstrap_status = 'pending'
       RETURNING thread_id
@@ -359,7 +432,43 @@ const make = Effect.gen(function* () {
       Effect.mapError(
         (cause) =>
           new ScientForkContextBootstrapError({
-            threadId,
+            threadId: input.threadId,
+            detail: "Unable to reserve delivery of the retained fork context.",
+            cause,
+          }),
+      ),
+    );
+    if (updated.length === 0) {
+      return yield* new ScientForkContextBootstrapError({
+        threadId: input.threadId,
+        detail: "The retained fork context is already being delivered or was already used.",
+      });
+    }
+  });
+
+  const markAccepted: ScientForkContextBootstrapShape["markAccepted"] = Effect.fn(
+    "markScientForkContextAccepted",
+  )(function* (input) {
+    const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    // markAccepted can only complete bootstrap for the exact reserved message
+    // on a ready fork. Non-ready forks (pending, provisioning, failed,
+    // abandoned) must never reach a completed acceptance marker. The
+    // provider_mode compatibility column is not checked here; the canonical
+    // model guarantees transcript-bootstrap through insertPendingFork and
+    // migration 3 normalization.
+    const updated = yield* sql<{ readonly thread_id: string }>`
+      UPDATE scient_thread_lineage
+      SET provider_bootstrap_status = 'completed', updated_at = ${updatedAt}
+      WHERE thread_id = ${input.threadId}
+        AND status = 'ready'
+        AND provider_bootstrap_status = 'sending'
+        AND provider_bootstrap_message_id = ${input.messageId}
+      RETURNING thread_id
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ScientForkContextBootstrapError({
+            threadId: input.threadId,
             detail: "Unable to record the accepted fork context.",
             cause,
           }),
@@ -376,13 +485,13 @@ const make = Effect.gen(function* () {
     }>`
       SELECT status, provider_bootstrap_status
       FROM scient_thread_lineage
-      WHERE thread_id = ${threadId}
+      WHERE thread_id = ${input.threadId}
       LIMIT 1
     `.pipe(
       Effect.mapError(
         (cause) =>
           new ScientForkContextBootstrapError({
-            threadId,
+            threadId: input.threadId,
             detail: "Unable to read the fork context state.",
             cause,
           }),
@@ -391,18 +500,81 @@ const make = Effect.gen(function* () {
     const row = rows[0];
     if (row === undefined) {
       return yield* new ScientForkContextBootstrapError({
-        threadId,
+        threadId: input.threadId,
         detail: "The fork context state was not found.",
       });
     }
     if (row.status === "ready" && row.provider_bootstrap_status === "completed") return;
     return yield* new ScientForkContextBootstrapError({
-      threadId,
+      threadId: input.threadId,
       detail: "The fork workspace is not ready to accept context.",
     });
   });
 
-  return { prepareTurn, markAccepted } satisfies ScientForkContextBootstrapShape;
+  const markAmbiguous: ScientForkContextBootstrapShape["markAmbiguous"] = Effect.fn(
+    "markScientForkContextAmbiguous",
+  )(function* (input) {
+    const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    const updated = yield* sql<{ readonly thread_id: string }>`
+      UPDATE scient_thread_lineage
+      SET provider_bootstrap_status = 'ambiguous', updated_at = ${updatedAt}
+      WHERE thread_id = ${input.threadId}
+        AND status = 'ready'
+        AND provider_bootstrap_status = 'sending'
+        AND provider_bootstrap_message_id = ${input.messageId}
+      RETURNING thread_id
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ScientForkContextBootstrapError({
+            threadId: input.threadId,
+            detail: "Unable to record the uncertain fork context delivery.",
+            cause,
+          }),
+      ),
+    );
+    if (updated.length > 0) return;
+
+    const rows = yield* sql<{
+      readonly status: string;
+      readonly provider_bootstrap_status: string;
+      readonly provider_bootstrap_message_id: string | null;
+    }>`
+      SELECT status, provider_bootstrap_status, provider_bootstrap_message_id
+      FROM scient_thread_lineage
+      WHERE thread_id = ${input.threadId}
+      LIMIT 1
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ScientForkContextBootstrapError({
+            threadId: input.threadId,
+            detail: "Unable to read the uncertain fork context state.",
+            cause,
+          }),
+      ),
+    );
+    const row = rows[0];
+    if (
+      row?.status === "ready" &&
+      ((row.provider_bootstrap_status === "ambiguous" &&
+        row.provider_bootstrap_message_id === input.messageId) ||
+        row.provider_bootstrap_status === "completed")
+    ) {
+      return;
+    }
+    return yield* new ScientForkContextBootstrapError({
+      threadId: input.threadId,
+      detail: "The uncertain fork context delivery does not match the reserved message.",
+    });
+  });
+
+  return {
+    prepareTurn,
+    beginAttempt,
+    markAccepted,
+    markAmbiguous,
+  } satisfies ScientForkContextBootstrapShape;
 });
 
 export const ScientForkContextBootstrapLive = Layer.effect(ScientForkContextBootstrap, make);
@@ -416,7 +588,11 @@ export const testLayer = (
         input: input.messageText,
         attachments: input.attachments,
         bootstrapPending: false,
+        omittedMessageCount: 0,
+        omittedAttachmentCount: 0,
       }),
+    beginAttempt: () => Effect.void,
     markAccepted: () => Effect.void,
+    markAmbiguous: () => Effect.void,
     ...overrides,
   });

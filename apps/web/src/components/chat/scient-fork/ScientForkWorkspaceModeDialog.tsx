@@ -1,4 +1,4 @@
-import { FolderOpenIcon, GitBranchIcon, GitForkIcon, LockKeyholeIcon } from "lucide-react";
+import { FolderOpenIcon, GitBranchIcon, LockKeyholeIcon, SplitIcon } from "lucide-react";
 
 import { Button } from "../../ui/button";
 import {
@@ -12,21 +12,29 @@ import {
 } from "../../ui/dialog";
 
 type ForkWorkspaceMode = "new-worktree" | "local";
-export type ScientForkSource = "latest-response" | "this-response";
+export type ScientForkSource = "latest-response" | "this-response" | "this-message";
 
 export function scientForkDialogCopy(source: ScientForkSource): {
   readonly title: string;
   readonly description: string;
 } {
-  return source === "latest-response"
-    ? {
+  switch (source) {
+    case "latest-response":
+      return {
         title: "Fork latest response",
         description: "Create a new conversation from the latest response.",
-      }
-    : {
+      };
+    case "this-response":
+      return {
         title: "Fork this response",
         description: "Create a new conversation from this response.",
       };
+    case "this-message":
+      return {
+        title: "Fork this message",
+        description: "Create a new conversation from this message.",
+      };
+  }
 }
 
 export const SCIENT_FORK_WORKSPACE_CHOICES = [
@@ -56,6 +64,13 @@ const forkWorktreeUnavailableCopy: Record<ForkWorktreeUnavailableReason, string>
   "no-checkpoint": "No saved checkpoint for this response",
 };
 
+function unavailableCopy(source: ScientForkSource, reason: ForkWorktreeUnavailableReason): string {
+  if (source === "this-message" && reason === "no-checkpoint") {
+    return "No saved checkpoint before this message";
+  }
+  return forkWorktreeUnavailableCopy[reason];
+}
+
 export function ScientForkWorkspaceModeDialog({
   disabled,
   source,
@@ -77,7 +92,7 @@ export function ScientForkWorkspaceModeDialog({
       <DialogPopup className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <GitForkIcon className="size-4" />
+            <SplitIcon className="size-4 rotate-90" />
             {copy.title}
           </DialogTitle>
           <DialogDescription>{copy.description}</DialogDescription>
@@ -92,7 +107,7 @@ export function ScientForkWorkspaceModeDialog({
                 ? GitBranchIcon
                 : FolderOpenIcon;
             const description = unavailable
-              ? forkWorktreeUnavailableCopy[worktreeAvailability.reason]
+              ? unavailableCopy(source, worktreeAvailability.reason)
               : choice.description;
 
             return (

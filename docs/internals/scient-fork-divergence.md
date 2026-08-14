@@ -6,11 +6,20 @@ small set of T3-owned seams that an upstream merge may touch.
 
 ## Product behavior
 
-From the Fork action beside a completed assistant response, a user can create a
-new conversation containing the transcript through that exact response. The
-origin conversation is never modified. `/fork` selects the latest completed
-assistant response. Both paths ask the user to choose one of two workspace
-behaviors:
+From the Fork action beside either a sent user message or a completed assistant
+response, a user can create a new conversation at that exact point. The origin
+conversation is never modified. `/fork` continues to select the latest
+completed assistant response.
+
+- Forking an assistant response retains the transcript through that response.
+  The destination waits for the user's next message.
+- Forking a user message retains only the completed transcript before that
+  message. The selected text and images are restored as an unsent, persisted
+  destination composer draft so the user can edit or send it deliberately.
+  The server never sends the clicked message. The origin answer and all later
+  history are excluded.
+
+Every path asks the user to choose one of two workspace behaviors:
 
 - **Create independent worktree** creates a dedicated Git worktree at the
   selected historical checkpoint. It is available only when that checkpoint can
@@ -28,6 +37,16 @@ The client navigates to the new conversation only after durable provisioning
 has completed. A failed fork is returned as an error instead of exposing a
 half-ready conversation as successful.
 
+The destination also inherits safe, durable right-panel intent: files, diffs,
+pull requests, Agents, Sources, source PDFs, and portable Scient artifacts.
+Live terminal sessions are intentionally dropped. Live browser tab identities
+are replaced by one fresh browser surface rather than reusing another thread's
+session. Workspace-backed or attachment-backed transient artifact surfaces are
+dropped. A file PDF keeps its reader position automatically in a shared
+workspace; for a separate worktree, Scient remaps the saved reader session to
+the destination path after that workspace becomes available. This continuity
+is best-effort and can never make an otherwise successful fork fail.
+
 The fork lifecycle has three separate readiness milestones:
 
 1. **Server provisioning complete:** the durable fork workflow has created and
@@ -41,15 +60,17 @@ These milestones must not be collapsed into a fixed delay or treated as
 interchangeable. Navigation is successful only after the first two milestones
 are true; the third is the final UI action.
 
-The clicked assistant message is the public boundary. The server resolves its
-completed turn, conversation count, and checkpoint authoritatively; the client
-never supplies those implementation details and cannot request an empty
-turn-zero fork. Internal turn-zero baselines remain valid when re-forking an
-inherited transcript. A user can fork the latest completed response while a
-newer turn is active. Git checkpoint availability only decides whether the
-independent-worktree choice is eligible; same-workspace conversation forks also
-work in non-Git projects. Explicitly addressed archived origins remain readable
-for this decision; deleted origins do not.
+The clicked message ID is the public boundary. The server validates its role
+and durable projection, then resolves the completed conversation boundary and
+checkpoint authoritatively; the client never supplies those implementation
+details. A first user message legitimately resolves to a synthetic turn-zero
+boundary and becomes the destination's unsent draft. Internal turn-zero baselines also
+remain valid when re-forking an inherited transcript. A user can fork a sent
+message or the latest completed response while a newer turn is active. Git
+checkpoint availability only decides whether the independent-worktree choice
+is eligible; same-workspace conversation forks also work in non-Git projects.
+Explicitly addressed archived origins remain readable for this decision;
+deleted origins do not.
 
 ## Preserved Claude provenance
 
@@ -79,10 +100,10 @@ reachable even if publication later uses a different presentation strategy.
 
 Forking is a durable, restart-safe saga:
 
-1. The event-sourced decider resolves the requested assistant message to an
-   authoritative terminal completed conversation boundary; allocates fresh
-   thread, turn, message, and attachment identities; emits the new thread plus
-   retained transcript as one immutable turn-zero baseline; and records
+1. The event-sourced decider resolves the requested assistant or user message
+   to an authoritative completed conversation boundary; allocates fresh thread,
+   turn, message, and attachment identities; emits the new thread
+   plus retained transcript as one immutable turn-zero baseline; and records
    immutable lineage.
 2. The Scient lineage projector inserts a durable `pending` record.
 3. The Scient fork reactor claims the record, copies fork-owned attachment
@@ -94,10 +115,20 @@ Forking is a durable, restart-safe saga:
    its lineage row, so a missed live wake-up cannot strand an accepted fork.
 5. The reactor records `ready` only after every required substrate is verified.
    The WebSocket command waits for this typed completion receipt.
-6. On the first accepted provider turn, the provider-neutral bootstrap injects
-   the retained transcript and recent retained images. The durable bootstrap
-   marker is completed only after the provider accepts the send.
-7. Terminal failures such as a disappeared origin attachment or an unavailable
+6. The copied logical-boundary manifest records remapped turn and message IDs.
+   It lets a fork be forked again directly, without walking ancestor threads or
+   pretending copied transcript rows are provider-native turns.
+7. For a user-message fork, the web client prepares every authorized image,
+   persists the complete unsent destination draft, and flushes storage before
+   issuing the server command. A rejected command removes that staged draft.
+8. On the first provider turn, the provider-neutral bootstrap injects only the
+   immutable retained baseline and recent retained images. It reserves the
+   exact outgoing message before the external send and records
+   `pending` -> `sending` -> `completed`. A failed or interrupted send becomes
+   `ambiguous`; Scient never silently re-injects context whose acceptance is
+   uncertain. A later completed assistant response can reconcile that state as
+   accepted.
+9. Terminal failures such as a disappeared origin attachment or an unavailable
    required worktree checkpoint delete the unusable target thread and record an
    `abandoned` lineage state. Transient failures remain retryable.
 
@@ -125,6 +156,7 @@ internals:
 - `apps/server/src/orchestration/Layers/ScientForkReactor.ts`
 - `apps/web/src/components/chat/scient-fork/ScientForkMessageButton.tsx`
 - `apps/web/src/components/chat/scient-fork/ScientForkWorkspaceModeDialog.tsx`
+- `apps/web/src/components/scient-fork/forkViewContinuity.ts`
 - `apps/web/src/components/scient-fork/useScientThreadFork.ts`
 
 Tests live beside these modules. The checkpoint helper uses T3's existing
@@ -141,18 +173,19 @@ migration normalization and active repository/bootstrap code paths.
 ## Stack phase A: server-owned boundary resolution
 
 Stack phase A moves fork boundary authority from client-shaped thread snapshots to a
-Scient-owned server resolver. The public fork command carries only four
-fields: `originThreadId`, `newThreadId`, `sourceAssistantMessageId`, and
-`workspaceMode`. The server independently queries SQL-backed
-`projection_turns` joined with `scient_thread_lineage` to resolve the exact
-completed assistant boundary, its turn ID, conversation count, and checkpoint
+Scient-owned server resolver. The public fork command carries
+`originThreadId`, `newThreadId`, `workspaceMode`, and exactly one of
+`sourceAssistantMessageId` or `sourceUserMessageId`. The server independently
+queries SQL-backed `projection_turns`, `projection_thread_messages`, and
+`scient_thread_lineage` to validate message role/order and resolve the exact
+completed boundary, its turn ID, conversation count, and checkpoint
 eligibility. The client never supplies boundary arrays, turn counts, checkpoint
 relationships, or caller titles.
 
 ### Boundary ownership
 
 ```text
-client assistant-message ID
+client assistant- or user-message ID
         |
         v
 Scient server boundary resolver (ForkBoundaryReadModel)
@@ -172,6 +205,13 @@ serialized command worker, then delegates to the resolver before calling the
 decider. Missing origin detail or boundary resolution fails closed; production
 code never synthesizes conversation authority from Git checkpoints or cached
 snapshot arrays.
+
+User-message boundaries are paired through the authoritative turn projection,
+using each turn's pending user-message ID rather than message timestamp or
+lexical ID ordering. Legacy rows without that association use a conservative
+strictly-earlier turn timestamp fallback; an equal timestamp is excluded. This
+may omit an uncertain prior boundary, but it cannot retain the response to the
+user message being forked and then send that message again.
 
 ### Projection state narrowing
 
@@ -279,7 +319,7 @@ The Scient migration runner (`scientMigrator.ts`) delegates to the standard
 Effect SQL Migrator (`Migrator.make`) with its own `scient_schema_migrations`
 ledger table. It runs as a side effect of `SqlitePersistenceMemory` layer
 construction, before `pipeline.bootstrap` runs T3 migrations. Four migrations
-are defined:
+established the fork foundation:
 
 1. `durable-thread-forks` — creates the initial `scient_thread_lineage` table.
 2. `durable-provider-bootstrap` — adds provider bootstrap columns.
@@ -292,6 +332,15 @@ are defined:
    the active repository/recovery model cannot safely decode. It keys evidence
    and deletion by SQLite row ID so null or blank thread IDs are handled
    without collision or undeletable rows.
+
+Later Scient-owned migrations add independent projection and storage state.
+Migration 8 retains its pre-commit development ledger name,
+`fork-delivery-and-seed`, so already-tested local databases remain readable;
+its canonical body now adds the fork-point kind, copied logical-boundary
+manifest, and exact provider-delivery reservation fields. Migration 9,
+`copied-fork-boundary-manifest`, is an idempotent compatibility convergence for
+development databases that recorded the earlier migration-8 body. Fresh
+databases receive the column in migration 8 and migration 9 becomes a no-op.
 
 Before the Migrator runs, two Scient-owned preflight passes execute: a
 transactional rebuild of legacy `applied_at` ledgers into the canonical
@@ -354,22 +403,26 @@ Terminal lifecycle guards are enforced in repository SQL predicates:
   only non-terminal, non-ready states can transition to ready.
 - `claimFork`: WHERE `status NOT IN ('ready', 'abandoned')` — terminal and
   ready states cannot be claimed.
-- `markAccepted`: requires `status = 'ready'` plus
-  `provider_bootstrap_status = 'pending'`. Non-ready forks cannot reach a
+- `beginAttempt`: requires `status = 'ready'` plus
+  `provider_bootstrap_status = 'pending'`, and atomically reserves the exact
+  outbound user-message ID.
+- `markAccepted`: requires `provider_bootstrap_status = 'sending'` and that
+  exact reserved message ID. A mismatched or non-ready fork cannot reach a
   completed acceptance marker.
+- `markAmbiguous`: transitions only that same in-flight reservation; repeated
+  recovery calls are idempotent, while a different message ID fails closed.
 
 ### Provider bootstrap normalization
 
 `transcript-bootstrap` is the only active provider bootstrap mode.
-`prepareTurn` no longer reads the `provider_mode` compatibility column; it
-checks only `status`, `provider_bootstrap_status`, and
-`fork_point_turn_count`. The normal successful path injects the retained
-transcript exactly once (when `provider_bootstrap_status = 'pending'` and
-`status = 'ready'`), `markAccepted` completes the durable marker, and
-subsequent `prepareTurn` calls return `bootstrapPending = false`. Crash
-recovery: if the process crashes after `prepareTurn` but before `markAccepted`,
-the marker remains `pending` and `prepareTurn` re-injects on restart
-(at-least-once). Once `markAccepted` persists, restart injects nothing again.
+`prepareTurn` no longer reads the `provider_mode` compatibility column. It
+reads the immutable `baseline_assistant_message_id` and will never infer the
+baseline from later destination messages. Before the external provider send,
+`beginAttempt` atomically reserves the exact user message. `markAccepted`
+completes only that reservation. A send failure
+marks delivery ambiguous; a restart blocks re-injection unless a completed
+assistant response proves the original attempt was accepted. Bounded omission
+counts remain explicit inside the injected context payload.
 
 ## Narrow T3-owned seams
 
@@ -384,10 +437,10 @@ All production seams are additive and marked with `SCIENT-FORK:START` and
 | `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert. | Generic projection extension and derived-field hooks replace these seams. |
 | `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient migration runner.                                                                                             | A generic product-schema hook replaces the seam.                          |
 | `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                                                                                   | Start/provide the Scient worker and provider-context service.                                                                            | Generic reactor and provider-context extension points exist.              |
-| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Prepare the first fork turn and mark its bootstrap accepted after provider send.                                                         | T3 exposes a provider request-decoration hook.                            |
+| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Reserve, prepare, and reconcile the first fork provider turn around the existing provider send.                                          | T3 exposes a provider request-decoration hook.                            |
 | `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                       | T3 supports typed asynchronous command receipts.                          |
 | `packages/client-runtime/src/operations/commands.ts`, `packages/client-runtime/src/state/threadCommands.ts`                                                                   | Dispatch and serialize the fork command.                                                                                                 | T3 client runtime has an equivalent operation.                            |
-| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`                                                                                   | Send the selected completed assistant message ID and mount Scient-owned hook/control components.                                         | T3 exposes a row action/extension slot or ships native UI.                |
+| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, `apps/web/src/rightPanelStore.ts`                                                | Send the selected message ID, mount Scient-owned fork controls, and expose one narrow sanitized panel-state restore action.              | T3 exposes row-action and thread-view continuity extension slots.         |
 
 Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
@@ -395,10 +448,10 @@ forking and would have increased every future upstream merge.
 
 ## Safety and bounded compromises
 
-- Only terminal completed assistant responses are forkable. Invalid,
-  non-terminal, streaming, stale, or unknown message IDs fail closed. A newer
-  streaming turn is excluded from the retained prefix rather than blocking an
-  older completed response.
+- Only durable sent user messages and terminal completed assistant responses
+  are forkable. Invalid, stale, unknown, or streaming message IDs fail closed.
+  A newer streaming turn is excluded from the retained prefix rather than
+  blocking an older fork point.
 - A new worktree fails closed if the historical Git checkpoint is unavailable.
 - Same-workspace mode is honest about sharing current files; only its
   conversation and checkpoint lineage are independent.
@@ -410,10 +463,14 @@ forking and would have increased every future upstream merge.
 - Provider bootstrap preserves exact message text until the total contract
   budget requires truncating the oldest context. It never emits invalid JSON.
   The current bounds are 120,000 characters and eight recent images.
-- Marking provider bootstrap complete retries locally. If persistence fails
-  after a provider accepted the send, restart recovery may inject the context
-  again. At-least-once context is safer than silently losing it; true
-  exactly-once delivery requires provider-side idempotency.
+- Provider acceptance cannot be made globally exactly-once without provider
+  idempotency. Scient therefore chooses the safe failure mode: an uncertain
+  send is durable and blocks automatic re-injection. A proved provider response
+  reconciles it; otherwise the user creates a fresh fork instead of risking a
+  duplicated request.
+- Right-panel continuity copies only safe descriptors. It never reuses a live
+  terminal or browser session, never persists authorized URLs, and expires
+  pending PDF remaps after seven days.
 - A transiently failed durable fork remains recoverable and is retried after
   restart. A terminally impossible fork is compensated and never shown as a
   usable thread.
@@ -453,15 +510,19 @@ building a parallel generic platform.
   terminal truthfulness, restart recovery, attachment replay, workspace/
   checkpoint truthfulness, provider bootstrap normal and crash recovery,
   bootstrap readiness gating, re-fork persistence, abandoned non-regression,
-  and `markAccepted` non-ready rejection.
+  provider reservation identity, ambiguous-send recovery, copied-boundary
+  recovery, and non-ready acceptance rejection.
 - Cross-area: fresh startup to ready fork, prototype upgrade compatibility,
   restart during pending fork, interrupted provisioning retry, exact boundary
   through projection/persistence, revert-then-fork, re-fork after
   normalization, T3/Scient ledger isolation, and stacked phase A+B validation.
 - Provider bootstrap normal, truncation, attachment, restart, send-failure, and
   completion-marker cases.
-- Web assistant-response action, streaming exclusion, slash-command selection,
-  same-tick duplicate prevention, and RPC acknowledgement/failure gating.
+- Web assistant- and user-message actions, turn-zero user fork, persisted
+  unsent text/image draft, failed-command cleanup, streaming exclusion,
+  slash-command selection, same-tick duplicate prevention, safe
+  right-panel filtering, PDF session remapping, and RPC
+  acknowledgement/failure gating.
 - Focused server, contracts, client-runtime, and web typechecks/tests; format;
   lint; `git diff --check`; and read-only merge rehearsal against current T3.
 

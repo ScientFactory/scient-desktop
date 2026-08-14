@@ -157,6 +157,12 @@ const make = Effect.gen(function* () {
   const processFork = Effect.fn("processScientFork")(function* (payload: ThreadForkedPayload) {
     const claimedAt = yield* nowIso;
     if (!(yield* claimFork(sql, payload.newThreadId, claimedAt))) {
+      // Another worker owns the lifecycle or the fork is already terminal.
+      const status = yield* getForkStatus(sql, payload.newThreadId);
+      if (status?.status !== "ready") return;
+      const completion = yield* completionFor(payload.newThreadId);
+      yield* Deferred.succeed(completion, undefined);
+      yield* releaseCompletion(payload.newThreadId, completion);
       return;
     }
 

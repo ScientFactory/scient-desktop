@@ -570,7 +570,14 @@ describe("ProviderCommandReactor", () => {
           input: `retained-context\n${input.messageText}`,
           attachments: input.attachments,
           bootstrapPending: true,
+          omittedMessageCount: 0,
+          omittedAttachmentCount: 0,
         };
+      }),
+    );
+    const beginAttempt = vi.fn<ScientForkContextBootstrapShape["beginAttempt"]>(() =>
+      Effect.sync(() => {
+        callOrder.push("reserved");
       }),
     );
     const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() =>
@@ -579,7 +586,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const harness = await createHarness({
-      forkContextBootstrap: { prepareTurn, markAccepted },
+      forkContextBootstrap: { prepareTurn, beginAttempt, markAccepted },
       sendTurnEffect: () =>
         Effect.sync(() => {
           callOrder.push("send");
@@ -613,11 +620,14 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       input: "retained-context\ncontinue from here",
     });
-    expect(callOrder).toEqual(["prepare", "send", "accepted"]);
+    expect(callOrder).toEqual(["prepare", "reserved", "send", "accepted"]);
   });
 
-  it("keeps fork context pending when the provider rejects the turn", async () => {
+  it("marks fork context ambiguous when provider acceptance cannot be proven", async () => {
     const markAccepted = vi.fn<ScientForkContextBootstrapShape["markAccepted"]>(() => Effect.void);
+    const markAmbiguous = vi.fn<ScientForkContextBootstrapShape["markAmbiguous"]>(
+      () => Effect.void,
+    );
     const harness = await createHarness({
       forkContextBootstrap: {
         prepareTurn: (input) =>
@@ -625,8 +635,11 @@ describe("ProviderCommandReactor", () => {
             input: `retained-context\n${input.messageText}`,
             attachments: input.attachments,
             bootstrapPending: true,
+            omittedMessageCount: 0,
+            omittedAttachmentCount: 0,
           }),
         markAccepted,
+        markAmbiguous,
       },
       sendTurnEffect: () =>
         Effect.fail(
@@ -658,6 +671,10 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);
     expect(markAccepted).not.toHaveBeenCalled();
+    expect(markAmbiguous).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      messageId: asMessageId("fork-rejected-user-message"),
+    });
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

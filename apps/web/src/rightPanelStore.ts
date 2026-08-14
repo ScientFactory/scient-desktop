@@ -97,6 +97,7 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  restoreThreadState: (ref: ScopedThreadRef, state: ThreadRightPanelState) => void;
   open: (
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "scient">,
@@ -387,6 +388,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set) => ({
       byThreadKey: {},
+      restoreThreadState: (ref, restored) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), () => restored),
+        })),
       open: (ref, kind) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
@@ -638,11 +643,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 surface.id !== "browser:new" &&
                 validIds.has(surface.id),
             );
+            const placeholder =
+              tabIds.length === 0
+                ? current.surfaces.find((surface) => surface.id === "browser:new")
+                : undefined;
             const knownIds = new Set(existingBrowser.map((surface) => surface.id));
             const added = tabIds
               .filter((tabId) => !knownIds.has(`browser:${tabId}`))
               .map((tabId) => browserSurface(tabId));
-            const surfaces = [...nonBrowser, ...existingBrowser, ...added];
+            const surfaces = [
+              ...nonBrowser,
+              ...(placeholder === undefined ? [] : [placeholder]),
+              ...existingBrowser,
+              ...added,
+            ];
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );

@@ -50,6 +50,7 @@ const ORIGIN_WORKTREE = "/tmp/scient-fork-origin-worktree";
 const NEW_WORKTREE_FIXTURE = "/tmp/scient-fork-new-worktree";
 const CREATED_AT = "2026-01-01T00:00:00.000Z";
 const FORK_AT_TURN = 1;
+const SOURCE_USER_MESSAGE_ID = MessageId.make("origin-user-1");
 const SOURCE_ASSISTANT_MESSAGE_ID = MessageId.make("origin-assistant-1");
 
 interface LineageRow {
@@ -204,7 +205,7 @@ const seedOrigin = (checkpointStatus: "ready" | "missing" = "ready") =>
       commandId: CommandId.make("cmd-fork-turn-start-1"),
       threadId: ORIGIN,
       message: {
-        messageId: MessageId.make("origin-user-1"),
+        messageId: SOURCE_USER_MESSAGE_ID,
         role: "user",
         text: "Investigate the result",
         attachments: [],
@@ -289,6 +290,19 @@ const dispatchFork = (workspaceMode: "local" | "new-worktree", forkCommandId: st
       newThreadId: NEW,
       sourceAssistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
       workspaceMode,
+    });
+  });
+
+const dispatchUserMessageFork = (forkCommandId: string) =>
+  Effect.gen(function* () {
+    const engine = yield* OrchestrationEngineService;
+    yield* engine.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make(forkCommandId),
+      originThreadId: ORIGIN,
+      newThreadId: NEW,
+      sourceUserMessageId: SOURCE_USER_MESSAGE_ID,
+      workspaceMode: "local",
     });
   });
 
@@ -407,6 +421,59 @@ describe("ScientForkReactor", () => {
       const lineage = yield* readLineageRow(sql);
       expect(lineage?.fidelity_mode).toBe("transcript-bootstrap");
       expect(lineage?.workspace_mode).toBe("new-worktree");
+    }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
+  });
+
+  it.live("leaves a user-message fork empty for an unsent client composer draft", () => {
+    const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+    const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
+
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* reactor.start();
+      yield* seedOrigin();
+
+      const completionFiber = yield* Effect.forkChild(reactor.awaitCompletion(NEW));
+      yield* dispatchUserMessageFork("cmd-fork-from-user-message");
+      yield* Fiber.join(completionFiber);
+      yield* reactor.drain;
+
+      const detail = yield* snapshotQuery.getThreadDetailById(NEW);
+      expect(Option.isSome(detail)).toBe(true);
+      if (Option.isSome(detail)) {
+        expect(detail.value.messages).toHaveLength(0);
+        expect(
+          detail.value.messages.some((message) => message.id === SOURCE_ASSISTANT_MESSAGE_ID),
+        ).toBe(false);
+        expect(detail.value.forkLineage).toMatchObject({
+          originThreadId: ORIGIN,
+        });
+      }
+
+      const [lineage] = yield* sql<{
+        readonly baseline_assistant_message_id: string | null;
+        readonly fork_point_kind: string;
+        readonly source_user_message_id: string | null;
+        readonly copied_boundaries_json: string;
+      }>`
+        SELECT
+          baseline_assistant_message_id,
+          fork_point_kind,
+          source_user_message_id,
+          copied_boundaries_json
+        FROM scient_thread_lineage
+        WHERE thread_id = ${NEW}
+      `;
+      expect(lineage).toEqual({
+        baseline_assistant_message_id: null,
+        fork_point_kind: "user-message",
+        source_user_message_id: SOURCE_USER_MESSAGE_ID,
+        copied_boundaries_json: "[]",
+      });
+      expect(forkBaselineCalls).toHaveLength(0);
+      expect(createWorktreeCalls).toHaveLength(0);
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 

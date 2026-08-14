@@ -864,6 +864,34 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("restores one sanitized thread state without changing another thread", () => {
+    useRightPanelStore.getState().openFile(refA, "origin.ts");
+    useRightPanelStore.getState().openFile(refB, "untouched.ts");
+
+    useRightPanelStore.getState().restoreThreadState(refA, {
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
+    });
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([
+      {
+        id: "file:untouched.ts",
+        kind: "file",
+        relativePath: "untouched.ts",
+        revealLine: null,
+        revealRequestId: 1,
+      },
+    ]);
+  });
+
   it("reconciles browser surfaces without deleting other surface kinds", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
@@ -875,5 +903,20 @@ describe("rightPanelStore", () => {
         (surface) => surface.id,
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
+  });
+
+  it("keeps a new-browser placeholder until a real browser tab exists", () => {
+    useRightPanelStore.getState().openBrowser(refA, null);
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, []);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "browser:new",
+      kind: "preview",
+      resourceId: null,
+    });
+
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a"]);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }]);
   });
 });

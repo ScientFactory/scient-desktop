@@ -90,6 +90,28 @@ describe("PDF reader session persistence", () => {
     });
   });
 
+  it("copies a complete reader session to a remapped fork document", () => {
+    const persisted = createMockStorage();
+    const store = createPdfReaderSessionStore({
+      storage: persisted.storage,
+      writeDelayMs: 0,
+      now: () => 1_000,
+    });
+    store.updateViewport("origin-paper", VIEWPORT);
+    store.updateSidebar("origin-paper", "thumbnails");
+
+    store.copy("origin-paper", "fork-paper");
+
+    expect(store.get("fork-paper")).toMatchObject({
+      viewport: VIEWPORT,
+      sidebar: "thumbnails",
+    });
+    expect(store.get("origin-paper")).toMatchObject({
+      viewport: VIEWPORT,
+      sidebar: "thumbnails",
+    });
+  });
+
   it("ignores corrupt envelopes and invalid entries without losing valid sessions", () => {
     expect(decodePdfReaderSessions("not-json")).toEqual({});
     expect(decodePdfReaderSessions(JSON.stringify({ version: 2, sessions: {} }))).toEqual({});
