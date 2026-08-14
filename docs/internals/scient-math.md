@@ -94,7 +94,24 @@ an asterisk does not qualify (it is usually the author's emphasis
 delimiter); a colon needs a strong TeX signal; markdown structure is never
 math content — the `](` and `][` link boundaries, bare reference labels
 (`[foo]`, while `[0,1]` intervals stay math), footnote references (`[^1]`),
-HTML-tag and autolink shapes; and bare domain-like content stays prose. One micromark caveat is load-bearing: when several
+HTML-tag and autolink shapes; bare domain-like content stays prose; a
+backslash only counts as TeX when it starts a control word or control
+symbol, so string escapes (`"$a\n$b"`, `\U$first\E$last`) and regex
+backreferences stay literal; calls with multi-letter or dotted names
+(`$el.fadeOut(200)$`) are code, while `f(x)` and the classic named
+operators (`sin`, `log`, …) stay math; parens and brackets must balance
+unless the span opens with one (half-open `$[0,1)$` survives); a trailing
+prime must follow a symbol and a trailing percent must be escaped; and the
+closer never abuts a digit, dollar, or brace (`"$dir${file}"`).
+
+Known floor, accepted by design: two glued single-identifier interpolations
+(`echo $a$b`) render the first identifier as math, because `$a$` is
+byte-identical to authored math and rejecting a letter after the closer
+would break the legitimate `$n$th` idiom. Three adversarial verification
+rounds (structure diffing against a no-plugin baseline, guard-bypass
+batteries over shell/interpolation/currency corpora, and per-character
+streaming prefixes) drove every other discovered bypass into these rules;
+their reproducers live in the co-located tests. One micromark caveat is load-bearing: when several
 constructs share a character code, an attempt runs them all regardless of
 their individual `previous` hooks, so every Scient guard lives inside
 `tokenize`, not in the `previous` hook.

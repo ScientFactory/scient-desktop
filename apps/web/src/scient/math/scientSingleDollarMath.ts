@@ -41,6 +41,7 @@ const CODE_EOF = null;
 const CODE_SPACE = 32;
 const CODE_DOLLAR = 36;
 const CODE_BACKSLASH = 92;
+const CODE_LEFT_BRACE = 123;
 
 /**
  * Longer candidates are overwhelmingly two unrelated dollars pairing up, not
@@ -68,6 +69,50 @@ const HTML_TAG_LIKE_PATTERN = /<\/?[a-zA-Z][^<>]*>/;
 const INTERPOLATION_SIGNAL_PATTERN = /[\\^_+\-*=<>|]/;
 const BARE_BRACKET_GROUP_PATTERN = /^!?\[[^\][]*\]$/;
 const DOMAIN_LIKE_PATTERN = /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+){2,}$/u;
+// A TeX backslash starts a control word (two-plus letters: `\alpha`, `\to`)
+// or a control symbol (`\%`, `\$`, `\,`). A backslash followed by a single
+// alphanumeric — `\n`, `\t`, `\E`, `\1` — is a string escape or regex
+// backreference, the signature of `echo -e "$a\n$b"` glue; KaTeX rejects
+// those anyway, so such spans could only ever show the literal fallback.
+const STRING_ESCAPE_PATTERN = /\\(?![a-zA-Z]{2,})[a-zA-Z0-9]/;
+const TEX_CONTROL_WORD_PATTERN = /\\[a-zA-Z]{2,}/;
+// A call with a multi-letter or dotted name (`foo(1)`, `el.fadeOut(200)`) is
+// code; informal math writes single-letter functions or the classic named
+// operators.
+const CALL_SHAPE_PATTERN = /^([a-zA-Z][\w$]*(?:\.[\w$]+)*)\(/;
+const MATH_FUNCTION_NAMES = new Set([
+  "sin",
+  "cos",
+  "tan",
+  "cot",
+  "sec",
+  "csc",
+  "sinh",
+  "cosh",
+  "tanh",
+  "coth",
+  "arcsin",
+  "arccos",
+  "arctan",
+  "log",
+  "ln",
+  "lg",
+  "exp",
+  "det",
+  "gcd",
+  "lcm",
+  "max",
+  "min",
+  "lim",
+  "sup",
+  "inf",
+  "arg",
+  "mod",
+  "deg",
+  "dim",
+  "ker",
+  "Pr",
+]);
 
 /**
  * Closing parens or brackets the span never opened are glued code
@@ -125,6 +170,7 @@ function isWhitespaceCode(code: Code): boolean {
  */
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
+  if (STRING_ESCAPE_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
   if (!CONTENT_END_PATTERN.test(content)) return false;
@@ -138,12 +184,25 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (HTML_TAG_LIKE_PATTERN.test(content)) return false;
   // Dereference arrows (`$x->{key}$y`) and empty-paren calls (`$a.b()$c`)
   // are code glue; TeX writes \to and functions take arguments.
-  if ((content.includes("->") || content.includes("=>")) && !content.includes("\\")) return false;
+  if (
+    (content.includes("->") || content.includes("=>")) &&
+    !TEX_CONTROL_WORD_PATTERN.test(content)
+  ) {
+    return false;
+  }
   if (content.includes("()")) return false;
+  const call = CALL_SHAPE_PATTERN.exec(content);
+  const callName = call?.[1];
+  if (
+    callName !== undefined &&
+    (callName.includes(".") || (callName.length > 1 && !MATH_FUNCTION_NAMES.has(callName)))
+  ) {
+    return false;
+  }
   if (hasGluedClosers(content)) return false;
-  // A brace group in TeX always carries a command (`{a \over b}`); without a
-  // backslash a `{` start is interpolation (`${PREFIX:-app}`, `${row}`).
-  if (content.startsWith("{") && !content.includes("\\")) return false;
+  // A brace group in TeX always carries a control word (`{a \over b}`); a
+  // bare `{` start is interpolation (`${PREFIX:-app}`, `${dir//\//_}`).
+  if (content.startsWith("{") && !TEX_CONTROL_WORD_PATTERN.test(content)) return false;
   // A parenthesized span needs a TeX operator, and once it contains spaces a
   // shell flag's `-`/`+` is not enough (`$(date -u)$`, `$(date +%F)$`).
   if (content.startsWith("(")) {
@@ -242,8 +301,9 @@ function scientSingleDollarMathText(): Construct {
 
     function afterCloser(code: Code): State | undefined {
       // A digit after the closer is a price range (`$5-$10`); another dollar
-      // means this closer was really part of a `$$` sequence.
-      if (isDigitCode(code) || code === CODE_DOLLAR) {
+      // means this closer was really part of a `$$` sequence; a brace is the
+      // next interpolation (`"$dir${file}"`) — real math never abuts `{`.
+      if (isDigitCode(code) || code === CODE_DOLLAR || code === CODE_LEFT_BRACE) {
         return nok(code);
       }
       effects.exit("mathText");

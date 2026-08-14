@@ -116,6 +116,24 @@ describe("isPlausibleScientSingleDollarTex", () => {
     expect(isPlausibleScientSingleDollarTex("(a+b)^2")).toBe(true);
   });
 
+  it("rejects string escapes but keeps control words and control symbols", () => {
+    for (const content of ["a\\n", "PATH\\n", "col1\\t", "h->{name}\\n", "first\\E", "a/\\n"]) {
+      expect(isPlausibleScientSingleDollarTex(content)).toBe(false);
+    }
+    expect(isPlausibleScientSingleDollarTex("\\alpha")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("\\$5 + \\$10")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("x\\,y")).toBe(true);
+  });
+
+  it("rejects code-shaped calls but keeps math functions", () => {
+    for (const content of ["el.fadeOut(200)", "foo(1)", "{dir//\\//_}"]) {
+      expect(isPlausibleScientSingleDollarTex(content)).toBe(false);
+    }
+    expect(isPlausibleScientSingleDollarTex("f(x)")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("sin(2x)")).toBe(true);
+    expect(isPlausibleScientSingleDollarTex("g(x_0)")).toBe(true);
+  });
+
   it("rejects empty and oversized content", () => {
     expect(isPlausibleScientSingleDollarTex("")).toBe(false);
     expect(
@@ -267,5 +285,25 @@ describe("guarded single-dollar tokenizer", () => {
     expect(render("derivative $x'$ here")).toContain(INLINE_MATH_SHAPE);
     expect(render("share is $100\\%$ done")).toContain(INLINE_MATH_SHAPE);
     expect(render("interval $[0,1)$ closed-open")).toContain(INLINE_MATH_SHAPE);
+  });
+
+  it("keeps escape-sequence glue between interpolated variables literal", () => {
+    for (const markdown of [
+      'echo -e "$a\\n$b" prints both',
+      'printf "$col1\\t$col2\\n" here',
+      'perl print "$h->{name}\\n$h->{age}\\n"',
+      'perl "\\U$first\\E$last"',
+      'sed "s/$old/\\n$new/" file inserts',
+      "then $el.fadeOut(200)$next.fadeIn(150) runs",
+      "key=${dir//\\//_}${file} joins",
+      'path="$dir${file}" here',
+    ]) {
+      expect(render(markdown)).not.toContain("language-math");
+    }
+  });
+
+  it("still renders named math functions", () => {
+    expect(render("value $sin(2x)$ here")).toContain(INLINE_MATH_SHAPE);
+    expect(render("norm $\\alpha$ fine")).toContain(INLINE_MATH_SHAPE);
   });
 });
