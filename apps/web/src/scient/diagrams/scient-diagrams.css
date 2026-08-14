@@ -1,0 +1,30 @@
+.scient-mermaid-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22rem;
+}
+
+.scient-mermaid-inline svg {
+  display: block;
+  width: 100%;
+  max-width: 100% !important;
+  height: auto;
+  margin-inline: auto;
+}
+
+.scient-mermaid-dialog-diagram svg {
+  display: block;
+  width: 100%;
+  max-width: none !important;
+  height: auto;
+}
+
+.scient-mermaid-source {
+  tab-size: 2;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scient-mermaid-card * {
+    scroll-behavior: auto !important;
+  }
+}

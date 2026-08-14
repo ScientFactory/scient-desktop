@@ -109,6 +109,7 @@ import {
 import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
+import { MermaidDiagramCard } from "../scient/diagrams/MermaidDiagramCard";
 
 interface ChatMarkdownProps {
   text: string;
@@ -1716,6 +1717,19 @@ function ChatMarkdown({
         const language = extractFenceLanguage(codeBlock.className);
         const fenceMeta = extractPreCodeMeta(node);
         const fenceTitle = extractFenceTitle(fenceMeta);
+        if (!isStreaming && language.toLowerCase() === "mermaid") {
+          return (
+            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+              <MermaidDiagramCard
+                fenceMeta={fenceMeta}
+                language={language}
+                source={codeBlock.code}
+                theme={resolvedTheme}
+                title={fenceTitle}
+              />
+            </RenderErrorBoundary>
+          );
+        }
         const copyTextDirection = resolvePlainTextBoxDirection({
           code: codeBlock.code,
           language,

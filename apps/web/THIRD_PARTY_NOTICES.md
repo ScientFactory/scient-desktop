@@ -1,5 +1,13 @@
 # Third-Party Notices
 
+## Mermaid
+
+Scient renders diagrams with an unmodified, locally bundled
+[`mermaid`](https://mermaid.js.org/) package. Mermaid is Copyright (c)
+2014-2022 Knut Sveidqvist and is licensed under the MIT License.
+
+- <https://github.com/mermaid-js/mermaid/blob/develop/LICENSE>
+
 ## vscode-icons
 
 The custom file icon symbols in `src/pierre-icons.ts` are adapted from the

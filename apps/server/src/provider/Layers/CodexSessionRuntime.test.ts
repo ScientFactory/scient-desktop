@@ -307,6 +307,19 @@ describe("T3 browser developer instructions", () => {
   });
 });
 
+describe("Scient rich chat presentation instructions", () => {
+  it("advertises the same Mermaid capability in both collaboration modes", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      NodeAssert.match(instructions, /settled fenced ```mermaid blocks/);
+      NodeAssert.match(instructions, /self-contained Mermaid source/);
+      NodeAssert.match(instructions, /not a durable project artifact/);
+    }
+  });
+});
+
 describe("hasConfiguredMcpServer", () => {
   it("detects inline Codex MCP configuration arguments", () => {
     NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
