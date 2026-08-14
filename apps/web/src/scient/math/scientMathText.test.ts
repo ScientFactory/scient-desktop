@@ -71,6 +71,26 @@ describe("normalizeScientMathDelimiters", () => {
     expect(normalizeScientMathDelimiters(unclosed)).toBe(unclosed);
   });
 
+  it("never rewrites inside raw HTML tag attributes", () => {
+    const anchor = 'See <a href="/path/\\(v1\\)/doc">link</a> now.';
+    const span = '<span title="\\(x\\)">label</span>';
+
+    expect(normalizeScientMathDelimiters(anchor)).toBe(anchor);
+    expect(normalizeScientMathDelimiters(span)).toBe(span);
+  });
+
+  it("still rewrites prose between raw HTML tags", () => {
+    expect(normalizeScientMathDelimiters("<span>\\(x\\)</span>")).toBe("<span>$$x$$</span>");
+  });
+
+  it("never rewrites inside HTML comments, closed or streaming", () => {
+    const comment = "before <!-- \\(x\\) --> after";
+    const unclosed = "before <!-- \\(x\\)";
+
+    expect(normalizeScientMathDelimiters(comment)).toBe(comment);
+    expect(normalizeScientMathDelimiters(unclosed)).toBe(unclosed);
+  });
+
   it("never rewrites inside inline code spans, including multi-backtick spans", () => {
     const single = "use `\\(x\\)` here";
     const double = "use ``a \\(x\\) b`` here";

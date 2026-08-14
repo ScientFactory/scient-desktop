@@ -43,8 +43,10 @@ describe("math components", () => {
     const inline = renderToStaticMarkup(createElement(ScientInlineMath, { tex: "x^2" }));
     const display = renderToStaticMarkup(createElement(ScientDisplayMath, { tex: "E = mc^2" }));
 
-    expect(inline).toContain("$x^2$");
-    expect(inline).toContain('data-markdown-copy="$x^2$"');
+    // Both forms are double-dollar: single-dollar spans are not recognized,
+    // so only `$$...$$` re-renders as math when a copied message is pasted.
+    expect(inline).toContain("$$x^2$$");
+    expect(inline).toContain('data-markdown-copy="$$x^2$$"');
     expect(display).toContain("$$E = mc^2$$");
     expect(display).toContain("data-markdown-copy");
   });

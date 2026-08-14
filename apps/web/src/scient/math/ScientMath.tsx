@@ -24,10 +24,12 @@ function estimateRenderedMathSize(html: string, tex: string): number {
 /**
  * What highlight-and-copy emits for a math node: the dollar-form source, so a
  * copied message re-renders as the same math (`markdown-clipboard.ts` returns
- * `data-markdown-copy` verbatim instead of walking KaTeX's DOM).
+ * `data-markdown-copy` verbatim instead of walking KaTeX's DOM). Both modes
+ * use `$$`, the only dollar form recognized — single-dollar `$...$` would not
+ * re-render on paste; the newline framing keeps display math a block.
  */
 function mathMarkdownCopySource(tex: string, displayMode: boolean): string {
-  return displayMode ? `$$\n${tex}\n$$\n\n` : `$${tex}$`;
+  return displayMode ? `$$\n${tex}\n$$\n\n` : `$$${tex}$$`;
 }
 
 interface ScientMathProps {
@@ -40,7 +42,7 @@ interface ScientMathProps {
 function ScientMathLiteral({ tex, displayMode }: Omit<ScientMathProps, "isStreaming">) {
   return (
     <code dir="ltr" data-markdown-copy={mathMarkdownCopySource(tex, displayMode)}>
-      {displayMode ? `$$${tex}$$` : `$${tex}$`}
+      {`$$${tex}$$`}
     </code>
   );
 }

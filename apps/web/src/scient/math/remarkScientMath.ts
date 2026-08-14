@@ -3,10 +3,12 @@ import remarkMath from "remark-math";
 
 /**
  * remark-math with single-dollar parsing off: `$...$` at the parser level
- * corrupts links, paths, shell identifiers, and prices, so only the
- * unambiguous `$$` forms are parsed there. Single-dollar math is recognized
- * afterwards by `remarkScientMathRefinements`, where code, links, and raw HTML
- * are already structurally excluded and stricter token rules can apply.
+ * corrupts links, paths, shell identifiers, and prices, and no later pass can
+ * repair structure the parser already destroyed. Single-dollar math is not
+ * recognized anywhere in this first release: tree-level token heuristics
+ * cannot tell `$HOME/bin:$PATH` from math, and emphasis parsing fragments
+ * spans like `$a*b*c$` before any tree pass can see them. Safe `$...$`
+ * support needs a tokenizer-level pass with source context — future work.
  */
 export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] satisfies NonNullable<
   ReactMarkdownOptions["remarkPlugins"]
@@ -38,16 +40,7 @@ interface MdastNode {
   };
 }
 
-/** The hast instructions mdast-util-math attaches to the inline math nodes it parses; synthesized nodes need the same shape to render. */
-function inlineMathHastData(value: string) {
-  return {
-    hName: "code",
-    hProperties: { className: ["language-math", "math-inline"] },
-    hChildren: [{ type: "text", value }],
-  };
-}
-
-/** The display shape: a pre wrapping a language-math code element. */
+/** The display shape synthesized display nodes need to render: a pre wrapping a language-math code element. */
 function displayMathHastData(value: string) {
   return {
     hName: "pre",
@@ -66,141 +59,116 @@ interface VFileLike {
   toString(): string;
 }
 
-/** Subtrees whose text must never become math: literal regions and link machinery. */
-const EXCLUDED_PARENT_TYPES = new Set([
-  "code",
-  "inlineCode",
-  "html",
-  "math",
-  "inlineMath",
-  "link",
-  "linkReference",
-  "image",
-  "imageReference",
-  "definition",
-]);
-
-const IDENTIFIER_CONTENT_PATTERN = /^[A-Z][A-Z0-9]+$/;
-const MATH_SIGNAL_PATTERN = /[\\^_{}=+\-*/<>|]/;
-
-/**
- * Whether a candidate `$...$` span reads as math. Shell/currency identifiers
- * like `$PATH$` or `$USD$` stay text; spaced prose like `5 and ` stays text
- * unless an operator or control sequence marks it as an expression. Compact
- * numeric spans — `$42$`, `$1/2$`, `$12-15$` — are math.
- */
-function isPlausibleTexSpan(content: string): boolean {
-  if (content.length === 0 || content.length > MAX_SCIENT_TEX_LENGTH) return false;
-  if (IDENTIFIER_CONTENT_PATTERN.test(content)) return false;
-  if (/\s/.test(content) && !MATH_SIGNAL_PATTERN.test(content)) return false;
-  return true;
+export interface ScientMathRefinementOptions {
+  /**
+   * The message text before delimiter normalization. Normalization is
+   * length-preserving, so a math node's offsets address the same characters
+   * here; the original delimiter at a node's start offset tells whether the
+   * author asked for inline `\(...\)` or display `\[...\]` math, a
+   * distinction the uniform `$$` rewrite erases.
+   */
+  sourceText?: string;
 }
 
-interface DollarSpan {
-  readonly start: number;
-  readonly end: number;
-  readonly content: string;
+type AuthoredIntent = "inline" | "display";
+
+function authoredIntentAt(sourceText: string | undefined, node: MdastNode): AuthoredIntent | null {
+  if (sourceText === undefined) return null;
+  const start = node.position?.start.offset;
+  if (typeof start !== "number") return null;
+  const opener = sourceText.slice(start, start + 2);
+  if (opener === "\\(") return "inline";
+  if (opener === "\\[") return "display";
+  return null;
 }
 
-function isWordCharacter(character: string | undefined): boolean {
-  return character !== undefined && /[\p{L}\p{N}_]/u.test(character);
+function displayMathNode(value: string, position: MdastNode["position"]): MdastNode {
+  return {
+    type: "math",
+    value,
+    data: displayMathHastData(value),
+    ...(position ? { position } : {}),
+  };
 }
 
 /**
- * Scans one text value for `$...$` spans under the token rules: the opener is
- * not preceded by a word character, backslash, or dollar and not followed by
- * whitespace; the closer is not preceded by whitespace and not followed by a
- * digit (protecting `$5-$10`) or another dollar.
+ * Trims break nodes and edge whitespace from the run; a run with no prose
+ * left contributes no paragraph. Edge newlines must go because remark-breaks
+ * runs after this pass on the hard-break surface and would otherwise turn
+ * them into stray `<br>`s at the split paragraphs' edges.
  */
-function findDollarSpans(value: string): DollarSpan[] {
-  const spans: DollarSpan[] = [];
-  let searchFrom = 0;
-  while (searchFrom < value.length) {
-    const open = value.indexOf("$", searchFrom);
-    if (open === -1) break;
-    const before = value[open - 1];
-    if (isWordCharacter(before) || before === "\\" || before === "$") {
-      searchFrom = open + 1;
-      continue;
-    }
-    const first = value[open + 1];
-    if (first === undefined || /\s/.test(first) || first === "$") {
-      searchFrom = open + 1;
-      continue;
-    }
-    const close = value.indexOf("$", open + 1);
-    if (close === -1) break;
-    const content = value.slice(open + 1, close);
-    const beforeClose = value[close - 1];
-    const afterClose = value[close + 1];
-    if (
-      content.includes("\n") ||
-      (beforeClose !== undefined && /\s/.test(beforeClose)) ||
-      (afterClose !== undefined && (/\d/.test(afterClose) || afterClose === "$")) ||
-      !isPlausibleTexSpan(content)
-    ) {
-      searchFrom = open + 1;
-      continue;
-    }
-    spans.push({ start: open, end: close + 1, content });
-    searchFrom = close + 1;
+function paragraphFromRun(run: MdastNode[]): MdastNode | null {
+  while (run.length > 0 && run[0]?.type === "break") run.shift();
+  while (run.length > 0 && run[run.length - 1]?.type === "break") run.pop();
+  const first = run[0];
+  if (first?.type === "text" && first.value !== undefined) {
+    first.value = first.value.replace(/^\s+/, "");
   }
-  return spans;
+  const last = run[run.length - 1];
+  if (last?.type === "text" && last.value !== undefined) {
+    last.value = last.value.replace(/\s+$/, "");
+  }
+  const meaningful = run.some((node) => !(node.type === "text" && (node.value ?? "") === ""));
+  return meaningful ? { type: "paragraph", children: run } : null;
 }
 
-function recognizeDollarSpans(node: MdastNode, source: string, insideExcluded: boolean): void {
-  if (EXCLUDED_PARENT_TYPES.has(node.type)) {
-    insideExcluded = true;
-  }
+/**
+ * Display math authored as `\[...\]` breaks its paragraph, exactly as TeX
+ * itself treats display math: the paragraph splits into the prose before, the
+ * block equation, and the prose after. Only direct paragraph children are
+ * extracted; a pair nested inside emphasis or a link stays inline.
+ */
+function extractAuthoredDisplayMath(node: MdastNode, sourceText: string | undefined): void {
   const children = node.children;
   if (!children) return;
-
   for (let index = children.length - 1; index >= 0; index -= 1) {
     const child = children[index];
     if (!child) continue;
-    if (child.type !== "text" || insideExcluded) {
-      recognizeDollarSpans(child, source, insideExcluded);
+    if (child.type !== "paragraph") {
+      extractAuthoredDisplayMath(child, sourceText);
       continue;
     }
-    const value = child.value ?? "";
-    if (!value.includes("$")) continue;
-    // Markdown escaping collapses `\$` into a plain dollar in the node value,
-    // so an explicitly escaped dollar is only visible in the raw source; a
-    // node that uses one opts its whole text run out of math recognition.
-    const raw = rawSlice(source, child);
-    if (raw !== null && raw.includes("\\$")) continue;
-    const spans = findDollarSpans(value);
-    if (spans.length === 0) continue;
+    const inner = child.children ?? [];
+    const hasDisplayIntent = inner.some(
+      (grandchild) =>
+        grandchild.type === "inlineMath" && authoredIntentAt(sourceText, grandchild) === "display",
+    );
+    if (!hasDisplayIntent) continue;
 
-    const replacements: MdastNode[] = [];
-    let cursor = 0;
-    for (const span of spans) {
-      if (span.start > cursor) {
-        replacements.push({ type: "text", value: value.slice(cursor, span.start) });
+    const segments: MdastNode[] = [];
+    let run: MdastNode[] = [];
+    for (const grandchild of inner) {
+      if (
+        grandchild.type === "inlineMath" &&
+        authoredIntentAt(sourceText, grandchild) === "display"
+      ) {
+        const paragraph = paragraphFromRun(run);
+        if (paragraph) segments.push(paragraph);
+        run = [];
+        segments.push(displayMathNode(grandchild.value ?? "", grandchild.position));
+      } else {
+        run.push(grandchild);
       }
-      replacements.push({
-        type: "inlineMath",
-        value: span.content,
-        data: inlineMathHastData(span.content),
-      });
-      cursor = span.end;
     }
-    if (cursor < value.length) {
-      replacements.push({ type: "text", value: value.slice(cursor) });
-    }
-    children.splice(index, 1, ...replacements);
+    const trailing = paragraphFromRun(run);
+    if (trailing) segments.push(trailing);
+    children.splice(index, 1, ...segments);
   }
 }
 
-/** A paragraph holding exactly one `$$...$$` span is a block equation: `\[...\]` and own-line `$$x$$` both land here. */
-function promoteSoleInlineMathParagraphs(node: MdastNode): void {
+/**
+ * A paragraph holding exactly one `$$...$$` span is a block equation: own-line
+ * `$$x$$` lands here. A span the author wrote as `\(...\)` keeps its inline
+ * intent instead; authored `\[...\]` was already extracted as display math.
+ */
+function promoteSoleInlineMathParagraphs(node: MdastNode, sourceText: string | undefined): void {
   const children = node.children;
   if (!children) return;
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index];
     if (!child) continue;
     if (child.type !== "paragraph") {
-      promoteSoleInlineMathParagraphs(child);
+      promoteSoleInlineMathParagraphs(child, sourceText);
       continue;
     }
     const meaningful = (child.children ?? []).filter(
@@ -208,6 +176,7 @@ function promoteSoleInlineMathParagraphs(node: MdastNode): void {
     );
     const only = meaningful[0];
     if (meaningful.length === 1 && only?.type === "inlineMath") {
+      if (authoredIntentAt(sourceText, only) === "inline") continue;
       children[index] = {
         type: "math",
         value: only.value ?? "",
@@ -281,16 +250,18 @@ function guardMathNodes(node: MdastNode, source: string): void {
 
 /**
  * The Scient math pass over the parsed tree, in three steps: downgrade
- * unclosed or oversized math to its literal source, promote sole-`$$`
- * paragraphs to display math, then recognize validated single-dollar spans.
+ * unclosed or oversized math to its literal source, break out `\[...\]`
+ * equations as display math wherever they appear, then promote remaining
+ * sole-`$$` paragraphs to display math unless the author wrote `\(...\)`.
  * Operating on the tree keeps code, links, and raw HTML structurally excluded
  * and never rewrites the source string.
  */
-export function remarkScientMathRefinements() {
+export function remarkScientMathRefinements(options?: ScientMathRefinementOptions) {
+  const sourceText = options?.sourceText;
   return (tree: MdastNode, file: VFileLike) => {
     const source = String(file);
     guardMathNodes(tree, source);
-    promoteSoleInlineMathParagraphs(tree);
-    recognizeDollarSpans(tree, source, false);
+    extractAuthoredDisplayMath(tree, sourceText);
+    promoteSoleInlineMathParagraphs(tree, sourceText);
   };
 }

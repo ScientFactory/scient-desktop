@@ -31,7 +31,6 @@
     "vercel.ts",
     "test",
     "scripts/warm-dep-cache.ts",
-    "scripts/scientKatexFontDisplay.ts",
     "scripts/scientPdfAssets.ts",
     "../../scripts/lib/public-config.ts"
   ]

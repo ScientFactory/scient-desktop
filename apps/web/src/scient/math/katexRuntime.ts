@@ -1,5 +1,8 @@
 import katex from "katex";
-import "katex/dist/katex.min.css";
+// The swap variant KaTeX ships: identical to katex.min.css except every
+// @font-face declares `font-display: swap`, so math paints with fallback
+// glyphs while the bundled fonts load instead of staying invisible.
+import "katex/dist/katex-swap.min.css";
 
 /**
  * The lazily loaded half of the module: everything that pulls KaTeX and its

@@ -115,7 +115,10 @@ import {
   remarkScientMath,
   remarkScientMathRefinements,
 } from "../scient/math/remarkScientMath";
-import { useScientMathMarkdownText } from "../scient/math/scientMathText";
+import {
+  useScientMathMarkdownText,
+  useScientMathRemarkPlugins,
+} from "../scient/math/scientMathText";
 import { ScientDisplayMath, ScientInlineMath } from "../scient/math/ScientMath";
 
 interface ChatMarkdownProps {
@@ -1367,8 +1370,14 @@ function ChatMarkdown({
   directionHint,
 }: ChatMarkdownProps) {
   // Delimiter normalization is length-preserving, so offset-based behavior
-  // (task-list toggling, list positions) stays correct on every surface.
+  // (task-list toggling, list positions) stays correct on every surface. The
+  // original text rides along so the refinement plugin can recover each
+  // backslash pair's inline-versus-display intent after normalization.
   const text = useScientMathMarkdownText(textProp);
+  const remarkPlugins = useScientMathRemarkPlugins(
+    lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
+    textProp,
+  );
   const scopedContentDirection = useContentDirection();
   const effectiveContentDirection = contentDirection ?? scopedContentDirection;
   const streamingDirectionRef = useRef<{
@@ -1810,9 +1819,7 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
+        remarkPlugins={remarkPlugins}
         rehypePlugins={[
           ...CHAT_MARKDOWN_REHYPE_PLUGINS,
           [

@@ -1,4 +1,7 @@
 import { useMemo } from "react";
+import type { Options as ReactMarkdownOptions } from "react-markdown";
+
+import { remarkScientMathRefinements, type ScientMathRefinementOptions } from "./remarkScientMath";
 
 /**
  * Rewrites the TeX delimiters models emit — `\(...\)` and `\[...\]` — into the
@@ -21,6 +24,11 @@ const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
 const INDENTED_CODE_LINE_PATTERN = /^(?: {4,}|\t)/;
 const INLINE_CODE_SPAN_PATTERN = /(`+)[^`][\s\S]*?\1(?!`)|``(?!`)/g;
 const RAW_CODE_REGION_PATTERN = /<(code|pre)(?:\s[^>]*)?>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+// Attribute text inside a raw HTML tag is not markdown prose, so a delimiter
+// lookalike in a title or href must survive verbatim. Text BETWEEN tags stays
+// eligible — CommonMark treats inline-HTML content as ordinary prose.
+const RAW_HTML_TAG_PATTERN = /<\/?[a-zA-Z][^<>\n]*>/g;
+const RAW_HTML_COMMENT_PATTERN = /<!--[\s\S]*?(?:-->|$)/g;
 const TEX_DELIMITER_PAIR_PATTERN =
   /(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]|(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g;
 
@@ -95,6 +103,8 @@ export function normalizeScientMathDelimiters(text: string): string {
   collectIndentedLineRanges(text, protectedRanges);
   collectPatternRanges(text, INLINE_CODE_SPAN_PATTERN, protectedRanges);
   collectPatternRanges(text, RAW_CODE_REGION_PATTERN, protectedRanges);
+  collectPatternRanges(text, RAW_HTML_TAG_PATTERN, protectedRanges);
+  collectPatternRanges(text, RAW_HTML_COMMENT_PATTERN, protectedRanges);
 
   let characters: string[] | null = null;
   for (const match of text.matchAll(TEX_DELIMITER_PAIR_PATTERN)) {
@@ -118,4 +128,33 @@ export function normalizeScientMathDelimiters(text: string): string {
 /** Memoized per message text, since streaming re-renders the same string repeatedly. */
 export function useScientMathMarkdownText(text: string): string {
   return useMemo(() => normalizeScientMathDelimiters(text), [text]);
+}
+
+type ScientRemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+/**
+ * The remark plugins for one message. When the message uses backslash math
+ * delimiters, the refinement plugin needs the original text to recover each
+ * pair's inline-versus-display intent (the length-preserving rewrite turns
+ * both into `$$`); every other message keeps the shared static array, so the
+ * common path allocates nothing.
+ */
+export function useScientMathRemarkPlugins(
+  basePlugins: ScientRemarkPlugins,
+  sourceText: string,
+): ScientRemarkPlugins {
+  const needsAuthoredIntent = sourceText.includes("\\(") || sourceText.includes("\\[");
+  return useMemo(() => {
+    if (!needsAuthoredIntent) {
+      return basePlugins;
+    }
+    return basePlugins.map((plugin) =>
+      plugin === remarkScientMathRefinements
+        ? ([
+            remarkScientMathRefinements,
+            { sourceText } satisfies ScientMathRefinementOptions,
+          ] satisfies ScientRemarkPlugins[number])
+        : plugin,
+    );
+  }, [basePlugins, needsAuthoredIntent, sourceText]);
 }

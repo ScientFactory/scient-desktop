@@ -3,15 +3,16 @@
 Mathematical notation in chat responses renders as typeset math instead of
 raw notation.
 
-- Inline math: `$...$`, `$$...$$`, or `\(...\)` within a sentence.
-- Block math, shown on its own line: `$$...$$`, `\[...\]`, or a ` ```math `
-  fence.
+- Inline math, within a sentence: `$$...$$` or `\(...\)`.
+- Block math, shown centered on its own line: `\[...\]` anywhere — even
+  mid-paragraph, where it breaks the text the way TeX does — `$$...$$` alone
+  on its line, or a ` ```math ` fence.
 
 Rendered Markdown file previews get the same treatment.
 
-Ordinary dollars stay text. Prices like "it costs $5 and $10 today", shell
-variables like `$PATH`, and dollars inside file paths, links, and code are
-never turned into math.
+Single dollar signs are never interpreted as math. Prices like "it costs $5
+and $10 today", shell variables like `$PATH`or`$HOME/bin:$PATH`, dollars
+inside file paths, links, and code — and also well-formed spans like `$x^2$`— all stay exactly as written. To typeset an expression, use`$$x^2$$`or`\(x^2\)`.
 
 An equation still being written — for example while a response is streaming —
 stays as typed until its closing delimiter arrives, then renders. If a formula

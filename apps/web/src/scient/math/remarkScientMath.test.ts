@@ -94,7 +94,7 @@ describe("remarkScientMathRefinements", () => {
     expect(tree.children?.[0]?.value).toBe("x + y");
   });
 
-  it("recognizes validated dollar spans in text and splits the node", () => {
+  it("never recognizes single-dollar spans in text", () => {
     const source = "solve $x^2$ now";
     const tree: TestNode = {
       type: "root",
@@ -114,12 +114,12 @@ describe("remarkScientMathRefinements", () => {
     refine(tree, source);
     const children = tree.children?.[0]?.children ?? [];
 
-    expect(children.map((child) => child.type)).toEqual(["text", "inlineMath", "text"]);
-    expect(children[1]?.value).toBe("x^2");
+    expect(children).toHaveLength(1);
+    expect(children[0]?.type).toBe("text");
   });
 
-  it("never recognizes dollar spans inside links", () => {
-    const source = "[a $x^2$ b](https://x.test)";
+  it("keeps a sole span inline when the author wrote \\(...\\)", () => {
+    const sourceText = "\\(x\\)";
     const tree: TestNode = {
       type: "root",
       children: [
@@ -127,23 +127,53 @@ describe("remarkScientMathRefinements", () => {
           type: "paragraph",
           children: [
             {
-              type: "link",
-              children: [
-                {
-                  type: "text",
-                  value: "a $x^2$ b",
-                  position: { start: { offset: 1 }, end: { offset: 10 } },
-                },
-              ],
+              type: "inlineMath",
+              value: "x",
+              position: { start: { offset: 0 }, end: { offset: 5 } },
             },
           ],
         },
       ],
     };
-    refine(tree, source);
-    const linkChildren = tree.children?.[0]?.children?.[0]?.children ?? [];
+    remarkScientMathRefinements({ sourceText })(tree, { toString: () => "$$x$$" });
 
-    expect(linkChildren).toHaveLength(1);
-    expect(linkChildren[0]?.type).toBe("text");
+    expect(tree.children?.[0]?.type).toBe("paragraph");
+    expect(tree.children?.[0]?.children?.[0]?.type).toBe("inlineMath");
+  });
+
+  it("breaks out a mid-paragraph \\[...\\] span as display math", () => {
+    const sourceText = "prose \\[x\\] end";
+    const normalized = "prose $$x$$ end";
+    const tree: TestNode = {
+      type: "root",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "text",
+              value: "prose ",
+              position: { start: { offset: 0 }, end: { offset: 6 } },
+            },
+            {
+              type: "inlineMath",
+              value: "x",
+              position: { start: { offset: 6 }, end: { offset: 11 } },
+            },
+            {
+              type: "text",
+              value: " end",
+              position: { start: { offset: 11 }, end: { offset: 15 } },
+            },
+          ],
+        },
+      ],
+    };
+    remarkScientMathRefinements({ sourceText })(tree, { toString: () => normalized });
+
+    expect(tree.children?.map((child) => child.type)).toEqual(["paragraph", "math", "paragraph"]);
+    expect(tree.children?.[1]?.value).toBe("x");
+    expect(tree.children?.[0]?.children?.[0]?.value).toBe("prose");
+    expect(tree.children?.[2]?.children?.[0]?.value).toBe("end");
   });
 });
