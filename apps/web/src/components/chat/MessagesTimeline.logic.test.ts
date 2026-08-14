@@ -4,6 +4,7 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   findLatestCompletedAssistantMessageId,
+  findPrecedingCompletedAssistantMessageId,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
 } from "./MessagesTimeline.logic";
@@ -51,6 +52,84 @@ describe("findLatestCompletedAssistantMessageId", () => {
     });
 
     expect(result).toBe("assistant-1");
+  });
+});
+
+describe("findPrecedingCompletedAssistantMessageId", () => {
+  it("uses the terminal completed response before the selected user message", () => {
+    const result = findPrecedingCompletedAssistantMessageId({
+      timelineEntries: [
+        {
+          id: "assistant-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:01Z",
+          message: {
+            id: "assistant-commentary" as never,
+            role: "assistant",
+            text: "Interim",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:01Z",
+            updatedAt: "2026-01-01T00:00:01Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:02Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant",
+            text: "Final",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:02Z",
+            updatedAt: "2026-01-01T00:00:02Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "selected-user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:03Z",
+          message: {
+            id: "selected-user" as never,
+            role: "user",
+            text: "Fork this",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03Z",
+            updatedAt: "2026-01-01T00:00:03Z",
+            streaming: false,
+          },
+        },
+      ],
+      sourceUserMessageId: "selected-user" as never,
+    });
+
+    expect(result).toBe("assistant-final");
+  });
+
+  it("returns no checkpoint boundary before the first user message", () => {
+    expect(
+      findPrecedingCompletedAssistantMessageId({
+        timelineEntries: [
+          {
+            id: "selected-user-entry",
+            kind: "message",
+            createdAt: "2026-01-01T00:00:00Z",
+            message: {
+              id: "selected-user" as never,
+              role: "user",
+              text: "Start here",
+              turnId: null,
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+              streaming: false,
+            },
+          },
+        ],
+        sourceUserMessageId: "selected-user" as never,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -308,6 +387,33 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("allows a durable user message to be selected as a fork point", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-message" as never,
+            role: "user",
+            text: "Fork this request",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.find((row) => row.kind === "message")?.canForkConversation).toBe(true);
+  });
+
   it("passes the preceding user direction as the streaming assistant hint", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

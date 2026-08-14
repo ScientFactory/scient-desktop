@@ -272,10 +272,12 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import {
   findLatestCompletedAssistantMessageId,
+  findPrecedingCompletedAssistantMessageId,
   resolveTimelineIsAtEnd,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useScientGeneralChatMove } from "./scient-general-chat/useScientGeneralChatMove";
+import { restoreForkPdfContinuity } from "./scient-fork/forkViewContinuity";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -1582,13 +1584,24 @@ function ChatViewContent(props: ChatViewProps) {
   const {
     errorUpdate: forkErrorUpdate,
     isForking: isForkingThread,
-    forkFromAssistantMessage,
+    forkFromMessage,
   } = useScientThreadFork({ origin: activeThread ?? null, navigate });
-  const [forkCommandTarget, setForkCommandTarget] = useState<{
-    readonly threadId: ThreadId;
-    readonly sourceAssistantMessageId: MessageId;
-    readonly source: ScientForkSource;
-  } | null>(null);
+  const [forkCommandTarget, setForkCommandTarget] = useState<
+    | {
+        readonly threadId: ThreadId;
+        readonly kind: "assistant-response";
+        readonly messageId: MessageId;
+        readonly source: ScientForkSource;
+      }
+    | {
+        readonly threadId: ThreadId;
+        readonly kind: "user-message";
+        readonly messageId: MessageId;
+        readonly message: ChatMessage;
+        readonly source: ScientForkSource;
+      }
+    | null
+  >(null);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2807,7 +2820,8 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadId) return;
     setForkCommandTarget({
       threadId: activeThreadId,
-      sourceAssistantMessageId: latestCompletedAssistantMessageId,
+      kind: "assistant-response",
+      messageId: latestCompletedAssistantMessageId,
       source: "latest-response",
     });
   }, [activeThreadId, latestCompletedAssistantMessageId]);
@@ -2878,6 +2892,14 @@ function ChatViewContent(props: ChatViewProps) {
         ? serverConfigs.get(activeThread.environmentId)?.cwd
         : undefined,
   });
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    restoreForkPdfContinuity({
+      environmentId: activeThreadRef.environmentId,
+      threadId: activeThreadRef.threadId,
+      destinationWorkspaceRoot: activeWorkspaceRoot,
+    });
+  }, [activeThreadRef, activeWorkspaceRoot]);
   const activeTerminalTarget = useMemo(
     () =>
       terminalCapabilityAllowed
@@ -2908,14 +2930,29 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     const target = forkCommandTarget?.threadId === activeThreadId ? forkCommandTarget : null;
-    const checkpoint = target
-      ? turnDiffSummaryByAssistantMessageId.get(target.sourceAssistantMessageId)
+    const checkpointAssistantMessageId =
+      target?.kind === "assistant-response"
+        ? target.messageId
+        : target?.kind === "user-message"
+          ? findPrecedingCompletedAssistantMessageId({
+              timelineEntries,
+              sourceUserMessageId: target.messageId,
+            })
+          : null;
+    const checkpoint = checkpointAssistantMessageId
+      ? turnDiffSummaryByAssistantMessageId.get(checkpointAssistantMessageId)
       : null;
     if (checkpoint?.status === "ready" && checkpoint.checkpointRef !== null) {
       return { available: true };
     }
     return { available: false, reason: "no-checkpoint" };
-  }, [activeThreadId, forkCommandTarget, isGitRepo, turnDiffSummaryByAssistantMessageId]);
+  }, [
+    activeThreadId,
+    forkCommandTarget,
+    isGitRepo,
+    timelineEntries,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -6246,8 +6283,22 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeThreadId) return;
       setForkCommandTarget({
         threadId: activeThreadId,
-        sourceAssistantMessageId,
+        kind: "assistant-response",
+        messageId: sourceAssistantMessageId,
         source: "this-response",
+      });
+    },
+    [activeThreadId],
+  );
+  const onForkUserMessage = useCallback(
+    (message: ChatMessage) => {
+      if (!activeThreadId) return;
+      setForkCommandTarget({
+        threadId: activeThreadId,
+        kind: "user-message",
+        messageId: message.id,
+        message,
+        source: "this-message",
       });
     },
     [activeThreadId],
@@ -6582,6 +6633,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onRevertUserMessage={onRevertUserMessage}
                 // SCIENT-FORK:START
                 onForkAssistantMessage={onForkAssistantMessage}
+                onForkUserMessage={onForkUserMessage}
                 // SCIENT-FORK:END
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
@@ -6978,7 +7030,18 @@ function ChatViewContent(props: ChatViewProps) {
           const target = forkCommandTarget;
           if (!target || target.threadId !== activeThreadId) return;
           setForkCommandTarget(null);
-          void forkFromAssistantMessage(target.sourceAssistantMessageId, workspaceMode);
+          void forkFromMessage(
+            target.kind === "assistant-response"
+              ? { kind: target.kind, messageId: target.messageId }
+              : {
+                  kind: target.kind,
+                  messageId: target.messageId,
+                  prompt: target.message.text,
+                  attachments: target.message.attachments ?? [],
+                },
+            workspaceMode,
+            activeWorkspaceRoot,
+          );
         }}
       />
     </div>

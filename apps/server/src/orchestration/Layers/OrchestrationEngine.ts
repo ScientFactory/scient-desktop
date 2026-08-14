@@ -193,7 +193,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           resolvedForkBoundaries = yield* forkBoundaryResolver
             .resolve({
               originThreadId: envelope.command.originThreadId,
-              sourceAssistantMessageId: envelope.command.sourceAssistantMessageId,
+              ...(envelope.command.sourceAssistantMessageId !== undefined
+                ? { sourceAssistantMessageId: envelope.command.sourceAssistantMessageId }
+                : {}),
+              ...(envelope.command.sourceUserMessageId !== undefined
+                ? { sourceUserMessageId: envelope.command.sourceUserMessageId }
+                : {}),
               threadCreatedAt: origin.createdAt,
             })
             .pipe(

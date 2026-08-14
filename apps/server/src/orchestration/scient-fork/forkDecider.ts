@@ -6,9 +6,11 @@
  * thread fork.
  *
  * A fork creates a NEW, independent thread whose event stream is seeded from a
- * PREFIX of the origin thread (up to a completed assistant response), records fork
- * lineage, and leaves the origin thread completely untouched — the decider emits
- * events ONLY against `newThreadId`, never against `originThreadId`.
+ * PREFIX of the origin thread, records fork lineage, and leaves the origin
+ * thread completely untouched — the decider emits events ONLY against
+ * `newThreadId`, never against `originThreadId`. A user-message fork retains
+ * only the completed prefix before that message; the client stages the
+ * selected request as an unsent destination composer draft.
  *
  * We re-emit the retained transcript (`thread.message-sent`) as one immutable
  * fork-owned conversation baseline. Git eligibility stays separate: when the
@@ -166,6 +168,12 @@ function retainPrefixMessages(
 const invariant = (detail: string): OrchestrationCommandInvariantError =>
   new OrchestrationCommandInvariantError({ commandType: "thread.fork", detail });
 
+function commandForkPoint(command: ThreadForkCommand): ResolvedForkBoundaries["forkPoint"] {
+  return command.sourceAssistantMessageId !== undefined
+    ? { kind: "assistant-response", messageId: command.sourceAssistantMessageId }
+    : { kind: "user-message", messageId: command.sourceUserMessageId! };
+}
+
 function deriveForkTitle(
   origin: OrchestrationThread,
   readModel: OrchestrationReadModel,
@@ -247,9 +255,11 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     threadId: command.newThreadId,
   });
 
+  const forkPoint = commandForkPoint(command);
   if (
     resolvedBoundaries.originThreadId !== command.originThreadId ||
-    resolvedBoundaries.sourceAssistantMessageId !== command.sourceAssistantMessageId
+    resolvedBoundaries.forkPoint.kind !== forkPoint.kind ||
+    resolvedBoundaries.forkPoint.messageId !== forkPoint.messageId
   ) {
     return yield* invariant(
       `Authoritative fork boundaries do not match the public fork request for origin thread '${command.originThreadId}'.`,
@@ -259,49 +269,63 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   const conversationBoundaries = resolvedBoundaries.boundaries;
   // Re-select from the authoritative list so a malformed resolver result
   // cannot smuggle selected-boundary metadata that is absent from that list.
-  const selectedBoundary =
-    conversationBoundaries.find(
-      (boundary) => boundary.assistantMessageId === command.sourceAssistantMessageId,
-    ) ?? null;
+  const selectedBoundary = conversationBoundaries.find(
+    (boundary) =>
+      boundary.turnId === resolvedBoundaries.selectedBoundary.turnId &&
+      boundary.conversationTurnCount ===
+        resolvedBoundaries.selectedBoundary.conversationTurnCount &&
+      boundary.assistantMessageId === resolvedBoundaries.selectedBoundary.assistantMessageId,
+  );
   if (
-    selectedBoundary === null ||
-    selectedBoundary.turnId !== resolvedBoundaries.selectedBoundary.turnId ||
-    selectedBoundary.conversationTurnCount !==
-      resolvedBoundaries.selectedBoundary.conversationTurnCount ||
-    selectedBoundary.assistantMessageId !== resolvedBoundaries.selectedBoundary.assistantMessageId
+    selectedBoundary === undefined ||
+    (forkPoint.kind === "assistant-response" &&
+      selectedBoundary.assistantMessageId !== forkPoint.messageId)
   ) {
     return yield* invariant(
-      `Assistant message '${command.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`,
+      forkPoint.kind === "assistant-response"
+        ? `Assistant message '${forkPoint.messageId}' is not a completed conversation boundary of origin thread '${command.originThreadId}'.`
+        : `User message '${forkPoint.messageId}' has no completed conversation boundary before it in origin thread '${command.originThreadId}'.`,
     );
   }
 
-  const sourceAssistantMessage = origin.messages.find(
-    (message) => message.id === command.sourceAssistantMessageId,
-  );
-  if (
-    !sourceAssistantMessage ||
-    sourceAssistantMessage.role !== "assistant" ||
-    sourceAssistantMessage.streaming ||
-    selectedBoundary.turnId === null ||
-    sourceAssistantMessage.turnId !== selectedBoundary.turnId
-  ) {
+  const sourceMessage = origin.messages.find((message) => message.id === forkPoint.messageId);
+  if (forkPoint.kind === "assistant-response") {
+    if (
+      !sourceMessage ||
+      sourceMessage.role !== "assistant" ||
+      sourceMessage.streaming ||
+      selectedBoundary.turnId === null ||
+      sourceMessage.turnId !== selectedBoundary.turnId
+    ) {
+      return yield* invariant(
+        `Assistant message '${forkPoint.messageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,
+      );
+    }
+  } else if (!sourceMessage || sourceMessage.role !== "user" || sourceMessage.streaming) {
     return yield* invariant(
-      `Assistant message '${command.sourceAssistantMessageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,
+      `User message '${forkPoint.messageId}' is not an available durable request of origin thread '${command.originThreadId}'.`,
     );
   }
   const forkTitle = deriveForkTitle(origin, readModel, conversationBoundaries);
 
-  const retainedBoundaries = conversationBoundaries.filter(
-    (boundary) => boundary.conversationTurnCount <= selectedBoundary.conversationTurnCount,
-  );
+  const selectedBoundaryIndex = conversationBoundaries.indexOf(selectedBoundary);
+  const retainedBoundaries = conversationBoundaries.slice(0, selectedBoundaryIndex + 1);
   const retainedTurnIds = new Set<string>(
     retainedBoundaries.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
   );
   const retainedPrefix = retainPrefixMessages(origin.messages, retainedBoundaries, retainedTurnIds);
   const prefixMessages = retainedPrefix.messages;
+  if (
+    forkPoint.kind === "user-message" &&
+    prefixMessages.some((message) => message.id === forkPoint.messageId)
+  ) {
+    return yield* invariant(
+      `User message '${forkPoint.messageId}' was included in the retained transcript instead of remaining an unsent draft.`,
+    );
+  }
   if (prefixMessages.some((message) => message.streaming)) {
     return yield* invariant(
-      `Assistant message '${command.sourceAssistantMessageId}' belongs to an incomplete conversation prefix and cannot be forked.`,
+      `Message '${forkPoint.messageId}' belongs to an incomplete conversation prefix and cannot be forked.`,
     );
   }
 
@@ -313,7 +337,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   );
   if (command.workspaceMode === "new-worktree" && !selectedCheckpoint) {
     return yield* invariant(
-      `Assistant message '${command.sourceAssistantMessageId}' has no ready Git checkpoint; fork it in the same workspace or choose a checkpoint-backed response.`,
+      `Message '${forkPoint.messageId}' has no ready Git checkpoint before the selected fork point; fork it in the same workspace or choose a checkpoint-backed message.`,
     );
   }
 
@@ -379,6 +403,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   let baselineUserMessageId: MessageId | null = null;
   let baselineAssistantMessageId: MessageId | null = null;
   const importedTurnIds = new Map<string, TurnId>();
+  const messageIdRemap = new Map<string, MessageId>();
 
   // 2) Re-emit the prefix transcript into the new thread's stream. Payload
   // timestamps preserve message history, while event occurrence stays at the
@@ -388,6 +413,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       Effect.flatMap((crypto) => crypto.randomUUIDv4),
     );
     const messageId = MessageId.make(freshMessageId);
+    messageIdRemap.set(message.id, messageId);
     if (message.role === "user") baselineUserMessageId = messageId;
     if (message.role === "assistant") baselineAssistantMessageId = messageId;
     let importedTurnId: TurnId | null = null;
@@ -432,6 +458,32 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     });
   }
 
+  const copiedBoundaries = retainedBoundaries.flatMap((boundary) => {
+    if (boundary.turnId === null || boundary.assistantMessageId === null) return [];
+    const turnId = importedTurnIds.get(boundary.turnId);
+    const assistantMessageId = messageIdRemap.get(boundary.assistantMessageId);
+    if (turnId === undefined || assistantMessageId === undefined) return [];
+    return [
+      {
+        turnId,
+        userMessageId:
+          boundary.userMessageId === null
+            ? null
+            : (messageIdRemap.get(boundary.userMessageId) ?? null),
+        assistantMessageId,
+        completedAt: boundary.completedAt,
+      },
+    ];
+  });
+  const retainedCompletedBoundaryCount = retainedBoundaries.filter(
+    (boundary) => boundary.turnId !== null && boundary.assistantMessageId !== null,
+  ).length;
+  if (copiedBoundaries.length !== retainedCompletedBoundaryCount) {
+    return yield* invariant(
+      `The retained transcript for '${forkPoint.messageId}' could not preserve every logical fork boundary.`,
+    );
+  }
+
   // 3) Lineage. Folded into scient_thread_lineage by the Scient lineage
   //    projector; ignored (no-op) by every other projector and the read model.
   events.push({
@@ -450,6 +502,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       baselineTurnId,
       baselineUserMessageId,
       baselineAssistantMessageId,
+      forkPointKind: forkPoint.kind,
+      sourceUserMessageId: forkPoint.kind === "user-message" ? forkPoint.messageId : null,
+      copiedBoundaries,
       workspaceMode: command.workspaceMode,
       providerMode: "transcript-bootstrap",
       attachmentCopies,

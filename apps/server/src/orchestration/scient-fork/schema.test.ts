@@ -65,7 +65,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 );
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
-const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7];
+const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
   "durable-provider-bootstrap",
@@ -74,6 +74,8 @@ const SCIENT_MIGRATION_NAMES = [
   "analysis-run-index",
   "analysis-run-projection-state",
   "analysis-run-storage-status",
+  "fork-delivery-and-seed",
+  "copied-fork-boundary-manifest",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -129,9 +131,14 @@ it.effect("fresh install creates canonical Scient schema with ledger and indexes
         "baseline_turn_id",
         "baseline_user_message_id",
         "baseline_assistant_message_id",
+        "fork_point_kind",
+        "source_user_message_id",
+        "copied_boundaries_json",
         "workspace_mode",
         "provider_mode",
         "provider_bootstrap_status",
+        "provider_bootstrap_message_id",
+        "provider_bootstrap_started_at",
         "attachment_copies_json",
         "fidelity_mode",
         "status",
@@ -486,6 +493,8 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [5, "analysis-run-index"],
           [6, "analysis-run-projection-state"],
           [7, "analysis-run-storage-status"],
+          [8, "fork-delivery-and-seed"],
+          [9, "copied-fork-boundary-manifest"],
         ] as const,
       );
 
@@ -734,7 +743,7 @@ it.effect("migration 4 repairs databases that already recorded migration 3", () 
       const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
         executed.map(([id]) => id),
-        [4, 5, 6, 7],
+        [4, 5, 6, 7, 8, 9],
       );
 
       const active = yield* sql<{ readonly thread_id: string }>`
@@ -1881,6 +1890,33 @@ it.effect("a renamed ledger entry fails closed even through legacy reconciliatio
   ),
 );
 
+it.effect("migration 9 converges a development database that already recorded migration 8", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE scient_schema_migrations (
+          migration_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `;
+      for (const [migrationId, name] of SCIENT_MIGRATION_NAMES.slice(0, 8).entries()) {
+        yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (${migrationId + 1}, ${name})`;
+      }
+      yield* sql`CREATE TABLE scient_thread_lineage (thread_id TEXT PRIMARY KEY)`;
+
+      const executed = yield* runScientMigrations(sql);
+
+      assert.deepStrictEqual(executed, [[9, "copied-fork-boundary-manifest"]]);
+      const columns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(scient_thread_lineage)`;
+      assert.isTrue(columns.some((column) => column.name === "copied_boundaries_json"));
+    }),
+  ),
+);
+
 it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
   withMemory(
     Effect.gen(function* () {
@@ -1899,7 +1935,9 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (5, 'analysis-run-index')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (6, 'analysis-run-projection-state')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (7, 'analysis-run-storage-status')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (8, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (8, 'fork-delivery-and-seed')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (9, 'copied-fork-boundary-manifest')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (10, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -1907,7 +1945,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 8"),
+          error.message.includes("unknown migration 10"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -1918,7 +1956,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2, 3, 4, 5, 6, 7, 8],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
       );
     }),
   ),

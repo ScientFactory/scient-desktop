@@ -43,6 +43,8 @@ import Migration004 from "./migrations/004_QuarantineInvalidLineage.ts";
 import Migration005 from "./migrations/005_AnalysisRunIndex.ts";
 import Migration006 from "./migrations/006_AnalysisRunProjectionState.ts";
 import Migration007 from "./migrations/007_AnalysisRunStorageStatus.ts";
+import Migration008 from "./migrations/008_ForkDeliveryAndBoundaries.ts";
+import Migration009 from "./migrations/009_CopiedForkBoundaryManifest.ts";
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -89,6 +91,10 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 5, name: "analysis-run-index", effect: Migration005 },
   { id: 6, name: "analysis-run-projection-state", effect: Migration006 },
   { id: 7, name: "analysis-run-storage-status", effect: Migration007 },
+  // Keep the pre-commit development name so already-tested local candidates
+  // remain readable; the canonical body no longer contains a seed workflow.
+  { id: 8, name: "fork-delivery-and-seed", effect: Migration008 },
+  { id: 9, name: "copied-fork-boundary-manifest", effect: Migration009 },
 ] as const;
 
 const loader = Migrator.fromRecord(

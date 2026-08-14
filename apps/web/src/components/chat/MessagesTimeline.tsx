@@ -38,7 +38,7 @@ import {
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
-import { type TurnDiffSummary } from "../../types";
+import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -143,6 +143,7 @@ interface TimelineRowSharedState {
   // `| undefined` is explicit for exactOptionalPropertyTypes: the shared-state
   // object always carries the key (possibly undefined) so rows can gate on it.
   onForkAssistantMessage?: ((messageId: MessageId) => void) | undefined;
+  onForkUserMessage?: ((message: ChatMessage) => void) | undefined;
   // SCIENT-FORK:END
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -227,6 +228,7 @@ interface MessagesTimelineProps {
   forkBaselineAssistantMessageId?: MessageId | null;
   // SCIENT-FORK:START
   onForkAssistantMessage?: (messageId: MessageId) => void;
+  onForkUserMessage?: (message: ChatMessage) => void;
   // SCIENT-FORK:END
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -278,6 +280,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   forkBaselineAssistantMessageId,
   // SCIENT-FORK:START
   onForkAssistantMessage,
+  onForkUserMessage,
   // SCIENT-FORK:END
   isRevertingCheckpoint,
   onImageExpand,
@@ -533,6 +536,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       // SCIENT-FORK:START — expose the fork trigger to rows via context.
       onForkAssistantMessage,
+      onForkUserMessage,
       // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
@@ -552,6 +556,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       // SCIENT-FORK:START
       onForkAssistantMessage,
+      onForkUserMessage,
       // SCIENT-FORK:END
       onImageExpand,
       onOpenTurnDiff,
@@ -1084,6 +1089,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            {row.canForkConversation === true && ctx.onForkUserMessage ? (
+              <ScientForkMessageButton
+                label="Fork conversation from this message"
+                onFork={() => ctx.onForkUserMessage?.(row.message)}
+              />
+            ) : null}
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />

@@ -6,6 +6,7 @@ import {
   ThreadId,
   TurnId,
   ThreadForkAttachmentCopy,
+  ThreadForkCopiedBoundary,
   type ThreadForkedPayload,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -17,6 +18,8 @@ export type ScientForkWorkspaceStatus = "project-root" | "shared" | "worktree";
 
 const AttachmentCopiesJson = Schema.fromJsonString(Schema.Array(ThreadForkAttachmentCopy));
 const encodeAttachmentCopiesJson = Schema.encodeEffect(AttachmentCopiesJson);
+const CopiedBoundariesJson = Schema.fromJsonString(Schema.Array(ThreadForkCopiedBoundary));
+const encodeCopiedBoundariesJson = Schema.encodeEffect(CopiedBoundariesJson);
 const ForkRow = Schema.Struct({
   thread_id: ThreadId,
   forked_from_thread_id: ThreadId,
@@ -26,6 +29,9 @@ const ForkRow = Schema.Struct({
   baseline_turn_id: TurnId,
   baseline_user_message_id: Schema.NullOr(MessageId),
   baseline_assistant_message_id: Schema.NullOr(MessageId),
+  fork_point_kind: Schema.Literals(["assistant-response", "user-message"]),
+  source_user_message_id: Schema.NullOr(MessageId),
+  copied_boundaries_json: CopiedBoundariesJson,
   workspace_mode: OrchestrationForkWorkspaceMode,
   attachment_copies_json: AttachmentCopiesJson,
   created_at: IsoDateTime,
@@ -47,6 +53,9 @@ function forkRowToPayload(row: typeof ForkRow.Type): ThreadForkedPayload {
     baselineTurnId: row.baseline_turn_id,
     baselineUserMessageId: row.baseline_user_message_id,
     baselineAssistantMessageId: row.baseline_assistant_message_id,
+    forkPointKind: row.fork_point_kind,
+    sourceUserMessageId: row.source_user_message_id,
+    copiedBoundaries: row.copied_boundaries_json,
     workspaceMode: row.workspace_mode,
     providerMode: "transcript-bootstrap",
     attachmentCopies: row.attachment_copies_json,
@@ -61,6 +70,9 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
   const attachmentCopiesJson = yield* encodeAttachmentCopiesJson(payload.attachmentCopies).pipe(
     Effect.orDie,
   );
+  const copiedBoundariesJson = yield* encodeCopiedBoundariesJson(payload.copiedBoundaries).pipe(
+    Effect.orDie,
+  );
   yield* sql`
     INSERT INTO scient_thread_lineage (
       thread_id,
@@ -71,6 +83,9 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       baseline_turn_id,
       baseline_user_message_id,
       baseline_assistant_message_id,
+      fork_point_kind,
+      source_user_message_id,
+      copied_boundaries_json,
       workspace_mode,
       provider_mode,
       provider_bootstrap_status,
@@ -92,6 +107,9 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       ${payload.baselineTurnId},
       ${payload.baselineUserMessageId},
       ${payload.baselineAssistantMessageId},
+      ${payload.forkPointKind ?? "assistant-response"},
+      ${payload.sourceUserMessageId ?? null},
+      ${copiedBoundariesJson},
       ${payload.workspaceMode},
       ${payload.providerMode},
       'pending',
@@ -110,7 +128,14 @@ export const insertPendingFork = Effect.fn("insertPendingFork")(function* (
       source_checkpoint_turn_count = COALESCE(scient_thread_lineage.source_checkpoint_turn_count, excluded.source_checkpoint_turn_count),
       baseline_turn_id = COALESCE(scient_thread_lineage.baseline_turn_id, excluded.baseline_turn_id),
       baseline_user_message_id = COALESCE(scient_thread_lineage.baseline_user_message_id, excluded.baseline_user_message_id),
-      baseline_assistant_message_id = COALESCE(scient_thread_lineage.baseline_assistant_message_id, excluded.baseline_assistant_message_id)
+      baseline_assistant_message_id = COALESCE(scient_thread_lineage.baseline_assistant_message_id, excluded.baseline_assistant_message_id),
+      fork_point_kind = excluded.fork_point_kind,
+      source_user_message_id = COALESCE(scient_thread_lineage.source_user_message_id, excluded.source_user_message_id),
+      copied_boundaries_json = CASE
+        WHEN scient_thread_lineage.copied_boundaries_json = '[]'
+          THEN excluded.copied_boundaries_json
+        ELSE scient_thread_lineage.copied_boundaries_json
+      END
   `;
 });
 
@@ -214,6 +239,9 @@ export const listRecoverableForks = Effect.fn("listRecoverableForks")(function* 
       baseline_turn_id,
       baseline_user_message_id,
       baseline_assistant_message_id,
+      fork_point_kind,
+      source_user_message_id,
+      COALESCE(copied_boundaries_json, '[]') AS copied_boundaries_json,
       workspace_mode,
       attachment_copies_json,
       created_at
@@ -241,6 +269,9 @@ export const getRecoverableFork = Effect.fn("getRecoverableFork")(function* (
       baseline_turn_id,
       baseline_user_message_id,
       baseline_assistant_message_id,
+      fork_point_kind,
+      source_user_message_id,
+      COALESCE(copied_boundaries_json, '[]') AS copied_boundaries_json,
       workspace_mode,
       attachment_copies_json,
       created_at

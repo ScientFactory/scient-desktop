@@ -1011,11 +1011,21 @@ export const ThreadForkCommand = Schema.Struct({
   commandId: CommandId,
   originThreadId: ThreadId,
   newThreadId: ThreadId,
-  // The clicked completed assistant response is the public boundary. The
-  // server resolves its internal turn/count/checkpoint authoritatively.
-  sourceAssistantMessageId: MessageId,
+  // Exactly one source message identifies the public fork point. Assistant
+  // responses retain that response. User messages retain only the completed
+  // transcript before the message; the client stages the selected message as
+  // an unsent composer draft in the destination thread.
+  sourceAssistantMessageId: Schema.optional(MessageId),
+  sourceUserMessageId: Schema.optional(MessageId),
   workspaceMode: OrchestrationForkWorkspaceMode,
-});
+}).check(
+  Schema.makeFilter(
+    (command) =>
+      (command.sourceAssistantMessageId === undefined) !==
+        (command.sourceUserMessageId === undefined) ||
+      "exactly one fork source message must be specified",
+  ),
+);
 export type ThreadForkCommand = typeof ThreadForkCommand.Type;
 // SCIENT-FORK:END
 
@@ -1440,6 +1450,22 @@ export const ThreadForkAttachmentCopy = Schema.Struct({
 });
 export type ThreadForkAttachmentCopy = typeof ThreadForkAttachmentCopy.Type;
 
+/**
+ * One completed logical turn copied into a fork's immutable transcript.
+ *
+ * Copied transcript turns are not native turns in the destination provider
+ * session, so they deliberately carry no provider/checkpoint count. The
+ * remapped identities are sufficient for resolving later forks of a fork
+ * without walking ancestor threads or inventing provider history.
+ */
+export const ThreadForkCopiedBoundary = Schema.Struct({
+  turnId: TurnId,
+  userMessageId: Schema.NullOr(MessageId),
+  assistantMessageId: MessageId,
+  completedAt: IsoDateTime,
+});
+export type ThreadForkCopiedBoundary = typeof ThreadForkCopiedBoundary.Type;
+
 export const ThreadForkedPayload = Schema.Struct({
   originThreadId: ThreadId,
   newThreadId: ThreadId,
@@ -1458,6 +1484,18 @@ export const ThreadForkedPayload = Schema.Struct({
   ),
   baselineAssistantMessageId: Schema.NullOr(MessageId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  forkPointKind: Schema.Literals(["assistant-response", "user-message"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("assistant-response" as const)),
+    Schema.withConstructorDefault(Effect.succeed("assistant-response" as const)),
+  ),
+  sourceUserMessageId: Schema.NullOr(MessageId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+    Schema.withConstructorDefault(Effect.succeed(null)),
+  ),
+  copiedBoundaries: Schema.Array(ThreadForkCopiedBoundary).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.withConstructorDefault(Effect.succeed([])),
   ),
   workspaceMode: OrchestrationForkWorkspaceMode,
   providerMode: OrchestrationForkProviderMode.pipe(

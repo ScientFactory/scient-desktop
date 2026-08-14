@@ -39,6 +39,16 @@ function makePayload(threadId: string = THREAD): ThreadForkedPayload {
     baselineTurnId: TurnId.make("baseline-1"),
     baselineUserMessageId: MessageId.make("user-1"),
     baselineAssistantMessageId: MessageId.make("assistant-1"),
+    forkPointKind: "assistant-response",
+    sourceUserMessageId: null,
+    copiedBoundaries: [
+      {
+        turnId: TurnId.make("baseline-1"),
+        userMessageId: MessageId.make("user-1"),
+        assistantMessageId: MessageId.make("assistant-1"),
+        completedAt: NOW,
+      },
+    ],
     workspaceMode: "local",
     providerMode: "transcript-bootstrap",
     attachmentCopies: [],
@@ -91,6 +101,8 @@ it.layer(layer)("forkRepository lifecycle", (it) => {
       assert.strictEqual(row!.last_error, null);
       assert.strictEqual(row!.provider_bootstrap_status, "pending");
       assert.strictEqual(row!.created_at, NOW);
+      const recoverable = yield* listRecoverableForks(sql);
+      assert.deepStrictEqual(recoverable[0]?.copiedBoundaries, payload.copiedBoundaries);
     }),
   );
 

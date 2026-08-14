@@ -4,6 +4,7 @@ import {
   NonNegativeInt,
   ThreadId,
   TurnId,
+  ThreadForkCopiedBoundary,
   type OrchestrationForkBoundary,
   type OrchestrationForkLineage,
 } from "@t3tools/contracts";
@@ -13,7 +14,10 @@ import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
-import { resolveForkBoundariesFromList } from "./forkBoundaryTypes.ts";
+import {
+  resolveForkBoundariesFromList,
+  resolveUserForkBoundariesFromList,
+} from "./forkBoundaryTypes.ts";
 
 /**
  * Error raised when the Scient-owned resolver cannot find or validate a fork
@@ -43,7 +47,49 @@ export type ProjectionForkBoundaryRow = typeof ProjectionForkBoundaryRow.Type;
 export function mapForkBoundaries(
   rows: ReadonlyArray<ProjectionForkBoundaryRow>,
   threadCreatedAt: string,
+  copiedBoundaries: ReadonlyArray<ThreadForkCopiedBoundary> = [],
 ): ReadonlyArray<OrchestrationForkBoundary> {
+  const emptyBoundary: OrchestrationForkBoundary = {
+    turnId: null,
+    conversationTurnCount: 0,
+    userMessageId: null,
+    assistantMessageId: null,
+    completedAt: threadCreatedAt,
+    checkpointTurnCount: null,
+    checkpointStatus: null,
+  };
+
+  if (copiedBoundaries.length > 0) {
+    // Projection creates completed turn rows for copied assistant messages.
+    // The immutable manifest is the logical authority for those turns, so all
+    // manifest-owned rows (not only the final baseline row) must be excluded
+    // before native post-fork turns are appended.
+    const copiedTurnIds = new Set(copiedBoundaries.map((boundary) => boundary.turnId));
+    const nativeRows = rows.filter((row) => !copiedTurnIds.has(row.turnId));
+    return [
+      emptyBoundary,
+      ...copiedBoundaries.map(
+        (boundary): OrchestrationForkBoundary => ({
+          ...boundary,
+          conversationTurnCount: 0,
+          checkpointTurnCount: null,
+          checkpointStatus: null,
+        }),
+      ),
+      ...nativeRows.map(
+        (row, index): OrchestrationForkBoundary => ({
+          turnId: row.turnId,
+          conversationTurnCount: index + 1,
+          userMessageId: row.userMessageId,
+          assistantMessageId: row.assistantMessageId,
+          completedAt: row.completedAt,
+          checkpointTurnCount: row.checkpointTurnCount,
+          checkpointStatus: row.checkpointStatus,
+        }),
+      ),
+    ];
+  }
+
   let nextConversationTurnCount = 1;
   const boundaries = rows.map((row) => {
     const conversationTurnCount = row.isForkBaseline === 1 ? 0 : nextConversationTurnCount++;
@@ -62,18 +108,7 @@ export function mapForkBoundaries(
     return boundaries;
   }
 
-  return [
-    {
-      turnId: null,
-      conversationTurnCount: 0,
-      userMessageId: null,
-      assistantMessageId: null,
-      completedAt: threadCreatedAt,
-      checkpointTurnCount: null,
-      checkpointStatus: null,
-    },
-    ...boundaries,
-  ];
+  return [emptyBoundary, ...boundaries];
 }
 
 export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
@@ -99,6 +134,55 @@ export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
           AND turns.state = 'completed'
           AND turns.completed_at IS NOT NULL
         ORDER BY turns.requested_at ASC, turns.turn_id ASC
+      `,
+    }),
+    listForkMessageRowsByThread: SqlSchema.findAll({
+      Request: Schema.Struct({ threadId: ThreadId }),
+      Result: Schema.Struct({
+        messageId: MessageId,
+        role: Schema.Literals(["user", "assistant", "system"]),
+        isStreaming: Schema.Number,
+        createdAt: IsoDateTime,
+      }),
+      execute: ({ threadId }) => sql`
+        SELECT
+          message_id AS "messageId",
+          role,
+          is_streaming AS "isStreaming",
+          created_at AS "createdAt"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+        ORDER BY created_at ASC, message_id ASC
+      `,
+    }),
+    listForkTurnRowsByThread: SqlSchema.findAll({
+      Request: Schema.Struct({ threadId: ThreadId }),
+      Result: Schema.Struct({
+        turnId: TurnId,
+        userMessageId: Schema.NullOr(MessageId),
+        requestedAt: IsoDateTime,
+      }),
+      execute: ({ threadId }) => sql`
+        SELECT
+          turn_id AS "turnId",
+          pending_message_id AS "userMessageId",
+          requested_at AS "requestedAt"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NOT NULL
+        ORDER BY requested_at ASC, turn_id ASC
+      `,
+    }),
+    getCopiedForkBoundariesByThread: SqlSchema.findOneOption({
+      Request: Schema.Struct({ threadId: ThreadId }),
+      Result: Schema.Struct({
+        copiedBoundaries: Schema.fromJsonString(Schema.Array(ThreadForkCopiedBoundary)),
+      }),
+      execute: ({ threadId }) => sql`
+        SELECT COALESCE(copied_boundaries_json, '[]') AS "copiedBoundaries"
+        FROM scient_thread_lineage
+        WHERE thread_id = ${threadId}
+        LIMIT 1
       `,
     }),
   } as const;
@@ -179,11 +263,17 @@ export function toForkLineageMarker(
  * without reading `origin.conversationForkBoundaries` from the read model.
  */
 export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
-  const { listForkBoundaryRowsByThread } = makeForkBoundaryQueries(sql);
+  const {
+    listForkBoundaryRowsByThread,
+    listForkMessageRowsByThread,
+    listForkTurnRowsByThread,
+    getCopiedForkBoundariesByThread,
+  } = makeForkBoundaryQueries(sql);
 
   const resolve = Effect.fn("resolveForkBoundaries")(function* (input: {
     readonly originThreadId: ThreadId;
-    readonly sourceAssistantMessageId: MessageId;
+    readonly sourceAssistantMessageId?: MessageId;
+    readonly sourceUserMessageId?: MessageId;
     readonly threadCreatedAt: string;
   }) {
     const rows = yield* listForkBoundaryRowsByThread({ threadId: input.originThreadId }).pipe(
@@ -192,16 +282,65 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
       ),
     );
 
-    const boundaries = mapForkBoundaries(rows, input.threadCreatedAt);
-
-    const resolved = resolveForkBoundariesFromList({
-      originThreadId: input.originThreadId,
-      sourceAssistantMessageId: input.sourceAssistantMessageId,
-      boundaries,
-    });
+    const copiedBoundaryRow = yield* getCopiedForkBoundariesByThread({
+      threadId: input.originThreadId,
+    }).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ForkBoundaryResolver.resolve:getCopiedForkBoundariesByThread"),
+      ),
+    );
+    const boundaries = mapForkBoundaries(
+      rows,
+      input.threadCreatedAt,
+      copiedBoundaryRow._tag === "Some" ? copiedBoundaryRow.value.copiedBoundaries : [],
+    );
+    const sourceAssistantMessageId = input.sourceAssistantMessageId;
+    const sourceUserMessageId = input.sourceUserMessageId;
+    const resolved =
+      sourceAssistantMessageId !== undefined
+        ? resolveForkBoundariesFromList({
+            originThreadId: input.originThreadId,
+            sourceAssistantMessageId,
+            boundaries,
+          })
+        : sourceUserMessageId !== undefined
+          ? yield* listForkMessageRowsByThread({ threadId: input.originThreadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlError("ForkBoundaryResolver.resolve:listForkMessageRowsByThread"),
+              ),
+              Effect.flatMap((messages) => {
+                const source = messages.find(
+                  (message) => message.messageId === sourceUserMessageId,
+                );
+                if (source?.role !== "user" || source.isStreaming !== 0) {
+                  return Effect.succeed(null);
+                }
+                return listForkTurnRowsByThread({ threadId: input.originThreadId }).pipe(
+                  Effect.mapError(
+                    toPersistenceSqlError("ForkBoundaryResolver.resolve:listForkTurnRowsByThread"),
+                  ),
+                  Effect.map((orderedTurns) =>
+                    resolveUserForkBoundariesFromList({
+                      originThreadId: input.originThreadId,
+                      sourceUserMessageId,
+                      sourceUserCreatedAt: source.createdAt,
+                      orderedTurns,
+                      boundaries,
+                    }),
+                  ),
+                );
+              }),
+            )
+          : null;
     if (resolved === null) {
+      const sourceDescription =
+        sourceAssistantMessageId !== undefined
+          ? `Assistant message '${sourceAssistantMessageId}' is not a completed conversation boundary`
+          : sourceUserMessageId !== undefined
+            ? `User message '${sourceUserMessageId}' is not an available durable message`
+            : "No fork source message was supplied";
       return yield* new ForkBoundaryResolutionError({
-        detail: `Assistant message '${input.sourceAssistantMessageId}' is not a completed conversation boundary of origin thread '${input.originThreadId}' in SQL projection.`,
+        detail: `${sourceDescription} of origin thread '${input.originThreadId}' in SQL projection.`,
       });
     }
 

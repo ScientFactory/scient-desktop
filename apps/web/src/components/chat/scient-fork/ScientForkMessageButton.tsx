@@ -1,25 +1,25 @@
-import { GitForkIcon } from "lucide-react";
+import { SplitIcon } from "lucide-react";
 
 import { Button } from "../../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 
-export function ScientForkMessageButton({ onFork }: { readonly onFork: () => void }) {
+export function ScientForkMessageButton({
+  label = "Fork conversation from this response",
+  onFork,
+}: {
+  readonly label?: string;
+  readonly onFork: () => void;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            onClick={onFork}
-            aria-label="Fork conversation from this response"
-          />
+          <Button type="button" size="xs" variant="ghost" onClick={onFork} aria-label={label} />
         }
       >
-        <GitForkIcon className="size-3" />
+        <SplitIcon className="size-3 rotate-90" />
       </TooltipTrigger>
-      <TooltipPopup side="top">Fork from this response</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }

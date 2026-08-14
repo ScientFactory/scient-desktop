@@ -1213,24 +1213,59 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    if (preparedTurn.value.bootstrapPending) {
+      const reserved = yield* scientForkContextBootstrap
+        .beginAttempt({
+          threadId: event.payload.threadId,
+          messageId: message.id,
+        })
+        .pipe(
+          Effect.map(Option.some),
+          Effect.catchCause((cause) =>
+            handleTurnStartFailure(cause).pipe(Effect.as(Option.none())),
+          ),
+        );
+      if (Option.isNone(reserved)) return;
+    }
+
     yield* providerService.sendTurn(sendTurnRequest.value).pipe(
       Effect.tap(() =>
         preparedTurn.value.bootstrapPending
-          ? scientForkContextBootstrap.markAccepted(event.payload.threadId).pipe(
-              Effect.retry({ times: 2 }),
-              Effect.catchCause((cause) =>
-                Effect.logWarning(
-                  "provider command reactor could not persist accepted Scient fork context",
-                  {
-                    threadId: event.payload.threadId,
-                    cause: Cause.pretty(cause),
-                  },
+          ? scientForkContextBootstrap
+              .markAccepted({ threadId: event.payload.threadId, messageId: message.id })
+              .pipe(
+                Effect.retry({ times: 2 }),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "provider command reactor could not persist accepted Scient fork context",
+                    {
+                      threadId: event.payload.threadId,
+                      cause: Cause.pretty(cause),
+                    },
+                  ),
                 ),
-              ),
-            )
+              )
           : Effect.void,
       ),
-      Effect.catchCause(recoverTurnStartFailure),
+      Effect.catchCause((cause) =>
+        (preparedTurn.value.bootstrapPending
+          ? scientForkContextBootstrap
+              .markAmbiguous({ threadId: event.payload.threadId, messageId: message.id })
+              .pipe(
+                Effect.retry({ times: 2 }),
+                Effect.catchCause((markCause) =>
+                  Effect.logWarning(
+                    "provider command reactor could not persist ambiguous Scient fork context",
+                    {
+                      threadId: event.payload.threadId,
+                      cause: Cause.pretty(markCause),
+                    },
+                  ),
+                ),
+              )
+          : Effect.void
+        ).pipe(Effect.andThen(recoverTurnStartFailure(cause))),
+      ),
       Effect.forkScoped,
     );
   });

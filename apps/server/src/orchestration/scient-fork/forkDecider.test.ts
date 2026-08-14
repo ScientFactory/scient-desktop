@@ -19,7 +19,10 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "../decider.ts";
-import { resolveForkBoundariesFromList } from "./forkBoundaryTypes.ts";
+import {
+  resolveForkBoundariesFromList,
+  resolveUserForkBoundariesFromList,
+} from "./forkBoundaryTypes.ts";
 import { forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -211,14 +214,42 @@ function forkThreadForTest(input: {
   readonly resolvedBoundaries?: ReadonlyArray<OrchestrationForkBoundary>;
 }) {
   const boundaryList = input.resolvedBoundaries ?? boundaries;
-  const resolved = resolveForkBoundariesFromList({
-    originThreadId: input.command.originThreadId,
-    sourceAssistantMessageId: input.command.sourceAssistantMessageId,
-    boundaries: boundaryList,
-  });
+  const sourceAssistantMessageId = input.command.sourceAssistantMessageId;
+  const sourceUserMessageId = input.command.sourceUserMessageId;
+  const origin = input.readModel.threads.find(
+    (thread) => thread.id === input.command.originThreadId,
+  );
+  const resolved =
+    sourceAssistantMessageId !== undefined
+      ? resolveForkBoundariesFromList({
+          originThreadId: input.command.originThreadId,
+          sourceAssistantMessageId,
+          boundaries: boundaryList,
+        })
+      : sourceUserMessageId !== undefined && origin !== undefined
+        ? resolveUserForkBoundariesFromList({
+            originThreadId: input.command.originThreadId,
+            sourceUserMessageId,
+            sourceUserCreatedAt:
+              origin.messages.find((message) => message.id === sourceUserMessageId)?.createdAt ??
+              origin.createdAt,
+            orderedTurns: boundaryList.flatMap((boundary) =>
+              boundary.turnId === null
+                ? []
+                : [
+                    {
+                      turnId: boundary.turnId,
+                      userMessageId: boundary.userMessageId,
+                      requestedAt: boundary.completedAt,
+                    },
+                  ],
+            ),
+            boundaries: boundaryList,
+          })
+        : null;
   if (resolved === null) {
     throw new Error(
-      `No explicit boundary fixture matches '${input.command.sourceAssistantMessageId}'.`,
+      `No explicit boundary fixture matches '${sourceAssistantMessageId ?? sourceUserMessageId ?? "missing-source"}'.`,
     );
   }
   return forkThreadAuthoritative({ ...input, resolvedBoundaries: resolved });
@@ -239,7 +270,10 @@ function forkThreadWithUnmatchedResolution(input: {
     readModel: input.readModel,
     resolvedBoundaries: {
       originThreadId: input.command.originThreadId,
-      sourceAssistantMessageId: input.command.sourceAssistantMessageId,
+      forkPoint: {
+        kind: "assistant-response",
+        messageId: input.command.sourceAssistantMessageId ?? MessageId.make("missing-assistant"),
+      },
       boundaries: input.resolvedBoundaries,
       selectedBoundary,
     },
@@ -513,6 +547,193 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         copiedMessages[1]?.type === "thread.message-sent" ? copiedMessages[1].payload.turnId : null,
       );
     }),
+  );
+
+  it.effect("forking from a user message retains only the prior completed boundary", () =>
+    Effect.gen(function* () {
+      const sourceAttachment = {
+        type: "image" as const,
+        id: "origin-thread-00000000-0000-4000-8000-000000000002",
+        name: "question.png",
+        mimeType: "image/png",
+        sizeBytes: 52,
+      };
+      const origin = makeOriginThread({
+        messages: makeOriginThread().messages.map((entry) =>
+          entry.id === "user-2" ? { ...entry, attachments: [sourceAttachment] } : entry,
+        ),
+      });
+      const assistantCommand = forkCommand();
+      const command: ThreadForkCommand = {
+        type: assistantCommand.type,
+        commandId: assistantCommand.commandId,
+        originThreadId: assistantCommand.originThreadId,
+        newThreadId: assistantCommand.newThreadId,
+        sourceUserMessageId: MessageId.make("user-2"),
+        workspaceMode: assistantCommand.workspaceMode,
+      };
+      const events = yield* forkThreadForTest({
+        command,
+        readModel: makeReadModel({ origin }),
+      });
+
+      const retainedTexts = events
+        .filter((event) => event.type === "thread.message-sent")
+        .map((event) => (event.type === "thread.message-sent" ? event.payload.text : ""));
+      expect(retainedTexts).toEqual(["first prompt", "first answer"]);
+
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type).toBe("thread.forked");
+      if (forked?.type === "thread.forked") {
+        expect(forked.payload.forkPointKind).toBe("user-message");
+        expect(forked.payload.sourceUserMessageId).toBe("user-2");
+        expect(forked.payload.baselineAssistantMessageId).toBeTruthy();
+        expect(forked.payload.copiedBoundaries).toHaveLength(1);
+        expect(forked.payload.copiedBoundaries[0]?.assistantMessageId).toBe(
+          forked.payload.baselineAssistantMessageId,
+        );
+        expect(forked.payload.attachmentCopies).toHaveLength(0);
+      }
+      expect(retainedTexts).not.toContain("second answer");
+    }),
+  );
+
+  it.effect("forking from the first user message starts from an empty transcript", () =>
+    Effect.gen(function* () {
+      const assistantCommand = forkCommand();
+      const command: ThreadForkCommand = {
+        type: assistantCommand.type,
+        commandId: assistantCommand.commandId,
+        originThreadId: assistantCommand.originThreadId,
+        newThreadId: assistantCommand.newThreadId,
+        sourceUserMessageId: MessageId.make("user-1"),
+        workspaceMode: "local",
+      };
+      const events = yield* forkThreadForTest({
+        command,
+        readModel: makeReadModel(),
+      });
+
+      expect(events.map((event) => event.type)).toEqual(["thread.created", "thread.forked"]);
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type).toBe("thread.forked");
+      if (forked?.type === "thread.forked") {
+        expect(forked.payload.forkAtTurnId).toBeNull();
+        expect(forked.payload.forkAtTurnCount).toBe(0);
+        expect(forked.payload.baselineAssistantMessageId).toBeNull();
+        expect(forked.payload.copiedBoundaries).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect(
+    "forks an existing fork from copied logical boundaries without retaining later turns",
+    () =>
+      Effect.gen(function* () {
+        const copiedTurn1 = TurnId.make("copied-turn-1");
+        const copiedTurn2 = TurnId.make("copied-turn-2");
+        const copiedUser1 = MessageId.make("copied-user-1");
+        const copiedUser2 = MessageId.make("copied-user-2");
+        const copiedAssistant1 = MessageId.make("copied-assistant-1");
+        const copiedAssistant2 = MessageId.make("copied-assistant-2");
+        const recursiveBoundaries: ReadonlyArray<OrchestrationForkBoundary> = [
+          boundaries[0]!,
+          {
+            turnId: copiedTurn1,
+            conversationTurnCount: 0,
+            userMessageId: copiedUser1,
+            assistantMessageId: copiedAssistant1,
+            completedAt: "2026-01-01T00:00:02.000Z",
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          },
+          {
+            turnId: copiedTurn2,
+            conversationTurnCount: 0,
+            userMessageId: copiedUser2,
+            assistantMessageId: copiedAssistant2,
+            completedAt: "2026-01-01T00:00:04.000Z",
+            checkpointTurnCount: null,
+            checkpointStatus: null,
+          },
+        ];
+        const recursiveOrigin = makeOriginThread({
+          messages: [
+            message({
+              id: copiedUser1,
+              role: "user",
+              text: "copied first prompt",
+              turnId: copiedTurn1,
+              createdAt: "2026-01-01T00:00:01.000Z",
+            }),
+            message({
+              id: copiedAssistant1,
+              role: "assistant",
+              text: "copied first answer",
+              turnId: copiedTurn1,
+              createdAt: "2026-01-01T00:00:02.000Z",
+            }),
+            message({
+              id: copiedUser2,
+              role: "user",
+              text: "copied second prompt",
+              turnId: copiedTurn2,
+              createdAt: "2026-01-01T00:00:03.000Z",
+            }),
+            message({
+              id: copiedAssistant2,
+              role: "assistant",
+              text: "copied second answer",
+              turnId: copiedTurn2,
+              createdAt: "2026-01-01T00:00:04.000Z",
+            }),
+          ],
+          checkpoints: [],
+          conversationForkBoundaries: undefined,
+          forkLineage: {
+            originThreadId: ORIGIN,
+            baselineAssistantMessageId: copiedAssistant2,
+          },
+        });
+
+        const assistantEvents = yield* forkThreadForTest({
+          command: forkCommand({ sourceAssistantMessageId: copiedAssistant1 }),
+          readModel: makeReadModel({ origin: recursiveOrigin }),
+          resolvedBoundaries: recursiveBoundaries,
+        });
+        expect(
+          assistantEvents
+            .filter((event) => event.type === "thread.message-sent")
+            .map((event) => (event.type === "thread.message-sent" ? event.payload.text : "")),
+        ).toEqual(["copied first prompt", "copied first answer"]);
+        const assistantForked = assistantEvents.find((event) => event.type === "thread.forked");
+        expect(
+          assistantForked?.type === "thread.forked"
+            ? assistantForked.payload.copiedBoundaries.length
+            : 0,
+        ).toBe(1);
+
+        const userCommand = forkCommand({
+          sourceAssistantMessageId: undefined,
+          sourceUserMessageId: copiedUser2,
+        });
+        const userEvents = yield* forkThreadForTest({
+          command: userCommand,
+          readModel: makeReadModel({ origin: recursiveOrigin }),
+          resolvedBoundaries: recursiveBoundaries,
+        });
+        expect(
+          userEvents
+            .filter((event) => event.type === "thread.message-sent")
+            .map((event) => (event.type === "thread.message-sent" ? event.payload.text : "")),
+        ).toEqual(["copied first prompt", "copied first answer"]);
+        expect(
+          userEvents.some(
+            (event) =>
+              event.type === "thread.message-sent" && event.payload.text === "copied second prompt",
+          ),
+        ).toBe(false);
+      }),
   );
 
   it.effect("rejects a public request that does not name a completed assistant response", () =>

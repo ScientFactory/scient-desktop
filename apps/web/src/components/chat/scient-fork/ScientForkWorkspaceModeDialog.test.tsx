@@ -30,5 +30,9 @@ describe("ScientForkWorkspaceModeDialog", () => {
       title: "Fork this response",
       description: "Create a new conversation from this response.",
     });
+    expect(scientForkDialogCopy("this-message")).toEqual({
+      title: "Fork this message",
+      description: "Create a new conversation from this message.",
+    });
   });
 });
