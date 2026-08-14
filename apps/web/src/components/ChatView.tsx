@@ -148,6 +148,7 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import { useProjectScriptAutoPreview } from "./preview/useProjectScriptAutoPreview";
 import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
@@ -1704,6 +1705,12 @@ function ChatViewContent(props: ChatViewProps) {
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
+  const openProjectScriptPreview = useProjectScriptAutoPreview({
+    activeThreadRef,
+    activeTabId: activePreviewState.activeTabId,
+    sessions: activePreviewState.sessions,
+    openPreview,
+  });
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
@@ -3272,6 +3279,8 @@ function ChatViewContent(props: ChatViewProps) {
           error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
         );
       }
+      if (writeResult._tag === "Failure") return;
+      await openProjectScriptPreview(script, activeThreadRef);
     },
     [
       activeProject,
@@ -3291,6 +3300,7 @@ function ChatViewContent(props: ChatViewProps) {
       runningTerminalIds,
       terminalUiState.activeTerminalId,
       writeTerminal,
+      openProjectScriptPreview,
     ],
   );
 
