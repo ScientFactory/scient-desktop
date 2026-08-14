@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
 import { remarkScientMath, remarkScientMathRefinements } from "./remarkScientMath";
 import { normalizeScientMathDelimiters } from "./scientMathText";
+import { remarkScientSingleDollarMath } from "./scientSingleDollarMath";
 
 const chatMarkdownSource = NodeFS.readFileSync(
   new URL("../../components/ChatMarkdown.tsx", import.meta.url),
@@ -22,6 +23,9 @@ describe("ChatMarkdown math seam", () => {
   it("mounts the Scient math modules through the declared imports", () => {
     expect(chatMarkdownSource).toContain('} from "../scient/math/remarkScientMath";');
     expect(chatMarkdownSource).toContain('} from "../scient/math/scientMathText";');
+    expect(chatMarkdownSource).toContain(
+      'import { remarkScientSingleDollarMath } from "../scient/math/scientSingleDollarMath";',
+    );
     expect(chatMarkdownSource).toContain("useScientMathMarkdownText,");
     expect(chatMarkdownSource).toContain("useScientMathRemarkPlugins,");
     expect(chatMarkdownSource).toContain(
@@ -29,9 +33,11 @@ describe("ChatMarkdown math seam", () => {
     );
   });
 
-  it("registers the math plugin and its refinements in both remark plugin arrays", () => {
+  it("registers the math plugins and refinements in both remark plugin arrays", () => {
     expect(
-      chatMarkdownSource.match(/remarkGfm,\s+remarkScientMath,\s+remarkScientMathRefinements,/gu),
+      chatMarkdownSource.match(
+        /remarkGfm,\s+remarkScientMath,\s+remarkScientSingleDollarMath,\s+remarkScientMathRefinements,/gu,
+      ),
     ).toHaveLength(2);
   });
 
@@ -67,7 +73,12 @@ function renderChatShapedPipeline(markdown: string, sourceText?: string): string
     createElement(
       ReactMarkdown,
       {
-        remarkPlugins: [remarkGfm, remarkScientMath, [remarkScientMathRefinements, { sourceText }]],
+        remarkPlugins: [
+          remarkGfm,
+          remarkScientMath,
+          remarkScientSingleDollarMath,
+          [remarkScientMathRefinements, { sourceText }],
+        ],
         rehypePlugins: [rehypeRaw, [rehypeSanitize, defaultSchema]],
       },
       markdown,
@@ -106,15 +117,66 @@ describe("dollar-form math", () => {
   });
 });
 
-describe("single-dollar spans are never math in this release", () => {
-  it("leaves well-formed single-dollar expressions as text", () => {
-    for (const markdown of ["$x^2$", "$42$", "$1/2$", "$1+1$", "$12-15$", "$\\alpha$"]) {
+describe("single-dollar math from model output", () => {
+  it("renders well-formed single-dollar expressions as inline math", () => {
+    for (const markdown of [
+      "$x^2$",
+      "$42$",
+      "$1/2$",
+      "$1+1$",
+      "$12-15$",
+      "$\\alpha$",
+      "$E=mc^2$",
+      "$f(x)$",
+      "$a*b*c$",
+    ]) {
       const html = renderChatShapedPipeline(`value: ${markdown} end`);
-      expect(html).not.toContain("language-math");
-      expect(html).toContain("$");
+      expect(html).toContain(INLINE_MATH_SHAPE);
+      expect(html).not.toContain("<pre>");
     }
   });
 
+  it("recognizes a span whole before emphasis can fragment it", () => {
+    const html = renderChatShapedPipeline("compute $a*b*c$ now");
+
+    expect(html).toContain(INLINE_MATH_SHAPE);
+    expect(html).toContain("a*b*c");
+    expect(html).not.toContain("<em>");
+  });
+
+  it("renders valid math after an escaped dollar in the same run", () => {
+    const html = renderChatShapedPipeline("literal \\$5 then $x+1$ renders");
+
+    expect(html).toContain(INLINE_MATH_SHAPE);
+    expect(html).toContain("x+1");
+    expect(html).toContain("$5");
+  });
+
+  it("keeps a sole single-dollar paragraph inline", () => {
+    const html = renderChatShapedPipeline("$x^2$");
+
+    expect(html).toContain(INLINE_MATH_SHAPE);
+    expect(html).not.toContain("<pre>");
+  });
+
+  it("keeps an unclosed single-dollar span literal while streaming", () => {
+    const streaming = renderChatShapedPipeline("solve $x^2");
+    const closed = renderChatShapedPipeline("solve $x^2$ now");
+
+    expect(streaming).not.toContain("language-math");
+    expect(closed).toContain(INLINE_MATH_SHAPE);
+  });
+
+  it("recognizes spans per table cell, never across cells", () => {
+    const math = renderChatShapedPipeline("| a | b |\n| - | - |\n| $x^2$ | $y_1$ |");
+    const prices = renderChatShapedPipeline("| a | b |\n| - | - |\n| $5 | $6 |");
+
+    expect(math.match(/language-math/g)).toHaveLength(2);
+    expect(prices).not.toContain("language-math");
+  });
+});
+
+describe("single-dollar text that must stay text", () => {
   it("keeps shell fragments with separators literal", () => {
     const html = renderChatShapedPipeline("echo $HOME/bin:$PATH");
 
@@ -122,14 +184,8 @@ describe("single-dollar spans are never math in this release", () => {
     expect(html).toContain("$HOME/bin:$PATH");
   });
 
-  it("keeps emphasized dollar spans un-mathed", () => {
-    for (const markdown of ["compute $a*b*c$ now", "compute $a~~b~~c$ now"]) {
-      expect(renderChatShapedPipeline(markdown)).not.toContain("language-math");
-    }
-  });
-
-  it("keeps mixed escaped-dollar and dollar text literal", () => {
-    const html = renderChatShapedPipeline("literal \\$5 then $x+1$ stays text");
+  it("keeps adjacent shell variables literal", () => {
+    const html = renderChatShapedPipeline("use $HOME/$USER here");
 
     expect(html).not.toContain("language-math");
   });
@@ -345,14 +401,19 @@ describe("math inside RTL prose", () => {
       createElement(
         ReactMarkdown,
         {
-          remarkPlugins: [remarkGfm, remarkScientMath, [remarkScientMathRefinements, {}]],
+          remarkPlugins: [
+            remarkGfm,
+            remarkScientMath,
+            remarkScientSingleDollarMath,
+            [remarkScientMathRefinements, {}],
+          ],
           rehypePlugins: [
             rehypeRaw,
             [rehypeSanitize, defaultSchema],
             [rehypeScientBidi, { direction: "rtl", requestedDirection: "auto" }],
           ],
         },
-        "הנוסחה $$x^2 + 1$$ מופיעה במשפט הזה.",
+        "הנוסחה $x^2 + 1$ מופיעה במשפט הזה.",
       ),
     );
 

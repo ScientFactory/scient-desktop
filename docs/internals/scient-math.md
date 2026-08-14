@@ -22,11 +22,13 @@ why the shipped swap variant is used instead of a transform.)
 ## ChatMarkdown seam
 
 The inherited-host seam is `ChatMarkdown.tsx` only: the import block for the
-three math modules, `remarkScientMath` plus `remarkScientMathRefinements` in
-both remark plugin arrays, one unconditional `useScientMathMarkdownText`
-call, one `useScientMathRemarkPlugins` call that threads the original
-message text to the refinement plugin (`remarkPlugins={remarkPlugins}` at
-the render site), and two `components` branches — `code` routes
+four math modules, `remarkScientMath` plus `remarkScientSingleDollarMath`
+plus `remarkScientMathRefinements` in both remark plugin arrays (the
+single-dollar plugin must follow `remarkScientMath` so `$$` forms keep their
+upstream construct), one unconditional `useScientMathMarkdownText` call, one
+`useScientMathRemarkPlugins` call that threads the original message text to
+the refinement plugin (`remarkPlugins={remarkPlugins}` at the render site),
+and two `components` branches — `code` routes
 `language-math` nodes to `ScientInlineMath`, `pre` routes them to
 `ScientDisplayMath`. Normalization is length-preserving (every rewrite swaps
 a two-character delimiter for the two-character `$$`), so character offsets
@@ -69,16 +71,26 @@ that original through `useScientMathRemarkPlugins` and reads the delimiter
 at each node's start offset to recover inline-versus-display intent that the
 uniform `$$` rewrite erases.
 
-Single-dollar `$...$` is not recognized anywhere in this release.
-`singleDollarTextMath` is off because parser-level `$...$` corrupts link
-labels and destinations, file paths, shell identifiers, and prices, and no
-later pass can repair structure the parser already destroyed. Tree-level
-token heuristics were tried and rejected: they typeset shell fragments like
-`$HOME/bin:$PATH`, and emphasis parsing fragments spans like `$a*b*c$`
-before any tree pass can see them. Safe `$...$` recognition needs a
-tokenizer-level pass with source context; until that exists, well-formed
-`$x^2$` stays literal text and the supported spellings are `$$...$$`,
-`\(...\)`, `\[...\]`, and ` ```math ` fences.
+Single-dollar `$...$` is recognized by `remarkScientSingleDollarMath`
+(`scientSingleDollarMath.ts`), a guarded micromark text construct — the only
+altitude where `$...$` can be both safe and complete. `singleDollarTextMath`
+stays off because remark-math's unguarded parsing corrupts link labels,
+paths, shell identifiers, and prices; and tree-level heuristics were tried
+and rejected because they typeset `$HOME/bin:$PATH` while emphasis parsing
+fragments `$a*b*c$` before any tree pass can see it. The tokenizer sees raw
+source (spans arrive whole), markdown's escape construct consumes `\$`
+before it runs, and a rejected candidate unwinds without disturbing
+structure. Its guards: the opener must not follow a word character or
+unescaped dollar and must not precede whitespace; the closer must not follow
+whitespace or a backslash and must not precede a digit (`$5-$10`) or another
+dollar; spans are single-line and capped at 300 characters (streaming
+half-formulas stay literal); shell identifiers (`$PATH$`) and identifier
+paths (`HOME/bin:`) stay text; spaced content needs an operator or control
+sequence; a colon needs a strong TeX signal; and the `](` link boundary is
+never math content. One micromark caveat is load-bearing: when several
+constructs share a character code, an attempt runs them all regardless of
+their individual `previous` hooks, so every Scient guard lives inside
+`tokenize`, not in the `previous` hook.
 
 ## Detection
 
@@ -115,7 +127,9 @@ display math scrolling inside its own container.
 Coverage is co-located unit tests (`scientMathText.test.ts` for the
 normalizer's protection and length-preservation properties,
 `remarkScientMath.test.ts` for the refinement plugin's tree transforms,
-`ScientMath.test.ts` for the KaTeX runtime and component fallbacks) plus
+`scientSingleDollarMath.test.ts` for the tokenizer's guards and plausibility
+rules, `ScientMath.test.ts` for the KaTeX runtime and component fallbacks)
+plus
 `chatMarkdownMathSeam.test.ts`, which combines a static source audit of the
 `ChatMarkdown.tsx` seam (the `pdfFilePreviewSeam.test.ts` pattern) with
 pipeline regressions through the real plugin chain and sanitizer: dollar

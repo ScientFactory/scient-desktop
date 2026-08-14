@@ -2,13 +2,13 @@ import type { Options as ReactMarkdownOptions } from "react-markdown";
 import remarkMath from "remark-math";
 
 /**
- * remark-math with single-dollar parsing off: `$...$` at the parser level
+ * remark-math with single-dollar parsing off: unguarded parser-level `$...$`
  * corrupts links, paths, shell identifiers, and prices, and no later pass can
- * repair structure the parser already destroyed. Single-dollar math is not
- * recognized anywhere in this first release: tree-level token heuristics
- * cannot tell `$HOME/bin:$PATH` from math, and emphasis parsing fragments
- * spans like `$a*b*c$` before any tree pass can see them. Safe `$...$`
- * support needs a tokenizer-level pass with source context — future work.
+ * repair structure the parser already destroyed. Single-dollar math is
+ * instead recognized by `remarkScientSingleDollarMath`, a guarded micromark
+ * construct that sees raw source (so `$a*b*c$` arrives whole before emphasis
+ * runs) and rejects implausible spans during tokenization (so a rejected
+ * candidate unwinds without corrupting anything).
  */
 export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] satisfies NonNullable<
   ReactMarkdownOptions["remarkPlugins"]
@@ -156,19 +156,31 @@ function extractAuthoredDisplayMath(node: MdastNode, sourceText: string | undefi
   }
 }
 
+/** Whether the span at this node's offset was written with a lone `$` in the (normalized) source — explicit inline intent. */
+function isSingleDollarSpan(source: string, node: MdastNode): boolean {
+  const start = node.position?.start.offset;
+  if (typeof start !== "number") return false;
+  return source[start] === "$" && source[start + 1] !== "$";
+}
+
 /**
  * A paragraph holding exactly one `$$...$$` span is a block equation: own-line
- * `$$x$$` lands here. A span the author wrote as `\(...\)` keeps its inline
- * intent instead; authored `\[...\]` was already extracted as display math.
+ * `$$x$$` lands here. Spans the author wrote as `\(...\)` or single-dollar
+ * `$...$` keep their inline intent instead; authored `\[...\]` was already
+ * extracted as display math.
  */
-function promoteSoleInlineMathParagraphs(node: MdastNode, sourceText: string | undefined): void {
+function promoteSoleInlineMathParagraphs(
+  node: MdastNode,
+  sourceText: string | undefined,
+  source: string,
+): void {
   const children = node.children;
   if (!children) return;
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index];
     if (!child) continue;
     if (child.type !== "paragraph") {
-      promoteSoleInlineMathParagraphs(child, sourceText);
+      promoteSoleInlineMathParagraphs(child, sourceText, source);
       continue;
     }
     const meaningful = (child.children ?? []).filter(
@@ -176,6 +188,7 @@ function promoteSoleInlineMathParagraphs(node: MdastNode, sourceText: string | u
     );
     const only = meaningful[0];
     if (meaningful.length === 1 && only?.type === "inlineMath") {
+      if (isSingleDollarSpan(source, only)) continue;
       if (authoredIntentAt(sourceText, only) === "inline") continue;
       children[index] = {
         type: "math",
@@ -262,6 +275,6 @@ export function remarkScientMathRefinements(options?: ScientMathRefinementOption
     const source = String(file);
     guardMathNodes(tree, source);
     extractAuthoredDisplayMath(tree, sourceText);
-    promoteSoleInlineMathParagraphs(tree, sourceText);
+    promoteSoleInlineMathParagraphs(tree, sourceText, source);
   };
 }

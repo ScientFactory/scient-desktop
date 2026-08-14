@@ -115,6 +115,7 @@ import {
   remarkScientMath,
   remarkScientMathRefinements,
 } from "../scient/math/remarkScientMath";
+import { remarkScientSingleDollarMath } from "../scient/math/scientSingleDollarMath";
 import {
   useScientMathMarkdownText,
   useScientMathRemarkPlugins,
@@ -190,6 +191,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
   remarkScientMath,
+  remarkScientSingleDollarMath,
   remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
@@ -200,6 +202,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
   remarkScientMath,
+  remarkScientSingleDollarMath,
   remarkScientMathRefinements,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
