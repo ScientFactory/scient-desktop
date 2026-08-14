@@ -8,6 +8,11 @@ import type {
 
 import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 
+/**
+ * Scient-owned browser storage keeps the `scient.` prefix and a camelCase
+ * name, so nothing this fork remembers can collide with an inherited
+ * `t3code.*` key or be mistaken for one when a profile is inspected.
+ */
 export const LATEX_PREVIEW_MODE_STORAGE_KEY = "scient.latexPreviewMode";
 export const LATEX_SPLIT_RATIO_STORAGE_KEY = "scient.latexSplitRatio";
 
@@ -54,6 +59,50 @@ export function latexSplitFractionFromPointer(input: {
 }): number {
   if (input.width <= 0) return DEFAULT_LATEX_SPLIT_FRACTION;
   return clampLatexSplitFraction((input.pointerX - input.left) / input.width);
+}
+
+/** One arrow press worth of divider travel. */
+export const LATEX_SPLIT_KEYBOARD_STEP = 0.02;
+
+/**
+ * The divider from the keyboard: arrows step it, Home and End park it at the
+ * limits, and every other key is left to the browser. `null` means this key
+ * is not the divider's to handle.
+ */
+export function nudgeLatexSplitFraction(current: number, key: string): number | null {
+  switch (key) {
+    case "ArrowLeft":
+      return clampLatexSplitFraction(current - LATEX_SPLIT_KEYBOARD_STEP);
+    case "ArrowRight":
+      return clampLatexSplitFraction(current + LATEX_SPLIT_KEYBOARD_STEP);
+    case "Home":
+      return MIN_LATEX_SPLIT_FRACTION;
+    case "End":
+      return 1 - MIN_LATEX_SPLIT_FRACTION;
+    default:
+      return null;
+  }
+}
+
+/** Windows and POSIX paths compare and read the same way here. */
+function normalizeLatexPath(value: string): string {
+  return value.replace(/\\/gu, "/").replace(/^\.\//u, "");
+}
+
+/**
+ * The root document this build actually compiles, when it is not the file on
+ * screen: an included chapter builds through the root that pulls it in, and
+ * saying so is the only way that reads as deliberate rather than as the
+ * viewer showing the wrong document.
+ */
+export function latexCompiledFromPath(
+  rootRelativePath: string | null | undefined,
+  relativePath: string,
+): string | null {
+  if (rootRelativePath === null || rootRelativePath === undefined) return null;
+  const root = normalizeLatexPath(rootRelativePath);
+  if (root.length === 0 || root === normalizeLatexPath(relativePath)) return null;
+  return root;
 }
 
 /** The build state the surface reads, whatever produced it. */
@@ -114,15 +163,34 @@ export function latexDiagnosticCounts(diagnostics: ReadonlyArray<ScientLatexDiag
   return { errors, warnings };
 }
 
-/** `main.tex:12`, `main.tex`, or nothing when the log never named a file. */
-export function formatLatexDiagnosticLocation(diagnostic: ScientLatexDiagnostic): string | null {
-  if (diagnostic.file === null) return null;
-  const fileName = diagnostic.file.split(/[\\/]/u).at(-1) ?? diagnostic.file;
-  return diagnostic.line === null ? fileName : `${fileName}:${diagnostic.line}`;
+/**
+ * The file a diagnostic names, as the reader knows it: rebased on the
+ * workspace root so a message from `chapters/intro.tex` is not indexed under
+ * the same `intro.tex` as every other chapter's, and left whole when the log
+ * pointed outside the workspace (a class file from the distribution, say).
+ */
+export function latexDiagnosticPath(file: string, workspaceRoot: string | null): string {
+  const path = normalizeLatexPath(file);
+  if (workspaceRoot === null) return path;
+  const root = normalizeLatexPath(workspaceRoot).replace(/\/+$/u, "");
+  return root.length > 0 && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
 }
 
-export function formatLatexDiagnosticLine(diagnostic: ScientLatexDiagnostic): string {
-  const location = formatLatexDiagnosticLocation(diagnostic);
+/** `chapters/intro.tex:12`, `chapters/intro.tex`, or nothing when no file was named. */
+export function formatLatexDiagnosticLocation(
+  diagnostic: ScientLatexDiagnostic,
+  workspaceRoot: string | null = null,
+): string | null {
+  if (diagnostic.file === null) return null;
+  const path = latexDiagnosticPath(diagnostic.file, workspaceRoot);
+  return diagnostic.line === null ? path : `${path}:${diagnostic.line}`;
+}
+
+export function formatLatexDiagnosticLine(
+  diagnostic: ScientLatexDiagnostic,
+  workspaceRoot: string | null = null,
+): string {
+  const location = formatLatexDiagnosticLocation(diagnostic, workspaceRoot);
   return location === null ? diagnostic.message : `${location} ${diagnostic.message}`;
 }
 
@@ -147,6 +215,90 @@ export function latexDiagnosticRows(
   });
 }
 
+type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
+
+function descriptorsEqual(left: LatexPdfDescriptor, right: LatexPdfDescriptor): boolean {
+  if (left === null || right === null) return left === right;
+  if (
+    left._tag !== right._tag ||
+    left.logicalDocumentKey !== right.logicalDocumentKey ||
+    left.title !== right.title ||
+    left.fileName !== right.fileName
+  ) {
+    return false;
+  }
+  if (left._tag === "generated-pdf") {
+    return (
+      right._tag === "generated-pdf" &&
+      left.artifactId === right.artifactId &&
+      left.revisionId === right.revisionId &&
+      left.bindingGeneration === right.bindingGeneration &&
+      left.bindingStatus === right.bindingStatus &&
+      left.staleReason === right.staleReason
+    );
+  }
+  return (
+    right._tag === "workspace-pdf" &&
+    left.absolutePath === right.absolutePath &&
+    left.threadId === right.threadId
+  );
+}
+
+function toolchainsEqual(
+  left: ScientLatexToolchainStatus | null,
+  right: ScientLatexToolchainStatus | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.kind === right.kind &&
+    left.executable === right.executable &&
+    left.version === right.version &&
+    left.source === right.source &&
+    left.probedAtEpochMs === right.probedAtEpochMs
+  );
+}
+
+function diagnosticsEqual(
+  left: ReadonlyArray<ScientLatexDiagnostic>,
+  right: ReadonlyArray<ScientLatexDiagnostic>,
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((diagnostic, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      diagnostic.severity === other.severity &&
+      diagnostic.file === other.file &&
+      diagnostic.line === other.line &&
+      diagnostic.message === other.message
+    );
+  });
+}
+
+/**
+ * Whether two polls of the same document say the same thing. A build that
+ * takes ten seconds answers the same snapshot six times over; holding onto
+ * the first one keeps the surface — and the PDF reader inside it — from
+ * re-rendering for news that never arrived.
+ */
+export function latexSnapshotsEqual(
+  left: ScientLatexBuildSnapshot,
+  right: ScientLatexBuildSnapshot,
+): boolean {
+  return (
+    left.state === right.state &&
+    left.pendingRerun === right.pendingRerun &&
+    left.logicalDocumentKey === right.logicalDocumentKey &&
+    left.rootRelativePath === right.rootRelativePath &&
+    left.failureSummary === right.failureSummary &&
+    left.startedAtEpochMs === right.startedAtEpochMs &&
+    left.finishedAtEpochMs === right.finishedAtEpochMs &&
+    descriptorsEqual(left.descriptor, right.descriptor) &&
+    toolchainsEqual(left.toolchain, right.toolchain) &&
+    diagnosticsEqual(left.diagnostics, right.diagnostics)
+  );
+}
+
 function buildLabel(state: ScientLatexBuildState): string {
   switch (state) {
     case "queued":
@@ -166,7 +318,10 @@ function buildLabel(state: ScientLatexBuildState): string {
   }
 }
 
-export function latexStatusStripModel(status: LatexBuildStatus): LatexStatusStripModel {
+export function latexStatusStripModel(
+  status: LatexBuildStatus,
+  workspaceRoot: string | null = null,
+): LatexStatusStripModel {
   const snapshot = status.snapshot;
   const state = snapshot?.state ?? "idle";
   const active = isActiveLatexBuildState(state);
@@ -203,7 +358,7 @@ export function latexStatusStripModel(status: LatexBuildStatus): LatexStatusStri
     canCancel: active,
     canRebuild: !status.requesting && !installing,
     firstDiagnosticLine:
-      firstDiagnostic === null ? null : formatLatexDiagnosticLine(firstDiagnostic),
+      firstDiagnostic === null ? null : formatLatexDiagnosticLine(firstDiagnostic, workspaceRoot),
     viewer:
       descriptor !== null ? "pdf" : state === "failed" ? "diagnostics" : busy ? "building" : "idle",
   };

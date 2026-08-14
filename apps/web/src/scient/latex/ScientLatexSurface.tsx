@@ -1,41 +1,33 @@
-import type { SelectedLineRange } from "@pierre/diffs";
-import { Editor } from "@pierre/diffs/editor";
-import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScientLatexDiagnostic, ScopedThreadRef } from "@t3tools/contracts";
+import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import {
+  ProjectWriteFileError,
+  type EnvironmentId,
+  type ScientLatexBuildSnapshot,
+  type ScientLatexDiagnostic,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { DiffCommentAnnotation } from "~/components/diffs/DiffCommentAnnotation";
-import {
-  type FileCommentAnnotationEntry,
-  type FileCommentAnnotationGroup,
-  type FileCommentLineAnnotation,
-  formatFileCommentRange,
-  nextFileCommentId,
-  normalizeFileCommentRange,
-  remapFileCommentAnnotations,
-} from "~/components/files/fileCommentAnnotations";
-import {
-  projectFileCacheKey,
-  projectFileEditorCacheKey,
-} from "~/components/files/fileContentRevision";
-import { installFileEditorDismissal } from "~/components/files/fileEditorDismissal";
-import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
-import {
-  confirmProjectFileQueryData,
-  setProjectFileQueryData,
-  useProjectFileQuery,
-} from "~/components/files/projectFilesQueryState";
+import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
+import { projectFileCacheKey } from "~/components/files/fileContentRevision";
+import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
-import { buildFileReviewComment } from "~/reviewCommentContext";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { projectEnvironment } from "~/state/projects";
-import { useAtomCommand } from "~/state/use-atom-command";
+import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import {
@@ -53,40 +45,50 @@ import {
   LATEX_PREVIEW_MODES,
   LATEX_SPLIT_RATIO_STORAGE_KEY,
   LATEX_TOOLCHAIN_MISSING_HINT,
+  MIN_LATEX_SPLIT_FRACTION,
   formatLatexDiagnosticLocation,
+  latexCompiledFromPath,
   latexDiagnosticRows,
   latexSplitFractionFromPointer,
   latexStatusStripModel,
   normalizeLatexPreviewMode,
   normalizeLatexSplitFraction,
+  nudgeLatexSplitFraction,
+  type LatexBuildStatus,
+  type LatexViewerState,
   type ScientLatexPreviewMode,
 } from "./scientLatexSurfaceModel";
 
 import "./scient-latex.css";
 
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
+type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
 
 interface ScientLatexSurfaceProps {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
-  readonly threadRef: ScopedThreadRef;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly contents: string;
+  readonly revision: string;
   readonly truncated: boolean;
   readonly resolvedTheme: "light" | "dark";
+  readonly revealLine: number | null;
   readonly revealRequestId: number;
   readonly wordWrap: boolean;
   readonly onPostRender: FilePostRender;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
+  readonly onSaveFailure: (relativePath: string, error: unknown) => void;
+  readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
+  readonly onSaveResolutionApplied: () => void;
+  readonly saveResolution: FileSaveResolution | null;
 }
 
-const FILE_SAVE_DEBOUNCE_MS = 500;
 const NO_DIAGNOSTICS: ReadonlyArray<ScientLatexDiagnostic> = [];
+const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
 /**
- * Mirrors the file panel's private editor theming, including the reveal
- * highlight its post-render hook paints on this surface's rows. The attribute
- * name is part of that hook's contract, so both must move together.
+ * Mirrors the file panel's private editor theming for the read-only half. The
+ * editable half is that panel's own component, so it carries the panel's copy.
  */
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const LATEX_EDITOR_UNSAFE_CSS = `
@@ -177,8 +179,11 @@ function LatexPendingViewer(props: { readonly label: string }) {
   );
 }
 
-function LatexDiagnosticsRow(props: { readonly diagnostic: ScientLatexDiagnostic }) {
-  const location = formatLatexDiagnosticLocation(props.diagnostic);
+function LatexDiagnosticsRow(props: {
+  readonly diagnostic: ScientLatexDiagnostic;
+  readonly workspaceRoot: string;
+}) {
+  const location = formatLatexDiagnosticLocation(props.diagnostic, props.workspaceRoot);
   return (
     <li className="scient-latex-diagnostic">
       {props.diagnostic.severity === "error" ? (
@@ -191,320 +196,6 @@ function LatexDiagnosticsRow(props: { readonly diagnostic: ScientLatexDiagnostic
       )}
       <span className="scient-latex-diagnostic-message">{props.diagnostic.message}</span>
     </li>
-  );
-}
-
-interface LatexEditorHalfProps {
-  readonly environmentId: EnvironmentId;
-  readonly cwd: string;
-  readonly relativePath: string;
-  readonly composerDraftTarget: ScopedThreadRef | DraftId;
-  readonly contents: string;
-  readonly revision: string;
-  readonly resolvedTheme: "light" | "dark";
-  readonly revealRequestId: number;
-  readonly wordWrap: boolean;
-  readonly onPostRender: FilePostRender;
-  readonly onPendingChange: (relativePath: string, pending: boolean) => void;
-  readonly onSaveFailure: (error: unknown) => void;
-  readonly onSaveConfirmed: () => void;
-}
-
-interface FileSelectionOverride {
-  readonly revealRequestId: number;
-  readonly range: SelectedLineRange | null;
-}
-
-/**
- * The source half of the split. Same editor wiring as the inherited file
- * panel's editable surface, plus a build trigger on every confirmed save.
- */
-function LatexEditorHalf({
-  environmentId,
-  cwd,
-  relativePath,
-  composerDraftTarget,
-  contents,
-  revision,
-  resolvedTheme,
-  revealRequestId,
-  wordWrap,
-  onPostRender,
-  onPendingChange,
-  onSaveFailure,
-  onSaveConfirmed,
-}: LatexEditorHalfProps) {
-  const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
-  const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
-  const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
-  const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
-  const selectedRange =
-    selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
-  const setSelectedRange = useCallback(
-    (range: SelectedLineRange | null) => {
-      setSelectionOverride({ revealRequestId, range });
-    },
-    [revealRequestId],
-  );
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const selectionFrameRef = useRef<number | null>(null);
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
-  const saveCoordinator = useMemo(
-    () =>
-      new FileSaveCoordinator({
-        debounceMs: FILE_SAVE_DEBOUNCE_MS,
-        initialRevision: revision,
-        onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents, expectedRevision) =>
-          writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents: nextContents, expectedRevision },
-          }),
-        revisionFromResult: (result) => result.revision,
-        onConfirmed: (confirmedContents, result) => {
-          confirmProjectFileQueryData(
-            environmentId,
-            cwd,
-            relativePath,
-            confirmedContents,
-            result.revision,
-          );
-          onSaveConfirmed();
-        },
-        onFailure: (_contents, result) => onSaveFailure(squashAtomCommandFailure(result)),
-      }),
-    // The coordinator owns the debounce timer, so it outlives revision changes;
-    // the confirmed revision is synced into it below instead.
-    [cwd, environmentId, onPendingChange, onSaveConfirmed, onSaveFailure, relativePath, writeFile],
-  );
-
-  useEffect(() => saveCoordinator.syncConfirmedFileRevision(revision), [saveCoordinator, revision]);
-  useEffect(() => () => saveCoordinator.dispose(), [saveCoordinator]);
-
-  const editor = useMemo(
-    () =>
-      new Editor<FileCommentAnnotationGroup>({
-        persistState: true,
-        persistStateStorage: "inMemory",
-        onChange: (file, nextLineAnnotations) => {
-          setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
-          saveCoordinator.change(file.contents);
-          if (nextLineAnnotations) {
-            const remapped = remapFileCommentAnnotations(
-              nextLineAnnotations as FileCommentLineAnnotation[],
-            );
-            setLineAnnotations(remapped);
-            for (const annotation of remapped) {
-              for (const entry of annotation.metadata.entries) {
-                if (entry.kind !== "comment") continue;
-                addReviewComment(
-                  composerDraftTarget,
-                  buildFileReviewComment({
-                    id: entry.id,
-                    filePath: relativePath,
-                    startLine: entry.startLine,
-                    endLine: entry.endLine,
-                    text: entry.text,
-                    contents: file.contents,
-                  }),
-                );
-              }
-            }
-          }
-        },
-      }),
-    [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator],
-  );
-
-  useEffect(
-    () => () => {
-      editor.cleanUp();
-    },
-    [editor],
-  );
-
-  const removeAnnotationEntry = useCallback(
-    (entryId: string) => {
-      setSelectedRange(null);
-      removeReviewComment(composerDraftTarget, entryId);
-      setLineAnnotations((current) =>
-        current.flatMap((annotation) => {
-          const entries = annotation.metadata.entries.filter((entry) => entry.id !== entryId);
-          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
-        }),
-      );
-    },
-    [composerDraftTarget, removeReviewComment, setSelectedRange],
-  );
-
-  const submitAnnotationEntry = useCallback(
-    (entryId: string, text: string) => {
-      setSelectedRange(null);
-      const entry = lineAnnotations
-        .flatMap((annotation) => annotation.metadata.entries)
-        .find((candidate) => candidate.id === entryId);
-      if (entry) {
-        addReviewComment(
-          composerDraftTarget,
-          buildFileReviewComment({
-            id: entry.id,
-            filePath: relativePath,
-            startLine: entry.startLine,
-            endLine: entry.endLine,
-            text,
-            contents,
-          }),
-        );
-      }
-      setLineAnnotations((current) =>
-        current.map((annotation) => ({
-          ...annotation,
-          metadata: {
-            entries: annotation.metadata.entries.map((annotationEntry) =>
-              annotationEntry.id === entryId
-                ? { ...annotationEntry, kind: "comment", text }
-                : annotationEntry,
-            ),
-          },
-        })),
-      );
-    },
-    [
-      addReviewComment,
-      composerDraftTarget,
-      contents,
-      lineAnnotations,
-      relativePath,
-      setSelectedRange,
-    ],
-  );
-
-  const beginComment = useCallback((range: SelectedLineRange) => {
-    const { startLine, endLine } = normalizeFileCommentRange(range);
-    const draftEntry: FileCommentAnnotationEntry = {
-      id: nextFileCommentId(),
-      kind: "draft",
-      startLine,
-      endLine,
-      text: "",
-    };
-    setLineAnnotations((current) => {
-      const withoutDraft = current.flatMap((annotation) => {
-        const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-        return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
-      });
-      const existingIndex = withoutDraft.findIndex(
-        (annotation) => annotation.lineNumber === endLine,
-      );
-      if (existingIndex < 0) {
-        return [...withoutDraft, { lineNumber: endLine, metadata: { entries: [draftEntry] } }];
-      }
-      return withoutDraft.map((annotation, index) =>
-        index === existingIndex
-          ? { ...annotation, metadata: { entries: [...annotation.metadata.entries, draftEntry] } }
-          : annotation,
-      );
-    });
-  }, []);
-
-  const hasOpenCommentForm = lineAnnotations.some((annotation) =>
-    annotation.metadata.entries.some((entry) => entry.kind === "draft"),
-  );
-
-  useEffect(() => {
-    const root = surfaceRef.current;
-    if (!root) return;
-    return installFileEditorDismissal({
-      root,
-      editor,
-      isBlocked: () => hasOpenCommentForm,
-      onDismiss: () => setSelectedRange(null),
-    });
-  }, [editor, hasOpenCommentForm, setSelectedRange]);
-
-  const handleLineSelectionEnd = useCallback(
-    (range: SelectedLineRange | null) => {
-      setSelectedRange(range);
-      if (range) beginComment(range);
-    },
-    [beginComment, setSelectedRange],
-  );
-
-  const handlePostRender = useCallback<FilePostRender>(
-    (fileContainer, instance, phase) => {
-      onPostRender(fileContainer, instance, phase);
-
-      if (selectionFrameRef.current !== null) {
-        cancelAnimationFrame(selectionFrameRef.current);
-        selectionFrameRef.current = null;
-      }
-      if (phase === "unmount") return;
-
-      selectionFrameRef.current = requestAnimationFrame(() => {
-        selectionFrameRef.current = null;
-        if (!fileContainer.isConnected) return;
-        instance.setSelectedLines(selectedRange, { notify: false });
-      });
-    },
-    [onPostRender, selectedRange],
-  );
-
-  return (
-    <EditProvider editor={editor}>
-      <div ref={surfaceRef} className="flex min-h-0 min-w-0 flex-1">
-        <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-          config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
-        >
-          <File<FileCommentAnnotationGroup>
-            file={{
-              name: relativePath,
-              contents,
-              ...scientificSourceLanguageOverride(relativePath),
-              cacheKey: projectFileEditorCacheKey(
-                environmentId,
-                cwd,
-                relativePath,
-                contents,
-                editor.getFile(),
-              ),
-            }}
-            options={{
-              disableFileHeader: true,
-              enableGutterUtility: !hasOpenCommentForm,
-              enableLineSelection: !hasOpenCommentForm,
-              onGutterUtilityClick: setSelectedRange,
-              onLineSelectionChange: setSelectedRange,
-              onLineSelectionEnd: handleLineSelectionEnd,
-              overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
-              themeType: resolvedTheme,
-              unsafeCSS: LATEX_EDITOR_UNSAFE_CSS,
-              onPostRender: handlePostRender,
-            }}
-            selectedLines={selectedRange}
-            lineAnnotations={lineAnnotations}
-            renderAnnotation={(annotation) => (
-              <div className="py-1">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
-            className="min-h-full"
-            contentEditable
-          />
-        </Virtualizer>
-      </div>
-    </EditProvider>
   );
 }
 
@@ -543,6 +234,55 @@ function LatexReadOnlyHalf(props: {
   );
 }
 
+interface LatexViewerPaneProps {
+  readonly descriptor: LatexPdfDescriptor;
+  readonly readerKey: string | null;
+  readonly viewer: LatexViewerState;
+  readonly toolchainMissing: boolean;
+  readonly failureLine: string | null;
+  readonly status: LatexBuildStatus;
+  readonly onInstall: () => void;
+}
+
+/**
+ * The viewer half behind its own memo boundary. Typing in the source half, a
+ * divider drag, and a layout change all re-render the surface; none of them is
+ * news to the PDF reader, and re-rendering it would cost the reader its page.
+ */
+const LatexViewerPane = memo(function LatexViewerPane({
+  descriptor,
+  readerKey,
+  viewer,
+  toolchainMissing,
+  failureLine,
+  status,
+  onInstall,
+}: LatexViewerPaneProps) {
+  return (
+    <div className="scient-latex-pane scient-latex-pane-viewer">
+      {descriptor !== null && readerKey !== null ? (
+        <Suspense fallback={<LatexPendingViewer label="Opening PDF…" />}>
+          <ScientPdfReader key={readerKey} source={descriptor} />
+        </Suspense>
+      ) : toolchainMissing ? (
+        <LatexToolchainSetupCard status={status} onInstall={onInstall} />
+      ) : viewer === "diagnostics" ? (
+        <div className="scient-latex-placeholder">
+          <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
+          <h2>This document did not build</h2>
+          <p>{failureLine ?? "Check the build messages above."}</p>
+        </div>
+      ) : viewer === "building" ? (
+        <LatexPendingViewer label="Building…" />
+      ) : (
+        <div className="scient-latex-placeholder">
+          <p>Save this document or select Rebuild to compile a PDF.</p>
+        </div>
+      )}
+    </div>
+  );
+});
+
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const target = useMemo<LatexBuildTarget>(
     () => ({
@@ -553,12 +293,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     [props.cwd, props.environmentId, props.relativePath],
   );
   const build = useLatexBuild(target);
-  const status = useMemo(() => latexStatusStripModel(build), [build]);
-  const file = useProjectFileQuery(props.environmentId, props.cwd, props.relativePath);
-  const [mode, setMode] = useState(initialPreviewMode);
+  const status = useMemo(() => latexStatusStripModel(build, props.cwd), [build, props.cwd]);
+  const [preferredMode, setPreferredMode] = useState(initialPreviewMode);
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const editorPaneRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
@@ -570,24 +310,64 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
 
   useEffect(() => startWatchingLatexBuild(target), [target]);
 
-  const handleSaveConfirmed = useCallback(() => {
-    setSaveError(null);
-    requestLatexRebuild(target);
-  }, [target]);
-  const handleSaveFailure = useCallback((error: unknown) => {
-    setSaveError(error instanceof Error ? error.message : "The file could not be saved.");
-  }, []);
+  const { onSaveConfirmed, onSaveFailure, revealLine, revealRequestId } = props;
+  const handleSaveConfirmed = useCallback(
+    (path: string, contents: string, revision: string) => {
+      setSaveError(null);
+      onSaveConfirmed(path, contents, revision);
+      requestLatexRebuild(target);
+    },
+    [onSaveConfirmed, target],
+  );
+  const handleSaveFailure = useCallback(
+    (path: string, error: unknown) => {
+      onSaveFailure(path, error);
+      // A conflicting write is the panel's notice to resolve, and saying it
+      // twice would only compete with the buttons that fix it. Anything else —
+      // an unreachable environment, a file that turned read-only — has nowhere
+      // else to surface.
+      setSaveError(
+        isProjectWriteFileError(error) && error.failure === "revision_conflict"
+          ? null
+          : error instanceof Error
+            ? error.message
+            : "The file could not be saved.",
+      );
+    },
+    [onSaveFailure],
+  );
   const handleInstallToolchain = useCallback(() => {
     requestManagedLatexInstall(target);
   }, [target]);
 
-  const selectMode = useCallback((next: ScientLatexPreviewMode) => {
-    setMode(next);
-    persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
+  // A reveal asks for a line of source, so a document parked on the PDF shows
+  // its source until the reader picks a layout again. The file panel's
+  // rendered-markdown branch resolves the same conflict the same way.
+  const revealPending = revealLine !== null && handledRevealRequestId !== revealRequestId;
+  const mode = revealPending && preferredMode === "pdf" ? "split" : preferredMode;
+  const selectMode = useCallback(
+    (next: ScientLatexPreviewMode) => {
+      setPreferredMode(next);
+      setHandledRevealRequestId(revealRequestId);
+      persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
+    },
+    [revealRequestId],
+  );
+
+  // One writer owns the editor pane's width: the divider while a drag is live,
+  // this effect otherwise. React never renders flex-basis, so a snapshot
+  // landing mid-drag cannot snap the pane back to the last committed fraction.
+  useLayoutEffect(() => {
+    const pane = editorPaneRef.current;
+    if (pane === null || dragRef.current !== null) return;
+    pane.style.flexBasis = mode === "split" ? `${splitFraction * 100}%` : "";
+  }, [mode, splitFraction]);
+
+  const commitSplitFraction = useCallback((fraction: number) => {
+    setSplitFraction(fraction);
+    persist(LATEX_SPLIT_RATIO_STORAGE_KEY, fraction, Schema.Number);
   }, []);
 
-  // The divider writes straight to the pane's flex basis while dragging, so the
-  // PDF beside it never re-renders mid-drag; React state catches up on release.
   const handleDividerPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const container = splitRef.current;
@@ -620,17 +400,29 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     });
   }, []);
 
-  const handleDividerPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    dragRef.current = null;
-    if (drag.frame !== null) cancelAnimationFrame(drag.frame);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    setSplitFraction(drag.fraction);
-    persist(LATEX_SPLIT_RATIO_STORAGE_KEY, drag.fraction, Schema.Number);
-  }, []);
+  const handleDividerPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      dragRef.current = null;
+      if (drag.frame !== null) cancelAnimationFrame(drag.frame);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      commitSplitFraction(drag.fraction);
+    },
+    [commitSplitFraction],
+  );
+
+  const handleDividerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const next = nudgeLatexSplitFraction(splitFraction, event.key);
+      if (next === null) return;
+      event.preventDefault();
+      commitSplitFraction(next);
+    },
+    [commitSplitFraction, splitFraction],
+  );
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
   const diagnosticRows = useMemo(() => latexDiagnosticRows(diagnostics), [diagnostics]);
@@ -643,6 +435,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       : descriptor._tag === "generated-pdf"
         ? descriptor.artifactId
         : descriptor.logicalDocumentKey;
+  const compiledFrom = latexCompiledFromPath(build.snapshot?.rootRelativePath, props.relativePath);
   const showEditor = mode !== "pdf";
   const showViewer = mode !== "source";
 
@@ -678,6 +471,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           >
             {status.label}
           </span>
+          {compiledFrom === null ? null : (
+            <span
+              className="scient-latex-chip"
+              title={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
+            >
+              Compiled from {compiledFrom}
+            </span>
+          )}
           {status.errorCount > 0 ? (
             <span className="scient-latex-chip scient-latex-chip-error">
               {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
@@ -744,7 +545,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           {diagnosticsOpen ? (
             <ul className="scient-latex-diagnostics-list">
               {diagnosticRows.map((row) => (
-                <LatexDiagnosticsRow key={row.key} diagnostic={row.diagnostic} />
+                <LatexDiagnosticsRow
+                  key={row.key}
+                  diagnostic={row.diagnostic}
+                  workspaceRoot={props.cwd}
+                />
               ))}
             </ul>
           ) : null}
@@ -756,7 +561,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           <div
             ref={editorPaneRef}
             className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
-            style={mode === "split" ? { flexBasis: `${splitFraction * 100}%` } : undefined}
           >
             {props.truncated ? (
               <LatexReadOnlyHalf
@@ -768,13 +572,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 onPostRender={props.onPostRender}
               />
             ) : (
-              <LatexEditorHalf
+              <EditableFileSurface
                 environmentId={props.environmentId}
                 cwd={props.cwd}
                 relativePath={props.relativePath}
                 composerDraftTarget={props.composerDraftTarget}
                 contents={props.contents}
-                revision={file.data?.revision ?? ""}
+                revision={props.revision}
                 resolvedTheme={props.resolvedTheme}
                 revealRequestId={props.revealRequestId}
                 wordWrap={props.wordWrap}
@@ -782,6 +586,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 onPendingChange={props.onPendingChange}
                 onSaveFailure={handleSaveFailure}
                 onSaveConfirmed={handleSaveConfirmed}
+                onSaveResolutionApplied={props.onSaveResolutionApplied}
+                saveResolution={props.saveResolution}
               />
             )}
           </div>
@@ -791,8 +597,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           <div
             className="scient-latex-divider"
             role="separator"
+            tabIndex={0}
             aria-orientation="vertical"
             aria-label="Resize LaTeX preview"
+            aria-valuemin={Math.round(MIN_LATEX_SPLIT_FRACTION * 100)}
+            aria-valuemax={Math.round((1 - MIN_LATEX_SPLIT_FRACTION) * 100)}
+            aria-valuenow={Math.round(splitFraction * 100)}
+            onKeyDown={handleDividerKeyDown}
             onPointerDown={handleDividerPointerDown}
             onPointerMove={handleDividerPointerMove}
             onPointerUp={handleDividerPointerUp}
@@ -801,31 +612,15 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         ) : null}
 
         {showViewer ? (
-          <div className="scient-latex-pane scient-latex-pane-viewer">
-            {descriptor !== null && readerKey !== null ? (
-              <Suspense fallback={<LatexPendingViewer label="Opening PDF…" />}>
-                <ScientPdfReader key={readerKey} source={descriptor} />
-              </Suspense>
-            ) : status.toolchainMissing ? (
-              <LatexToolchainSetupCard status={build} onInstall={handleInstallToolchain} />
-            ) : status.viewer === "diagnostics" ? (
-              <div className="scient-latex-placeholder">
-                <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
-                <h2>This document did not build</h2>
-                <p>
-                  {status.firstDiagnosticLine ??
-                    build.snapshot?.failureSummary ??
-                    "Check the build messages above."}
-                </p>
-              </div>
-            ) : status.viewer === "building" ? (
-              <LatexPendingViewer label="Building…" />
-            ) : (
-              <div className="scient-latex-placeholder">
-                <p>Save this document or select Rebuild to compile a PDF.</p>
-              </div>
-            )}
-          </div>
+          <LatexViewerPane
+            descriptor={descriptor}
+            readerKey={readerKey}
+            viewer={status.viewer}
+            toolchainMissing={status.toolchainMissing}
+            failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
+            status={build}
+            onInstall={handleInstallToolchain}
+          />
         ) : null}
       </div>
     </div>

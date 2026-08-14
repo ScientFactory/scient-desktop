@@ -522,7 +522,7 @@ function useFileSaveCoordinator({
   return coordinator;
 }
 
-function EditableFileSurface({
+export function EditableFileSurface({
   environmentId,
   cwd,
   relativePath,
@@ -1233,15 +1233,20 @@ export default function FilePreviewPanel({
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}
-                threadRef={threadRef}
                 composerDraftTarget={composerDraftTarget}
                 contents={file.data.contents}
+                revision={file.data.revision}
                 truncated={file.data.truncated}
                 resolvedTheme={resolvedTheme}
+                revealLine={revealLine}
                 revealRequestId={revealRequestId}
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
                 onPendingChange={handlePendingChange}
+                onSaveFailure={handleSaveFailure}
+                onSaveConfirmed={handleSaveConfirmed}
+                onSaveResolutionApplied={handleSaveResolutionApplied}
+                saveResolution={saveResolution}
               />
             </Suspense>
           ) : relativePath && file.data ? (

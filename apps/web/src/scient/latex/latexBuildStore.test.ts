@@ -94,6 +94,14 @@ function missingToolchain(managedInstall?: ScientLatexManagedInstallState) {
 /** Let the mocked client promises settle without moving the poll clock. */
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
+/**
+ * The next status read answers for a document this environment has never
+ * built, which is the one case where opening it starts a build.
+ */
+function openUnbuilt(): void {
+  readLatexBuildStatus.mockResolvedValueOnce(snapshot("idle"));
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   requestLatexBuild.mockResolvedValue(snapshot("queued"));
@@ -116,7 +124,8 @@ afterEach(() => {
 });
 
 describe("latexBuildStore", () => {
-  it("builds a watched document, then polls until the build is terminal", async () => {
+  it("builds an unbuilt document, then polls until the build is terminal", async () => {
+    openUnbuilt();
     readLatexBuildStatus
       .mockResolvedValueOnce(snapshot("running"))
       .mockResolvedValueOnce(snapshot("succeeded"));
@@ -139,38 +148,155 @@ describe("latexBuildStore", () => {
 
     // Terminal: the loop must go quiet instead of polling a finished build.
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 10);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(3);
+    stop();
+  });
+
+  it("adopts the build the environment already has instead of starting another", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    // Status first: the stored PDF is on screen before anything is asked for.
+    expect(readLatexBuildStatus).toHaveBeenCalledExactlyOnceWith(target.environmentId, {
+      workspaceRoot: target.cwd,
+      relativePath: target.relativePath,
+    });
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+    expect(readLatexBuild(target).snapshot?.state).toBe("succeeded");
+
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 4);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("joins a build already running rather than restarting it", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("running"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+    expect(readLatexBuild(target).snapshot?.state).toBe("running");
+
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("probes the toolchain once per opened document", async () => {
+    openUnbuilt();
+    readLatexBuildStatus.mockResolvedValue(snapshot("running"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    // The empty state needs to know whether this environment can install an
+    // engine before any build has run; everything after that rides the
+    // snapshots, or the install watch.
+    expect(readLatexToolchain).toHaveBeenCalledExactlyOnceWith(target.environmentId, {
+      refresh: false,
+    });
+
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 4);
+    expect(readLatexToolchain).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("keeps one entry while repeated polls of a running build say the same thing", async () => {
+    requestLatexBuild.mockResolvedValue(snapshot("running"));
+    readLatexBuildStatus.mockResolvedValue(snapshot("running"));
+    openUnbuilt();
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    const settled = readLatexBuild(target);
+
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 3);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
+    // Equal snapshots must not replace the entry: every replacement re-renders
+    // the surface, and the PDF reader with it.
+    expect(readLatexBuild(target)).toBe(settled);
+    stop();
+  });
+
+  it("drops a status poll a newer request has already overtaken", async () => {
+    openUnbuilt();
+    requestLatexBuild.mockResolvedValue(snapshot("running"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    let answerPoll = () => {};
+    readLatexBuildStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answerPoll = () => resolve(snapshot("succeeded"));
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+
+    // The rebuild is asked for while that poll is still in flight.
+    requestLatexRebuild(target);
+    await settle();
+    expect(readLatexBuild(target).snapshot?.state).toBe("running");
+
+    answerPoll();
+    await settle();
+    // The poll answered for the build before this one; adopting it would stop
+    // the spinner on a build that is still going.
+    expect(readLatexBuild(target).snapshot?.state).toBe("running");
     stop();
   });
 
   it("keeps the last snapshot and backs off when the environment is unreachable", async () => {
     requestLatexBuild.mockResolvedValue(snapshot("running"));
+    openUnbuilt();
     readLatexBuildStatus
       .mockRejectedValueOnce(new Error("Failed to fetch"))
       .mockResolvedValueOnce(snapshot("succeeded"));
 
     const stop = startWatchingLatexBuild(target);
     await settle();
-    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).snapshot?.state).toBe("running");
 
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
     expect(readLatexBuild(target).error).toBe("Failed to fetch");
     expect(readLatexBuild(target).snapshot?.state).toBe("running");
 
     // The normal cadence must not retry a failed transport.
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(LATEX_OFFLINE_POLL_INTERVAL_MS - LATEX_POLL_INTERVAL_MS);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(3);
     expect(readLatexBuild(target).error).toBeNull();
     expect(readLatexBuild(target).snapshot?.state).toBe("succeeded");
+    stop();
+  });
+
+  it("still builds an unbuilt document once an unreachable environment answers", async () => {
+    readLatexBuildStatus
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
+      .mockResolvedValueOnce(snapshot("idle"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    expect(readLatexBuild(target).error).toBe("Failed to fetch");
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(LATEX_OFFLINE_POLL_INTERVAL_MS);
+    // The retry inherits the open's intent, so the document is not left unbuilt.
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
     stop();
   });
 
   it("runs one loop per document however many surfaces watch it", async () => {
     requestLatexBuild.mockResolvedValue(snapshot("running"));
     readLatexBuildStatus.mockResolvedValue(snapshot("running"));
+    openUnbuilt();
 
     const first = startWatchingLatexBuild(target);
     const second = startWatchingLatexBuild(target);
@@ -178,38 +304,39 @@ describe("latexBuildStore", () => {
 
     expect(requestLatexBuild).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 3);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(3);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
 
     // Releasing one watcher must not strand the other.
     first();
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(5);
 
     second();
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 5);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(5);
   });
 
   it("keeps polling a single loop when a rebuild lands mid-build", async () => {
     requestLatexBuild.mockResolvedValue(snapshot("running"));
     readLatexBuildStatus.mockResolvedValue(snapshot("running", { pendingRerun: true }));
+    openUnbuilt();
 
     const stop = startWatchingLatexBuild(target);
     await settle();
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
 
     requestLatexRebuild(target);
     await settle();
     expect(requestLatexBuild).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 2);
-    expect(readLatexBuildStatus).toHaveBeenCalledTimes(3);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
     expect(readLatexBuild(target).snapshot?.pendingRerun).toBe(true);
     stop();
   });
 
-  it("ignores rebuild and cancel for a document nobody is watching", async () => {
+  it("holds a rebuild for an unwatched document and drops a cancel", async () => {
     requestLatexRebuild(target);
     cancelLatexBuild(target);
     await settle();
@@ -218,9 +345,37 @@ describe("latexBuildStore", () => {
     expect(requestLatexCancel).not.toHaveBeenCalled();
   });
 
+  it("builds on reopen for a save confirmed after the last surface closed", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    stop();
+
+    // The closing editor flushed its pending save; the confirmation lands here
+    // with no loop left to serve it.
+    requestLatexRebuild(target);
+    await settle();
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+
+    const reopened = startWatchingLatexBuild(target);
+    await settle();
+    // The stored snapshot still says `succeeded`, so status alone would leave
+    // the reader looking at a PDF of the text before that save.
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    reopened();
+
+    // The debt is settled, so opening it again is an ordinary open.
+    const again = startWatchingLatexBuild(target);
+    await settle();
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    again();
+  });
+
   it("adopts the snapshot a cancel returns and stops polling", async () => {
     requestLatexBuild.mockResolvedValue(snapshot("running"));
     readLatexBuildStatus.mockResolvedValue(snapshot("running"));
+    openUnbuilt();
 
     const stop = startWatchingLatexBuild(target);
     await settle();

@@ -34,8 +34,8 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "ScientLatexSurface",
-      "purpose": "Mount the additive LaTeX build surface in the inherited file viewer."
+      "anchor": "export function EditableFileSurface",
+      "purpose": "Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination."
     },
     {
       "path": "packages/contracts/src/environmentHttp.ts",

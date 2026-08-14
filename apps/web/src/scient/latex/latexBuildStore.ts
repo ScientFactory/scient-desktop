@@ -17,7 +17,11 @@ import {
   requestLatexToolchainInstall,
 } from "./client";
 import { isActiveLatexInstall } from "./latexToolchainSetupModel";
-import { isActiveLatexBuildState, type LatexBuildStatus } from "./scientLatexSurfaceModel";
+import {
+  isActiveLatexBuildState,
+  latexSnapshotsEqual,
+  type LatexBuildStatus,
+} from "./scientLatexSurfaceModel";
 
 export const LATEX_POLL_INTERVAL_MS = 1_500;
 /** A transport failure backs the loop off so an unreachable environment is not hammered. */
@@ -44,6 +48,12 @@ export function latexBuildKey(target: LatexBuildTarget): string {
 }
 
 interface LatexBuildStoreState {
+  /**
+   * One entry per document watched in this window, kept after its watchers
+   * go: reopening a document paints its last known build at once instead of
+   * flashing an empty viewer at the reader. A closed document holds one small
+   * snapshot and no timers, so nothing is evicted before the window is.
+   */
   readonly entries: Readonly<Record<string, LatexBuildStatus>>;
 }
 
@@ -67,12 +77,20 @@ function updateEntry(key: string, update: (current: LatexBuildStatus) => LatexBu
 }
 
 function applySnapshot(key: string, snapshot: ScientLatexBuildSnapshot): void {
-  updateEntry(key, (current) => ({
-    ...current,
-    snapshot,
-    toolchain: snapshot.toolchain ?? current.toolchain,
-    error: null,
-  }));
+  updateEntry(key, (current) => {
+    const toolchain = snapshot.toolchain ?? current.toolchain;
+    // Every poll of a running build answers the same thing. Replacing the
+    // entry with an equal one would re-render the surface and the PDF beside
+    // it once a second for no news.
+    const unchanged = current.snapshot !== null && latexSnapshotsEqual(current.snapshot, snapshot);
+    if (unchanged && current.error === null && current.toolchain === toolchain) return current;
+    return {
+      ...current,
+      snapshot: unchanged ? current.snapshot : snapshot,
+      toolchain,
+      error: null,
+    };
+  });
 }
 
 function applyTransportError(key: string, error: unknown): void {
@@ -91,9 +109,38 @@ interface WatchLoop {
   timer: ReturnType<typeof setTimeout> | null;
   polling: boolean;
   stopped: boolean;
+  /**
+   * Stamped on every request this loop issues. Only the newest issue may write
+   * to the store: a status poll already in flight when a rebuild starts
+   * answers with the finished previous build, and adopting that would stop the
+   * spinner on a build that is still queued.
+   */
+  sequence: number;
 }
 
 const loops = new Map<string, WatchLoop>();
+
+/**
+ * Documents that need a build as soon as anything watches them again. A
+ * closing editor flushes its pending save on the way out, so the confirmation
+ * can arrive after the last watcher is gone; without this the next open would
+ * adopt the PDF built from the text before that save. Keys leave the set the
+ * moment their build is issued, so it holds nothing but documents closed
+ * mid-save.
+ */
+const pendingRebuilds = new Set<string>();
+
+/** What a freshly opened document does with the status it reads first. */
+type LatexOpenBuild = "none" | "when-idle" | "always";
+
+function issueSequence(loop: WatchLoop): number {
+  loop.sequence += 1;
+  return loop.sequence;
+}
+
+function isCurrentIssue(loop: WatchLoop, issued: number): boolean {
+  return !loop.stopped && loop.sequence === issued;
+}
 
 function clearTimer(loop: WatchLoop): void {
   if (loop.timer === null) return;
@@ -106,11 +153,12 @@ function schedulePoll(
   target: LatexBuildTarget,
   loop: WatchLoop,
   delayMs: number,
+  buildOnOpen: LatexOpenBuild = "none",
 ): void {
   if (loop.stopped || loop.timer !== null) return;
   loop.timer = setTimeout(() => {
     loop.timer = null;
-    void pollStatus(key, target, loop);
+    void pollStatus(key, target, loop, buildOnOpen);
   }, delayMs);
 }
 
@@ -134,9 +182,20 @@ function scheduleFollowUp(
   schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
 }
 
-async function pollStatus(key: string, target: LatexBuildTarget, loop: WatchLoop): Promise<void> {
-  if (loop.stopped || loop.polling) return;
+async function pollStatus(
+  key: string,
+  target: LatexBuildTarget,
+  loop: WatchLoop,
+  buildOnOpen: LatexOpenBuild = "none",
+): Promise<void> {
+  if (loop.stopped) return;
+  // A poll that outlives its slot must not silently drop the cadence with it.
+  if (loop.polling) {
+    schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS, buildOnOpen);
+    return;
+  }
   loop.polling = true;
+  const issued = issueSequence(loop);
   try {
     // An install running on the environment is watched by the same loop, one
     // poll ahead of the build status so a finished install rebuilds at once.
@@ -148,13 +207,20 @@ async function pollStatus(key: string, target: LatexBuildTarget, loop: WatchLoop
       workspaceRoot: target.cwd,
       relativePath: target.relativePath,
     });
-    if (loop.stopped) return;
+    if (!isCurrentIssue(loop, issued)) return;
     applySnapshot(key, snapshot);
+    if (buildOnOpen === "always" || (buildOnOpen === "when-idle" && snapshot.state === "idle")) {
+      pendingRebuilds.delete(key);
+      runBuild(key, target, loop);
+      return;
+    }
     scheduleFollowUp(key, target, loop, snapshot);
   } catch (error) {
-    if (loop.stopped) return;
+    if (!isCurrentIssue(loop, issued)) return;
     applyTransportError(key, error);
-    schedulePoll(key, target, loop, LATEX_OFFLINE_POLL_INTERVAL_MS);
+    // The retry inherits the open's intent: a document opened with a build
+    // owed to it still owes that build once the environment answers.
+    schedulePoll(key, target, loop, LATEX_OFFLINE_POLL_INTERVAL_MS, buildOnOpen);
   } finally {
     loop.polling = false;
   }
@@ -168,19 +234,29 @@ async function runRequest(
 ): Promise<void> {
   if (loop.stopped) return;
   clearTimer(loop);
+  const issued = issueSequence(loop);
   setRequesting(key, true);
   try {
     const snapshot = await request();
-    if (loop.stopped) return;
+    if (!isCurrentIssue(loop, issued)) return;
     applySnapshot(key, snapshot);
     scheduleFollowUp(key, target, loop, snapshot);
   } catch (error) {
-    if (loop.stopped) return;
+    if (!isCurrentIssue(loop, issued)) return;
     applyTransportError(key, error);
     schedulePoll(key, target, loop, LATEX_OFFLINE_POLL_INTERVAL_MS);
   } finally {
     setRequesting(key, false);
   }
+}
+
+function runBuild(key: string, target: LatexBuildTarget, loop: WatchLoop): void {
+  void runRequest(key, target, loop, () =>
+    requestLatexBuild(target.environmentId, {
+      workspaceRoot: target.cwd,
+      relativePath: target.relativePath,
+    }),
+  );
 }
 
 /**
@@ -209,8 +285,9 @@ async function pollToolchain(key: string, target: LatexBuildTarget): Promise<voi
 }
 
 /**
- * Watch one document: start a build, then keep the snapshot current until every
- * watcher is gone. Repeat calls for the same document share the single loop.
+ * Watch one document: read what the environment already has, build only if it
+ * has nothing, then keep the snapshot current until every watcher is gone.
+ * Repeat calls for the same document share the single loop.
  */
 export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
   const key = latexBuildKey(target);
@@ -220,15 +297,16 @@ export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
     return () => releaseWatcher(key, existing);
   }
 
-  const loop: WatchLoop = { watchers: 1, timer: null, polling: false, stopped: false };
+  const loop: WatchLoop = { watchers: 1, timer: null, polling: false, stopped: false, sequence: 0 };
   loops.set(key, loop);
+  // One probe per opened document: the empty state has to know whether this
+  // environment can install an engine before any build has run. Every later
+  // toolchain read belongs to an install this loop is already watching.
   void pollToolchain(key, target);
-  void runRequest(key, target, loop, () =>
-    requestLatexBuild(target.environmentId, {
-      workspaceRoot: target.cwd,
-      relativePath: target.relativePath,
-    }),
-  );
+  // Status first, so a document the environment built earlier paints its
+  // stored PDF at once and a build already running is joined rather than
+  // restarted. Only a document with nothing behind it is built on open.
+  void pollStatus(key, target, loop, pendingRebuilds.has(key) ? "always" : "when-idle");
   return () => releaseWatcher(key, loop);
 }
 
@@ -242,19 +320,21 @@ function releaseWatcher(key: string, loop: WatchLoop): void {
 }
 
 /**
- * Ask for a fresh build of a watched document. A build already running is not
- * interrupted: the server queues the rerun and the loop keeps polling.
+ * Ask for a fresh build of a document. A build already running is not
+ * interrupted: the server queues the rerun and the loop keeps polling. A
+ * request for a document nobody watches any more — the save a closing editor
+ * flushed on its way out — is remembered for the next watcher instead of
+ * being dropped.
  */
 export function requestLatexRebuild(target: LatexBuildTarget): void {
   const key = latexBuildKey(target);
   const loop = loops.get(key);
-  if (!loop) return;
-  void runRequest(key, target, loop, () =>
-    requestLatexBuild(target.environmentId, {
-      workspaceRoot: target.cwd,
-      relativePath: target.relativePath,
-    }),
-  );
+  if (!loop) {
+    pendingRebuilds.add(key);
+    return;
+  }
+  pendingRebuilds.delete(key);
+  runBuild(key, target, loop);
 }
 
 /**
@@ -312,5 +392,6 @@ export function resetLatexBuildsForTests(): void {
     clearTimer(loop);
     loops.delete(key);
   }
+  pendingRebuilds.clear();
   useLatexBuildStore.setState({ entries: {} });
 }

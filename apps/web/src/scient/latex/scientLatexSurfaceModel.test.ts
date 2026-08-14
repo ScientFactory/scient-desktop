@@ -16,6 +16,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_LATEX_PREVIEW_MODE,
   DEFAULT_LATEX_SPLIT_FRACTION,
+  LATEX_SPLIT_KEYBOARD_STEP,
   LATEX_TOOLCHAIN_MISSING_HINT,
   LATEX_TOOLCHAIN_MISSING_TITLE,
   MIN_LATEX_SPLIT_FRACTION,
@@ -23,12 +24,16 @@ import {
   formatLatexDiagnosticLine,
   formatLatexDiagnosticLocation,
   isActiveLatexBuildState,
+  latexCompiledFromPath,
   latexDiagnosticCounts,
+  latexDiagnosticPath,
   latexDiagnosticRows,
+  latexSnapshotsEqual,
   latexSplitFractionFromPointer,
   latexStatusStripModel,
   normalizeLatexPreviewMode,
   normalizeLatexSplitFraction,
+  nudgeLatexSplitFraction,
   type LatexBuildStatus,
 } from "./scientLatexSurfaceModel";
 
@@ -145,6 +150,36 @@ describe("latex split fraction", () => {
       DEFAULT_LATEX_SPLIT_FRACTION,
     );
   });
+
+  it("moves the divider from the keyboard and leaves other keys alone", () => {
+    expect(nudgeLatexSplitFraction(0.5, "ArrowRight")).toBeCloseTo(0.5 + LATEX_SPLIT_KEYBOARD_STEP);
+    expect(nudgeLatexSplitFraction(0.5, "ArrowLeft")).toBeCloseTo(0.5 - LATEX_SPLIT_KEYBOARD_STEP);
+    expect(nudgeLatexSplitFraction(0.5, "Home")).toBe(MIN_LATEX_SPLIT_FRACTION);
+    expect(nudgeLatexSplitFraction(0.5, "End")).toBe(1 - MIN_LATEX_SPLIT_FRACTION);
+    // The limits hold for the keyboard exactly as they do for a drag.
+    expect(nudgeLatexSplitFraction(MIN_LATEX_SPLIT_FRACTION, "ArrowLeft")).toBe(
+      MIN_LATEX_SPLIT_FRACTION,
+    );
+    expect(nudgeLatexSplitFraction(1 - MIN_LATEX_SPLIT_FRACTION, "ArrowRight")).toBe(
+      1 - MIN_LATEX_SPLIT_FRACTION,
+    );
+    expect(nudgeLatexSplitFraction(0.5, "ArrowUp")).toBeNull();
+    expect(nudgeLatexSplitFraction(0.5, "a")).toBeNull();
+  });
+});
+
+describe("latexCompiledFromPath", () => {
+  it("names the root only when it is not the file on screen", () => {
+    expect(latexCompiledFromPath("main.tex", "main.tex")).toBeNull();
+    expect(latexCompiledFromPath("main.tex", "./main.tex")).toBeNull();
+    expect(latexCompiledFromPath("main.tex", "chapters\\intro.tex")).toBe("main.tex");
+    expect(latexCompiledFromPath("paper/main.tex", "paper/chapters/intro.tex")).toBe(
+      "paper/main.tex",
+    );
+    expect(latexCompiledFromPath(null, "main.tex")).toBeNull();
+    expect(latexCompiledFromPath(undefined, "main.tex")).toBeNull();
+    expect(latexCompiledFromPath("", "main.tex")).toBeNull();
+  });
 });
 
 describe("latex diagnostics formatting", () => {
@@ -159,15 +194,36 @@ describe("latex diagnostics formatting", () => {
     expect(latexDiagnosticCounts([])).toEqual({ errors: 0, warnings: 0 });
   });
 
-  it("shows the file name and line the log reported", () => {
-    expect(formatLatexDiagnosticLocation(diagnostic())).toBe("main.tex:12");
-    expect(formatLatexDiagnosticLocation(diagnostic({ line: null }))).toBe("main.tex");
-    expect(formatLatexDiagnosticLocation(diagnostic({ file: null }))).toBeNull();
-    expect(formatLatexDiagnosticLocation(diagnostic({ file: "chapters\\intro.tex" }))).toBe(
-      "intro.tex:12",
+  it("shows the whole path a message came from, rebased on the workspace", () => {
+    const root = "/workspace/paper";
+    expect(formatLatexDiagnosticLocation(diagnostic(), root)).toBe("main.tex:12");
+    expect(formatLatexDiagnosticLocation(diagnostic({ line: null }), root)).toBe("main.tex");
+    expect(formatLatexDiagnosticLocation(diagnostic({ file: null }), root)).toBeNull();
+    // Two chapters both end in intro.tex; only the path says which one failed.
+    expect(
+      formatLatexDiagnosticLocation(
+        diagnostic({ file: "/workspace/paper/chapters/intro.tex" }),
+        root,
+      ),
+    ).toBe("chapters/intro.tex:12");
+    expect(formatLatexDiagnosticLocation(diagnostic({ file: "chapters\\intro.tex" }), root)).toBe(
+      "chapters/intro.tex:12",
     );
-    expect(formatLatexDiagnosticLine(diagnostic())).toBe("main.tex:12 Undefined control sequence.");
-    expect(formatLatexDiagnosticLine(diagnostic({ file: null }))).toBe(
+    // A message from outside the workspace keeps the only path it has.
+    expect(
+      formatLatexDiagnosticLocation(diagnostic({ file: "/usr/share/texmf/tex/article.cls" }), root),
+    ).toBe("/usr/share/texmf/tex/article.cls:12");
+    expect(formatLatexDiagnosticLocation(diagnostic())).toBe("/workspace/paper/main.tex:12");
+    expect(latexDiagnosticPath("C:\\work\\paper\\main.tex", "C:\\work\\paper")).toBe("main.tex");
+    expect(latexDiagnosticPath("/workspace/paper/main.tex", "/workspace/paper/")).toBe("main.tex");
+    // A sibling directory that merely starts the same way is not inside it.
+    expect(latexDiagnosticPath("/workspace/paper-old/main.tex", "/workspace/paper")).toBe(
+      "/workspace/paper-old/main.tex",
+    );
+    expect(formatLatexDiagnosticLine(diagnostic(), root)).toBe(
+      "main.tex:12 Undefined control sequence.",
+    );
+    expect(formatLatexDiagnosticLine(diagnostic({ file: null }), root)).toBe(
       "Undefined control sequence.",
     );
   });
@@ -199,6 +255,75 @@ describe("latex build states", () => {
     expect(isActiveLatexBuildState("succeeded")).toBe(false);
     expect(isActiveLatexBuildState("failed")).toBe(false);
     expect(isActiveLatexBuildState("cancelled")).toBe(false);
+  });
+});
+
+describe("latexSnapshotsEqual", () => {
+  it("treats a repeated poll of the same build as no news", () => {
+    expect(latexSnapshotsEqual(snapshot("running"), snapshot("running"))).toBe(true);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", { descriptor: generatedDescriptor(), diagnostics: [diagnostic()] }),
+        snapshot("succeeded", { descriptor: generatedDescriptor(), diagnostics: [diagnostic()] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("sees every change the surface renders", () => {
+    expect(latexSnapshotsEqual(snapshot("running"), snapshot("succeeded"))).toBe(false);
+    expect(
+      latexSnapshotsEqual(snapshot("running"), snapshot("running", { pendingRerun: true })),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", { descriptor: generatedDescriptor() }),
+        snapshot("succeeded", {
+          descriptor: generatedDescriptor({ bindingStatus: "stale", staleReason: "source newer" }),
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", { descriptor: null }),
+        snapshot("succeeded", { descriptor: generatedDescriptor() }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("failed", { diagnostics: [diagnostic()] }),
+        snapshot("failed", { diagnostics: [diagnostic({ line: 13 })] }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("failed", { diagnostics: [diagnostic()] }),
+        snapshot("failed", { diagnostics: [diagnostic(), diagnostic()] }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("failed", { toolchain: toolchain(null) }),
+        snapshot("failed", { toolchain: toolchain("latexmk") }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", { finishedAtEpochMs: 1 }),
+        snapshot("succeeded", { finishedAtEpochMs: 2 }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("failed", { failureSummary: "latexmk exited with code 12" }),
+        snapshot("failed", { failureSummary: null }),
+      ),
+    ).toBe(false);
+    expect(
+      latexSnapshotsEqual(
+        snapshot("succeeded", { rootRelativePath: "main.tex" }),
+        snapshot("succeeded", { rootRelativePath: "paper/main.tex" }),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -256,6 +381,7 @@ describe("latexStatusStripModel", () => {
           failureSummary: "latexmk exited with code 12",
         }),
       }),
+      "/workspace/paper",
     );
     expect(model.label).toBe("Build failed");
     expect(model.errorCount).toBe(1);
@@ -273,6 +399,7 @@ describe("latexStatusStripModel", () => {
           descriptor: generatedDescriptor(),
         }),
       }),
+      "/workspace/paper",
     );
     expect(model.label).toBe("Built");
     expect(model.warningCount).toBe(1);

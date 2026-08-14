@@ -38,6 +38,33 @@ describe("Scient LaTeX file-preview seam", () => {
     expect([...mountedPropNames()].sort()).toEqual([...declaredPropNames()].sort());
   });
 
+  it("hands the surface the save bindings the panel's own editor mount gets", () => {
+    // Without these the surface's editor cannot resolve a revision conflict:
+    // the coordinator refuses to advance and the panel's reload notice buttons
+    // have nothing to act on.
+    expect(mountedPropNames()).toEqual(
+      expect.arrayContaining([
+        "revision",
+        "saveResolution",
+        "onSaveConfirmed",
+        "onSaveFailure",
+        "onSaveResolutionApplied",
+      ]),
+    );
+  });
+
+  it("reuses the panel's editable surface instead of forking it", () => {
+    expect(panelSource).toMatch(/^export function EditableFileSurface\(/mu);
+    expect(surfaceSource).toMatch(
+      /import \{ EditableFileSurface \} from "~\/components\/files\/FilePreviewPanel"/u,
+    );
+    // The forked copy carried its own editor, save coordinator, and comment
+    // wiring. Any of them reappearing here is that fork growing back.
+    expect(surfaceSource).not.toMatch(/new FileSaveCoordinator/u);
+    expect(surfaceSource).not.toMatch(/new Editor</u);
+    expect(surfaceSource).not.toMatch(/useProjectFileQuery/u);
+  });
+
   it("keeps the LaTeX surface off the chat markdown pipeline", () => {
     expect(surfaceSource).not.toMatch(/ChatMarkdown/u);
     expect(surfaceSource).not.toMatch(/from "~\/components\/ChatMarkdown"/u);
