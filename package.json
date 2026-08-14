@@ -29,6 +29,7 @@
     "brand:check": "node scripts/check-scient-brand.ts",
     "analysis:seams:check": "node scripts/verify-scient-analysis-seams.mjs",
     "quick-chat:seams:check": "node scripts/verify-scient-quick-chat-seams.mjs",
+    "latex:seams:check": "node scripts/verify-scient-latex-seams.mjs",
     "upstream:provenance:check": "node scripts/verify-upstream-provenance.mjs",
     "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
     "build:marketing": "vp run --filter @t3tools/marketing build",

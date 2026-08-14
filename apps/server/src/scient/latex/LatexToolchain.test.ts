@@ -119,6 +119,27 @@ describe("LatexToolchain", () => {
     }),
   );
 
+  it.effect("spawns one probe for concurrent callers that all find no cached answer", () =>
+    Effect.gen(function* () {
+      const { layer, calls } = yield* harness(() =>
+        // Yield inside the probe so the second caller really is in flight
+        // while the first one is still shelling out.
+        Effect.yieldNow.pipe(Effect.as(output(LATEXMK_BANNER))),
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const [first, second] = yield* Effect.all(
+          [toolchain.probe(false), toolchain.probe(false)],
+          { concurrency: "unbounded" },
+        );
+        // One spawn sequence, one answer: the loser of the gate read the cache.
+        expect(yield* Ref.get(calls)).toEqual(["latexmk"]);
+        expect(second.probedAtEpochMs).toBe(first.probedAtEpochMs);
+        expect(second.kind).toBe("latexmk");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("serves a cached answer inside the TTL and re-probes once it lapses", () =>
     Effect.gen(function* () {
       const { layer, calls } = yield* harness(() => Effect.succeed(output(LATEXMK_BANNER)));

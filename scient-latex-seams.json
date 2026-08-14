@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "ownedRoots": ["apps/server/src/scient/latex", "apps/web/src/scient/latex"],
+  "ownedFiles": [
+    "packages/client-runtime/src/state/scientLatexHttp.ts",
+    "packages/contracts/src/scientLatex.ts"
+  ],
+  "latexDiffSignals": [
+    "ScientLatex",
+    "scientLatex",
+    "(/|~)scient/latex",
+    "scient_latex_",
+    "Latex(BuildService|Toolchain|BuildError|Invocation)",
+    "isLatexPreviewFile",
+    "latexDir",
+    "/api/scient/latex"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/server/src/config.ts",
+      "anchor": "latexDir",
+      "purpose": "Derive the server-owned LaTeX build state from the configured state root."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "LatexBuildService",
+      "purpose": "Provide the build coordinator and toolchain probe to the shared server layer."
+    },
+    {
+      "path": "apps/web/src/components/files/filePreviewMode.ts",
+      "anchor": "isLatexPreviewFile",
+      "purpose": "Recognize LaTeX sources in the inherited file preview mode selection."
+    },
+    {
+      "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
+      "anchor": "ScientLatexSurface",
+      "purpose": "Mount the additive LaTeX build surface in the inherited file viewer."
+    },
+    {
+      "path": "packages/contracts/src/environmentHttp.ts",
+      "anchor": "scientLatex",
+      "purpose": "Register the LaTeX endpoint group in the shared environment HTTP API."
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scientLatex.ts",
+      "purpose": "Export the additive Scient LaTeX contract from the inherited contract package."
+    },
+    {
+      "path": "packages/client-runtime/package.json",
+      "anchor": "./state/scient-latex",
+      "purpose": "Expose the Scient LaTeX HTTP client module through the package export map."
+    }
+  ]
+}

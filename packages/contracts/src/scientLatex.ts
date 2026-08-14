@@ -40,9 +40,11 @@ export const ScientLatexBuildState = Schema.Literals([
 export type ScientLatexBuildState = typeof ScientLatexBuildState.Type;
 
 /**
- * One poll of a document's build. Clients poll until the state is terminal;
- * `descriptor` is the published PDF the viewer renders and survives a later
- * failure, so a stale binding still has something to show.
+ * One poll of a document's build. Clients poll until the state is terminal and
+ * `pendingRerun` is false, because a coalesced rebuild re-arms the document
+ * right after the terminal state is written; `descriptor` is the published PDF
+ * the viewer renders and survives a later failure, so a stale binding still has
+ * something to show.
  */
 export const ScientLatexBuildSnapshot = Schema.Struct({
   logicalDocumentKey: Schema.String,

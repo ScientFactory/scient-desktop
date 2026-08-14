@@ -1,9 +1,14 @@
 /**
  * Parses TeX engine output into structured diagnostics. Builds run with
  * `-file-line-error`, so errors arrive as `./path.tex:12: message`; warnings
- * keep LaTeX's prose form. The parser reads both interleaved from one
- * combined stdout/stderr transcript and never throws on unfamiliar output —
- * unrecognized lines are simply not diagnostics.
+ * keep LaTeX's prose form. tectonic prefixes the same lines with `error:` or
+ * `warning:`, which the parser strips before matching. The parser reads both
+ * interleaved from one combined stdout/stderr transcript and never throws on
+ * unfamiliar output — unrecognized lines are simply not diagnostics.
+ *
+ * Paths are reported exactly as the engine printed them, which means relative
+ * to the compiler's working directory. `LatexBuildService` rebases them onto
+ * the workspace root before they reach a client.
  */
 
 export interface LatexDiagnostic {
@@ -19,12 +24,41 @@ const BARE_ERROR_PATTERN = /^!\s?(.+)$/u;
 const WARNING_PATTERN = /^(?:LaTeX|Package|Class)(?:\s+\S+)?\s+Warning:\s?(.*)$/u;
 const WARNING_LINE_SUFFIX_PATTERN = /on input line (\d+)\.?\s*$/u;
 const MISSING_FILE_PATTERN = /^No file\s+(.+?)\.\s*$/u;
+/** tectonic labels every line it forwards; the label is severity, not path. */
+const SEVERITY_PREFIX_PATTERN = /^(error|warning):\s+/iu;
+
+/**
+ * Extensions the engine writes itself. A cold build prints `No file main.aux.`
+ * on its first pass and then creates it, so reporting these as missing files
+ * would put a warning on every first compile of every document.
+ */
+const GENERATED_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".aux",
+  ".bbl",
+  ".blg",
+  ".idx",
+  ".lof",
+  ".lot",
+  ".nav",
+  ".out",
+  ".snm",
+  ".synctex",
+  ".toc",
+]);
 
 const MAX_DIAGNOSTICS = 200;
 const MAX_MESSAGE_LENGTH = 500;
 
 function normalizeEnginePath(rawPath: string): string {
   return rawPath.replaceAll("\\", "/").replace(/^\.\//u, "");
+}
+
+/** True for `main.aux` and for compound names like `main.synctex.gz`. */
+function isGeneratedArtifactPath(rawPath: string): boolean {
+  const baseName = (normalizeEnginePath(rawPath).split("/").at(-1) ?? "").toLowerCase();
+  return [...GENERATED_EXTENSIONS].some(
+    (extension) => baseName.endsWith(extension) || baseName.includes(`${extension}.`),
+  );
 }
 
 function clampMessage(message: string): string {
@@ -40,7 +74,13 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
   const lines = transcript.split(/\r?\n/u);
 
   for (let index = 0; index < lines.length && diagnostics.length < MAX_DIAGNOSTICS; index += 1) {
-    const line = lines[index] ?? "";
+    const rawLine = lines[index] ?? "";
+    // Strip tectonic's label before anything else, so the file capture starts
+    // at the path instead of swallowing `error: ` into it.
+    const severityPrefix = SEVERITY_PREFIX_PATTERN.exec(rawLine);
+    const line = severityPrefix === null ? rawLine : rawLine.slice(severityPrefix[0].length);
+    const labelledSeverity =
+      severityPrefix?.[1]?.toLowerCase() === "warning" ? ("warning" as const) : ("error" as const);
 
     const fileLineError = FILE_LINE_ERROR_PATTERN.exec(line);
     if (fileLineError?.[1] !== undefined && fileLineError[2] !== undefined) {
@@ -51,7 +91,7 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
         `${fileLineError[3] ?? ""}${continuation && !continuation.startsWith("!") ? ` ${continuation}` : ""}`,
       );
       diagnostics.push({
-        severity: "error",
+        severity: labelledSeverity,
         file: normalizeEnginePath(fileLineError[1]),
         line: Number.parseInt(fileLineError[2], 10),
         message: message || "TeX error",
@@ -91,7 +131,7 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
     }
 
     const missingFile = MISSING_FILE_PATTERN.exec(line);
-    if (missingFile?.[1] !== undefined) {
+    if (missingFile?.[1] !== undefined && !isGeneratedArtifactPath(missingFile[1])) {
       diagnostics.push({
         severity: "warning",
         file: normalizeEnginePath(missingFile[1]),

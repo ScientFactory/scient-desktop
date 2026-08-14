@@ -28,7 +28,11 @@ import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import {
   LatexBuildService,
   type LatexBuildInput,
+  appendBoundedTranscript,
+  emptyTranscript,
+  escapesWorkspaceRoot,
   layer as buildServiceLayer,
+  renderTranscript,
 } from "./LatexBuildService.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 
@@ -110,6 +114,10 @@ function producedPdfPath(request: ExecutionProcessRequest): string {
 const makeHarness = (input: {
   readonly compiles: ReadonlyArray<FakeCompile>;
   readonly toolchain?: ScientLatexToolchainStatus;
+  /** Extra sources, keyed by workspace-relative posix path. */
+  readonly files?: Readonly<Record<string, string>>;
+  /** The document `buildInput` points at; defaults to the root-level `main.tex`. */
+  readonly relativePath?: string;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -119,6 +127,11 @@ const makeHarness = (input: {
     });
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-state-" });
     yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), SOURCE);
+    for (const [relativePath, contents] of Object.entries(input.files ?? {})) {
+      const absolutePath = path.join(workspaceRoot, relativePath);
+      yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });
+      yield* fileSystem.writeFileString(absolutePath, contents);
+    }
 
     const started = yield* Queue.unbounded<ExecutionProcessRequest>();
     const startCount = yield* Ref.make(0);
@@ -179,7 +192,12 @@ const makeHarness = (input: {
       started,
       startCount,
       cancelCount,
-      buildInput: { workspaceRoot, relativePath: "main.tex" } satisfies LatexBuildInput,
+      workspaceRoot,
+      inputFor: (relativePath: string): LatexBuildInput => ({ workspaceRoot, relativePath }),
+      buildInput: {
+        workspaceRoot,
+        relativePath: input.relativePath ?? "main.tex",
+      } satisfies LatexBuildInput,
     };
   });
 
@@ -225,6 +243,89 @@ describe("LatexBuildService", () => {
           },
         ]);
 
+        const bound = yield* store.getDescriptor(
+          LogicalDocumentKey.make(finished.logicalDocumentKey),
+        );
+        expect(bound).toMatchObject({ bindingStatus: "current", bindingGeneration: 1 });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("compiles a subdirectory root from its own directory and rebases its diagnostics", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness({
+        relativePath: "paper/main.tex",
+        files: {
+          "paper/main.tex": SOURCE,
+          "paper/sections/intro.tex": "intro\n",
+        },
+        compiles: [
+          {
+            // Printed the way the engine prints it: relative to its own cwd.
+            transcript: [
+              "./sections/intro.tex:7: Undefined control sequence.",
+              "l.7 \\nosuchmacro",
+              "",
+              "/opt/texlive/tex/latex/base/article.cls:11: Package error.",
+              "",
+            ].join("\n"),
+            exitCode: 0,
+            pdf: minimalPdf("build-sub"),
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const request = yield* Queue.take(harness.started);
+        // `\input{sections/intro}` only resolves when TeX runs from `paper/`.
+        expect(request.cwd).toBe(path.join(harness.workspaceRoot, "paper"));
+        // Without these TeX hard-wraps its own messages at 79 columns.
+        expect(request.environment).toMatchObject({
+          max_print_line: "1000",
+          error_line: "254",
+          half_error_line: "238",
+        });
+
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.rootRelativePath).toBe("paper/main.tex");
+        // Clients only understand workspace-relative paths.
+        expect(finished.diagnostics[0]).toMatchObject({
+          severity: "error",
+          file: "paper/sections/intro.tex",
+          line: 7,
+        });
+        // A path outside the workspace keeps its message and loses its file.
+        expect(finished.diagnostics[1]).toMatchObject({ severity: "error", file: null, line: 11 });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("publishes a PDF the engine produced despite errors, keeping the errors", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: ERROR_TRANSCRIPT, exitCode: 1, pdf: minimalPdf("partial") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        // Overleaf parity: the reader gets the PDF, the editor gets the errors.
+        expect(finished.state).toBe("succeeded");
+        expect(finished.failureSummary).toBeNull();
+        expect(finished.diagnostics[0]).toMatchObject({
+          severity: "error",
+          file: "main.tex",
+          line: 12,
+        });
+        expect(finished.descriptor).toMatchObject({
+          _tag: "generated-pdf",
+          bindingStatus: "current",
+        });
         const bound = yield* store.getDescriptor(
           LogicalDocumentKey.make(finished.logicalDocumentKey),
         );
@@ -336,6 +437,88 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("reports the binding it just staled when it cancels a build that owned one", () =>
+    Effect.gen(function* () {
+      const hold = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("build-a") },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("build-b"), hold },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const published = yield* awaitTerminal(service, harness.buildInput);
+        expect(published.descriptor).toMatchObject({ bindingStatus: "current" });
+        yield* Queue.take(harness.started);
+
+        yield* service.requestBuild(harness.buildInput);
+        yield* Queue.take(harness.started);
+        const cancelled = yield* service.cancel(harness.buildInput);
+
+        expect(cancelled.state).toBe("cancelled");
+        expect(cancelled.failureSummary).toBe("Build cancelled.");
+        // The store recorded the cancel against the binding, so the snapshot
+        // that reports the cancel has to carry that status, not the `current`
+        // one the descriptor was holding when the build started.
+        expect(cancelled.descriptor).toMatchObject({
+          bindingStatus: "stale",
+          staleReason: "Build cancelled.",
+        });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("admits three compiles at a time and leaves the rest queued", () =>
+    Effect.gen(function* () {
+      const hold = yield* Deferred.make<void>();
+      const documents = ["a.tex", "b.tex", "c.tex", "d.tex"];
+      const harness = yield* makeHarness({
+        files: Object.fromEntries(documents.map((name) => [name, SOURCE])),
+        compiles: documents.map((name) => ({
+          transcript: "",
+          exitCode: 0,
+          pdf: minimalPdf(name),
+          hold,
+        })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const inputs = documents.map((name) => harness.inputFor(name));
+        yield* Effect.all(inputs.map((input) => service.requestBuild(input)));
+        yield* Effect.all([
+          Queue.take(harness.started),
+          Queue.take(harness.started),
+          Queue.take(harness.started),
+        ]);
+
+        // Give the fourth compile every chance to reach the port; the permit is
+        // the only thing holding it back.
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          yield* Effect.sleep(Duration.millis(10));
+          expect(yield* Ref.get(harness.startCount)).toBe(3);
+        }
+        const waiting = yield* Effect.all(inputs.map((input) => service.status(input)));
+        expect(waiting.filter((snapshot) => snapshot.state === "running")).toHaveLength(3);
+        expect(waiting.filter((snapshot) => snapshot.state === "queued")).toHaveLength(1);
+
+        yield* Deferred.succeed(hold, undefined);
+        const finished = yield* Effect.all(
+          inputs.map((input) => awaitTerminal(service, input)),
+          { concurrency: "unbounded" },
+        );
+        expect(finished.map((snapshot) => snapshot.state)).toEqual([
+          "succeeded",
+          "succeeded",
+          "succeeded",
+          "succeeded",
+        ]);
+        expect(yield* Ref.get(harness.startCount)).toBe(4);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("lets the newest generation win and reports a superseded publish as cancelled", () =>
     Effect.gen(function* () {
       const hold = yield* Deferred.make<void>();
@@ -427,6 +610,34 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("never compiles a Windows drive-relative path", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ compiles: [] });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const outcome = yield* service
+          .requestBuild({
+            workspaceRoot: harness.buildInput.workspaceRoot,
+            relativePath: "C:evil\\x.tex",
+          })
+          .pipe(Effect.result);
+
+        // Where `C:evil\x.tex` lands depends on the drive the workspace sits
+        // on: the same drive resolves it to an ordinary missing file inside the
+        // workspace, another drive makes `path.relative` hand back an absolute
+        // path that the containment guard rejects. Neither reaches the engine,
+        // and neither is allowed to name a path outside the root.
+        if (outcome._tag === "Failure") {
+          expect(outcome.failure.reason).toBe("invalid-path");
+        } else {
+          expect(outcome.success.state).toBe("failed");
+          expect(escapesWorkspaceRoot(outcome.success.rootRelativePath)).toBe(false);
+        }
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("fails a build whose engine never exits once the compile timeout elapses", () =>
     Effect.gen(function* () {
       const hold = yield* Deferred.make<void>();
@@ -450,4 +661,46 @@ describe("LatexBuildService", () => {
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer())), Effect.scoped),
   );
+});
+
+describe("escapesWorkspaceRoot", () => {
+  it("rejects parent walks and anything path.relative could not keep relative", () => {
+    expect(escapesWorkspaceRoot("main.tex")).toBe(false);
+    expect(escapesWorkspaceRoot("paper/sections/intro.tex")).toBe(false);
+    expect(escapesWorkspaceRoot("")).toBe(true);
+    expect(escapesWorkspaceRoot("..")).toBe(true);
+    expect(escapesWorkspaceRoot("../outside.tex")).toBe(true);
+    // `path.relative` returns these when the two sides share no root at all,
+    // which is how a Windows drive-relative request escapes.
+    expect(escapesWorkspaceRoot("/etc/passwd")).toBe(true);
+    expect(escapesWorkspaceRoot("C:/other/evil/x.tex")).toBe(true);
+  });
+});
+
+describe("appendBoundedTranscript", () => {
+  it("keeps a small transcript verbatim", () => {
+    const state = appendBoundedTranscript(
+      appendBoundedTranscript(emptyTranscript, "This is pdfTeX\n"),
+      "Output written on main.pdf (3 pages).\n",
+    );
+
+    expect(renderTranscript(state)).toBe("This is pdfTeX\nOutput written on main.pdf (3 pages).\n");
+  });
+
+  it("drops the middle of an oversized transcript, never the ending", () => {
+    const noise = "x".repeat(1024 * 1024);
+    let state = appendBoundedTranscript(emptyTranscript, "This is pdfTeX\n");
+    for (let chunk = 0; chunk < 5; chunk += 1) {
+      state = appendBoundedTranscript(state, noise);
+    }
+    state = appendBoundedTranscript(state, "\n./main.tex:12: Undefined control sequence.\n");
+    const text = renderTranscript(state);
+
+    // The engine's verdict is the last thing it prints, so the tail is the part
+    // worth keeping; the banner survives as a short head.
+    expect(text.startsWith("This is pdfTeX\n")).toBe(true);
+    expect(text.endsWith("\n./main.tex:12: Undefined control sequence.\n")).toBe(true);
+    expect(text).toContain("[transcript truncated]");
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(4 * 1024 * 1024 + 64);
+  });
 });

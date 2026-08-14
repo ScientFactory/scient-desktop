@@ -1,9 +1,13 @@
 /**
  * Builds the exact engine invocation for one compile. Every invocation is
  * non-interactive, reports errors in file:line form, keeps shell escape off,
- * and writes every aux and output file into a Scient-owned work directory
- * outside the project tree, so builds never dirty the workspace or the
- * agent's checkpoints.
+ * emits a SyncTeX index next to the PDF, and writes every aux and output file
+ * into a Scient-owned work directory outside the project tree, so builds never
+ * dirty the workspace or the agent's checkpoints.
+ *
+ * Nothing here stops at the first error: Overleaf publishes whatever PDF the
+ * engine managed to produce and shows the errors beside it, so the engine runs
+ * to the end of the document and the caller decides what the exit code means.
  */
 
 export type LatexToolchainKind = "latexmk" | "tectonic";
@@ -38,7 +42,7 @@ export function buildLatexInvocation(input: {
   if (input.toolchain.kind === "tectonic") {
     return {
       command: input.toolchain.executable,
-      args: ["--outdir", input.workDirectory, "--untrusted", input.rootAbsolutePath],
+      args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootAbsolutePath],
       pdfPath,
     };
   }
@@ -48,9 +52,9 @@ export function buildLatexInvocation(input: {
     args: [
       "-pdf",
       "-interaction=nonstopmode",
-      "-halt-on-error",
       "-file-line-error",
       "-no-shell-escape",
+      "-synctex=1",
       `-outdir=${input.workDirectory}`,
       input.rootAbsolutePath,
     ],

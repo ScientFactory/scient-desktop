@@ -14,10 +14,36 @@ describe("buildLatexInvocation", () => {
     expect(invocation.args).toContain("-interaction=nonstopmode");
     expect(invocation.args).toContain("-file-line-error");
     expect(invocation.args).toContain("-no-shell-escape");
-    expect(invocation.args).toContain("-halt-on-error");
+    expect(invocation.args).toContain("-synctex=1");
     expect(invocation.args).toContain("-outdir=C:/state/scient-latex/abc");
     expect(invocation.args.at(-1)).toBe("C:\\work\\paper\\main.tex");
     expect(invocation.pdfPath).toBe("C:/state/scient-latex/abc/main.pdf");
+  });
+
+  it("runs to the end of the document instead of halting on the first error", () => {
+    const invocation = buildLatexInvocation({
+      toolchain: { kind: "latexmk", executable: "latexmk", version: "4.86" },
+      rootAbsolutePath: "/home/u/paper/main.tex",
+      workDirectory: "/state/scient-latex/abc",
+    });
+
+    // Overleaf parity: an error-carrying document still typesets a PDF, and the
+    // service publishes it with the errors beside it.
+    expect(invocation.args).not.toContain("-halt-on-error");
+  });
+
+  it("keeps a subdirectory root addressable from its own directory", () => {
+    const invocation = buildLatexInvocation({
+      toolchain: { kind: "latexmk", executable: "latexmk", version: "4.86" },
+      rootAbsolutePath: "/home/u/workspace/paper/main.tex",
+      workDirectory: "/state/scient-latex/abc",
+    });
+
+    // The engine is spawned from the root's own directory so `\input` resolves,
+    // and the absolute root plus an absolute `-outdir` survive that cwd.
+    expect(invocation.args.at(-1)).toBe("/home/u/workspace/paper/main.tex");
+    expect(invocation.args).toContain("-outdir=/state/scient-latex/abc");
+    expect(invocation.pdfPath).toBe("/state/scient-latex/abc/main.pdf");
   });
 
   it("builds an untrusted tectonic invocation", () => {
@@ -32,6 +58,7 @@ describe("buildLatexInvocation", () => {
       "--outdir",
       "/state/scient-latex/xyz",
       "--untrusted",
+      "--synctex",
       "/home/u/paper/thesis.tex",
     ]);
     expect(invocation.pdfPath).toBe("/state/scient-latex/xyz/thesis.pdf");

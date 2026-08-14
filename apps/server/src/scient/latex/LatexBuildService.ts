@@ -6,9 +6,11 @@
  * `GeneratedDocumentStore` that turns a produced PDF into an immutable
  * revision the viewer can render.
  *
- * Three invariants shape the code below:
+ * Four invariants shape the code below:
  *   - A rebuild requested while one is in flight coalesces into a single
  *     follow-up run, so a save-happy editor cannot queue a hundred compiles.
+ *   - At most `MAX_CONCURRENT_COMPILES` documents compile at once; the rest
+ *     sit in `queued` until a permit frees.
  *   - Aux files never touch the workspace; every engine writes into
  *     `<latexDir>/builds/<digest>/`.
  *   - A build that loses the binding race (`superseded`) reports itself
@@ -42,6 +44,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
@@ -88,7 +91,29 @@ export class LatexBuildService extends Context.Service<
 const LATEX_PRODUCER_ID = ArtifactProducerId.make("latex");
 const BUILD_TIMEOUT = "240 seconds";
 const MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024;
+/** The banner and the engine's own summary of the run live at the very top. */
+const TRANSCRIPT_HEAD_BYTES = 2 * 1024;
 const MAX_LOGICAL_DOCUMENT_KEY_LENGTH = 1_024;
+/**
+ * Root resolution never needs more than the head of a file: the magic-comment
+ * scan stops at 4 000 characters and `\documentclass` sits in the preamble, so
+ * a status poll on a multi-megabyte source reads one block instead of all of it.
+ */
+const ROOT_RESOLUTION_HEAD_BYTES = 8 * 1_024;
+/** A compile is CPU- and disk-bound; three at once keeps a laptop usable. */
+const MAX_CONCURRENT_COMPILES = 3;
+
+/**
+ * TeX wraps its own messages at 79 columns by default, which cuts file paths
+ * and error text in half before the parser ever sees them. These are the
+ * documented `texmf.cnf` knobs for that, and every engine reads them from the
+ * environment.
+ */
+const TEX_OUTPUT_ENVIRONMENT: Readonly<Record<string, string>> = {
+  max_print_line: "1000",
+  error_line: "254",
+  half_error_line: "238",
+};
 
 const NO_TOOLCHAIN_SUMMARY =
   "No LaTeX toolchain found. Install latexmk (TeX Live or MiKTeX) or tectonic, then try again.";
@@ -105,7 +130,7 @@ const ACTIVE_STATES: ReadonlySet<ScientLatexBuildState> = new Set([
 
 interface LatexBuildEntry {
   readonly logicalDocumentKey: string;
-  /** Absolute, resolved workspace root; also the compiler's cwd. */
+  /** Absolute, resolved workspace root; every path a client sees is relative to it. */
   readonly workspaceRoot: string;
   readonly rootRelativePath: string;
   readonly state: ScientLatexBuildState;
@@ -129,10 +154,33 @@ interface ResolvedLatexTarget {
   readonly failureSummary: string | null;
 }
 
+/**
+ * The transcript is bounded but the interesting part is at the end: the final
+ * error, the rerun decision, and `Output written on …` all arrive last. The
+ * state therefore keeps a short head (the engine banner) plus the newest bytes
+ * that fit, and drops the middle.
+ */
 interface TranscriptState {
+  readonly head: string;
+  readonly headBytes: number;
+  /** Oldest first; whole chunks fall off the front as newer ones arrive. */
+  readonly tail: ReadonlyArray<TranscriptChunk>;
+  readonly tailBytes: number;
+  readonly dropped: boolean;
+}
+
+interface TranscriptChunk {
   readonly text: string;
   readonly bytes: number;
 }
+
+export const emptyTranscript: TranscriptState = {
+  head: "",
+  headBytes: 0,
+  tail: [],
+  tailBytes: 0,
+  dropped: false,
+};
 
 function toPosixPath(input: string): string {
   return input.replaceAll("\\", "/");
@@ -144,12 +192,23 @@ function normalizeWorkspaceRoot(workspaceRoot: string): string {
   return posix.length > 1 ? posix.replace(/\/+$/u, "") : posix;
 }
 
-function escapesRoot(relativePath: string): boolean {
+/** `/etc/passwd`, `C:/other/x.tex` — what `path.relative` returns when it cannot stay relative. */
+const ABSOLUTE_PATH_PATTERN = /^(?:\/|[A-Za-z]:)/u;
+
+/**
+ * Containment guard for a path already made relative to the workspace root and
+ * normalized to forward slashes. `..` walks are the obvious escape; the absolute
+ * form is the quiet one, because `path.relative` gives up and returns an
+ * absolute path whenever the two sides sit on different Windows drives — which
+ * is exactly what a drive-relative request like `C:evil\x.tex` produces.
+ */
+export function escapesWorkspaceRoot(relativePath: string): boolean {
   return (
     relativePath.length === 0 ||
     relativePath === "." ||
     relativePath === ".." ||
-    relativePath.startsWith("../")
+    relativePath.startsWith("../") ||
+    ABSOLUTE_PATH_PATTERN.test(relativePath)
   );
 }
 
@@ -162,17 +221,53 @@ function documentTitle(rootRelativePath: string): string {
   return baseName.replace(/\.\w+$/u, "") || baseName;
 }
 
-function appendBoundedTranscript(state: TranscriptState, text: string): TranscriptState {
-  const remaining = MAX_TRANSCRIPT_BYTES - state.bytes;
-  if (remaining <= 0) return state;
-  const byteLength = Buffer.byteLength(text);
-  if (byteLength <= remaining) {
-    return { text: state.text + text, bytes: state.bytes + byteLength };
+/** Splits on a codepoint boundary at or before `maxBytes` so neither side gains a replacement character. */
+function splitAtBytes(text: string, maxBytes: number): readonly [string, string] {
+  if (maxBytes <= 0) return ["", text];
+  const buffer = Buffer.from(text, "utf8");
+  if (buffer.byteLength <= maxBytes) return [text, ""];
+  let cut = maxBytes;
+  while (cut > 0 && ((buffer[cut] ?? 0) & 0b1100_0000) === 0b1000_0000) cut -= 1;
+  return [buffer.toString("utf8", 0, cut), buffer.toString("utf8", cut)];
+}
+
+const TRANSCRIPT_TAIL_BYTES = MAX_TRANSCRIPT_BYTES - TRANSCRIPT_HEAD_BYTES;
+const TRANSCRIPT_TRUNCATION_MARKER = "\n[transcript truncated]\n";
+
+export function appendBoundedTranscript(state: TranscriptState, text: string): TranscriptState {
+  const [headPart, overflow] = splitAtBytes(text, TRANSCRIPT_HEAD_BYTES - state.headBytes);
+  const head = state.head + headPart;
+  const headBytes = state.headBytes + Buffer.byteLength(headPart);
+  if (overflow.length === 0) return { ...state, head, headBytes };
+
+  const tail = [...state.tail, { text: overflow, bytes: Buffer.byteLength(overflow) }];
+  let tailBytes = state.tailBytes + Buffer.byteLength(overflow);
+  let dropped = state.dropped;
+  while (tailBytes > TRANSCRIPT_TAIL_BYTES && tail.length > 0) {
+    const oldest = tail[0];
+    if (oldest === undefined) break;
+    dropped = true;
+    const excess = tailBytes - TRANSCRIPT_TAIL_BYTES;
+    if (oldest.bytes <= excess) {
+      tail.shift();
+      tailBytes -= oldest.bytes;
+      continue;
+    }
+    const [discarded, kept] = splitAtBytes(oldest.text, excess);
+    const discardedBytes = Buffer.byteLength(discarded);
+    // Snapping to a codepoint boundary can leave the last few bytes in place;
+    // stop rather than spin, a handful of bytes over a four-megabyte budget.
+    if (discardedBytes === 0) break;
+    tail[0] = { text: kept, bytes: oldest.bytes - discardedBytes };
+    tailBytes -= discardedBytes;
   }
-  return {
-    text: `${state.text}${text.slice(0, remaining)}\n[truncated]`,
-    bytes: MAX_TRANSCRIPT_BYTES,
-  };
+  return { head, headBytes, tail, tailBytes, dropped };
+}
+
+/** Head, a marker where the middle was dropped, then the newest output. */
+export function renderTranscript(state: TranscriptState): string {
+  const tail = state.tail.map((chunk) => chunk.text).join("");
+  return state.dropped ? `${state.head}${TRANSCRIPT_TRUNCATION_MARKER}${tail}` : state.head + tail;
 }
 
 export const make = Effect.gen(function* () {
@@ -187,6 +282,39 @@ export const make = Effect.gen(function* () {
   // by the service instead of a request scope.
   const buildScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(buildScope, Exit.void));
+  // Admission control for the compile itself. A fiber holds no permit while it
+  // waits, which is what keeps the `queued` state honest.
+  const admission = yield* Semaphore.make(MAX_CONCURRENT_COMPILES);
+
+  /** Reads only the head of a source file; see `ROOT_RESOLUTION_HEAD_BYTES`. */
+  const readSourceHead = (absolutePath: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fileSystem.open(absolutePath, { flag: "r" });
+        const chunk = yield* file.readAlloc(ROOT_RESOLUTION_HEAD_BYTES);
+        return Option.isNone(chunk) ? "" : new TextDecoder().decode(chunk.value);
+      }),
+    );
+
+  /**
+   * TeX resolves `\input` against its working directory, so a build compiles
+   * from the root document's folder and every printed path is relative to that
+   * folder. Clients only understand workspace-relative paths, so rebase them
+   * here. A path that lands outside the workspace keeps its message and loses
+   * its file, because no client could open it anyway.
+   */
+  const rebaseDiagnostics = (input: {
+    readonly workspaceRoot: string;
+    readonly compileDirectory: string;
+    readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
+  }): ReadonlyArray<ScientLatexDiagnostic> =>
+    input.diagnostics.map((diagnostic) => {
+      if (diagnostic.file === null) return diagnostic;
+      const relative = toPosixPath(
+        path.relative(input.workspaceRoot, path.resolve(input.compileDirectory, diagnostic.file)),
+      );
+      return { ...diagnostic, file: escapesWorkspaceRoot(relative) ? null : relative };
+    });
 
   const getEntry = (key: string) =>
     Ref.get(entriesRef).pipe(Effect.map((entries) => entries.get(key) ?? null));
@@ -288,12 +416,12 @@ export const make = Effect.gen(function* () {
           executable: input.command,
           args: input.args,
           cwd: input.cwd,
-          environment: {},
+          environment: TEX_OUTPUT_ENVIRONMENT,
         });
         yield* updateEntry(input.key, (entry) => ({ ...entry, handle }));
         // A cancel that raced the spawn still has to reach this process tree.
         if (yield* isCancelled(input.key)) yield* handle.cancel.pipe(Effect.ignoreCause());
-        const transcriptRef = yield* Ref.make<TranscriptState>({ text: "", bytes: 0 });
+        const transcriptRef = yield* Ref.make<TranscriptState>(emptyTranscript);
         const outputFiber = yield* handle.output.pipe(
           Stream.runForEach((chunk) =>
             Ref.update(transcriptRef, (state) => appendBoundedTranscript(state, chunk.text)),
@@ -310,7 +438,7 @@ export const make = Effect.gen(function* () {
         const transcript = yield* Ref.get(transcriptRef);
         return {
           exitCode: Option.isNone(exitCode) ? null : exitCode.value,
-          transcript: transcript.text,
+          transcript: renderTranscript(transcript),
         };
       }),
     );
@@ -372,7 +500,7 @@ export const make = Effect.gen(function* () {
         );
     });
 
-  const runOnce = (key: string) =>
+  const compileAndPublish = (key: string) =>
     Effect.gen(function* () {
       const entry = yield* getEntry(key);
       if (entry === null || entry.cancelRequested) return;
@@ -401,42 +529,61 @@ export const make = Effect.gen(function* () {
       });
       yield* updateEntry(key, (current) => ({ ...current, production }));
 
+      const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
       const invocation = buildLatexInvocation({
         toolchain: {
           kind: toolchain.kind,
           executable: toolchain.executable,
           version: toolchain.version ?? "unknown",
         },
-        rootAbsolutePath: path.join(entry.workspaceRoot, entry.rootRelativePath),
+        rootAbsolutePath,
         workDirectory,
       });
 
+      // The work directory outlives a single build, so the previous run's PDF
+      // is still sitting at `pdfPath`. Drop it first: afterwards "a PDF is
+      // there" means "this run produced one", which is what lets a run that
+      // exits non-zero still publish honestly.
+      yield* fileSystem.remove(invocation.pdfPath, { force: true }).pipe(Effect.ignoreCause());
+
+      // TeX resolves `\input{sections/intro}` against the working directory,
+      // not against the root document, so a root under `paper/` only builds
+      // when the engine runs from `paper/`.
+      const compileDirectory = path.dirname(rootAbsolutePath);
       const outcome = yield* runProcess({
         key,
         command: invocation.command,
         args: invocation.args,
-        cwd: entry.workspaceRoot,
+        cwd: compileDirectory,
       });
       // A cancel that landed while the engine ran already wrote the terminal
       // state and told the store; do not overwrite it with the kill's exit code.
       if (yield* isCancelled(key)) return;
 
-      const diagnostics = parseLatexLog(outcome.transcript);
+      const diagnostics = rebaseDiagnostics({
+        workspaceRoot: entry.workspaceRoot,
+        compileDirectory,
+        diagnostics: parseLatexLog(outcome.transcript),
+      });
       if (outcome.exitCode === null) {
         yield* recordFailure({ key, production, summary: TIMEOUT_SUMMARY, diagnostics });
         return;
       }
-      if (outcome.exitCode !== 0) {
+      // Overleaf parity: a document with errors that still typeset a PDF is
+      // published, with the errors alongside it. Only an empty-handed run
+      // fails, because then there is nothing new for the viewer to show.
+      const producedBytes = yield* fileSystem.stat(invocation.pdfPath).pipe(
+        Effect.map((info) => Number(info.size)),
+        Effect.orElseSucceed(() => 0),
+      );
+      if (producedBytes <= 0) {
         yield* recordFailure({
           key,
           production,
-          summary: summarizeLatexFailure(diagnostics),
+          summary:
+            outcome.exitCode === 0 ? MISSING_PDF_SUMMARY : summarizeLatexFailure(diagnostics),
           diagnostics,
         });
-        return;
-      }
-      if (!(yield* fileSystem.exists(invocation.pdfPath))) {
-        yield* recordFailure({ key, production, summary: MISSING_PDF_SUMMARY, diagnostics });
         return;
       }
       yield* publish({
@@ -446,23 +593,33 @@ export const make = Effect.gen(function* () {
         title: documentTitle(entry.rootRelativePath),
         diagnostics,
       });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("latex build failed", { logicalDocumentKey: key, cause });
-          const entry = yield* getEntry(key);
-          if (entry === null || !ACTIVE_STATES.has(entry.state)) return;
-          if (entry.production !== null) {
-            yield* recordStoreFailure(entry.production, UNEXPECTED_FAILURE_SUMMARY);
-          }
-          yield* finishBuild(key, (current) => ({
-            ...current,
-            state: "failed",
-            failureSummary: UNEXPECTED_FAILURE_SUMMARY,
-          }));
-        }),
-      ),
-    );
+    });
+
+  /**
+   * One pass of the build loop. The permit is taken around the compile itself,
+   * so a build that is waiting its turn stays in `queued` — the state a client
+   * polls — instead of claiming to be running.
+   */
+  const runOnce = (key: string) =>
+    admission
+      .withPermits(1)(compileAndPublish(key))
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("latex build failed", { logicalDocumentKey: key, cause });
+            const entry = yield* getEntry(key);
+            if (entry === null || !ACTIVE_STATES.has(entry.state)) return;
+            if (entry.production !== null) {
+              yield* recordStoreFailure(entry.production, UNEXPECTED_FAILURE_SUMMARY);
+            }
+            yield* finishBuild(key, (current) => ({
+              ...current,
+              state: "failed",
+              failureSummary: UNEXPECTED_FAILURE_SUMMARY,
+            }));
+          }),
+        ),
+      );
 
   /** Consumes a coalesced rebuild request and re-arms the entry for another pass. */
   const consumePendingRerun = (key: string) =>
@@ -498,8 +655,10 @@ export const make = Effect.gen(function* () {
 
   const resolveTarget = (operation: LatexBuildError["operation"], input: LatexBuildInput) =>
     Effect.gen(function* () {
-      const workspaceRoot = path.resolve(input.workspaceRoot.trim());
-      const requested = input.relativePath.trim();
+      // Both fields arrive through `Schema.Trimmed`, so there is nothing left
+      // to trim off them here.
+      const workspaceRoot = path.resolve(input.workspaceRoot);
+      const requested = input.relativePath;
       const invalidPath = () =>
         new LatexBuildError({
           operation,
@@ -510,7 +669,7 @@ export const make = Effect.gen(function* () {
       const requestedRelative = toPosixPath(
         path.relative(workspaceRoot, path.resolve(workspaceRoot, requested)),
       );
-      if (escapesRoot(requestedRelative)) return yield* invalidPath();
+      if (escapesWorkspaceRoot(requestedRelative)) return yield* invalidPath();
 
       const makeTarget = (
         rootRelativePath: string,
@@ -534,12 +693,10 @@ export const make = Effect.gen(function* () {
         });
       };
 
-      const contents = yield* fileSystem
-        .readFileString(path.resolve(workspaceRoot, requestedRelative))
-        .pipe(
-          Effect.map(Option.some),
-          Effect.orElseSucceed(() => Option.none<string>()),
-        );
+      const contents = yield* readSourceHead(path.resolve(workspaceRoot, requestedRelative)).pipe(
+        Effect.map(Option.some),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      );
       if (Option.isNone(contents)) {
         return yield* makeTarget(
           requestedRelative,
@@ -554,7 +711,7 @@ export const make = Effect.gen(function* () {
       const rootRelativePath = toPosixPath(
         path.relative(workspaceRoot, path.resolve(workspaceRoot, resolution.rootRelativePath)),
       );
-      if (escapesRoot(rootRelativePath)) return yield* invalidPath();
+      if (escapesWorkspaceRoot(rootRelativePath)) return yield* invalidPath();
       return yield* makeTarget(rootRelativePath, null);
     });
 
@@ -657,10 +814,17 @@ export const make = Effect.gen(function* () {
       if (entry.production !== null) {
         yield* recordStoreFailure(entry.production, CANCELLED_SUMMARY);
       }
+      // Same re-read as `recordFailure`: cancelling a build that owned the
+      // binding marks it stale in the store, and the snapshot this call returns
+      // has to say so rather than echo the `current` status it was holding.
+      const descriptor = yield* store
+        .getDescriptor(LogicalDocumentKey.make(target.logicalDocumentKey))
+        .pipe(Effect.orElseSucceed(() => null));
       yield* finishBuild(target.logicalDocumentKey, (current) => ({
         ...current,
         state: "cancelled",
-        failureSummary: null,
+        failureSummary: CANCELLED_SUMMARY,
+        descriptor: descriptor ?? current.descriptor,
       }));
       return yield* readEntrySnapshot(target.logicalDocumentKey);
     });

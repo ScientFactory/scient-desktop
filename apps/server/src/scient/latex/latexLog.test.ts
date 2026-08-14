@@ -71,6 +71,64 @@ describe("parseLatexLog", () => {
   it("returns nothing for a clean transcript", () => {
     expect(parseLatexLog("Output written on main.pdf (3 pages).\n")).toHaveLength(0);
   });
+
+  it("ignores the aux files a cold build reports missing before writing them", () => {
+    const transcript = [
+      "No file main.aux.",
+      "No file main.toc.",
+      "No file paper/main.bbl.",
+      "No file main.synctex.gz.",
+      "No file chapters/intro.tex.",
+    ].join("\n");
+
+    const diagnostics = parseLatexLog(transcript);
+
+    // Only the real source file is missing; the rest the engine creates itself.
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      severity: "warning",
+      file: "chapters/intro.tex",
+    });
+  });
+
+  it("reads a tectonic transcript whose lines carry a severity label", () => {
+    // Verbatim shape of tectonic's forwarded TeX output.
+    const transcript = [
+      "Running TeX ...",
+      "error: main.tex:12: Undefined control sequence.",
+      "l.12 \\nosuchmacro",
+      "",
+      "warning: sections/intro.tex:3: Overfull \\hbox (12.0pt too wide).",
+      "error: the LaTeX engine failed (exit status 1)",
+    ].join("\n");
+
+    const diagnostics = parseLatexLog(transcript);
+
+    // The label must never end up inside the file capture.
+    expect(diagnostics[0]).toMatchObject({
+      severity: "error",
+      file: "main.tex",
+      line: 12,
+    });
+    expect(diagnostics[0]?.message).toContain("Undefined control sequence");
+    expect(diagnostics[1]).toMatchObject({
+      severity: "warning",
+      file: "sections/intro.tex",
+      line: 3,
+    });
+  });
+
+  it("keeps a long message whole now that builds raise max_print_line", () => {
+    // TeX wraps at 79 columns unless `max_print_line` says otherwise, which
+    // used to split one error across lines; the service sets it, so the
+    // transcript arrives unwrapped and the message survives in one piece.
+    const message = `Undefined control sequence \\${"verylongmacroname".repeat(4)} in the preamble.`;
+    const diagnostics = parseLatexLog(`./main.tex:12: ${message}\n\n`);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toBe(message);
+    expect((diagnostics[0]?.message ?? "").length).toBeGreaterThan(79);
+  });
 });
 
 describe("summarizeLatexFailure", () => {

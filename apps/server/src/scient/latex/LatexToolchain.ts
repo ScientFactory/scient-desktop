@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../../processRunner.ts";
 
@@ -64,6 +65,10 @@ const absent = (probedAtEpochMs: number): ScientLatexToolchainStatus => ({
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheRef = yield* Ref.make<ScientLatexToolchainStatus | null>(null);
+  // Every build and every status poll asks for the toolchain, so a lapsed TTL
+  // would otherwise let a burst of pollers each shell out. One probe runs; the
+  // rest queue here and read the answer it leaves in the cache.
+  const probeGate = yield* Semaphore.make(1);
 
   const probeCandidate = (candidate: ToolchainCandidate, probedAtEpochMs: number) =>
     processRunner
@@ -107,16 +112,29 @@ export const make = Effect.gen(function* () {
     return absent(probedAtEpochMs);
   });
 
+  const isFresh = (cached: ScientLatexToolchainStatus | null) =>
+    Effect.gen(function* () {
+      if (cached === null) return false;
+      const now = yield* Clock.currentTimeMillis;
+      return now - cached.probedAtEpochMs < PROBE_CACHE_TTL_MS;
+    });
+
   const probe = (refresh: boolean) =>
     Effect.gen(function* () {
       const cached = yield* Ref.get(cacheRef);
-      if (!refresh && cached !== null) {
-        const now = yield* Clock.currentTimeMillis;
-        if (now - cached.probedAtEpochMs < PROBE_CACHE_TTL_MS) return cached;
-      }
-      const status = yield* probeAll;
-      yield* Ref.set(cacheRef, status);
-      return status;
+      if (!refresh && (yield* isFresh(cached)) && cached !== null) return cached;
+      return yield* probeGate.withPermits(1)(
+        Effect.gen(function* () {
+          // Re-read behind the gate: whoever held it just refreshed the cache,
+          // and the fibers that queued behind it want that answer, not a
+          // second round of subprocesses.
+          const settled = yield* Ref.get(cacheRef);
+          if (!refresh && (yield* isFresh(settled)) && settled !== null) return settled;
+          const status = yield* probeAll;
+          yield* Ref.set(cacheRef, status);
+          return status;
+        }),
+      );
     });
 
   return LatexToolchain.of({ probe });
