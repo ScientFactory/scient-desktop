@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
     pid: number | null;
     terminal: null | { threadId: string; terminalId: string };
     source: "scanner";
-    listening: boolean;
   }>,
 }));
 
@@ -23,10 +22,14 @@ vi.mock("./useDiscoveredLocalServers", async (importOriginal) => {
     useDiscoveredLocalServers: () => mocks.servers,
   };
 });
+vi.mock("./PreviewFaviconIcon", () => ({
+  PreviewFaviconIcon: () => <span data-favicon-icon />,
+}));
 
 import { PreviewEmptyState } from "./PreviewEmptyState";
 
 const environmentId = EnvironmentId.make("env-1");
+const threadRef = { environmentId, threadId: ThreadId.make("thread-1") };
 
 function server(port: number) {
   return {
@@ -38,13 +41,13 @@ function server(port: number) {
     pid: 1,
     terminal: null,
     source: "scanner" as const,
-    listening: true,
   };
 }
 
 function render(recentEntries: Array<{ url: string; lastVisitedAt: number; title?: string }>) {
   return renderToStaticMarkup(
     <PreviewEmptyState
+      threadRef={threadRef}
       environmentId={environmentId}
       threadId="thread-current"
       environmentHttpBaseUrl="http://localhost:3773"
@@ -56,7 +59,7 @@ function render(recentEntries: Array<{ url: string; lastVisitedAt: number; title
 }
 
 describe("PreviewEmptyState", () => {
-  it("keeps unrelated listeners collapsed and shows actual history", () => {
+  it("keeps other browser-ready servers collapsed and shows actual history", () => {
     mocks.servers = [server(5173)];
     const html = render([
       { url: "https://myapp.test/admin#users", lastVisitedAt: Date.now(), title: "Admin" },
@@ -70,7 +73,7 @@ describe("PreviewEmptyState", () => {
     expect(html).not.toContain("node");
   });
 
-  it("offers unrelated listeners through a collapsed secondary action", () => {
+  it("offers other browser-ready servers through a collapsed secondary action", () => {
     mocks.servers = [server(8080)];
     const html = render([]);
     expect(html).toContain("Find another local server");
@@ -89,6 +92,7 @@ describe("PreviewEmptyState", () => {
     const html = render([]);
     expect(html).toContain("Local previews");
     expect(html).toContain("node");
+    expect(html).toContain("data-favicon-icon");
     expect(html).not.toContain("Find another local server");
   });
 

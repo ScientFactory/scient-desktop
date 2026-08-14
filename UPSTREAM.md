@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260814-5304f3e9.md`](docs/internals/t3-upstream-sync-20260814-5304f3e9.md)
+[`docs/internals/t3-upstream-sync-20260814-7e01d33f.md`](docs/internals/t3-upstream-sync-20260814-7e01d33f.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `5304f3e9d4c912bfa0eb2f5f41fa109b3646236b` into the refresh
+checkpoint `7e01d33f0eeb9435299791392d546756cc09c5d3` into the refresh
 branch, preserving the complete contiguous range after the previously
-integrated tip `97db94c9bf6fa5d83f94c8fff85566d7fc96276e`. Later observed T3
+integrated tip `5304f3e9d4c912bfa0eb2f5f41fa109b3646236b`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -140,6 +140,14 @@ projectless/environment contract. Scient's sidebar row remains shared between
 project and projectless threads while adopting the new configurable
 auto-settle-on-merge behavior. The approved Scient wordmark and stage artwork
 remain authoritative at the identity conflicts.
+
+The follow-up 2026-08-14 sync through `7e01d33f` receives T3's browser-ready
+local-server discovery, Browser-panel favicons, quicker policy tooltips,
+simpler desktop-update guidance, and smaller Windows asar packaging. Scient
+keeps its approved relevant-versus-other server grouping on top of T3's deeper
+server probe, preserves General Chat and Sources, and adds the existing PDF
+canvas runtime to T3's new native external/unpack authority so packaged PDF
+behavior is not lost.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
