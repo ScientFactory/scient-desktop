@@ -5,6 +5,8 @@ import {
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
+export const isLatexPreviewFile = (path: string): boolean => /\.(?:tex|latex|ltx)$/i.test(path);
+
 export type FilePreviewKind = "empty" | "image" | "pdf" | "text";
 
 export function resolveFilePreviewKind(path: string | null): FilePreviewKind {

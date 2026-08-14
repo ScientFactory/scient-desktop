@@ -71,6 +71,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
 import {
+  isLatexPreviewFile,
   isMarkdownPreviewFile,
   resolveMarkdownTaskPreviewUpdate,
   resolveFilePreviewKind,
@@ -148,6 +149,11 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
 const ScientPdfReader = lazy(() =>
   import("~/scient/pdf/ScientPdfReader").then((module) => ({
     default: module.ScientPdfReader,
+  })),
+);
+const ScientLatexSurface = lazy(() =>
+  import("~/scient/latex/ScientLatexSurface").then((module) => ({
+    default: module.ScientLatexSurface,
   })),
 );
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
@@ -1214,6 +1220,30 @@ export default function FilePreviewPanel({
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
             </div>
+          ) : relativePath && file.data && isLatexPreviewFile(relativePath) ? (
+            <Suspense
+              fallback={
+                <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+                  <LoaderCircle className="size-5 animate-spin" />
+                </div>
+              }
+            >
+              <ScientLatexSurface
+                key={`${relativePath}:${resolvedTheme}`}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                threadRef={threadRef}
+                composerDraftTarget={composerDraftTarget}
+                contents={file.data.contents}
+                truncated={file.data.truncated}
+                resolvedTheme={resolvedTheme}
+                revealRequestId={revealRequestId}
+                wordWrap={wordWrap}
+                onPostRender={onFilePostRender}
+                onPendingChange={handlePendingChange}
+              />
+            </Suspense>
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
               <RenderedMarkdownSurface

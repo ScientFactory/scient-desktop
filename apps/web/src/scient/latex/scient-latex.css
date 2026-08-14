@@ -1,0 +1,244 @@
+.scient-latex-surface {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.scient-latex-toolbar {
+  display: flex;
+  min-height: 34px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--background) 96%, var(--muted));
+}
+
+.scient-latex-modes {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px;
+}
+
+.scient-latex-mode-button {
+  border-radius: 5px;
+  padding: 2px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.scient-latex-mode-button:hover {
+  color: var(--foreground);
+}
+
+.scient-latex-mode-button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.scient-latex-status {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+
+.scient-latex-status-label {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+.scient-latex-chip {
+  flex: none;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scient-latex-chip-error {
+  background: color-mix(in srgb, var(--destructive) 16%, transparent);
+  color: var(--destructive);
+}
+
+.scient-latex-chip-warning {
+  background: var(--warning-surface, color-mix(in srgb, var(--warning) 16%, transparent));
+  color: var(--warning-foreground, var(--warning));
+}
+
+.scient-latex-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.scient-latex-action {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.scient-latex-action:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.scient-latex-action:disabled {
+  opacity: 0.38;
+}
+
+.scient-latex-diagnostics {
+  display: flex;
+  max-height: 40%;
+  flex: none;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  background: color-mix(in srgb, var(--background) 92%, var(--muted));
+}
+
+.scient-latex-diagnostics-toggle {
+  display: flex;
+  min-height: 26px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  color: var(--muted-foreground);
+  text-align: start;
+  font-size: 11px;
+}
+
+.scient-latex-diagnostics-toggle:hover {
+  color: var(--foreground);
+}
+
+.scient-latex-diagnostics-summary {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.scient-latex-diagnostics-count {
+  flex: none;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scient-latex-diagnostics-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 6px;
+}
+
+.scient-latex-diagnostic {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.scient-latex-diagnostic-location {
+  flex: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, monospace);
+}
+
+.scient-latex-diagnostic-message {
+  min-width: 0;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.scient-latex-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.scient-latex-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scient-latex-pane-sized {
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.scient-latex-pane-viewer {
+  border-inline-start: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+}
+
+.scient-latex-divider {
+  width: 6px;
+  flex: none;
+  background: color-mix(in srgb, var(--border) 64%, transparent);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.scient-latex-divider:hover {
+  background: var(--ring);
+}
+
+.scient-latex-placeholder {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.scient-latex-placeholder h2 {
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.scient-latex-placeholder p {
+  max-width: 34rem;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 18px;
+}
