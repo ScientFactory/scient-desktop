@@ -66,8 +66,75 @@ jobs:
           grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
           grep -n "__clerk_internal_electron_passkeys" apps/desktop/dist-electron/preload.cjs
 
-  test:
-    name: Test
+  test_server:
+    name: Test / Server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # Keep this deterministic: inherited server tests share SQLite files,
+      # temporary repositories, and process-level orchestration state.
+      - name: Test server
+        working-directory: apps/server
+        env:
+          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            vp test run \
+              --fileParallelism \
+              --maxWorkers=4 \
+              --reporter=default \
+              --reporter=json \
+              --outputFile.json="${{ runner.temp }}/server-tests.json" \
+            2>&1 | tee "${{ runner.temp }}/server-tests.log"
+
+      - name: Publish transfer budget report
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/t3code-transfer-budget.md"; then
+            tee -a "$GITHUB_STEP_SUMMARY" < "${{ runner.temp }}/t3code-transfer-budget.md"
+          else
+            echo "Transfer budget report was not produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload thread transfer result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/thread-transfer-result.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload server test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: server-test-diagnostics
+          path: |
+            ${{ runner.temp }}/server-tests.log
+            ${{ runner.temp }}/server-tests.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  test_workspace:
+    name: Test / Workspace
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -92,32 +159,30 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
-      - name: Test
-        env:
-          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
-          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run test
-
-      - name: Publish transfer budget report
-        if: always()
-        run: |
-          if test -f "${{ runner.temp }}/t3code-transfer-budget.md"; then
-            tee -a "$GITHUB_STEP_SUMMARY" < "${{ runner.temp }}/t3code-transfer-budget.md"
-          else
-            echo "Transfer budget report was not produced." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload thread transfer result
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: thread-transfer-results
-          path: ${{ runner.temp }}/thread-transfer-result.json
-          if-no-files-found: ignore
-          retention-days: 30
+      # The root script recursively runs every package and the server has its
+      # own lane above, so exclude both to avoid duplicate work.
+      - name: Test workspace packages
+        run: vp run --filter '!t3' --filter '!@t3tools/monorepo' --log grouped test
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+  test:
+    name: Test
+    if: always()
+    needs:
+      - test_server
+      - test_workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify test suites
+        env:
+          SERVER_RESULT: ${{ needs.test_server.result }}
+          WORKSPACE_RESULT: ${{ needs.test_workspace.result }}
+        run: |
+          test "$SERVER_RESULT" = "success"
+          test "$WORKSPACE_RESULT" = "success"
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
