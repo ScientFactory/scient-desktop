@@ -399,6 +399,20 @@ describe("latexStatusStripModel", () => {
     ).toBe("Installing LaTeX packages: mathtools, siunitx…");
   });
 
+  it("leads with the count once the list is longer than the strip can show", () => {
+    // The strip is one line, and the end of it is the first thing an ellipsis
+    // takes — so how many there are has to come before the names.
+    expect(
+      latexStatusStripModel(
+        status({
+          snapshot: snapshot("running", {
+            installingPackages: ["mathtools", "siunitx", "booktabs", "microtype"],
+          }),
+        }),
+      ).label,
+    ).toBe("Installing 4 LaTeX packages: mathtools, siunitx…");
+  });
+
   it("is busy while this client's own request is unanswered", () => {
     const model = latexStatusStripModel(status({ requesting: true }));
     expect(model.busy).toBe(true);

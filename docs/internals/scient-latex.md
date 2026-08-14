@@ -128,20 +128,37 @@ ten and deduplicated, and maps only `.sty`/`.cls` names to packages: a missing
 `.tex`, `.bib`, or image is the author's own file and is deliberately mapped to
 nothing.
 
+The transcript is only read for missing packages when the run needs it: a
+compile that exited `0` and wrote a PDF resolves nothing, so a working document
+never pays for a `tlmgr` round over a name the log mentioned in passing.
+
 What happens next depends on who owns the engine. For
 `toolchain.source === "scient-managed"`, `LatexBuildService` sets
 `installingPackages` on the snapshot, runs `LatexPackageInstaller`, and — if
 anything landed — compiles again inside the same production handle, without
 beginning a second binding attempt. The state stays `running` throughout, so
 the client's existing poll continuation needs no new predicate and only the
-strip's label changes. Resolution is bounded twice over:
-`MAX_PACKAGE_RESOLUTION_ROUNDS = 2` per pass (a document can reveal packages in
-layers, but a third round means a build that never ends), and a per-build set
-of already-attempted names, so a package no repository has cannot send the same
-document round the loop again. Both bounds are checked before the fetch, and a
-cancel that lands during one is honored before the retry. This is the only
-place a build reaches the network, and only for the distribution the user
-explicitly asked Scient to install.
+strip's label changes.
+
+Resolution is bounded, but not by the round count doing the work. LaTeX takes
+an emergency stop at the _first_ input it cannot find — `nonstopmode` does not
+change that — so one compile reveals exactly one missing package however many
+the preamble needs, and a document wanting five of them needs five rounds.
+`MAX_PACKAGE_RESOLUTION_ROUNDS = 15` is therefore set above a real preamble
+rather than as the safety rail; what actually ends the loop is a round that
+places nothing new, plus a per-build set of already-attempted names so a
+package no repository has cannot send the same document round again. Every
+bound is checked before the fetch, and a cancel that lands during one is
+honored before the retry. This is the only place a build reaches the network,
+and only for the distribution the user explicitly asked Scient to install.
+
+When the managed resolver runs and the package is still missing afterwards —
+an offline machine, a name this frozen TeX Live's repository does not carry, an
+author's own `.sty` that no repository ever had — the build appends its own
+`error` diagnostic beside the engine's: "Scient tried to install 'X'
+automatically and could not. If this is your own file, check its path;
+otherwise retry when online." Without it the managed path fails silently on the
+one thing it exists to do.
 
 For a system TeX Live, MiKTeX, or tectonic, nothing is installed: that
 installation is the user's own and Scient does not reach into it. Instead each
@@ -150,16 +167,38 @@ missing package gets a synthesized `error` diagnostic — "Missing LaTeX package
 the MiKTeX Console), then rebuild." — appended after the engine's own error,
 which is kept.
 
+**Where the package bytes come from, and who chooses them.** `tlmgr` fetches
+from TeX Live's own repository under TeX Live's own verification; these bytes
+are not covered by the SHA-256 pin in `tinytexManifest.ts`, which pins the
+distribution download and nothing after it. The names asked for come out of the
+compiler's transcript, which means the document chooses them — exactly as
+`\usepackage` already chooses what a compile loads and runs. So this is no
+privilege the document did not already have, and it is stated here plainly
+rather than implied by the digest pin one section above. Names are still
+filtered through the package-name pattern before they reach argv, because a
+transcript is untrusted text and `tlmgr` reads a leading dash as an option.
+
 `LatexPackageInstaller` runs `tlmgr install <pkg…>` through `ProcessRunner`
 (bounded output, 180-second default timeout, the same PATH-prepended
 environment `latexEngineEnvironment` builds for a compile) against the `tlmgr`
 inside the given `bin` directory — `tlmgr.bat` on Windows, which
-`resolveSpawnCommand` runs in shell mode as it does for any `.bat`. The verdict
+`resolveSpawnCommand` runs in shell mode as it does for any `.bat`; a lane test
+pins that routing so a future change to the inherited shell helper breaks a
+Scient test rather than Windows installs. Every run takes a single permit, so
+two of them never touch one distribution's package database at once — three
+documents compile concurrently and the install's eager collections fetch can
+overlap a first build, which is why `server.ts` mounts one
+`LatexPackageInstaller` for both `LatexBuildService` and
+`LatexManagedToolchain` rather than relying on layer memoization. The verdict
 is read out of the output rather than the exit code, whose meaning has changed
 across TeX Live releases. A package `tlmgr` reports as absent from the
 repository gets one fallback: `tlmgr search --global --file /<name>.` maps the
 file to the package that actually ships it (`algorithm.sty` comes from
-`algorithms`), and that package is installed instead. The service never fails —
+`algorithms`), and that package is installed instead. A name that search
+already failed to map is remembered for ten minutes (a small module-level map,
+cleared whenever a managed install finishes, since a new distribution has its
+own answers), so a document with a typo'd `\usepackage` does not buy a
+repository query on every save. The service never fails —
 a repository that cannot be reached, a `tlmgr` that will not run, a timeout all
 come back as `failed` names — so a build keeps the compiler error it already
 had rather than gaining a second one about the fetch.
@@ -179,7 +218,14 @@ label is read as severity, not swallowed into the file capture. Diagnostics
 are bounded to 200 entries and 500-character messages, and generated
 extensions (`.aux`, `.bbl`, `.synctex`, …) are excluded from "missing file"
 warnings so a cold build's first-pass `No file main.aux.` line never becomes
-user-facing noise. `LatexBuildService.rebaseDiagnostics` then rewrites every
+user-facing noise. Two shapes of wrapper noise are deliberately not
+diagnostics: a `file:line:` line whose file is a TeX Live script wrapper
+(`.tlu`, `.lua`) or whose message is "command failed with exit code …" —
+`runscript.tlu` reporting the exit status of the Perl tool it drove, which
+otherwise becomes the headline error at a path no reader can open — and, in
+`summarizeLatexFailure`, `latexmk`'s "==> Fatal error occurred" verdict, which
+is preferred against rather than for: the summary names the first error that is
+not that line, and falls back to it only when the run left nothing else. `LatexBuildService.rebaseDiagnostics` then rewrites every
 reported path: TeX resolves `\input` against its own working directory (the
 root document's folder, not the workspace root), so the engine's paths are
 rebased onto workspace-relative paths, and a diagnostic whose path would land

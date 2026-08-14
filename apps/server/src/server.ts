@@ -136,6 +136,7 @@ import * as AnalysisRunIndex from "./scient/analysis/AnalysisRunIndex.ts";
 import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
 import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
 import * as LatexManagedToolchain from "./scient/latex/LatexManagedToolchain.ts";
+import * as LatexPackageInstaller from "./scient/latex/LatexPackageInstaller.ts";
 import * as LatexToolchain from "./scient/latex/LatexToolchain.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
@@ -495,10 +496,12 @@ const AnalysisServiceLive = AnalysisService.layer.pipe(
 // The build coordinator owns its execution port the way the analysis runtime
 // does; the toolchain probe is merged out because the HTTP group reads it too,
 // and the managed installer sits on top of the probe so a finished install can
-// drop its cache.
+// drop its cache. The package installer is mounted once for both, because
+// `tlmgr` serializes against a single distribution tree.
 const ScientLatexServicesLive = LatexBuildService.layer.pipe(
   Layer.provide(LocalExecutionProcess.layer),
   Layer.provideMerge(LatexManagedToolchain.layer.pipe(Layer.provideMerge(LatexToolchain.layer))),
+  Layer.provideMerge(LatexPackageInstaller.layer),
 );
 
 export const makeRoutesLayer = Layer.mergeAll(

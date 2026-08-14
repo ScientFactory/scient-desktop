@@ -27,6 +27,7 @@ import {
   type LatexBuildInput,
   layer as buildServiceLayer,
 } from "./LatexBuildService.ts";
+import { layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { layer as toolchainLayer } from "./LatexToolchain.ts";
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
@@ -75,6 +76,10 @@ const makeWorkspace = (files: Readonly<Record<string, string>>) =>
       workspaceRoot,
       serviceLayer: buildServiceLayer.pipe(
         Layer.provide(LocalExecutionProcess.layer),
+        // Never asked for here — the engine on PATH is the user's own, which
+        // this lane does not install into — but the service holds it the way
+        // the server mounts it.
+        Layer.provide(packageInstallerLayer),
         Layer.provideMerge(toolchainLayer),
         Layer.provideMerge(storeLayer.pipe(Layer.provide(serverEnvironment))),
         Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),

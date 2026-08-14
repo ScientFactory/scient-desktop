@@ -5,8 +5,12 @@
  * relocatable, and needs no elevation: the whole tree lives under a directory
  * Scient owns and can be deleted by deleting that directory. The `TinyTeX-1`
  * bundle is the one the project itself installs by default — TeX Live's
- * infrastructure plus roughly a hundred common packages — which is what makes
- * an ordinary paper compile on the first try without a package-install round.
+ * infrastructure plus roughly a hundred common packages — and it is a base to
+ * build on rather than a complete distribution: the install fetches the
+ * recommended LaTeX and font collections on top of it, and a build that still
+ * meets a package neither of those carries installs it before compiling
+ * again. What the bundle guarantees is the infrastructure that makes both of
+ * those possible without elevation.
  *
  * Every asset here was downloaded once and hashed by hand; nothing resolves a
  * "latest" pointer at runtime, so an upstream re-tag cannot change what this

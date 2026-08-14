@@ -12,13 +12,22 @@
  * be reached, a package that does not exist, a `tlmgr` that will not run all
  * come back as `failed`, leaving the caller with the compiler error it already
  * had rather than a second one about the fetch.
+ *
+ * Every `tlmgr` run goes through one permit, because `tlmgr` writes the
+ * distribution's own package database: two of them against one tree is the
+ * "another tlmgr is running" failure at best and a corrupt database at worst.
+ * Three documents can compile at once, and the install that seeds a fresh
+ * distribution overlaps a first build, so the collision is ordinary rather
+ * than exotic.
  */
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../../processRunner.ts";
 import { latexEngineEnvironment } from "./latexCommand.ts";
@@ -64,6 +73,43 @@ const UNKNOWN_PACKAGE_PATTERNS: ReadonlyArray<RegExp> = [
 
 const SEARCH_PACKAGE_HEADING_PATTERN = /^(\S[^\s:]*):\s*$/u;
 const PACKAGE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+
+/**
+ * Names the repository has already said it has never heard of, so the file
+ * search behind them is paid for once rather than on every save. A document
+ * with `\usepackage{mystyle}` — the author's own file, or a typo — asks for
+ * the same name every rebuild, and the per-build attempted set cannot see
+ * across builds. Short-lived because the answer is only as true as the
+ * repository state it came from, and dropped wholesale when a managed install
+ * finishes, which is exactly when a "not present" answer stops being true.
+ */
+const FAILED_SEARCH_TTL_MS = 10 * 60 * 1000;
+const MAX_REMEMBERED_FAILED_SEARCHES = 64;
+const failedSearches = new Map<string, number>();
+
+/** Forgets every remembered failure; a new distribution has its own answers. */
+export function clearFailedPackageSearches(): void {
+  failedSearches.clear();
+}
+
+function rememberFailedSearch(packageName: string, nowEpochMs: number): void {
+  const identity = packageName.toLowerCase();
+  failedSearches.delete(identity);
+  if (failedSearches.size >= MAX_REMEMBERED_FAILED_SEARCHES) {
+    const oldest = failedSearches.keys().next().value;
+    if (oldest !== undefined) failedSearches.delete(oldest);
+  }
+  failedSearches.set(identity, nowEpochMs + FAILED_SEARCH_TTL_MS);
+}
+
+function searchFailedRecently(packageName: string, nowEpochMs: number): boolean {
+  const identity = packageName.toLowerCase();
+  const expiresAtEpochMs = failedSearches.get(identity);
+  if (expiresAtEpochMs === undefined) return false;
+  if (expiresAtEpochMs > nowEpochMs) return true;
+  failedSearches.delete(identity);
+  return false;
+}
 
 /** Requested names `tlmgr` reported as absent from the repository. */
 export function unknownPackagesFromInstall(
@@ -114,6 +160,9 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const hostEnvironment = yield* HostProcessEnvironment;
   const pathDelimiter = platform === "win32" ? ";" : ":";
+  // `tlmgr` writes the distribution's own package database, so two runs
+  // against one tree are a lock error at best. Every run below takes this.
+  const tlmgrGate = yield* Semaphore.make(1);
 
   /**
    * `tlmgr` lives beside `latexmk` in the distribution, as a `.bat` shim on
@@ -124,39 +173,42 @@ export const make = Effect.gen(function* () {
     path.join(binDirectory, platform === "win32" ? "tlmgr.bat" : "tlmgr");
 
   /**
-   * One bounded `tlmgr` run, or `null` when it could not be run at all. The
-   * distribution's own `bin` directory leads the child's PATH exactly as it
-   * does for a compile, because `tlmgr` drives the same helpers `latexmk` does.
+   * One bounded `tlmgr` run, or `null` when it could not be run at all. Runs
+   * one at a time against the tree. The distribution's own `bin` directory
+   * leads the child's PATH exactly as it does for a compile, because `tlmgr`
+   * drives the same helpers `latexmk` does.
    */
   const runTlmgr = (input: {
     readonly binDirectory: string;
     readonly args: ReadonlyArray<string>;
     readonly timeout: Duration.Input;
   }) =>
-    processRunner
-      .run({
-        command: tlmgrPath(input.binDirectory),
-        args: input.args,
-        timeout: input.timeout,
-        maxOutputBytes: MAX_OUTPUT_BYTES,
-        outputMode: "truncate",
-        timeoutBehavior: "timedOutResult",
-        env: latexEngineEnvironment({
-          base: {},
-          hostEnvironment,
-          binDirectory: input.binDirectory,
-          pathDelimiter,
-        }),
-      })
-      .pipe(
-        Effect.map((result) => ({
-          ok: !result.timedOut && result.code === 0,
-          output: `${result.stdout}\n${result.stderr}`,
-        })),
-        // A distribution without a `tlmgr` is not a defect here; it is a build
-        // that keeps the error it already had.
-        Effect.orElseSucceed(() => null),
-      );
+    tlmgrGate.withPermits(1)(
+      processRunner
+        .run({
+          command: tlmgrPath(input.binDirectory),
+          args: input.args,
+          timeout: input.timeout,
+          maxOutputBytes: MAX_OUTPUT_BYTES,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+          env: latexEngineEnvironment({
+            base: {},
+            hostEnvironment,
+            binDirectory: input.binDirectory,
+            pathDelimiter,
+          }),
+        })
+        .pipe(
+          Effect.map((result) => ({
+            ok: !result.timedOut && result.code === 0,
+            output: `${result.stdout}\n${result.stderr}`,
+          })),
+          // A distribution without a `tlmgr` is not a defect here; it is a
+          // build that keeps the error it already had.
+          Effect.orElseSucceed(() => null),
+        ),
+    );
 
   /** Maps a missing file back to the package that ships it. Costs one query. */
   const searchOwningPackage = (input: {
@@ -176,13 +228,17 @@ export const make = Effect.gen(function* () {
       return owningPackageFromSearch(result.output, input.packageName);
     });
 
-  const install = (input: LatexPackageInstallInput) =>
+  /** The fetch itself, over names already deduplicated and checked. */
+  const installNamed = (input: {
+    readonly packages: ReadonlyArray<string>;
+    readonly binDirectory: string;
+    readonly timeout: Duration.Input;
+  }) =>
     Effect.gen(function* () {
-      const requested = dedupe(input.packages);
-      if (requested.length === 0) return { installed: [], failed: [] };
+      const requested = input.packages;
       if (input.binDirectory.length === 0) return { installed: [], failed: requested };
 
-      const timeout = input.timeout ?? INSTALL_TIMEOUT;
+      const timeout = input.timeout;
       const attempt = yield* runTlmgr({
         binDirectory: input.binDirectory,
         args: ["install", ...requested],
@@ -201,12 +257,21 @@ export const make = Effect.gen(function* () {
       // A package named after the file is the common case, not the rule:
       // `algorithm.sty` comes from `algorithms`. One search says which.
       const owners: string[] = [];
+      const nowEpochMs = yield* Clock.currentTimeMillis;
       for (const packageName of unknown) {
+        // A name this session already searched for and did not find is not
+        // searched for again: a document with a typo in a `\usepackage` asks
+        // for it on every save, and the answer does not change that fast.
+        if (searchFailedRecently(packageName, nowEpochMs)) {
+          failed.push(packageName);
+          continue;
+        }
         const owner = yield* searchOwningPackage({
           binDirectory: input.binDirectory,
           packageName,
         });
         if (owner === null || installed.includes(owner) || owners.includes(owner)) {
+          if (owner === null) rememberFailedSearch(packageName, nowEpochMs);
           failed.push(packageName);
           continue;
         }
@@ -224,6 +289,27 @@ export const make = Effect.gen(function* () {
         installed,
         failed: [...failed, ...unknown.filter((name) => !failed.includes(name))],
       };
+    });
+
+  const install = (input: LatexPackageInstallInput) =>
+    Effect.gen(function* () {
+      const requested = dedupe(input.packages);
+      // Names come out of a compiler transcript, and a transcript is written
+      // by the document. Anything that is not a package name is answered here
+      // rather than handed to `tlmgr` as argv, where a leading dash is an
+      // option and everything else is a `.bat` shim's shell quoting problem.
+      const named = requested.filter((packageName) => PACKAGE_NAME_PATTERN.test(packageName));
+      const rejected = requested.filter((packageName) => !PACKAGE_NAME_PATTERN.test(packageName));
+      if (named.length === 0) return { installed: [], failed: rejected };
+
+      const outcome = yield* installNamed({
+        packages: named,
+        binDirectory: input.binDirectory,
+        timeout: input.timeout ?? INSTALL_TIMEOUT,
+      });
+      return rejected.length === 0
+        ? outcome
+        : { installed: outcome.installed, failed: [...outcome.failed, ...rejected] };
     });
 
   return LatexPackageInstaller.of({ install });

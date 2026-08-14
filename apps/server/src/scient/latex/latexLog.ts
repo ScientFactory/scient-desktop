@@ -28,6 +28,23 @@ const MISSING_FILE_PATTERN = /^No file\s+(.+?)\.\s*$/u;
 const SEVERITY_PREFIX_PATTERN = /^(error|warning):\s+/iu;
 
 /**
+ * Wrapper output that wears the `file:line:` shape without being an error in
+ * the document. TeX Live drives its Perl tools through `runscript.tlu`, which
+ * reports the exit code of the program it ran — "runscript.tlu:933: command
+ * failed with exit code 12: perl.exe …" — at a path inside the distribution.
+ * Read as a diagnostic it outranks the engine's own error, names a file no
+ * reader can open, and is the last thing anyone needs to know about a missing
+ * package.
+ */
+const WRAPPER_SCRIPT_EXTENSIONS: ReadonlySet<string> = new Set([".tlu", ".lua"]);
+const WRAPPER_MESSAGE_PATTERN = /^command failed with exit code/iu;
+/**
+ * `latexmk`'s closing verdict. It is an error, and it is the summary of one:
+ * the reason sits further up, so it is only the headline when nothing else is.
+ */
+const FATAL_SUMMARY_PATTERN = /^==>\s*Fatal error occurred/iu;
+
+/**
  * Extensions the engine writes itself. A cold build prints `No file main.aux.`
  * on its first pass and then creates it, so reporting these as missing files
  * would put a warning on every first compile of every document.
@@ -51,6 +68,13 @@ const MAX_MESSAGE_LENGTH = 500;
 
 function normalizeEnginePath(rawPath: string): string {
   return rawPath.replaceAll("\\", "/").replace(/^\.\//u, "");
+}
+
+/** True for the TeX Live script wrappers whose own failures are not the document's. */
+function isWrapperScriptPath(rawPath: string): boolean {
+  const baseName = (normalizeEnginePath(rawPath).split("/").at(-1) ?? "").toLowerCase();
+  const dot = baseName.lastIndexOf(".");
+  return dot > 0 && WRAPPER_SCRIPT_EXTENSIONS.has(baseName.slice(dot));
 }
 
 /** True for `main.aux` and for compound names like `main.synctex.gz`. */
@@ -84,6 +108,15 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
 
     const fileLineError = FILE_LINE_ERROR_PATTERN.exec(line);
     if (fileLineError?.[1] !== undefined && fileLineError[2] !== undefined) {
+      // The wrapper that ran the engine reports its exit code in this shape.
+      // It is not a diagnostic about the document, and taking it as one hides
+      // the error that is.
+      if (
+        isWrapperScriptPath(fileLineError[1]) ||
+        WRAPPER_MESSAGE_PATTERN.test((fileLineError[3] ?? "").trim())
+      ) {
+        continue;
+      }
       // Engines wrap the message across following lines until a blank one;
       // one continuation line is enough context without swallowing the log.
       const continuation = (lines[index + 1] ?? "").trim();
@@ -146,7 +179,12 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
 
 /** The one-line failure summary recorded on a stale binding. */
 export function summarizeLatexFailure(diagnostics: readonly LatexDiagnostic[]): string {
-  const firstError = diagnostics.find((diagnostic) => diagnostic.severity === "error");
+  const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+  // "Fatal error occurred, no output PDF file produced" is the run's verdict,
+  // not its cause; the cause is an error further up. Say the cause, and fall
+  // back to the verdict only when the run left nothing else to say.
+  const firstError =
+    errors.find((diagnostic) => !FATAL_SUMMARY_PATTERN.test(diagnostic.message)) ?? errors[0];
   if (firstError === undefined) return "LaTeX build failed.";
   const location =
     firstError.file !== null && firstError.line !== null

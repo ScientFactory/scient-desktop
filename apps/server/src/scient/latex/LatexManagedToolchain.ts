@@ -37,7 +37,7 @@ import * as Stream from "effect/Stream";
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import * as ServerConfig from "../../config.ts";
 import * as LatexArchiveUnpacker from "./LatexArchiveUnpacker.ts";
-import { LatexPackageInstaller, layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
+import { LatexPackageInstaller, clearFailedPackageSearches } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import {
   encodeManagedLatexInstallRecord,
@@ -479,6 +479,11 @@ export const make = Effect.gen(function* () {
           // says ready: a client that reacts to `ready` polls the toolchain
           // next, and must not be told the engine is still missing.
           yield* toolchain.probe(true).pipe(Effect.ignoreCause());
+          // Whatever an earlier distribution could not find is not this one's
+          // answer, and the machine is evidently online right now.
+          yield* Effect.sync(() => {
+            clearFailedPackageSearches();
+          });
           yield* publish((current) => ({
             ...current,
             state: "ready",
@@ -566,7 +571,12 @@ export const make = Effect.gen(function* () {
   });
 });
 
+/**
+ * The package installer is asked for rather than owned, so this service and
+ * `LatexBuildService` hold the same one: `tlmgr` serializes against a single
+ * distribution tree, and an eager collections fetch can overlap the first
+ * build's own resolution round.
+ */
 export const layer = Layer.effect(LatexManagedToolchain, make).pipe(
   Layer.provide(LatexArchiveUnpacker.layer),
-  Layer.provide(packageInstallerLayer),
 );

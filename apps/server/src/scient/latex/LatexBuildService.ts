@@ -54,7 +54,7 @@ import {
   type GeneratedDocumentProductionHandle,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
-import { LatexPackageInstaller, layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
+import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
 import { parseLatexLog, summarizeLatexFailure } from "./latexLog.ts";
@@ -106,12 +106,18 @@ const ROOT_RESOLUTION_HEAD_BYTES = 8 * 1_024;
 /** A compile is CPU- and disk-bound; three at once keeps a laptop usable. */
 const MAX_CONCURRENT_COMPILES = 3;
 /**
- * How many times one build may fetch packages and compile again. A document
- * reveals what it is missing in layers — a package pulled in by the package
- * that was just installed — so one round is not always enough; a third would
- * mean a document that never stops building.
+ * How many times one build may fetch packages and compile again.
+ *
+ * A compile reveals exactly one missing package, however many the document
+ * needs: LaTeX takes an emergency stop at the first input it cannot find, and
+ * `nonstopmode` does not change that. So a paper whose preamble wants five
+ * packages the distribution does not have needs five rounds, and a low ceiling
+ * is not a safety rail — it is a document that can never build. This bound is
+ * therefore set well above a real preamble and is not what ends the loop: a
+ * round that places nothing new ends it, and the per-build `attempted` set
+ * keeps a package no repository has from being asked for twice.
  */
-const MAX_PACKAGE_RESOLUTION_ROUNDS = 2;
+const MAX_PACKAGE_RESOLUTION_ROUNDS = 15;
 
 /**
  * TeX wraps its own messages at 79 columns by default, which cuts file paths
@@ -153,8 +159,30 @@ function missingPackageDiagnostic(packageName: string): ScientLatexDiagnostic {
   };
 }
 
+/**
+ * What a build says when its own distribution could not supply a package: the
+ * machine was offline, the repository has moved on from what this frozen TeX
+ * Live knows, or the name is the author's own file and no repository ever had
+ * it. The engine's error stays alongside this, because it is the one that says
+ * where in the document the name came from.
+ */
+function unresolvedPackageDiagnostic(packageName: string): ScientLatexDiagnostic {
+  return {
+    severity: "error",
+    file: null,
+    line: null,
+    message: `Scient tried to install '${packageName}' automatically and could not. If this is your own file, check its path; otherwise retry when online.`,
+  };
+}
+
 interface LatexBuildEntry {
   readonly logicalDocumentKey: string;
+  /**
+   * Which build this entry belongs to. `requestBuild` stamps a fresh number
+   * every time it replaces the entry, so a fiber that wakes up after its own
+   * build was cancelled and rebuilt can tell that it no longer speaks here.
+   */
+  readonly generation: number;
   /** Absolute, resolved workspace root; every path a client sees is relative to it. */
   readonly workspaceRoot: string;
   readonly rootRelativePath: string;
@@ -308,6 +336,8 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcessEnvironment;
   const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
+  // Monotonic across the process; only `requestBuild` hands one out.
+  const generationRef = yield* Ref.make(0);
   // Build fibers outlive the request that started them, so they are supervised
   // by the service instead of a request scope.
   const buildScope = yield* Scope.make("sequential");
@@ -349,17 +379,42 @@ export const make = Effect.gen(function* () {
   const getEntry = (key: string) =>
     Ref.get(entriesRef).pipe(Effect.map((entries) => entries.get(key) ?? null));
 
-  const updateEntry = (key: string, update: (entry: LatexBuildEntry) => LatexBuildEntry) =>
+  const updateEntryWhen = (
+    key: string,
+    matches: (entry: LatexBuildEntry) => boolean,
+    update: (entry: LatexBuildEntry) => LatexBuildEntry,
+  ) =>
     Ref.update(entriesRef, (entries) => {
       const current = entries.get(key);
-      if (current === undefined) return entries;
+      if (current === undefined || !matches(current)) return entries;
       const next = new Map(entries);
       next.set(key, update(current));
       return next;
     });
 
-  const isCancelled = (key: string) =>
-    getEntry(key).pipe(Effect.map((entry) => entry === null || entry.cancelRequested));
+  const updateEntry = (key: string, update: (entry: LatexBuildEntry) => LatexBuildEntry) =>
+    updateEntryWhen(key, () => true, update);
+
+  /**
+   * The write a build fiber is allowed to make: only while the entry is still
+   * the one that fiber was started for. A fiber parked in a package fetch can
+   * wake after a cancel and a fresh `requestBuild` have replaced the entry
+   * underneath it, and without this it would stamp its own state and process
+   * handle over the live build's.
+   */
+  const updateOwnEntry = (
+    key: string,
+    generation: number,
+    update: (entry: LatexBuildEntry) => LatexBuildEntry,
+  ) => updateEntryWhen(key, (entry) => entry.generation === generation, update);
+
+  /** True once this build may no longer speak for the entry: cancelled, or replaced. */
+  const isSuperseded = (key: string, generation: number) =>
+    getEntry(key).pipe(
+      Effect.map(
+        (entry) => entry === null || entry.generation !== generation || entry.cancelRequested,
+      ),
+    );
 
   const snapshotOf = (
     entry: LatexBuildEntry,
@@ -390,10 +445,14 @@ export const make = Effect.gen(function* () {
     );
 
   /** Terminal transition; always clears the process handle and binding handle. */
-  const finishBuild = (key: string, update: (entry: LatexBuildEntry) => LatexBuildEntry) =>
+  const finishBuild = (
+    key: string,
+    generation: number,
+    update: (entry: LatexBuildEntry) => LatexBuildEntry,
+  ) =>
     Effect.gen(function* () {
       const finishedAtEpochMs = yield* Clock.currentTimeMillis;
-      yield* updateEntry(key, (entry) => ({
+      yield* updateOwnEntry(key, generation, (entry) => ({
         ...update(entry),
         finishedAtEpochMs,
         production: null,
@@ -416,6 +475,7 @@ export const make = Effect.gen(function* () {
 
   const recordFailure = (input: {
     readonly key: string;
+    readonly generation: number;
     readonly production: GeneratedDocumentProductionHandle;
     readonly summary: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
@@ -427,7 +487,7 @@ export const make = Effect.gen(function* () {
       const descriptor = yield* store
         .getDescriptor(LogicalDocumentKey.make(input.key))
         .pipe(Effect.orElseSucceed(() => null));
-      yield* finishBuild(input.key, (entry) => ({
+      yield* finishBuild(input.key, input.generation, (entry) => ({
         ...entry,
         state: "failed",
         failureSummary: input.summary,
@@ -438,6 +498,7 @@ export const make = Effect.gen(function* () {
 
   const runProcess = (input: {
     readonly key: string;
+    readonly generation: number;
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
@@ -452,9 +513,11 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           environment: input.environment,
         });
-        yield* updateEntry(input.key, (entry) => ({ ...entry, handle }));
+        yield* updateOwnEntry(input.key, input.generation, (entry) => ({ ...entry, handle }));
         // A cancel that raced the spawn still has to reach this process tree.
-        if (yield* isCancelled(input.key)) yield* handle.cancel.pipe(Effect.ignoreCause());
+        if (yield* isSuperseded(input.key, input.generation)) {
+          yield* handle.cancel.pipe(Effect.ignoreCause());
+        }
         const transcriptRef = yield* Ref.make<TranscriptState>(emptyTranscript);
         const outputFiber = yield* handle.output.pipe(
           Stream.runForEach((chunk) =>
@@ -479,6 +542,7 @@ export const make = Effect.gen(function* () {
 
   const publish = (input: {
     readonly key: string;
+    readonly generation: number;
     readonly production: GeneratedDocumentProductionHandle;
     readonly pdfPath: string;
     readonly title: string;
@@ -486,7 +550,10 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bytes = yield* fileSystem.readFile(input.pdfPath);
-      yield* updateEntry(input.key, (entry) => ({ ...entry, state: "publishing" }));
+      yield* updateOwnEntry(input.key, input.generation, (entry) => ({
+        ...entry,
+        state: "publishing",
+      }));
       yield* store
         .publishPdf({
           ...input.production,
@@ -496,7 +563,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.flatMap((descriptor) =>
-            finishBuild(input.key, (entry) => ({
+            finishBuild(input.key, input.generation, (entry) => ({
               ...entry,
               state: "succeeded",
               descriptor,
@@ -509,7 +576,7 @@ export const make = Effect.gen(function* () {
             if (error.reason === "superseded") {
               // A newer build owns the binding. Report cancelled and leave the
               // store untouched so the winner's own outcome stands.
-              return finishBuild(input.key, (entry) => ({
+              return finishBuild(input.key, input.generation, (entry) => ({
                 ...entry,
                 state: "cancelled",
                 diagnostics: input.diagnostics,
@@ -517,7 +584,7 @@ export const make = Effect.gen(function* () {
             }
             if (error.reason === "validation-rejected") {
               // The store already recorded this failure while rejecting the PDF.
-              return finishBuild(input.key, (entry) => ({
+              return finishBuild(input.key, input.generation, (entry) => ({
                 ...entry,
                 state: "failed",
                 failureSummary: error.detail,
@@ -526,6 +593,7 @@ export const make = Effect.gen(function* () {
             }
             return recordFailure({
               key: input.key,
+              generation: input.generation,
               production: input.production,
               summary: error.detail,
               diagnostics: input.diagnostics,
@@ -542,11 +610,12 @@ export const make = Effect.gen(function* () {
    */
   const installMissingPackages = (input: {
     readonly key: string;
+    readonly generation: number;
     readonly packages: ReadonlyArray<string>;
     readonly binDirectory: string;
   }) =>
     Effect.gen(function* () {
-      yield* updateEntry(input.key, (entry) => ({
+      yield* updateOwnEntry(input.key, input.generation, (entry) => ({
         ...entry,
         installingPackages: input.packages,
       }));
@@ -554,7 +623,10 @@ export const make = Effect.gen(function* () {
         packages: input.packages,
         binDirectory: input.binDirectory,
       });
-      yield* updateEntry(input.key, (entry) => ({ ...entry, installingPackages: null }));
+      yield* updateOwnEntry(input.key, input.generation, (entry) => ({
+        ...entry,
+        installingPackages: null,
+      }));
       if (outcome.failed.length > 0) {
         yield* Effect.logDebug("latex packages could not be installed", {
           logicalDocumentKey: input.key,
@@ -564,24 +636,24 @@ export const make = Effect.gen(function* () {
       return outcome.installed.length > 0;
     });
 
-  const compileAndPublish = (key: string) =>
+  const compileAndPublish = (key: string, generation: number) =>
     Effect.gen(function* () {
       const entry = yield* getEntry(key);
-      if (entry === null || entry.cancelRequested) return;
-      yield* updateEntry(key, (current) => ({ ...current, state: "running" }));
+      if (entry === null || entry.generation !== generation || entry.cancelRequested) return;
+      yield* updateOwnEntry(key, generation, (current) => ({ ...current, state: "running" }));
 
       const toolchain = yield* toolchainProbe.probe(false);
       if (toolchain.kind === null || toolchain.executable === null) {
         // Without an engine there is nothing to produce, so the binding stays
         // exactly as the last real build left it.
-        yield* finishBuild(key, (current) => ({
+        yield* finishBuild(key, generation, (current) => ({
           ...current,
           state: "failed",
           failureSummary: NO_TOOLCHAIN_SUMMARY,
         }));
         return;
       }
-      if (yield* isCancelled(key)) return;
+      if (yield* isSuperseded(key, generation)) return;
 
       const workDirectory = path.join(config.latexDir, "builds", workDirectoryName(key));
       yield* fileSystem.makeDirectory(workDirectory, { recursive: true });
@@ -591,7 +663,7 @@ export const make = Effect.gen(function* () {
         operationId: ProducingOperationId.make(NodeCrypto.randomUUID()),
         producerId: LATEX_PRODUCER_ID,
       });
-      yield* updateEntry(key, (current) => ({ ...current, production }));
+      yield* updateOwnEntry(key, generation, (current) => ({ ...current, production }));
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
       const invocation = buildLatexInvocation({
@@ -631,6 +703,7 @@ export const make = Effect.gen(function* () {
 
         const outcome = yield* runProcess({
           key,
+          generation,
           command: invocation.command,
           args: invocation.args,
           cwd: compileDirectory,
@@ -638,7 +711,7 @@ export const make = Effect.gen(function* () {
         });
         // A cancel that landed while the engine ran already wrote the terminal
         // state and told the store; do not overwrite it with the kill's exit code.
-        if (yield* isCancelled(key)) return;
+        if (yield* isSuperseded(key, generation)) return;
 
         const parsed = rebaseDiagnostics({
           workspaceRoot: entry.workspaceRoot,
@@ -646,13 +719,33 @@ export const make = Effect.gen(function* () {
           diagnostics: parseLatexLog(outcome.transcript),
         });
         if (outcome.exitCode === null) {
-          yield* recordFailure({ key, production, summary: TIMEOUT_SUMMARY, diagnostics: parsed });
+          yield* recordFailure({
+            key,
+            generation,
+            production,
+            summary: TIMEOUT_SUMMARY,
+            diagnostics: parsed,
+          });
           return;
         }
 
-        // A missing `.sty` usually aborts the commands that package defines, so
-        // this is read whether or not the run managed to typeset something.
-        const missingPackages = missingLatexPackages(outcome.transcript);
+        // Overleaf parity: a document with errors that still typeset a PDF is
+        // published, with the errors alongside it. Only an empty-handed run
+        // fails, because then there is nothing new for the viewer to show.
+        const producedBytes = yield* fileSystem.stat(invocation.pdfPath).pipe(
+          Effect.map((info) => Number(info.size)),
+          Effect.orElseSucceed(() => 0),
+        );
+        // A run that both exited clean and wrote a PDF has nothing left to
+        // resolve, whatever the transcript mentions in passing, so a working
+        // document never pays for a `tlmgr` round. Everything else is read for
+        // missing packages, because a missing `.sty` usually aborts the
+        // commands that package defines whether or not the engine typeset
+        // something.
+        const missingPackages =
+          producedBytes > 0 && outcome.exitCode === 0
+            ? []
+            : missingLatexPackages(outcome.transcript);
         const wanted =
           managedBinDirectory === null
             ? []
@@ -665,28 +758,34 @@ export const make = Effect.gen(function* () {
           for (const packageName of wanted) attempted.add(packageName);
           const placed = yield* installMissingPackages({
             key,
+            generation,
             packages: wanted,
             binDirectory: managedBinDirectory,
           });
-          // A cancel during the fetch already wrote the terminal state.
-          if (yield* isCancelled(key)) return;
+          // A cancel during the fetch already wrote the terminal state, and a
+          // rebuild during it left this fiber with nothing to say.
+          if (yield* isSuperseded(key, generation)) return;
           if (placed) continue;
         }
+        // Reaching here with names still missing means resolution is over:
+        // either Scient does not own this distribution, or it owns it and
+        // could not place them. Both need saying, in the voice that fits.
         const diagnostics =
-          managedBinDirectory === null && missingPackages.length > 0
-            ? [...parsed, ...missingPackages.map(missingPackageDiagnostic)]
-            : parsed;
+          missingPackages.length === 0
+            ? parsed
+            : [
+                ...parsed,
+                ...missingPackages.map((packageName) =>
+                  managedBinDirectory === null
+                    ? missingPackageDiagnostic(packageName)
+                    : unresolvedPackageDiagnostic(packageName),
+                ),
+              ];
 
-        // Overleaf parity: a document with errors that still typeset a PDF is
-        // published, with the errors alongside it. Only an empty-handed run
-        // fails, because then there is nothing new for the viewer to show.
-        const producedBytes = yield* fileSystem.stat(invocation.pdfPath).pipe(
-          Effect.map((info) => Number(info.size)),
-          Effect.orElseSucceed(() => 0),
-        );
         if (producedBytes <= 0) {
           yield* recordFailure({
             key,
+            generation,
             production,
             summary:
               outcome.exitCode === 0 ? MISSING_PDF_SUMMARY : summarizeLatexFailure(diagnostics),
@@ -696,6 +795,7 @@ export const make = Effect.gen(function* () {
         }
         yield* publish({
           key,
+          generation,
           production,
           pdfPath: invocation.pdfPath,
           title: documentTitle(entry.rootRelativePath),
@@ -710,19 +810,20 @@ export const make = Effect.gen(function* () {
    * so a build that is waiting its turn stays in `queued` — the state a client
    * polls — instead of claiming to be running.
    */
-  const runOnce = (key: string) =>
+  const runOnce = (key: string, generation: number) =>
     admission
-      .withPermits(1)(compileAndPublish(key))
+      .withPermits(1)(compileAndPublish(key, generation))
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             yield* Effect.logWarning("latex build failed", { logicalDocumentKey: key, cause });
             const entry = yield* getEntry(key);
-            if (entry === null || !ACTIVE_STATES.has(entry.state)) return;
+            if (entry === null || entry.generation !== generation) return;
+            if (!ACTIVE_STATES.has(entry.state)) return;
             if (entry.production !== null) {
               yield* recordStoreFailure(entry.production, UNEXPECTED_FAILURE_SUMMARY);
             }
-            yield* finishBuild(key, (current) => ({
+            yield* finishBuild(key, generation, (current) => ({
               ...current,
               state: "failed",
               failureSummary: UNEXPECTED_FAILURE_SUMMARY,
@@ -732,12 +833,17 @@ export const make = Effect.gen(function* () {
       );
 
   /** Consumes a coalesced rebuild request and re-arms the entry for another pass. */
-  const consumePendingRerun = (key: string) =>
+  const consumePendingRerun = (key: string, generation: number) =>
     Effect.gen(function* () {
       const startedAtEpochMs = yield* Clock.currentTimeMillis;
       return yield* Ref.modify(entriesRef, (entries) => {
         const current = entries.get(key);
-        if (current === undefined || !current.pendingRerun || current.cancelRequested) {
+        if (
+          current === undefined ||
+          current.generation !== generation ||
+          !current.pendingRerun ||
+          current.cancelRequested
+        ) {
           return [false, entries] as const;
         }
         const next = new Map(entries);
@@ -755,12 +861,12 @@ export const make = Effect.gen(function* () {
       });
     });
 
-  const runBuildLoop = (key: string) =>
+  const runBuildLoop = (key: string, generation: number) =>
     Effect.gen(function* () {
       let again = true;
       while (again) {
-        yield* runOnce(key);
-        again = yield* consumePendingRerun(key);
+        yield* runOnce(key, generation);
+        again = yield* consumePendingRerun(key, generation);
       }
     });
 
@@ -871,6 +977,9 @@ export const make = Effect.gen(function* () {
       const target = yield* resolveTarget("build", input);
       if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
       const startedAtEpochMs = yield* Clock.currentTimeMillis;
+      // Claimed before the entry is written, so the build this call may start
+      // is the only one that owns the entry from here on.
+      const generation = yield* Ref.updateAndGet(generationRef, (current) => current + 1);
       const started = yield* Ref.modify(entriesRef, (entries) => {
         const current = entries.get(target.logicalDocumentKey);
         const next = new Map(entries);
@@ -881,6 +990,7 @@ export const make = Effect.gen(function* () {
         }
         next.set(target.logicalDocumentKey, {
           logicalDocumentKey: target.logicalDocumentKey,
+          generation,
           workspaceRoot: target.workspaceRoot,
           rootRelativePath: target.rootRelativePath,
           state: "queued",
@@ -899,7 +1009,9 @@ export const make = Effect.gen(function* () {
         });
         return [true, next] as const;
       });
-      if (started) yield* Effect.forkIn(runBuildLoop(target.logicalDocumentKey), buildScope);
+      if (started) {
+        yield* Effect.forkIn(runBuildLoop(target.logicalDocumentKey, generation), buildScope);
+      }
       return yield* readEntrySnapshot(target.logicalDocumentKey);
     });
 
@@ -932,7 +1044,7 @@ export const make = Effect.gen(function* () {
       const descriptor = yield* store
         .getDescriptor(LogicalDocumentKey.make(target.logicalDocumentKey))
         .pipe(Effect.orElseSucceed(() => null));
-      yield* finishBuild(target.logicalDocumentKey, (current) => ({
+      yield* finishBuild(target.logicalDocumentKey, entry.generation, (current) => ({
         ...current,
         state: "cancelled",
         failureSummary: CANCELLED_SUMMARY,
@@ -945,10 +1057,10 @@ export const make = Effect.gen(function* () {
 });
 
 /**
- * The package installer is owned here rather than asked for: it is only ever
- * pointed at the distribution this service already resolved, and nothing else
- * on the server has a use for it.
+ * The package installer is asked for rather than owned: the managed install
+ * fetches collections through the same service, and `tlmgr` serializes against
+ * one distribution tree. Both callers therefore have to hold the same
+ * instance, which the server layer mounts once for both rather than leaving to
+ * layer memoization.
  */
-export const layer = Layer.effect(LatexBuildService, make).pipe(
-  Layer.provide(packageInstallerLayer),
-);
+export const layer = Layer.effect(LatexBuildService, make);

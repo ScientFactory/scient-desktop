@@ -34,13 +34,22 @@ export const LATEX_TOOLCHAIN_MISSING_TITLE = "No LaTeX toolchain found";
 export const LATEX_TOOLCHAIN_MISSING_HINT = "Install TeX Live, MiKTeX, or Tectonic to build PDFs.";
 export const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
 
+/** Past this many names the count says more than the list the strip can show. */
+const MAX_NAMED_INSTALLING_PACKAGES = 2;
+
 /**
  * What the strip says while a build waits for a package the document turned
  * out to need. Naming the packages is the point: the build looks stalled
- * otherwise, and this is the one pause that is not the compiler's.
+ * otherwise, and this is the one pause that is not the compiler's. A long list
+ * leads with how many there are, because the strip is one line and the tail of
+ * it is the first thing an ellipsis takes.
  */
 export function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
-  return `Installing LaTeX packages: ${packages.join(", ")}…`;
+  if (packages.length <= MAX_NAMED_INSTALLING_PACKAGES) {
+    return `Installing LaTeX packages: ${packages.join(", ")}…`;
+  }
+  const named = packages.slice(0, MAX_NAMED_INSTALLING_PACKAGES).join(", ");
+  return `Installing ${String(packages.length)} LaTeX packages: ${named}…`;
 }
 
 export function normalizeLatexPreviewMode(

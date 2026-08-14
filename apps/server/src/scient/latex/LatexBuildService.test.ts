@@ -324,14 +324,21 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("stops after two rounds however many packages a document keeps revealing", () =>
+  it.live("keeps fetching one package per compile until the document builds", () =>
     Effect.gen(function* () {
+      // LaTeX stops at the first input it cannot find, so a preamble missing
+      // five packages reveals them one compile at a time. A document like this
+      // is the ordinary case, not the pathological one.
+      const revealed = ["mathtools", "comment", "siunitx", "booktabs", "microtype"];
       const harness = yield* makeHarness({
         toolchain: MANAGED_LATEXMK,
         compiles: [
-          { transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null },
-          { transcript: missingPackageTranscript("siunitx"), exitCode: 1, pdf: null },
-          { transcript: missingPackageTranscript("booktabs"), exitCode: 1, pdf: null },
+          ...revealed.map((packageName) => ({
+            transcript: missingPackageTranscript(packageName),
+            exitCode: 1,
+            pdf: null,
+          })),
+          { transcript: "", exitCode: 0, pdf: minimalPdf("resolved") },
         ],
       });
       yield* Effect.gen(function* () {
@@ -339,11 +346,151 @@ describe("LatexBuildService", () => {
         yield* service.requestBuild(harness.buildInput);
         const finished = yield* awaitTerminal(service, harness.buildInput);
 
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(yield* Ref.get(harness.installCount)).toBe(revealed.length);
+        expect(yield* Ref.get(harness.startCount)).toBe(revealed.length + 1);
+        const asked: ReadonlyArray<string>[] = [];
+        for (let round = 0; round < revealed.length; round += 1) {
+          asked.push([...(yield* Queue.take(harness.installRequests)).packages]);
+        }
+        // One name per round is what the engine gave the resolver to work with.
+        expect(asked).toEqual(revealed.map((packageName) => [packageName]));
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("stops at the round ceiling for a document that never stops revealing", () =>
+    Effect.gen(function* () {
+      // `MAX_PACKAGE_RESOLUTION_ROUNDS` rounds, then the engine's own error
+      // stands: the ceiling is above any real preamble, but it is still there.
+      const revealed = Array.from({ length: 16 }, (_unused, index) => `pkg${String(index)}`);
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: revealed.map((packageName) => ({
+          transcript: missingPackageTranscript(packageName),
+          exitCode: 1,
+          pdf: null,
+        })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
         expect(finished.state).toBe("failed");
-        // Two fetches, three compiles, and then the engine's own error stands.
-        expect(yield* Ref.get(harness.installCount)).toBe(2);
-        expect(yield* Ref.get(harness.startCount)).toBe(3);
-        expect(finished.failureSummary).toContain("booktabs.sty");
+        expect(yield* Ref.get(harness.installCount)).toBe(15);
+        expect(yield* Ref.get(harness.startCount)).toBe(16);
+        expect(finished.failureSummary).toContain("pkg15.sty");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("says so when its own distribution could not place the package", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [{ transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null }],
+        // Offline, a repository that has moved on, or a name no repository ever
+        // had: from here they all look like this.
+        install: (request) => Effect.succeed({ installed: [], failed: request.packages }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        // Nothing landed, so there was nothing to compile again for.
+        expect(yield* Ref.get(harness.installCount)).toBe(1);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        // The engine's own error is kept; the managed wording joins it.
+        expect(finished.diagnostics[0]).toMatchObject({ file: "main.tex", line: 3 });
+        expect(finished.diagnostics.at(-1)).toMatchObject({
+          severity: "error",
+          file: null,
+          message:
+            "Scient tried to install 'mathtools' automatically and could not. If this is your own file, check its path; otherwise retry when online.",
+        });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never fetches anything for a compile that exited clean with a PDF", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          {
+            // A rerun resolved this itself; the line survives in the transcript.
+            transcript: [
+              "! LaTeX Error: File `mathtools.sty' not found.",
+              "Output written on main.pdf (3 pages).",
+            ].join("\n"),
+            exitCode: 0,
+            pdf: minimalPdf("clean"),
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("succeeded");
+        // A working document pays nothing for the resolver.
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        expect(
+          finished.diagnostics.some((diagnostic) =>
+            diagnostic.message.startsWith("Scient tried to install"),
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("leaves the rebuild alone when a cancelled build's fetch finally returns", () =>
+    Effect.gen(function* () {
+      const fetching = yield* Deferred.make<void>();
+      const rebuildCompile = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [
+          { transcript: missingPackageTranscript("mathtools"), exitCode: 1, pdf: null },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("rebuild"), hold: rebuildCompile },
+        ],
+        install: (request) =>
+          Deferred.await(fetching).pipe(Effect.as({ installed: request.packages, failed: [] })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Queue.take(harness.started);
+        yield* Queue.take(harness.installRequests);
+
+        // Cancelling leaves that fiber asleep inside the installer.
+        expect((yield* service.cancel(harness.buildInput)).state).toBe("cancelled");
+        yield* service.requestBuild(harness.buildInput);
+        yield* Queue.take(harness.started);
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+
+        // It wakes into a document that has moved on, and has nothing to say
+        // about it: no second compile, no writes over the live build's state.
+        yield* Deferred.succeed(fetching, undefined);
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          yield* Effect.sleep(Duration.millis(10));
+          expect(yield* Ref.get(harness.startCount)).toBe(2);
+          const running = yield* service.status(harness.buildInput);
+          expect(running.state).toBe("running");
+          expect(running.installingPackages).toBeUndefined();
+        }
+
+        yield* Deferred.succeed(rebuildCompile, undefined);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

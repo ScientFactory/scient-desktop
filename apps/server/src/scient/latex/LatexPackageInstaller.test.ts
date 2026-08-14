@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -9,6 +11,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ProcessRunner from "../../processRunner.ts";
 import {
   LatexPackageInstaller,
+  clearFailedPackageSearches,
   make,
   owningPackageFromSearch,
   unknownPackagesFromInstall,
@@ -160,6 +163,7 @@ describe("LatexPackageInstaller", () => {
 
   it.effect("reports a package nothing can supply without asking twice", () =>
     Effect.gen(function* () {
+      clearFailedPackageSearches();
       const { layer, runs } = yield* harness((args) =>
         args[0] === "search"
           ? Effect.succeed(output({ stdout: "tlmgr: no results" }))
@@ -167,7 +171,7 @@ describe("LatexPackageInstaller", () => {
               output({ stdout: "tlmgr install: package nosuchpkg not present in repository." }),
             ),
       );
-      const result = yield* Effect.gen(function* () {
+      const install = Effect.gen(function* () {
         const installer = yield* LatexPackageInstaller;
         return yield* installer.install({
           packages: ["nosuchpkg"],
@@ -175,8 +179,108 @@ describe("LatexPackageInstaller", () => {
         });
       }).pipe(Effect.provide(layer));
 
-      expect(result).toEqual({ installed: [], failed: ["nosuchpkg"] });
+      expect(yield* install).toEqual({ installed: [], failed: ["nosuchpkg"] });
       expect(yield* Ref.get(runs)).toHaveLength(2);
+
+      // The same document, saved again. A name the repository has already
+      // disowned is not searched for a second time; only the install attempt
+      // that carries it runs.
+      expect(yield* install).toEqual({ installed: [], failed: ["nosuchpkg"] });
+      expect(yield* Ref.get(runs)).toHaveLength(3);
+      clearFailedPackageSearches();
+    }),
+  );
+
+  it.effect("never lets a name that is not a package name reach argv", () =>
+    Effect.gen(function* () {
+      const { layer, runs } = yield* harness(() =>
+        Effect.succeed(output({ stdout: "install: mathtools [40k]" })),
+      );
+      const result = yield* Effect.gen(function* () {
+        const installer = yield* LatexPackageInstaller;
+        return yield* installer.install({
+          // The names come out of a transcript the document wrote.
+          packages: ["-gui", "foo;bar", "mathtools"],
+          binDirectory: BIN_DIRECTORY,
+        });
+      }).pipe(Effect.provide(layer));
+
+      expect(result).toEqual({ installed: ["mathtools"], failed: ["-gui", "foo;bar"] });
+      expect((yield* Ref.get(runs)).map((run) => run.args)).toEqual([["install", "mathtools"]]);
+    }),
+  );
+
+  it.effect("runs nothing at all when no requested name is a package name", () =>
+    Effect.gen(function* () {
+      const { layer, runs } = yield* harness(() => Effect.succeed(output({})));
+      const result = yield* Effect.gen(function* () {
+        const installer = yield* LatexPackageInstaller;
+        return yield* installer.install({
+          packages: ["--repository=http://evil.example", "..\\..\\etc"],
+          binDirectory: BIN_DIRECTORY,
+        });
+      }).pipe(Effect.provide(layer));
+
+      expect(result).toEqual({
+        installed: [],
+        failed: ["--repository=http://evil.example", "..\\..\\etc"],
+      });
+      expect(yield* Ref.get(runs)).toEqual([]);
+    }),
+  );
+
+  it.live("runs one tlmgr at a time against the distribution", () =>
+    Effect.gen(function* () {
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const { layer } = yield* harness((args) =>
+        Effect.gen(function* () {
+          const name = args[1] ?? "";
+          yield* Ref.update(events, (previous) => [...previous, `start:${name}`]);
+          yield* Effect.sleep(Duration.millis(20));
+          yield* Ref.update(events, (previous) => [...previous, `end:${name}`]);
+          return output({ stdout: `install: ${name}` });
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const installer = yield* LatexPackageInstaller;
+        yield* Effect.all(
+          ["first", "second"].map((packageName) =>
+            installer.install({ packages: [packageName], binDirectory: BIN_DIRECTORY }),
+          ),
+          { concurrency: "unbounded" },
+        );
+      }).pipe(Effect.provide(layer));
+
+      // `tlmgr` writes the distribution's own package database; two of them
+      // over one tree is a lock error at best. Neither run overlaps the other.
+      const observed = yield* Ref.get(events);
+      expect(observed).toHaveLength(4);
+      const leader = (observed[0] ?? "").slice("start:".length);
+      const follower = leader === "first" ? "second" : "first";
+      expect(observed).toEqual([
+        `start:${leader}`,
+        `end:${leader}`,
+        `start:${follower}`,
+        `end:${follower}`,
+      ]);
+    }),
+  );
+
+  it.effect("routes the Windows tlmgr shim through the shell with escaped arguments", () =>
+    Effect.gen(function* () {
+      // Not a test of this module's own code: it pins the inherited helper
+      // `ProcessRunner` resolves through, because a `.bat` that stops being
+      // routed to the shell is a managed install that silently cannot fetch
+      // anything on Windows.
+      const routed = yield* resolveSpawnCommand(
+        `${BIN_DIRECTORY}/tlmgr.bat`,
+        ["install", "mathtools"],
+        { env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" } },
+      ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+      expect(routed.shell).toBe(true);
+      expect(routed.command).toContain("tlmgr.bat");
+      expect(routed.args).toEqual(['^"install^"', '^"mathtools^"']);
     }),
   );
 

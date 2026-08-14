@@ -118,6 +118,26 @@ describe("parseLatexLog", () => {
     });
   });
 
+  it("ignores the TeX Live wrapper reporting the exit code of what it drove", () => {
+    // Verbatim from a failed managed build: `runscript.tlu` announces the
+    // status of the perl script it ran, in the same `file:line:` shape a real
+    // error arrives in, and does it before the engine's own error is printed.
+    const transcript = [
+      'C:/Users/researcher/latex/managed/TinyTeX/bin/windows/runscript.tlu:933: command failed with exit code 12: perl.exe "C:/Users/researcher/latex/managed/TinyTeX/texmf-dist/scripts/latexmk/latexmk.pl" -pdf main.tex',
+      "./main.tex:4: LaTeX Error: File `comment.sty' not found.",
+      "",
+    ].join("\n");
+
+    const diagnostics = parseLatexLog(transcript);
+
+    // The reader's problem is the missing package, at a file they can open.
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ severity: "error", file: "main.tex", line: 4 });
+    expect(summarizeLatexFailure(diagnostics)).toBe(
+      "main.tex:4: LaTeX Error: File `comment.sty' not found.",
+    );
+  });
+
   it("keeps a long message whole now that builds raise max_print_line", () => {
     // TeX wraps at 79 columns unless `max_print_line` says otherwise, which
     // used to split one error across lines; the service sets it, so the
@@ -143,5 +163,39 @@ describe("summarizeLatexFailure", () => {
 
   it("falls back to a generic summary without errors", () => {
     expect(summarizeLatexFailure([])).toBe("LaTeX build failed.");
+  });
+
+  it("prefers the cause over latexmk's fatal-error verdict", () => {
+    // The verdict is printed first and is the only error carrying a location,
+    // so first-error-wins would report the summary instead of the reason.
+    const summary = summarizeLatexFailure([
+      {
+        severity: "error",
+        file: "main.tex",
+        line: 4,
+        message: "==> Fatal error occurred, no output PDF file produced!",
+      },
+      {
+        severity: "error",
+        file: null,
+        line: null,
+        message: "LaTeX Error: File `comment.sty' not found.",
+      },
+    ]);
+
+    expect(summary).toBe("LaTeX Error: File `comment.sty' not found.");
+  });
+
+  it("still reports the fatal verdict when it is the only thing the run said", () => {
+    expect(
+      summarizeLatexFailure([
+        {
+          severity: "error",
+          file: null,
+          line: null,
+          message: "==> Fatal error occurred, no output PDF file produced!",
+        },
+      ]),
+    ).toBe("==> Fatal error occurred, no output PDF file produced!");
   });
 });
