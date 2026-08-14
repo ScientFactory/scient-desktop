@@ -6,6 +6,7 @@
     "apps/server/src/scient/execution",
     "apps/server/src/scient/latex",
     "apps/web/src/scient/analysis",
+    "apps/web/src/scient/latex",
     "apps/web/src/scient/artifacts",
     "apps/web/src/scient/fileSurfaces",
     "packages/scient-analysis",
