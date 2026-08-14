@@ -25,7 +25,7 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
@@ -75,6 +75,15 @@ import { useProjects, useServerConfigs, useThreadShells } from "../state/entitie
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
+import {
+  getNewThreadNavigationIntentCoordinator,
+  type NewThreadNavigationIntent,
+} from "../lib/newThreadNavigationIntent";
+import { waitForProjectProjection } from "../lib/projectProjection";
+import {
+  shouldCloseProjectPickerAfterScientDecision,
+  type ScientProjectInitializationDecision,
+} from "../lib/scientProjectInitialization";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -581,6 +590,7 @@ function OpenCommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -673,6 +683,18 @@ function OpenCommandPaletteDialog(props: {
     prepareForOpening: prepareScientProjectForOpening,
     resolveDecision: resolveProjectInitializationDecision,
   } = useScientProjectInitialization();
+  const handleProjectInitializationDecision = useCallback(
+    (decision: ScientProjectInitializationDecision) => {
+      // Resolve first so unmount cleanup cannot reinterpret an accepted choice
+      // as cancellation. Both state changes are batched in the same interaction,
+      // so the underlying project picker never resurfaces between dialogs.
+      resolveProjectInitializationDecision(decision);
+      if (shouldCloseProjectPickerAfterScientDecision(decision)) {
+        setOpen(false);
+      }
+    },
+    [resolveProjectInitializationDecision, setOpen],
+  );
   const projectPathInputRef = useRef<HTMLInputElement>(null);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
@@ -1725,14 +1747,32 @@ function OpenCommandPaletteDialog(props: {
   });
 
   const handleAddProjectForEnvironment = useCallback(
-    async (input: {
-      readonly environmentId: EnvironmentId;
-      readonly rawCwd: string;
-      readonly platform: string;
-      readonly currentProjectCwd: string | null;
-      readonly prepared: PreparedConnection | null;
-      readonly analyticsMethod: "picker" | "drag-drop" | "recent" | "unknown";
-    }) => {
+    async (
+      input: {
+        readonly environmentId: EnvironmentId;
+        readonly rawCwd: string;
+        readonly platform: string;
+        readonly currentProjectCwd: string | null;
+        readonly prepared: PreparedConnection | null;
+        readonly analyticsMethod: "picker" | "drag-drop" | "recent" | "unknown";
+      },
+      preparedNavigationIntent?: NewThreadNavigationIntent,
+    ) => {
+      // Claim at the user's selection boundary, before filesystem inspection
+      // or project registration can yield. Claiming only inside
+      // handleNewThread lets an older, slower open complete one click late.
+      const navigationIntent =
+        preparedNavigationIntent ??
+        getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
+          router.subscribe("onBeforeNavigate", invalidate);
+        }).claim({
+          kind: "explicit",
+          scope:
+            router.state.location.state.__TSR_key ??
+            router.state.location.state.key ??
+            router.state.location.href,
+        });
+      const canCommitNavigation = navigationIntent.isCurrent;
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
       );
@@ -1786,7 +1826,7 @@ function OpenCommandPaletteDialog(props: {
         prepared: input.prepared,
         root: cwd,
       });
-      if (projectPreparation === null) return;
+      if (projectPreparation === null || !canCommitNavigation()) return;
       // The server owns filesystem identity. Use its canonical root for both
       // the host project record and the optional Scient initialization.
       cwd = projectPreparation.root;
@@ -1809,6 +1849,7 @@ function OpenCommandPaletteDialog(props: {
           clientSettings.sidebarThreadSortOrder,
         );
         if (latestThread) {
+          if (!canCommitNavigation()) return;
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(
@@ -1817,7 +1858,9 @@ function OpenCommandPaletteDialog(props: {
           });
         } else {
           const navigationResult = await settlePromise(() =>
-            handleNewThread(scopeProjectRef(existing.environmentId, existing.id)),
+            handleNewThread(scopeProjectRef(existing.environmentId, existing.id), {
+              navigationIntent,
+            }),
           );
           if (navigationResult._tag === "Failure") {
             const error = squashAtomCommandFailure(navigationResult);
@@ -1882,6 +1925,22 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      const createdProjectRef = scopeProjectRef(input.environmentId, projectId);
+      if (!canCommitNavigation()) return;
+      const projectProjected = await waitForProjectProjection(createdProjectRef);
+      if (!canCommitNavigation()) return;
+      if (!projectProjected) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Project added but still syncing",
+            description: "The project is saved. Select it again after it appears in the sidebar.",
+          }),
+        );
+        setOpen(false);
+        return;
+      }
+
       if (initializeProject) {
         void initializeProjectWithFeedback({
           environmentId: input.environmentId,
@@ -1890,7 +1949,7 @@ function OpenCommandPaletteDialog(props: {
       }
 
       const navigationResult = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+        handleNewThread(createdProjectRef, { navigationIntent }),
       );
       if (navigationResult._tag === "Failure") {
         recordScientAnalytics(readPreparedConnection(input.environmentId), {
@@ -1938,6 +1997,7 @@ function OpenCommandPaletteDialog(props: {
       setOpen,
       clientSettings.sidebarThreadSortOrder,
       threads,
+      router,
     ],
   );
 
@@ -2742,7 +2802,7 @@ function OpenCommandPaletteDialog(props: {
       />
       <ScientProjectInitializationDialog
         inspection={projectInitializationInspection}
-        onDecision={resolveProjectInitializationDecision}
+        onDecision={handleProjectInitializationDecision}
       />
     </CommandPaletteContent>
   );

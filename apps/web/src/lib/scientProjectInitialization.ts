@@ -12,6 +12,13 @@ import { runtime } from "./runtime";
 
 export type ScientProjectInitializationDecision = "cancel" | "initialize" | "open-only";
 
+/** Accepted setup choices continue opening the project; cancel returns to the picker. */
+export function shouldCloseProjectPickerAfterScientDecision(
+  decision: ScientProjectInitializationDecision,
+): boolean {
+  return decision !== "cancel";
+}
+
 export function inspectScientProjectForOpening(
   prepared: PreparedConnection,
   root: string,

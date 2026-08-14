@@ -27,8 +27,12 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
-import { readThreadShell, useProjects, useThread } from "../state/entities";
+import { readProject, readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  getNewThreadNavigationIntentCoordinator,
+  type NewThreadNavigationIntent,
+} from "../lib/newThreadNavigationIntent";
 import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -86,11 +90,29 @@ export function useNewThreadHandler() {
          * keep mint-fresh semantics.
          */
         carryComposerContent?: boolean;
+        /** The index route is the only best-effort automatic navigation. */
+        navigationKind?: "automatic";
+        /** A caller may claim ownership before its own asynchronous preparation. */
+        navigationIntent?: NewThreadNavigationIntent;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
       // up again and finding whichever draft it happens to hold.
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
+      const navigationIntent =
+        options?.navigationIntent ??
+        getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
+          router.subscribe("onBeforeNavigate", invalidate);
+        }).claim({
+          kind: options?.navigationKind ?? "explicit",
+          scope:
+            router.state.location.state.__TSR_key ??
+            router.state.location.state.key ??
+            router.state.location.href,
+        });
+      const canCommitNavigation = navigationIntent.isCurrent;
+      if (!canCommitNavigation()) return Promise.resolve(null);
+
       const {
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
@@ -160,11 +182,17 @@ export function useNewThreadHandler() {
           moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
         }
       };
-      const project = projects.find(
-        (candidate) =>
-          candidate.id === projectRef.projectId &&
-          candidate.environmentId === projectRef.environmentId,
-      );
+      const scopedProjectRef =
+        projectRef.projectId === null ? null : (projectRef as ScopedProjectRef);
+      // Async callers can outlive the render that created this callback. Read
+      // the live projection as a fallback so a just-created project gets its
+      // canonical logical identity and defaults even before React re-renders.
+      const project =
+        projects.find(
+          (candidate) =>
+            candidate.id === projectRef.projectId &&
+            candidate.environmentId === projectRef.environmentId,
+        ) ?? (scopedProjectRef ? (readProject(scopedProjectRef) ?? undefined) : undefined);
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
@@ -241,6 +269,7 @@ export function useNewThreadHandler() {
             workspaceContext = pickExplicitWorkspaceOptions(options);
           } else if (!isDraftAlreadyOpen) {
             const defaultEnvMode = await resolveDefaultEnvMode();
+            if (!canCommitNavigation()) return null;
             // The await yields. If the draft was opened (a concurrent
             // invocation's navigation landed), promoted to a real thread,
             // remapped away (a concurrent invocation registered a fresh
@@ -320,6 +349,7 @@ export function useNewThreadHandler() {
           ) {
             return opened;
           }
+          if (!canCommitNavigation()) return null;
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: emptyStoredDraftThread.draftId },
@@ -364,6 +394,7 @@ export function useNewThreadHandler() {
       const createdAt = new Date().toISOString();
       return (async () => {
         const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
+        if (!canCommitNavigation()) return null;
         // The await yields, so a concurrent invocation may have registered a
         // draft for this logical project in the meantime. Registering ours
         // too would evict that draft while its navigation is in flight —
@@ -394,6 +425,7 @@ export function useNewThreadHandler() {
             ...pickExplicitWorkspaceOptions(options),
           });
           carryComposerContentTo(racedDraft.draftId);
+          if (!canCommitNavigation()) return null;
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
@@ -427,6 +459,7 @@ export function useNewThreadHandler() {
         }
         carryComposerContentTo(draftId);
 
+        if (!canCommitNavigation()) return null;
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },
