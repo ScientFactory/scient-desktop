@@ -44,6 +44,7 @@ import {
   stepPdfZoom,
   type PdfSidebarMode,
 } from "./pdfReaderModel";
+import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { useScientPdfReader } from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
@@ -136,8 +137,11 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
+  const documentKey = pdfReaderSessionDocumentKey(props.source);
   return (
     <LoadedScientPdfReader
+      key={documentKey}
+      documentKey={documentKey}
       source={props.source}
       sourceUrl={asset.url}
       sourceExpiresAt={asset.expiresAt}
@@ -149,6 +153,7 @@ export function ScientPdfReader(props: {
 
 function LoadedScientPdfReader(props: {
   readonly actions: PdfSourceActions;
+  readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
   readonly refreshSource: () => void;
   readonly sourceExpiresAt: number;
@@ -156,14 +161,16 @@ function LoadedScientPdfReader(props: {
 }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
-  const [sidebar, setSidebar] = useState<PdfSidebarMode>("closed");
+  const [sidebar, setSidebarState] = useState<PdfSidebarMode>(
+    () => pdfReaderSessionStore.get(props.documentKey).sidebar,
+  );
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [pageInput, setPageInput] = useState("1");
   const reader = useScientPdfReader({
-    documentKey: JSON.stringify([props.source.authority, props.source.logicalDocumentKey]),
+    documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
     sourceUrl: props.sourceUrl,
     container,
@@ -173,6 +180,14 @@ function LoadedScientPdfReader(props: {
   const thumbnailPages = useMemo(
     () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
     [state.pageCount],
+  );
+
+  const setSidebar = useCallback(
+    (next: PdfSidebarMode) => {
+      setSidebarState(next);
+      pdfReaderSessionStore.updateSidebar(props.documentKey, next);
+    },
+    [props.documentKey],
   );
 
   useEffect(() => setPageInput(String(state.page)), [state.page]);
@@ -233,7 +248,7 @@ function LoadedScientPdfReader(props: {
       <div className="scient-pdf-toolbar" role="toolbar" aria-label="PDF controls">
         <ReaderButton
           label={sidebar === "closed" ? "Show thumbnails" : "Hide PDF sidebar"}
-          onClick={() => setSidebar((current) => (current === "closed" ? "thumbnails" : "closed"))}
+          onClick={() => setSidebar(sidebar === "closed" ? "thumbnails" : "closed")}
         >
           {sidebar === "closed" ? <PanelLeftOpen /> : <PanelLeftClose />}
         </ReaderButton>

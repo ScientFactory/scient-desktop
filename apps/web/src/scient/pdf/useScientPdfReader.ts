@@ -9,6 +9,8 @@ import {
   type ScientPdfRuntime,
 } from "./pdfRuntime";
 import { clampPdfPage, nextPdfRotation, normalizePdfZoom } from "./pdfReaderModel";
+import { type PdfViewAreaLocation } from "./pdfReaderSessionStore";
+import { createPdfReaderViewportSession } from "./pdfReaderViewportSession";
 
 export type PdfReaderPhase = "loading" | "password" | "ready" | "error";
 export type PdfFindPhase = "idle" | "pending" | "found" | "not-found";
@@ -94,15 +96,9 @@ export function useScientPdfReader(input: {
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
   const activeSearchQueryRef = useRef("");
-  const resumeStateRef = useRef<{
-    readonly page: number;
-    readonly rotation: number;
-    readonly scaleValue: string;
-  } | null>(null);
   const documentKeyRef = useRef(input.documentKey);
   if (documentKeyRef.current !== input.documentKey) {
     documentKeyRef.current = input.documentKey;
-    resumeStateRef.current = null;
     activeSearchQueryRef.current = "";
   }
 
@@ -114,9 +110,11 @@ export function useScientPdfReader(input: {
     let searchWarmupHandle: number | null = null;
     let searchWarmupKind: "idle" | "timeout" | null = null;
     let pinchFrame: number | null = null;
+    let restoreFrame: number | null = null;
     let pendingPinchFactor = 1;
     let pendingPinchOrigin: [number, number] = [0, 0];
     let onPinchWheel: ((event: WheelEvent) => void) | null = null;
+    const viewportSession = createPdfReaderViewportSession({ documentKey: input.documentKey });
     setState(INITIAL_STATE);
     const loadingTask = startPdfDocumentLoad(input.sourceUrl, {
       onPassword: ({ reason, submit }) => {
@@ -151,20 +149,21 @@ export function useScientPdfReader(input: {
         runtimeRef.current = runtime;
 
         const onPagesInit = () => {
-          const resume = resumeStateRef.current;
-          if (resume) {
-            runtime.viewer.pagesRotation = resume.rotation;
-            runtime.viewer.currentScaleValue = resume.scaleValue;
-            runtime.viewer.currentPageNumber = clampPdfPage(resume.page, runtime.document.numPages);
-          } else {
-            runtime.viewer.currentScaleValue = "page-width";
-          }
+          const restoredPage = viewportSession.restore(runtime.viewer, runtime.document.numPages);
+          if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
+          restoreFrame = requestAnimationFrame(() => {
+            restoreFrame = null;
+            if (!current) return;
+            viewportSession.completeRestore();
+            runtime.viewer.update();
+          });
           setState((previous) => ({
             ...previous,
             phase: "ready",
-            page: runtime.viewer.currentPageNumber,
+            page: restoredPage,
             pageCount: runtime.document.numPages,
             progress: 1,
+            rotation: runtime.viewer.pagesRotation,
             scale: runtime.viewer.currentScale,
           }));
 
@@ -218,6 +217,9 @@ export function useScientPdfReader(input: {
         const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
         };
+        const onUpdateViewArea = ({ location }: { location?: PdfViewAreaLocation }) => {
+          viewportSession.updateFromViewArea(location);
+        };
         const onFindCount = ({
           matchesCount,
         }: {
@@ -260,6 +262,7 @@ export function useScientPdfReader(input: {
         runtime.eventBus.on("pagechanging", onPageChanging);
         runtime.eventBus.on("scalechanging", onScaleChanging);
         runtime.eventBus.on("rotationchanging", onRotationChanging);
+        runtime.eventBus.on("updateviewarea", onUpdateViewArea);
         runtime.eventBus.on("updatefindmatchescount", onFindCount);
         runtime.eventBus.on("updatefindcontrolstate", onFindState);
 
@@ -312,15 +315,13 @@ export function useScientPdfReader(input: {
         else window.clearTimeout(searchWarmupHandle);
       }
       if (pinchFrame !== null) cancelAnimationFrame(pinchFrame);
+      if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
       if (onPinchWheel) container.removeEventListener("wheel", onPinchWheel);
       const runtime = runtimeRef.current;
       if (runtime) {
-        resumeStateRef.current = {
-          page: runtime.viewer.currentPageNumber,
-          rotation: runtime.viewer.pagesRotation,
-          scaleValue: runtime.viewer.currentScaleValue || String(runtime.viewer.currentScale),
-        };
+        viewportSession.snapshot(runtime.viewer, runtime.document.numPages);
       }
+      viewportSession.flush();
       runtimeRef.current = null;
       void (runtime ? runtime.destroy() : loadingTask.destroy());
     };
