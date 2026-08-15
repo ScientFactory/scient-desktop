@@ -29,6 +29,7 @@ vi.mock("./client", () => ({
 }));
 
 import {
+  LATEX_CURRENTNESS_POLL_INTERVAL_MS,
   LATEX_OFFLINE_POLL_INTERVAL_MS,
   LATEX_POLL_INTERVAL_MS,
   cancelLatexBuild,
@@ -151,9 +152,11 @@ describe("latexBuildStore", () => {
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
     expect(readLatexBuild(target).snapshot?.state).toBe("succeeded");
 
-    // Terminal: the loop must go quiet instead of polling a finished build.
-    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 10);
+    // Successful readers stay cheap, but not permanently blind to external edits.
+    await vi.advanceTimersByTimeAsync(LATEX_CURRENTNESS_POLL_INTERVAL_MS - 1);
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(4);
     stop();
   });
 
@@ -173,6 +176,27 @@ describe("latexBuildStore", () => {
 
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS * 4);
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("notices an external edit while a successful document remains open", async () => {
+    readLatexBuildStatus
+      .mockResolvedValueOnce(snapshot("succeeded"))
+      // The server's evidence check starts the rebuild before answering status.
+      .mockResolvedValueOnce(snapshot("queued"))
+      .mockResolvedValueOnce(snapshot("running"))
+      .mockResolvedValueOnce(snapshot("succeeded"));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(LATEX_CURRENTNESS_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).snapshot?.state).toBe("queued");
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).snapshot?.state).toBe("running");
+    await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
+    expect(readLatexBuild(target).snapshot?.state).toBe("succeeded");
+    expect(requestLatexBuild).not.toHaveBeenCalled();
     stop();
   });
 

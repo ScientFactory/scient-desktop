@@ -56,11 +56,11 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import type { ResolvedGeneratedDocumentRevision } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "../scient/analysis/LocalAnalysisStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { ASSET_TOKEN_TTL_MS } from "./AssetLifetime.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
-const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const ENVIRONMENT_HTML_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
@@ -287,6 +287,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
   readonly generatedDocument?: ResolvedGeneratedDocumentRevision;
+  /** Must match the durable lease returned with `generatedDocument`. */
+  readonly generatedDocumentExpiresAtEpochMs?: number;
   readonly analysisArtifact?: ResolvedAnalysisArtifactRepresentation;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -533,6 +535,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         input.generatedDocument.artifact.revisionId !== input.resource.revisionId
       ) {
         return yield* new AssetGeneratedDocumentNotFoundError({ resource: input.resource });
+      }
+      if (input.generatedDocumentExpiresAtEpochMs !== undefined) {
+        expiresAt = input.generatedDocumentExpiresAtEpochMs;
       }
       const config = yield* ServerConfig.ServerConfig;
       const [canonicalArtifactsRoot, canonicalGeneratedPath] = yield* Effect.all([

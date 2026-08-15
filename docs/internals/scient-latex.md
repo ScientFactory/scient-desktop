@@ -151,8 +151,9 @@ branch. The gate reads text, not TeX: it cannot evaluate the conditional, so
 where one is present it stands down and lets the compile decide. `\ifpdf` is
 deliberately not in that set, because it tests PDF output mode rather than the
 engine. Detection is comment-stripped, so a commented-out conditional cannot
-switch the refusal off, and the scan covers only the root's head — wiring the
-included texts the preamble scan already resolves into the gate is deferred.
+switch the refusal off. The scan covers the root head and the bounded one-level
+include heads already used by the upfront package scan, so an engine request in
+an extracted `preamble.tex` receives the same verdict as one written inline.
 
 **Only a clean run publishes; the last clean PDF stays visible as stale.** The
 engine still runs to the end of the document — `-interaction=nonstopmode`, no
@@ -181,6 +182,9 @@ predecessor's output. A clean run that produced no bytes at all
 (`producedBytes <= 0`) fails with `MISSING_PDF_SUMMARY`; a non-zero run fails
 with the first parsed error, or with the run's own last words when it left no
 parseable diagnostic (`transcriptFailureDiagnostic`, `summarizeLatexFailure`).
+Every exit path removes that candidate PDF again after it has either been
+published into the immutable artifact store or rejected, so the build work
+directory does not retain a second unbounded copy of each document.
 
 **Build-input evidence: a PDF is only current while its sources are.** A build
 request carries a workspace root and a relative path and nothing else — no root
@@ -197,9 +201,11 @@ every file that compile read: a workspace-relative path, the SHA-256 of the
 bytes, and the byte length, under a versioned `schemaVersion: 1` record written
 atomically to `<latexDir>/evidence/<sha256(logicalDocumentKey)[:16]>.json`. A
 dependency that was already gone keeps its place under a `missing` marker,
-because "the chapter was deleted" is a change; one larger than 16 MiB gets an
-`oversize` marker and is identified by size alone, so a fifty-megabyte figure is
-not rehashed on a poll.
+because "the chapter was deleted" is a change. Large files are streamed through
+SHA-256 rather than identified by length: a figure or data file can be rewritten
+in place without changing size. An `oversize` marker is decoded only to migrate
+evidence written by the earlier size-only implementation; its first unverifiable
+probe earns one rebuild and is replaced by a real digest.
 
 The dependency list comes from the engine's own recorder wherever there is one.
 `latexmk` passes `-recorder` by default and writes `<jobname>.fls` beside the
@@ -207,8 +213,10 @@ other aux files; `flsManifest.ts` reads its `INPUT` lines against the run's
 `PWD`, drops everything outside the workspace root (the distribution's classes,
 packages, and fonts) and everything inside the build work directory (the
 `.aux`/`.toc` this very run wrote and read back — inputs by label, outputs in
-fact), normalizes separators, dedupes, and sorts. Windows containment is
-compared case-insensitively and the returned path keeps the case on disk. A run
+fact), normalizes separators, dedupes, and sorts. Windows drive containment is
+compared case-insensitively and the returned path keeps the case on disk; POSIX
+containment remains case-sensitive, so a differently cased sibling is not
+admitted as a workspace input. A run
 naming more than `MAX_RECORDER_DEPENDENCIES = 256` workspace inputs reports
 `truncated: true` with an _empty_ list rather than its first 256, and evidence
 falls back to the root document alone: a narrower claim beats a partial one
@@ -228,6 +236,19 @@ request uses, so it takes the same three-permit admission and the same
 active state, which is exactly what the web client's existing poll continuation
 already handles, and the stale PDF stays on screen (`seedDescriptor`) while its
 replacement compiles. No wire contract changed.
+
+Evidence collection records `unverified` rather than `missing` when a present
+dependency is temporarily unreadable. A probe leaves that marker alone while
+the lock or permission failure remains, avoiding a rebuild loop; once the file
+becomes observable, it requests one rebuild so the replacement record contains
+the content identity the prior evidence never established.
+
+Scient saves request rebuilds directly. For writes with no browser event — an
+agent, another editor, or a checkout — an open successful reader asks status at
+`LATEX_CURRENTNESS_POLL_INTERVAL_MS = 15 seconds`; active builds retain the
+1.5-second cadence and failed/cancelled builds go quiet. This is the bounded
+fallback until the neutral binding-change stream gains a server-to-browser
+transport.
 
 Restart synthesis obeys the same rule: a persisted binding that says a PDF was
 published is only reported `succeeded` after the evidence check passes.
@@ -470,14 +491,14 @@ answer that fiber leaves behind instead of shelling out again.
 
 **Managed TinyTeX install.** `tinytexManifest.ts` pins exactly one TinyTeX
 release, `v2026.08`, by hand-verified SHA-256 and exact byte size — nothing
-resolves a "latest" pointer at install time. The Windows asset
-(`TinyTeX-1-windows-v2026.08.exe`, ~70 MB) is pinned; `darwin` and `linux` are
-both `null` until their per-architecture digests are pinned, so
-`LatexManagedToolchain.canInstall` is `false` on those platforms today and the
-setup card falls back to plain install-it-yourself instructions. Upstream
-ships the Windows bundle as a 7-Zip self-extracting `.exe`; Scient never runs
-that stub. `LatexArchiveUnpacker` shells out to `tar`, which reads the SFX file
-as an ordinary archive and extracts its payload directly. Only libarchive's tar
+resolves a "latest" pointer at install time. Windows x64, Linux x64, and the
+universal Darwin bundle used by both macOS x64 and arm64 are pinned. Windows
+arm64 and Linux arm64 remain explicit unsupported slots until their assets are
+verified; the setup card falls back to plain install-it-yourself instructions
+there. Upstream ships the Windows bundle as a 7-Zip self-extracting `.exe`;
+Scient never runs that stub. `LatexArchiveUnpacker` shells out to `tar`, which
+reads the SFX file as an ordinary archive and extracts its payload directly.
+Only libarchive's tar
 does that, though, so which `tar` cannot be left to `PATH` on Windows, where
 Git for Windows and MSYS2 both place a GNU tar that rejects the bundle: the
 unpacker resolves `%SystemRoot%\System32\tar.exe` (the bsdtar Windows 10+
@@ -655,9 +676,10 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   future producer lanes (Typst, Quarto) could reuse is raised to the platform
   owner of `docs/internals/scient-pdf-export-rendering-plan.md` rather than
   decided unilaterally here.
-- **Build-dir GC.** `<latexDir>/builds/<digest>` work directories are never
-  cleaned up automatically, so every document a workspace has ever built leaves
-  its aux directory behind. Superseded
+- **Build-dir GC.** Candidate PDFs are removed after every build, but
+  `<latexDir>/builds/<digest>` work directories are never cleaned up
+  automatically, so every document a workspace has ever built leaves its small
+  aux directory behind. Superseded
   `<latexDir>/managed/tinytex-<version>-<8hex>` trees are no longer part of
   this: `cleanupSupersededInstalls` reclaims them once a new install is
   promoted.
@@ -666,8 +688,9 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   renamed or deleted leaves small orphan files behind. This belongs with the
   build-directory collector above rather than in a second sweep of its own.
 - **Binding-change push subscription.** The web client polls the status
-  endpoint on a self-scheduling timeout (1.5 s active, 5 s after a transport
-  error) rather than subscribing to a push notification. The shared foundation
+  endpoint on a self-scheduling timeout (1.5 s active, 15 s for successful
+  currentness, 5 s after a transport error) rather than subscribing to a push
+  notification. The shared foundation
   now publishes binding transitions on `store.changes`, so what is missing is
   no longer the source but the transport: nothing carries those changes from
   the server to the browser yet, and polling stays the documented interim until

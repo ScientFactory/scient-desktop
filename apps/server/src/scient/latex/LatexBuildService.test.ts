@@ -407,6 +407,26 @@ const awaitPersistedEvidence = (latexDir: string) =>
     return [];
   });
 
+const awaitBuildCandidateCleanup = (latexDir: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const buildsDirectory = path.join(latexDir, "builds");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const workDirectories = yield* fileSystem
+        .readDirectory(buildsDirectory)
+        .pipe(Effect.orElseSucceed(() => []));
+      const candidates = yield* Effect.forEach(workDirectories, (directory) =>
+        fileSystem
+          .readDirectory(path.join(buildsDirectory, directory))
+          .pipe(Effect.orElseSucceed(() => [])),
+      );
+      if (candidates.flat().every((fileName) => !fileName.endsWith(".pdf"))) return;
+      yield* Effect.sleep(Duration.millis(5));
+    }
+    throw new Error("build candidate PDF was not cleaned up");
+  });
+
 const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildInput) =>
   Effect.gen(function* () {
     for (let attempt = 0; attempt < 600; attempt += 1) {
@@ -895,6 +915,7 @@ describe("LatexBuildService", () => {
           LogicalDocumentKey.make(finished.logicalDocumentKey),
         );
         expect(bound).toMatchObject({ bindingStatus: "current", bindingGeneration: 1 });
+        yield* awaitBuildCandidateCleanup(harness.latexDir);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -1544,6 +1565,34 @@ describe("LatexBuildService", () => {
         ).toBe(true);
         expect(yield* Ref.get(harness.startCount)).toBe(0);
         expect(yield* Ref.get(harness.installCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("refuses an unsupported engine request from an included preamble", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [],
+        files: {
+          "main.tex": [
+            "\\documentclass{article}",
+            "\\input{preamble}",
+            "\\begin{document}",
+            "x",
+            "\\end{document}",
+            "",
+          ].join("\n"),
+          "preamble.tex": "\\usepackage{fontspec}\n",
+        },
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        expect(finished.failureSummary).toContain("fontspec");
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

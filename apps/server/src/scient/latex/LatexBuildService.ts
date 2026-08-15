@@ -278,6 +278,11 @@ interface ResolvedLatexTarget {
   readonly failureSummary: string | null;
 }
 
+interface LatexPreambleHeads {
+  readonly rootText: string;
+  readonly includedTexts: ReadonlyArray<string>;
+}
+
 /**
  * The transcript is bounded but the interesting part is at the end: the final
  * error, the rerun decision, and `Output written on …` all arrive last. The
@@ -745,23 +750,33 @@ export const make = Effect.gen(function* () {
    * few probes and no fetch. The reactive loop still runs afterwards, for the
    * packages a package pulls in.
    */
+  const readPreambleHeads = (rootAbsolutePath: string) =>
+    Effect.gen(function* () {
+      const rootText = yield* readSourceHead(rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (rootText === null) return null;
+      const includedTexts: string[] = [];
+      const rootDirectory = path.dirname(rootAbsolutePath);
+      for (const include of latexPreambleIncludes(rootText)) {
+        const includedText = yield* readSourceHead(
+          path.resolve(rootDirectory, include),
+          INCLUDED_PREAMBLE_SCAN_HEAD_BYTES,
+        ).pipe(Effect.orElseSucceed(() => null));
+        if (includedText !== null) includedTexts.push(includedText);
+      }
+      return { rootText, includedTexts } satisfies LatexPreambleHeads;
+    });
+
   const preamblePackagesToFetch = (input: {
-    readonly rootAbsolutePath: string;
+    readonly preamble: LatexPreambleHeads;
     readonly binDirectory: string;
   }) =>
     Effect.gen(function* () {
-      const head = yield* readSourceHead(input.rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
-        Effect.orElseSucceed(() => ""),
-      );
-      const names = [...latexPreamblePackages(head)];
-      const rootDirectory = path.dirname(input.rootAbsolutePath);
-      for (const include of latexPreambleIncludes(head)) {
-        const includedHead = yield* readSourceHead(
-          path.resolve(rootDirectory, include),
-          INCLUDED_PREAMBLE_SCAN_HEAD_BYTES,
-        ).pipe(Effect.orElseSucceed(() => ""));
-        names.push(...latexPreamblePackages(includedHead));
-      }
+      const names = [
+        ...latexPreamblePackages(input.preamble.rootText),
+        ...input.preamble.includedTexts.flatMap((text) => latexPreamblePackages(text)),
+      ];
       // Nine files' worth of preambles is more names than any real document
       // has; the cap is what stops a generated one becoming a giant argv.
       const requested = [...new Set(names)].slice(0, MAX_PREAMBLE_PACKAGES_PER_BUILD);
@@ -999,8 +1014,9 @@ export const make = Effect.gen(function* () {
       return false;
     });
 
-  const compileAndPublish = (key: string, generation: number) =>
-    Effect.gen(function* () {
+  const compileAndPublish = (key: string, generation: number) => {
+    let candidatePdfPath: string | null = null;
+    return Effect.gen(function* () {
       const entry = yield* getEntry(key);
       if (entry === null || entry.generation !== generation || entry.cancelRequested) return;
       yield* updateOwnEntry(key, generation, (current) => ({ ...current, state: "running" }));
@@ -1018,6 +1034,8 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (yield* isSuperseded(key, generation)) return;
+      // Keep the narrowing across the cleanup finalizer below.
+      const toolchainExecutable = toolchain.executable;
 
       const workDirectory = path.join(config.latexDir, "builds", workDirectoryName(key));
       yield* fileSystem.makeDirectory(workDirectory, { recursive: true });
@@ -1040,19 +1058,17 @@ export const make = Effect.gen(function* () {
       }
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
+      const preamble =
+        toolchain.kind === "latexmk" ? yield* readPreambleHeads(rootAbsolutePath) : null;
 
       // A document that names another engine is refused before anything runs.
       // `latexmk -pdf` drives pdfLaTeX, and handing it a fontspec or
       // `% !TEX program = xelatex` document yields pages of confusing macro
       // errors instead of one honest sentence. Tectonic's engine is XeTeX-based,
       // so only the latexmk path is gated.
-      if (toolchain.kind === "latexmk") {
-        const rootHead = yield* readSourceHead(rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
-          // An unreadable root is the compile's own failure to report.
-          Effect.orElseSucceed(() => null),
-        );
-        const verdict = rootHead === null ? null : evaluateLatexEngineGate({ rootText: rootHead });
-        if (verdict !== null && !verdict.supported) {
+      if (toolchain.kind === "latexmk" && preamble !== null) {
+        const verdict = evaluateLatexEngineGate(preamble);
+        if (!verdict.supported) {
           yield* recordFailure({
             key,
             generation,
@@ -1076,7 +1092,7 @@ export const make = Effect.gen(function* () {
       const invocation = buildLatexInvocation({
         toolchain: {
           kind: toolchain.kind,
-          executable: toolchain.executable,
+          executable: toolchainExecutable,
           version: toolchain.version ?? "unknown",
         },
         rootAbsolutePath,
@@ -1088,6 +1104,7 @@ export const make = Effect.gen(function* () {
         // no run this would wrongly force.
         forceReprocess: true,
       });
+      candidatePdfPath = invocation.pdfPath;
 
       // TeX resolves `\input{sections/intro}` against the working directory,
       // not against the root document, so a root under `paper/` only builds
@@ -1096,7 +1113,7 @@ export const make = Effect.gen(function* () {
       // Non-null only for the distribution Scient installed, which is the only
       // one it may extend: `tlmgr` lives beside the engine in that tree.
       const managedBinDirectory =
-        toolchain.source === "scient-managed" ? path.dirname(toolchain.executable) : null;
+        toolchain.source === "scient-managed" ? path.dirname(toolchainExecutable) : null;
       const environment = latexEngineEnvironment({
         base: TEX_OUTPUT_ENVIRONMENT,
         hostEnvironment,
@@ -1109,9 +1126,9 @@ export const make = Effect.gen(function* () {
 
       // One fetch for everything the document already says it wants, so the
       // reactive loop below only has to cover what a package pulls in.
-      if (managedBinDirectory !== null) {
+      if (managedBinDirectory !== null && preamble !== null) {
         const upfront = yield* preamblePackagesToFetch({
-          rootAbsolutePath,
+          preamble,
           binDirectory: managedBinDirectory,
         });
         if (upfront.length > 0) {
@@ -1282,7 +1299,19 @@ export const make = Effect.gen(function* () {
         yield* persistBuildEvidence({ key, generation, evidence });
         return;
       }
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          candidatePdfPath === null
+            ? Effect.void
+            : // The artifact store owns the immutable published bytes. Keeping
+              // the engine output too would leave an unbounded duplicate PDF
+              // per work directory; aux files remain for latexmk's own reuse.
+              fileSystem.remove(candidatePdfPath, { force: true }).pipe(Effect.ignoreCause()),
+        ),
+      ),
+    );
+  };
 
   /**
    * One pass of the build loop. The permit is taken around the compile itself,

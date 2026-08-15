@@ -603,19 +603,22 @@ logical documents) in a `retention-index.json` beside the bindings, and enforces
 the budget opportunistically after each publish with no background timer.
 `GeneratedDocumentRetentionPolicy` carries the byte and artifact caps — the
 plan's 500 MiB / 100 artifacts by default — plus a per-pass eviction bound, and
-is overridable through `layerWith({ retention })`. Protection is derived from
-the bindings, never from the index: the revision every binding currently
-resolves to is never a candidate, and `retainRevision(ref)` adds scope-held
-protection for a revision that in-flight work still references. Eviction removes
+is overridable through `layerWith({ retention })`. The revision every binding
+currently resolves to is never a candidate, and `retainRevision(ref)` adds
+scope-held protection for a revision that in-flight work still references.
+`resolveRevisionForAsset` also persists a lease through the exact expiry of the
+signed reader URL it backs; startup reconstructs that protection, so a restart
+cannot evict bytes while an already-issued capability remains valid. Eviction removes
 the accounting entry before touching the filesystem, so an interrupted delete
 strands an unreferenced directory rather than a referenced-but-deleted revision;
 the bounded startup sweep re-adopts referenced directories the index has lost,
 drops entries whose directories are gone, and reclaims orphans and crashed
 temporary directories. A budget that cannot be restored without deleting
 protected work is reported through a warning rather than satisfied. Two pieces
-of the policy above remain open for the producer lanes: reader-open and
-pinned/saved lifetime beyond the scope-held pin, and blocking a new export with
-a visible storage-management error when only protected work remains.
+of the policy above remain open for the producer lanes: reader-open lifetime
+beyond renewable URL leases and pinned/saved lifetime beyond the scope-held pin,
+and blocking a new export with a visible storage-management error when only
+protected work remains.
 
 Integrity verification is performed when a renewable signed URL is issued,
 not for each HTTP byte-range request. The initial implementation re-hashes the

@@ -430,12 +430,14 @@ describe("AssetAccess", () => {
           revisionId,
         },
         generatedDocument,
+        generatedDocumentExpiresAtEpochMs: 10_000,
       });
       const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const separatorIndex = suffix.indexOf("/");
       const token = suffix.slice(0, separatorIndex);
       const canonicalGeneratedPath = yield* fileSystem.realPath(generatedPath);
 
+      expect(result.expiresAt).toBe(10_000);
       expect(yield* resolveAsset(token, suffix.slice(separatorIndex + 1))).toEqual({
         kind: "file",
         path: canonicalGeneratedPath,

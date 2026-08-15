@@ -16,12 +16,12 @@
  * path, the SHA-256 of its bytes, and its byte length; a file the run read that
  * is no longer there keeps its place in the list under `MISSING_FILE_DIGEST`,
  * because "the chapter was deleted" is a change, not an absence of one. Two
- * shapes get a marker instead of a digest: a missing file, and one too large to
- * hash on a status poll (`OVERSIZE_FILE_DIGEST`), whose identity falls back to
- * its size — a fifty-megabyte figure is not worth rehashing every 1.5 seconds
- * and does not change without changing size in practice. A third marker,
- * `UNVERIFIED_FILE_DIGEST`, covers a file that exists but could not be read;
- * see its own note for why that must never be recorded as a missing one.
+ * shapes get a marker instead of a digest: a missing file and one that exists
+ * but could not be read (`UNVERIFIED_FILE_DIGEST`). Large dependencies are
+ * streamed through SHA-256 like every other input: size alone is not identity,
+ * and an image or data file can be rewritten in place without changing length.
+ * `OVERSIZE_FILE_DIGEST` remains readable only to migrate evidence written by
+ * the earlier size-only implementation.
  *
  * The probe is built to be run on every poll, which is the constraint that
  * shapes it: one `stat` per dependency, and a content hash only where the size
@@ -38,10 +38,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 /** Recorded for a dependency the compile read that is no longer on disk. */
 export const MISSING_FILE_DIGEST = "missing";
-/** Recorded for a dependency too large to rehash on a status poll. */
+/** Legacy marker read from evidence written before large inputs were hashed. */
 export const OVERSIZE_FILE_DIGEST = "oversize";
 /**
  * Recorded for a dependency that is *there* and could not be read anyway.
@@ -53,13 +54,11 @@ export const OVERSIZE_FILE_DIGEST = "oversize";
  * Recording "absent" for a file that exists makes the very next poll see it
  * present, call that a change, and rebuild — into the same lock, recording
  * absent again, forever. This marker says the opposite of `missing`: nothing
- * is known about this file, so nothing about it may argue for a rebuild, and
- * the probe skips it entirely. The next successful build records a real digest
- * and the dependency starts being checked again.
+ * is known about this file. A probe leaves it alone while it is still
+ * unreadable, then requests one rebuild as soon as the file can be inspected so
+ * the replacement evidence contains a real identity.
  */
 export const UNVERIFIED_FILE_DIGEST = "unverified";
-/** Beyond this a dependency is identified by its size alone. */
-export const MAX_HASHED_DEPENDENCY_BYTES = 16 * 1_024 * 1_024;
 /** The same ceiling the recorder manifest applies, enforced again here. */
 export const MAX_EVIDENCE_DEPENDENCIES = 256;
 
@@ -174,8 +173,12 @@ const statOf = (absolutePath: string) =>
 const digestOf = (absolutePath: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.readFile(absolutePath).pipe(
-      Effect.map((bytes) => OK(NodeCrypto.createHash("sha256").update(bytes).digest("hex"))),
+    return yield* fileSystem.stream(absolutePath).pipe(
+      Stream.runFold(
+        () => NodeCrypto.createHash("sha256"),
+        (hash, chunk) => hash.update(chunk),
+      ),
+      Effect.map((hash) => OK(hash.digest("hex"))),
       Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
       Effect.orElseSucceed(() => UNREADABLE),
     );
@@ -237,15 +240,6 @@ export const collectLatexBuildEvidence = (input: {
           sha256: info._tag === "absent" ? MISSING_FILE_DIGEST : UNVERIFIED_FILE_DIGEST,
           byteLength: -1,
         });
-        continue;
-      }
-      if (info.value.size > MAX_HASHED_DEPENDENCY_BYTES) {
-        dependencies.push({
-          path: relativePath,
-          sha256: OVERSIZE_FILE_DIGEST,
-          byteLength: info.value.size,
-        });
-        marks.set(relativePath, info.value);
         continue;
       }
       const digest = yield* digestOf(absolutePath);
@@ -339,12 +333,16 @@ export const probeLatexEvidence = (input: {
     });
 
     for (const dependency of input.evidence.dependencies) {
-      // Nothing was ever established about this file, so nothing about it can
-      // argue for a rebuild. Checked before the `stat`, because the whole point
-      // is that reading it is not the way to settle anything.
-      if (dependency.sha256 === UNVERIFIED_FILE_DIGEST) continue;
       const absolutePath = path.resolve(input.workspaceRoot, dependency.path);
       const info = yield* statOf(absolutePath);
+      if (dependency.sha256 === UNVERIFIED_FILE_DIGEST) {
+        // Do not turn a transient lock into a rebuild loop. Once the file is
+        // observable again, however, rebuild exactly once so the next evidence
+        // record contains the identity the successful compile actually used.
+        if (info._tag === "unreadable") continue;
+        marks.delete(dependency.path);
+        return verdict(dependency.path);
+      }
       if (info._tag === "unreadable") {
         // Present and unavailable. The recorded digest stands, the mark stands
         // with it — an unreadable poll is not a reason to rebuild, and not a
@@ -375,10 +373,10 @@ export const probeLatexEvidence = (input: {
       // Size held but the timestamp moved, or nothing is remembered about this
       // file yet (the first probe after a restart). Only the bytes can answer,
       // and an mtime that moved without them is not a reason to rebuild.
-      if (dependency.sha256 === OVERSIZE_FILE_DIGEST) {
-        marks.set(dependency.path, info.value);
-        continue;
-      }
+      // Old evidence knew only the size of a large file. An unchanged in-memory
+      // mark is sufficient until the first restart; after that, or after any
+      // timestamp movement, rebuild once and replace the marker with a digest.
+      if (dependency.sha256 === OVERSIZE_FILE_DIGEST) return verdict(dependency.path);
       const digest = yield* digestOf(absolutePath);
       // Same rule as the `stat` above: only an answer decides. A read that
       // could not happen leaves the recorded digest exactly where it was.

@@ -3,8 +3,9 @@
  *
  * The server owns the build; this store owns one watcher per open document.
  * A watcher starts a build, then polls the status endpoint on a self-scheduling
- * timeout while the server still has work to do, and goes quiet the moment the
- * build reaches a terminal state so an idle document costs nothing.
+ * timeout while the server still has work to do. Successful documents retain a
+ * low-frequency currentness check so edits made by agents or external editors
+ * cannot leave an open reader calling an old PDF current indefinitely.
  */
 import type { EnvironmentId, ScientLatexBuildSnapshot } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -25,6 +26,8 @@ import {
 } from "./scientLatexSurfaceModel";
 
 export const LATEX_POLL_INTERVAL_MS = 1_500;
+/** Interim source-currentness cadence until binding changes have a transport subscription. */
+export const LATEX_CURRENTNESS_POLL_INTERVAL_MS = 15_000;
 /** A transport failure backs the loop off so an unreachable environment is not hammered. */
 export const LATEX_OFFLINE_POLL_INTERVAL_MS = 5_000;
 
@@ -184,10 +187,16 @@ function scheduleFollowUp(
 ): void {
   // The coordinator re-arms a coalesced rerun after writing the terminal
   // state, so a terminal snapshot with pendingRerun still has work coming.
-  if (!isActiveLatexBuildState(snapshot.state) && !snapshot.pendingRerun && !installUnderway(key)) {
+  if (isActiveLatexBuildState(snapshot.state) || snapshot.pendingRerun || installUnderway(key)) {
+    schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
     return;
   }
-  schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
+  // The server's status read verifies persisted build evidence. Saves inside
+  // Scient already request a rebuild directly; this slower lane covers writes
+  // with no browser event, without paying the active-build cadence forever.
+  if (snapshot.state === "succeeded") {
+    schedulePoll(key, target, loop, LATEX_CURRENTNESS_POLL_INTERVAL_MS);
+  }
 }
 
 async function pollStatus(
