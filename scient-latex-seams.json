@@ -1,7 +1,13 @@
 {
   "schemaVersion": 2,
   "owner": "ScientFactory",
-  "ownedRoots": ["apps/server/src/scient/latex", "apps/web/src/scient/latex"],
+  "ownedRoots": [
+    "apps/server/src/scient/latex",
+    "apps/web/src/scient/latex",
+    "apps/server/src/scient/documentArtifacts",
+    "packages/scient-document-artifacts",
+    "packages/scient-pdf-validation"
+  ],
   "ownedFiles": [
     "packages/client-runtime/src/state/scientLatexHttp.ts",
     "packages/contracts/src/scientLatex.ts"
