@@ -43,5 +43,4 @@ conversation contains.
 
 An inline chart is not automatically a durable scientific artifact. Ask the
 agent to create a real `.vl.json`, data, SVG, or PNG file when you need a
-versioned project asset. A project-relative SVG or PNG referenced with ordinary
-Markdown image syntax can be [viewed directly in chat](./images-in-chat.md).
+versioned project asset.
