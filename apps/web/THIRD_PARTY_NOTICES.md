@@ -81,3 +81,22 @@ license and upstream notice are available at:
 The upstream notice states that Codex includes code derived from Ratatui,
 licensed under the MIT License, with copyright held by Florian Dehau and the
 Ratatui Developers.
+
+## TinyTeX
+
+On a computer with no LaTeX installation, Scient can download an unmodified
+official TinyTeX release directly from its GitHub release, at the user's
+request. The managed distribution is not committed to or bundled with this
+repository or its installer; it is fetched only when a user asks Scient to
+install it, and it lives entirely under a directory Scient owns.
+
+TinyTeX's own installation and distribution scripts are Copyright Yihui Xie
+and are licensed under the GNU General Public License, version 2.0 (GPL-2.0).
+TinyTeX itself is a repackaged, minimal subset of TeX Live: the packages it
+installs are each licensed individually by their own authors, predominantly
+under the LaTeX Project Public License (LPPL) and other free software
+licenses TeX Live's package collection carries, not under TinyTeX's own
+GPL-2.0 terms.
+
+- <https://github.com/rstudio/tinytex-releases>
+- <https://tug.org/texlive/copying.html>

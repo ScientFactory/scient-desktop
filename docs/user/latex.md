@@ -14,6 +14,14 @@ stay put while a new version comes in, instead of snapping back to the top. If
 the PDF you're looking at is older than the source it was built from, a stale
 badge tells you so.
 
+Scient compiles with pdfLaTeX, driven through `latexmk` — or through Tectonic
+instead, if that's what it finds. XeLaTeX and LuaLaTeX aren't run yet: if a
+document asks for one, through a `% !TEX program = xelatex` (or `lualatex`)
+comment or by loading a package pdfLaTeX can't process, such as `fontspec` or
+`unicode-math`, Scient detects that before the build starts and the error
+explains what the document needs instead of failing partway through a compile
+that was never going to work.
+
 If Scient can't find a LaTeX installation on your computer, it offers to
 install TinyTeX for you — a small distribution, about 70 MB, that lives with
 Scient and needs no administrator access. That install includes the packages
@@ -24,12 +32,14 @@ minutes while those packages arrive — Scient says so, and names them, while it
 waits. Later builds of the same document are as fast as any other compile.
 Installing a package needs a network connection: when
 you're offline, or when no package by that name can be found, the build stops
-and the error says which one it was. You can also install TeX Live,
-MiKTeX, or Tectonic yourself, and Scient will use it instead; an existing
-installation always keeps precedence over Scient's own. If you install one
-while a document is already open, select Rebuild: asking for a build by hand
-also makes Scient look for an engine again, so the one you just installed is
-picked up without reopening the file or restarting.
+and the error says which one it was. This one-click install is currently
+available on Windows (x64) only; on macOS, Linux, and other Windows
+architectures, install TeX Live, MiKTeX, or Tectonic yourself, and Scient will
+use it — an existing installation always keeps precedence over Scient's own,
+on every platform. If you install one while a document is already open, select
+Rebuild: asking for a build by hand also makes Scient look for an engine
+again, so the one you just installed is picked up without reopening the file
+or restarting.
 
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.
