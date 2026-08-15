@@ -107,6 +107,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
 
 import {
   buildInlineTerminalContextText,
@@ -1021,39 +1022,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   return (
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
-        {regularImages.length > 0 && (
-          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-              <div
-                key={image.id}
-                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block h-auto max-h-[220px] w-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[11px]">
-                    {image.name}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <ScientChatImageGallery
+          className="mb-2 max-w-[420px]"
+          images={regularImages}
+          onExpand={(imageId) => {
+            const preview = buildExpandedImagePreview(regularImages, imageId);
+            if (preview) ctx.onImageExpand(preview);
+          }}
+        />
         {previewAnnotations.map((annotation, index) => (
           <UserMessagePreviewAnnotationCard
             key={annotation.id}
@@ -1153,7 +1129,10 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const assistantImages = row.message.attachments ?? [];
+  const messageText =
+    row.message.text ||
+    (row.message.streaming || assistantImages.length > 0 ? "" : "(empty response)");
 
   return (
     <>
@@ -1166,6 +1145,14 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           messageId={row.message.id}
           directionHint={row.assistantDirectionHint}
           skills={ctx.skills}
+        />
+        <ScientChatImageGallery
+          className={messageText.length > 0 ? "mt-3" : undefined}
+          images={assistantImages}
+          onExpand={(imageId) => {
+            const preview = buildExpandedImagePreview(assistantImages, imageId);
+            if (preview) ctx.onImageExpand(preview);
+          }}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -1606,6 +1593,7 @@ function UserMessagePreviewAnnotationCard(props: {
             src={props.image.previewUrl}
             alt="Annotated preview crop"
             className="size-full object-cover"
+            crossOrigin="anonymous"
           />
         </button>
       ) : null}

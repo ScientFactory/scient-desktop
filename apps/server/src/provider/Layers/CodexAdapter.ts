@@ -64,6 +64,11 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexGeneratedImageArtifactFromProviderEvent,
+  codexGeneratedImageArtifactFromRuntimeEvent,
+  sanitizeCodexGeneratedImagePayload,
+} from "../codexGeneratedImages.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -463,6 +468,33 @@ function mapItemLifecycle(
   canonicalThreadId: ThreadId,
   lifecycle: "item.started" | "item.updated" | "item.completed",
 ): ProviderRuntimeEvent | undefined {
+  const untypedItem =
+    event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? (event.payload as { item?: unknown }).item
+      : undefined;
+  const generatedImageArtifact =
+    lifecycle === "item.completed" && untypedItem !== undefined
+      ? codexGeneratedImageArtifactFromProviderEvent({ event, item: untypedItem })
+      : undefined;
+  if (generatedImageArtifact) {
+    return {
+      ...runtimeEventBase(event, canonicalThreadId),
+      raw: {
+        source: eventRawSource(event),
+        method: event.method,
+        payload: sanitizeCodexGeneratedImagePayload(event.payload ?? {}),
+      },
+      type: lifecycle,
+      payload: {
+        itemType: "image_view",
+        status: "completed",
+        title: "Generated image",
+        ...(generatedImageArtifact.sourcePath ? { detail: generatedImageArtifact.sourcePath } : {}),
+        data: generatedImageArtifact,
+      },
+    };
+  }
+
   const payload =
     readPayload(EffectCodexSchema.V2ItemStartedNotification, event.payload) ??
     readPayload(EffectCodexSchema.V2ItemCompletedNotification, event.payload);
@@ -1108,6 +1140,13 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/completed") {
+    // Image-generation items may arrive ahead of the app-server schema
+    // package's item union. Recognize this one bounded shape before the typed
+    // plan/item path so a schema-version lag cannot silently drop the image.
+    const generatedImage = mapItemLifecycle(event, canonicalThreadId, "item.completed");
+    if (generatedImage && codexGeneratedImageArtifactFromRuntimeEvent(generatedImage)) {
+      return [generatedImage];
+    }
     const payload = readPayload(EffectCodexSchema.V2ItemCompletedNotification, event.payload);
     const item = payload?.item;
     if (!item) {
@@ -1129,7 +1168,7 @@ function mapToRuntimeEvents(
         },
       ];
     }
-    const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
+    const completed = generatedImage;
     return completed ? [completed] : [];
   }
 
@@ -1918,7 +1957,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     if (!nativeEventLogger) {
       return;
     }
-    yield* nativeEventLogger.write(event, event.threadId);
+    const payload = sanitizeCodexGeneratedImagePayload(event.payload);
+    yield* nativeEventLogger.write(
+      payload === event.payload ? event : { ...event, payload },
+      event.threadId,
+    );
   });
 
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (

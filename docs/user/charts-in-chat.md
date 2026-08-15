@@ -30,14 +30,25 @@ declare an older schema version render without a version-only warning, while a
 chart declaring a newer major version reports that incompatibility rather than
 silently dropping unsupported features. The original JSON remains unchanged.
 
-Inline data is the most portable choice. Absolute HTTP and HTTPS data URLs are
-supported with a timeout and size limit; credentials are never sent. Relative
-or local resource paths need a future project-file adapter because a chat
-message has no stable directory authority. The chart source is canonical: whole
-message copy preserves the fenced JSON rather than generated SVG.
+Inline data is the most portable choice. A `Network data` badge appears before
+a chart loads absolute HTTP or HTTPS resources. Those requests come from the
+device viewing the chart, credentials are never sent, and public servers must
+allow browser access through CORS. Localhost and private-network HTTP(S)
+addresses are supported for local scientific data servers; `localhost` refers
+to the viewing device. Network requests have a timeout and size limit.
+Relative or local file paths need a future project-file adapter because a chat
+message has no stable directory authority. The chart source is canonical:
+whole-message copy preserves the fenced JSON rather than generated SVG.
+
+Unsized single and layered charts adapt to the available chat width. Faceted,
+repeated, and concatenated charts preserve their authored child dimensions so
+horizontal and vertical layouts are not silently distorted; their source
+should choose dimensions that fit the intended surface.
 
 For layered charts, Scient prepares a disposable interaction-safe render copy
 when an otherwise shared selection would create duplicate internal signals.
+This also applies when the layered chart is nested in a facet or concatenated
+view. Theme changes preserve the chart's current selection and control state.
 The JSON shown, copied, and downloaded from the card remains exactly what the
 conversation contains.
 

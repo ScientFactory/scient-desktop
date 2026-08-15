@@ -35,12 +35,17 @@ until the upstream Vega release containing that fix is adopted.
 Valid JSONC conveniences (comments and trailing commas) are accepted, but the
 untouched source is retained. Source is bounded to 1,000,000 characters,
 100,000 inline rows, and 250,000 inspected values. Unsized unit/layer charts
-receive non-mutating responsive presentation defaults. A Scient-owned render
-plan removes schema metadata from its disposable input so compatible older
+receive non-mutating responsive presentation defaults. Multi-view facet,
+repeat, and concatenation specifications retain authored child sizing because
+there is no single container-width rule that preserves both horizontal and
+vertical composition; agents should choose their dimensions deliberately. A
+Scient-owned render plan removes schema metadata from its disposable input so compatible older
 specifications do not produce Vega-Embed's version-only warning; a declared
 future major is rejected before compilation. The same plan scopes an otherwise
-unscoped layered selection to one deterministic view, avoiding duplicate Vega
-signals while every layer can still reference the shared selection. A
+unscoped layered selection to one deterministic view, including layers nested
+inside facet and concatenation specifications. Generated owner names are
+unique across the complete composed chart, avoiding duplicate Vega signals
+while every layer can still reference the shared selection. A
 legend-bound selection preserves a compatible shared legend when sibling
 layers suppress it. These corrections affect only the disposable render copy.
 The renderer uses SVG for crisp text and current-state export; Vega-Lite's
@@ -48,19 +53,32 @@ complete grammar and signals remain available for selections, tooltips, bound
 controls, and linked views.
 
 Inline and `data:` resources stay local. Absolute HTTP(S) resources are loaded
-without credentials, with a 15-second timeout and a 20 MiB decoded-response
-limit. Relative paths and local protocols fail with an actionable explanation
-because chat has no stable project base. This policy is isolated behind the
-loader so a future project-file resolver can add capability-authorized local
-assets without weakening chat behavior.
+by the viewing web or Electron client without credentials, with a 15-second
+timeout and a 20 MiB decoded-response limit. Public servers therefore need to
+allow browser cross-origin access. HTTP(S) loopback and private-network
+addresses remain intentionally available for local scientific data servers;
+`localhost` means the device viewing the chart, not necessarily the project
+environment. The card discloses this before loading with a `Network data`
+badge, and network failures mention availability and CORS. Relative paths and
+local protocols fail with an actionable explanation because chat has no stable
+project base. This explicit viewing-client policy remains isolated behind the
+loader so a future project-file resolver can add authorized local assets
+without changing chat's network semantics. If shared-chart policy later needs
+consent, add an explicit load gate rather than an incomplete hostname
+blacklist.
 
 ## Interaction and UX lifecycle
 
 The card has explicit idle, loading, ready, warning, source, and error states.
 A chart can be retried without affecting its message. The expanded dialog owns
 a second live Vega view: current signal/data state moves into it on open and
-returns to the inline chart on close. Reset, SVG, PNG, and clipboard export all
-operate on the current live state rather than a stale source-only rerender.
+returns to the inline chart on close. Its toolbar retains source copy/download,
+reset, SVG, PNG, and clipboard actions. Expanded exports operate on that live
+view; compact-card exports operate on the inline view, never a stale
+source-only rerender. A theme-only remount snapshots and restores the current
+Vega state, preserving brushes, legend selections, and bound controls while
+still recompiling theme-dependent presentation. State is not transferred when
+the authored chart or an explicit incoming state changes.
 
 Tooltips use Vega's formatter and viewport-aware mark positioning, but a
 Scient-owned adapter suppresses redundant DOM measurement while pointer events
@@ -96,7 +114,8 @@ required.
 
 Unit tests cover registry aliases, Markdown round-tripping, JSON diagnostics,
 bounds, responsive preparation, real Vega-Lite compilation and Vega parsing
-of layered hover/legend selections, resource policy, fetch limits, theme
+of root and composition-nested layered hover/legend selections, resource
+policy, fetch/CORS diagnostics, limits, theme-state remount policy, theme
 defaults, stable tooltip deduplication, cursor preservation, export bounds,
 lazy-runtime/CSP invariants, server fallback, and the single T3 seam. Provider
 tests cover OpenCode and Grok injection alongside the existing Codex and Claude

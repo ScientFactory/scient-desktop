@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
   },
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  copyPngToClipboard: (png) => ipcRenderer.invoke(IpcChannels.COPY_PNG_TO_CLIPBOARD_CHANNEL, png),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,

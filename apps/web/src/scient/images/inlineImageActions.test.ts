@@ -1,0 +1,139 @@
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+const downloadState = vi.hoisted(() => ({ calls: [] as Array<{ blob: Blob; fileName: string }> }));
+
+vi.mock("../presentation/presentationExport", () => ({
+  downloadPresentationBlob: (blob: Blob, fileName: string) => {
+    downloadState.calls.push({ blob, fileName });
+  },
+}));
+
+import {
+  copyInlineImage,
+  downloadInlineImage,
+  inlineImageCopyDimensions,
+} from "./inlineImageActions";
+
+afterEach(() => {
+  downloadState.calls = [];
+  vi.unstubAllGlobals();
+});
+
+describe("inline image copy dimensions", () => {
+  it("preserves ordinary image dimensions", () => {
+    expect(inlineImageCopyDimensions(1_200, 800)).toEqual({ width: 1_200, height: 800 });
+  });
+
+  it("bounds extremely large images by dimension and pixel count", () => {
+    const wide = inlineImageCopyDimensions(20_000, 2_000);
+    expect(wide.width).toBe(8_192);
+    expect(wide.height).toBe(819);
+
+    const square = inlineImageCopyDimensions(10_000, 10_000);
+    expect(square.width * square.height).toBeLessThanOrEqual(16_777_216);
+    expect(square.width).toBe(square.height);
+  });
+
+  it("rejects absent and invalid intrinsic dimensions", () => {
+    expect(() => inlineImageCopyDimensions(0, 100)).toThrow(/usable dimensions/u);
+    expect(() => inlineImageCopyDimensions(Number.NaN, 100)).toThrow(/usable dimensions/u);
+  });
+});
+
+describe("inline image byte actions", () => {
+  it("copies an existing PNG without re-encoding it", async () => {
+    const source = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+    const write = vi.fn().mockResolvedValue(undefined);
+    const items: Array<Record<string, Blob>> = [];
+    function TestClipboardItem(data: Record<string, Blob>) {
+      items.push(data);
+    }
+    const fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => source });
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("navigator", { clipboard: { write } });
+    vi.stubGlobal("ClipboardItem", TestClipboardItem);
+
+    await copyInlineImage("https://environment.test/figure.png");
+
+    expect(items).toEqual([{ "image/png": source }]);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("https://environment.test/figure.png", {
+      cache: "no-store",
+      mode: "cors",
+    });
+  });
+
+  it("decodes and rasterizes SVG before copying PNG clipboard bytes", async () => {
+    const source = new Blob(["<svg/>"], { type: "image/svg+xml" });
+    const png = new Blob([new Uint8Array([8, 9, 10])], { type: "image/png" });
+    const drawImage = vi.fn();
+    const write = vi.fn().mockResolvedValue(undefined);
+    const items: Array<Record<string, Blob>> = [];
+    let loadListener: (() => void) | undefined;
+
+    class TestImage {
+      decoding = "auto";
+      naturalHeight = 400;
+      naturalWidth = 600;
+      addEventListener(type: string, listener: () => void) {
+        if (type === "load") loadListener = listener;
+      }
+      set src(_value: string) {
+        loadListener?.();
+      }
+    }
+    function TestClipboardItem(data: Record<string, Blob>) {
+      items.push(data);
+    }
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => source }));
+    vi.stubGlobal("Image", TestImage);
+    vi.stubGlobal("URL", {
+      createObjectURL: () => "blob:test-image",
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({ drawImage }),
+        toBlob: (callback: (value: Blob) => void) => callback(png),
+      }),
+    });
+    vi.stubGlobal("navigator", { clipboard: { write } });
+    vi.stubGlobal("ClipboardItem", TestClipboardItem);
+
+    await copyInlineImage("https://environment.test/figure.svg");
+
+    expect(drawImage).toHaveBeenCalledWith(expect.any(TestImage), 0, 0, 600, 400);
+    expect(items).toEqual([{ "image/png": png }]);
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it("downloads the unmodified original bytes with the project filename", async () => {
+    const source = new Blob(["<svg/>"], { type: "image/svg+xml" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => source }));
+
+    await downloadInlineImage("https://environment.test/figure.svg", "figure.svg");
+
+    expect(downloadState.calls).toEqual([{ blob: source, fileName: "figure.svg" }]);
+  });
+
+  it("rejects failed requests and non-image responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    await expect(
+      downloadInlineImage("https://environment.test/missing.png", "missing.png"),
+    ).rejects.toThrow(/status 404/u);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(["not an image"], { type: "text/plain" }),
+      }),
+    );
+    await expect(
+      downloadInlineImage("https://environment.test/file.txt", "file.txt"),
+    ).rejects.toThrow(/not an image/u);
+  });
+});

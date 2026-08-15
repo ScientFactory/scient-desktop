@@ -1,4 +1,14 @@
-import { MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  DownloadIcon,
+  EllipsisIcon,
+  FileImageIcon,
+  ImageIcon,
+  MinusIcon,
+  PlusIcon,
+  ScanIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -9,11 +19,19 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 type DiagramZoom = "fit" | number;
+type DiagramAction = "copy-source" | "copy-png" | "download-png" | null;
 
 interface MermaidDiagramDialogProps {
+  readonly actionMessage: string | null;
+  readonly activeAction: DiagramAction;
+  readonly onCopyPng: () => void;
+  readonly onCopySource: () => void;
+  readonly onDownloadPng: () => void;
+  readonly onDownloadSvg: () => void;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly svg: string;
@@ -29,6 +47,12 @@ function intrinsicSvgWidth(svg: string): number {
 }
 
 export function MermaidDiagramDialog({
+  actionMessage,
+  activeAction,
+  onCopyPng,
+  onCopySource,
+  onDownloadPng,
+  onDownloadSvg,
   onOpenChange,
   open,
   svg,
@@ -56,7 +80,7 @@ export function MermaidDiagramDialog({
           <div className="min-w-0 flex-1">
             <DialogTitle className="truncate text-base">{title}</DialogTitle>
             <DialogDescription className="sr-only">
-              Expanded interactive view of the Mermaid diagram.
+              Expanded view of the Mermaid diagram with zoom and export controls.
             </DialogDescription>
           </div>
           <div className="flex items-center gap-1" role="toolbar" aria-label="Diagram zoom">
@@ -113,8 +137,56 @@ export function MermaidDiagramDialog({
             <Button onClick={() => setZoom(100)} size="sm" variant="ghost">
               Actual size
             </Button>
+            <Menu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={
+                        <Button
+                          aria-label="More diagram actions"
+                          disabled={activeAction != null}
+                          size="icon-sm"
+                          type="button"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">More diagram actions</TooltipPopup>
+              </Tooltip>
+              <MenuPopup align="end" className="min-w-48">
+                <MenuItem disabled={activeAction != null} onClick={onCopySource}>
+                  {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
+                  {activeAction === "copy-source" ? "Copying source…" : "Copy source"}
+                </MenuItem>
+                <MenuItem disabled={activeAction != null} onClick={onDownloadSvg}>
+                  <DownloadIcon />
+                  Download SVG
+                </MenuItem>
+                <MenuItem disabled={activeAction != null} onClick={onCopyPng}>
+                  <ImageIcon />
+                  {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
+                </MenuItem>
+                <MenuItem disabled={activeAction != null} onClick={onDownloadPng}>
+                  <FileImageIcon />
+                  {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
           </div>
         </DialogHeader>
+        {actionMessage != null ? (
+          <div
+            aria-live="polite"
+            className="border-b border-border/60 bg-background/70 px-4 py-2 text-muted-foreground text-xs"
+          >
+            {actionMessage}
+          </div>
+        ) : null}
         <div
           aria-label="Scrollable diagram canvas"
           className="scient-mermaid-dialog-stage min-h-0 flex-1 overflow-auto bg-secondary/30 p-6"

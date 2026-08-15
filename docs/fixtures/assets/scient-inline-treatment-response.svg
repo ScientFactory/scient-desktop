@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title description">
+  <title id="title">Treatment response with confidence interval</title>
+  <desc id="description">A treatment curve falls over eight weeks while the control curve stays nearly level.</desc>
+  <defs>
+    <linearGradient id="treatment-band" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#2563eb" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#2563eb" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M110 70V450H900" opacity="0.82" stroke-width="2"/>
+    <path d="M110 355H900M110 260H900M110 165H900" opacity="0.12"/>
+  </g>
+  <g fill="currentColor" font-family="system-ui, sans-serif" font-size="18">
+    <text x="505" y="505" text-anchor="middle">Week</text>
+    <text x="28" y="260" text-anchor="middle" transform="rotate(-90 28 260)">Response (µmol/L)</text>
+    <text x="110" y="478" text-anchor="middle">0</text>
+    <text x="505" y="478" text-anchor="middle">4</text>
+    <text x="900" y="478" text-anchor="middle">8</text>
+    <text x="86" y="360" text-anchor="end">4</text>
+    <text x="86" y="265" text-anchor="end">6</text>
+    <text x="86" y="170" text-anchor="end">8</text>
+    <text x="110" y="42" font-size="25" font-weight="650">Treatment response over time</text>
+    <text x="898" y="42" direction="rtl" text-anchor="end">ירידה עקבית</text>
+  </g>
+  <path d="M110 135L505 215L900 320L900 405L505 300L110 215Z" fill="url(#treatment-band)"/>
+  <path d="M110 175L505 255L900 362" fill="none" stroke="#2563eb" stroke-width="5"/>
+  <path d="M110 168L505 182L900 195" fill="none" stroke="#f97316" stroke-width="5"/>
+  <g fill="#2563eb">
+    <circle cx="110" cy="175" r="8"/><circle cx="505" cy="255" r="8"/><circle cx="900" cy="362" r="8"/>
+  </g>
+  <g fill="#f97316">
+    <circle cx="110" cy="168" r="8"/><circle cx="505" cy="182" r="8"/><circle cx="900" cy="195" r="8"/>
+  </g>
+</svg>

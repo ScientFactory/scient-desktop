@@ -158,6 +158,7 @@ export function PreviewImageSurface({
           key={source.url}
           src={source.url}
           alt={source.alt}
+          crossOrigin="anonymous"
           draggable={false}
           className={`absolute inset-0 size-full select-none object-contain transition-opacity duration-100 ${loadState === "loaded" ? "opacity-100" : "opacity-0"}`}
           onLoad={handleLoad}

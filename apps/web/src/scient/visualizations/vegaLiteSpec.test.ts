@@ -281,6 +281,56 @@ describe("buildVegaLiteRenderPlan", () => {
     expect(prepared.params[0]?.views).toEqual(["scient_interaction_brush"]);
     expect(compileAndParse(plan.spec)).toEqual([]);
   });
+
+  it("scopes layered selections nested inside composed views with globally unique owners", () => {
+    const source = {
+      vconcat: [structuredClone(LAYERED_HOVER_SPEC), structuredClone(LAYERED_HOVER_SPEC)],
+    } as never;
+    const plan = buildVegaLiteRenderPlan(source);
+    const prepared = plan.spec as unknown as {
+      vconcat: Array<{
+        layer: Array<{ name?: string }>;
+        params: Array<{ views?: string[] }>;
+      }>;
+    };
+    const firstOwner = prepared.vconcat[0]?.params[0]?.views?.[0];
+    const secondOwner = prepared.vconcat[1]?.params[0]?.views?.[0];
+
+    expect(firstOwner).toBe(prepared.vconcat[0]?.layer[0]?.name);
+    expect(secondOwner).toBe(prepared.vconcat[1]?.layer[0]?.name);
+    expect(firstOwner).not.toBe(secondOwner);
+    expect(
+      (source as { vconcat: Array<{ params: Array<{ views?: string[] }> }> }).vconcat[0]?.params[0]
+        ?.views,
+    ).toBeUndefined();
+    expect(compileAndParse(plan.spec)).toEqual([]);
+  });
+
+  it("scopes a layered selection inside a facet child", () => {
+    const source = {
+      data: {
+        values: [
+          { day: 1, group: "A", outcome: 4 },
+          { day: 2, group: "A", outcome: 7 },
+        ],
+      },
+      facet: { field: "group", type: "nominal" },
+      spec: {
+        params: structuredClone(LAYERED_HOVER_SPEC.params),
+        layer: structuredClone(LAYERED_HOVER_SPEC.layer),
+      },
+    } as never;
+    const plan = buildVegaLiteRenderPlan(source);
+    const prepared = plan.spec as unknown as {
+      spec: {
+        layer: Array<{ name?: string }>;
+        params: Array<{ views?: string[] }>;
+      };
+    };
+
+    expect(prepared.spec.params[0]?.views).toEqual([prepared.spec.layer[0]?.name]);
+    expect(compileAndParse(plan.spec)).toEqual([]);
+  });
 });
 
 describe("prepareVegaLiteSpecForRuntime", () => {

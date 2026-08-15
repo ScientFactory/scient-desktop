@@ -302,6 +302,39 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Fork conversation from this response"');
   });
 
+  it("renders assistant image attachments inline without an empty-response placeholder", () => {
+    const entry = buildAssistantTimelineEntry();
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              text: "",
+              attachments: [
+                {
+                  type: "image",
+                  id: "generated-image-1",
+                  name: "generated-image.png",
+                  mimeType: "image/png",
+                  sizeBytes: 12,
+                  previewUrl: "https://environment.test/generated-image.png",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Image attachment"');
+    expect(markup).toContain('aria-label="Preview generated-image.png"');
+    expect(markup).toContain('crossorigin="anonymous"');
+    expect(markup).not.toContain("(empty response)");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");

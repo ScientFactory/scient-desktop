@@ -4,6 +4,7 @@ import {
   markdownFenceCopySource,
   presentationFileBaseName,
 } from "../presentation/presentationExport";
+import { copyPngBlobToClipboard } from "../presentation/imageClipboard";
 
 const MAX_PNG_DIMENSION = 8_192;
 const MAX_PNG_PIXELS = 16_777_216;
@@ -161,9 +162,6 @@ export async function downloadMermaidPng(
 }
 
 export async function copyMermaidPng(svg: string, theme: MermaidTheme): Promise<void> {
-  if (typeof ClipboardItem === "undefined" || navigator.clipboard?.write == null) {
-    throw new Error("Copy image is unavailable in this environment.");
-  }
   const blob = await mermaidSvgToPngBlob(svg, theme);
-  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  await copyPngBlobToClipboard(blob);
 }

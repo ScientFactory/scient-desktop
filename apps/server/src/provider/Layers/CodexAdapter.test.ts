@@ -555,6 +555,52 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("promotes generated images to compact metadata and removes inline bytes", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-image-generation-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-08-15T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("image-call"),
+        payload: {
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+          item: {
+            id: "image-call",
+            type: "imageGeneration",
+            savedPath: "/codex/generated_images/provider-thread-1/image-call.png",
+            result: "large-inline-base64",
+            status: "completed",
+          },
+        },
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") return;
+      NodeAssert.equal(firstEvent.value.payload.itemType, "image_view");
+      NodeAssert.equal(firstEvent.value.payload.title, "Generated image");
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.data, {
+        kind: "scient.codex-generated-image",
+        callId: "image-call",
+        providerThreadId: "provider-thread-1",
+        sourcePath: "/codex/generated_images/provider-thread-1/image-call.png",
+      });
+      const rawPayload = firstEvent.value.raw?.payload as {
+        item?: { result?: string; resultElidedForRelay?: boolean };
+      };
+      NodeAssert.equal(rawPayload.item?.result, undefined);
+      NodeAssert.equal(rawPayload.item?.resultElidedForRelay, true);
+    }),
+  );
+
   it.effect("labels MCP lifecycle entries with server and tool names", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

@@ -35,6 +35,7 @@ export class ElectronShell extends Context.Service<
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
     readonly copyText: (text: string) => Effect.Effect<void>;
+    readonly copyPng: (png: Uint8Array) => Effect.Effect<boolean>;
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
@@ -53,6 +54,13 @@ export const make = ElectronShell.of({
   copyText: (text) =>
     Effect.sync(() => {
       Electron.clipboard.writeText(text);
+    }),
+  copyPng: (png) =>
+    Effect.sync(() => {
+      const image = Electron.nativeImage.createFromBuffer(Buffer.from(png));
+      if (image.isEmpty()) return false;
+      Electron.clipboard.writeImage(image);
+      return true;
     }),
 });
 

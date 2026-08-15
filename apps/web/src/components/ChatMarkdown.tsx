@@ -114,6 +114,14 @@ import {
   ScientRichFence,
 } from "../scient/presentation/ScientRichFence";
 import {
+  ScientInlineWorkspaceImage,
+  ScientPendingWorkspaceImage,
+} from "../scient/images/ScientInlineWorkspaceImage";
+import {
+  inlineWorkspaceImageMarkdownSource,
+  resolveInlineWorkspaceImage,
+} from "../scient/images/inlineWorkspaceImage";
+import {
   isScientMathCodeClassName,
   remarkScientMath,
   remarkScientMathRefinements,
@@ -1574,6 +1582,31 @@ function ChatMarkdown({
     };
 
     return {
+      img({ node: _node, alt, src, title, ...props }) {
+        const image = resolveInlineWorkspaceImage({ alt, cwd, src });
+        const markdownSource = image
+          ? inlineWorkspaceImageMarkdownSource(alt ?? image.alt, src ?? image.source, title)
+          : null;
+        if (image && markdownSource && threadRef && !isStreaming) {
+          return (
+            <ScientInlineWorkspaceImage
+              image={image}
+              markdownSource={markdownSource}
+              threadRef={threadRef}
+            />
+          );
+        }
+        if (image && markdownSource) {
+          return (
+            <ScientPendingWorkspaceImage
+              image={image}
+              markdownSource={markdownSource}
+              reason={isStreaming ? "streaming" : "unavailable"}
+            />
+          );
+        }
+        return <img {...props} alt={alt} decoding="async" loading="lazy" src={src} title={title} />;
+      },
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },

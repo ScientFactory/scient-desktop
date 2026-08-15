@@ -1076,6 +1076,8 @@ export interface DesktopBridge {
   /** Resolve the absolute path of an OS-dropped file or folder in Electron. */
   getPathForFile?: (file: File) => string | null;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /** Write an already-encoded PNG image to the native system clipboard. */
+  copyPngToClipboard?: (png: Uint8Array) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

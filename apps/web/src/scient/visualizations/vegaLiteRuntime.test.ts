@@ -11,6 +11,7 @@ import {
   fetchVegaRemoteResource,
   MAX_VEGA_REMOTE_RESOURCE_BYTES,
   normalizedVegaLiteError,
+  restoreVegaLiteViewState,
   SCIENT_VEGA_TOOLTIP_CURSOR,
   validateVegaResourceUri,
   vegaLiteThemeConfig,
@@ -80,6 +81,16 @@ describe("Vega-Lite runtime policy", () => {
     await expect(
       fetchVegaRemoteResource("https://example.test/missing.csv", {}, fetchImplementation),
     ).rejects.toThrow("404 Not Found");
+  });
+
+  it("explains viewing-device network and CORS failures", async () => {
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(
+      fetchVegaRemoteResource("https://example.test/cors-blocked.csv", {}, fetchImplementation),
+    ).rejects.toThrow("may not allow browser access (CORS)");
   });
 
   it("rejects resources whose declared size exceeds the runtime bound", async () => {
@@ -228,6 +239,26 @@ describe("Vega-Lite runtime policy", () => {
     expect(normalizedVegaLiteError(new Error("First problem\nsecondary detail")).message).toBe(
       "First problem",
     );
+  });
+
+  it("finishes restoring transferred interaction state before exposing the view", async () => {
+    const calls: string[] = [];
+    const view = {
+      setState: vi.fn(() => {
+        calls.push("setState");
+        return view;
+      }),
+      runAsync: vi.fn(async () => {
+        calls.push("runAsync");
+        await Promise.resolve();
+        calls.push("settled");
+        return view;
+      }),
+    };
+
+    await restoreVegaLiteViewState(view as never, { signals: { focus: "A" } } as never);
+
+    expect(calls).toEqual(["setState", "runAsync", "settled"]);
   });
 
   it("retains loader failures that Vega may otherwise downgrade to warnings", async () => {
