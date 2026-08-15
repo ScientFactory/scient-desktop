@@ -451,6 +451,54 @@ describe("GeneratedDocumentStore retention", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.effect("keeps a referenced revision when a binding cannot be read during the sweep", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-document-store-unreadable-binding-",
+      });
+      const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), baseDir);
+      const storeLayer = makeStoreLayer(configLayer);
+
+      const revisionDirectory = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* GeneratedDocumentStore;
+          const published = yield* publishRevision(store, 1, "revision-a");
+          return path.dirname((yield* store.resolveRevision(published)).path);
+        }).pipe(Effect.provide(storeLayer)),
+      );
+
+      // .../document-artifacts/revisions/<artifactId>/<revisionId>
+      const artifactsDirectory = path.dirname(path.dirname(path.dirname(revisionDirectory)));
+      const bindingsDirectory = path.join(artifactsDirectory, "bindings");
+      // Both halves of the evidence are damaged at once: the binding can no
+      // longer say which revision it protects, and the index that would have
+      // covered for it is gone. The revision is referenced all the same.
+      for (const fileName of yield* fileSystem.readDirectory(bindingsDirectory)) {
+        yield* fileSystem.writeFileString(
+          path.join(bindingsDirectory, fileName),
+          "{ not a binding",
+        );
+      }
+      yield* fileSystem.remove(path.join(artifactsDirectory, "retention-index.json"), {
+        force: true,
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* GeneratedDocumentStore;
+          expect(yield* fileSystem.exists(revisionDirectory)).toBe(true);
+          expect(yield* fileSystem.exists(path.join(revisionDirectory, "document.pdf"))).toBe(true);
+          // Nothing was papered over either: the binding is still unreadable.
+          expect((yield* store.getDescriptor(logicalDocumentKey).pipe(Effect.flip)).reason).toBe(
+            "corrupt-state",
+          );
+        }).pipe(Effect.provide(storeLayer)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("GeneratedDocumentStore production lifecycle", () => {

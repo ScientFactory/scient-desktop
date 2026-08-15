@@ -1009,10 +1009,17 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
       ),
     );
 
-  /** Every binding this authority owns. Unreadable files are reported, not fatal. */
+  /**
+   * Every binding this authority owns, plus how many binding files could not be
+   * read or decoded. Unreadable files are reported, not fatal — the store keeps
+   * serving every binding that does decode — but the revisions an unreadable
+   * binding references are invisible to the protection set, so the count is what
+   * lets the startup sweep refuse to mistake them for orphans.
+   */
   const listPersistedBindings = Effect.gen(function* () {
     const fileNames = yield* listDirectory(bindingsDirectory);
     const bindings: Array<DocumentArtifactBinding> = [];
+    let undecodable = 0;
     for (const fileName of fileNames) {
       if (!fileName.endsWith(".json")) continue;
       const filePath = path.join(bindingsDirectory, fileName);
@@ -1024,9 +1031,13 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
           ),
         ),
       );
-      if (binding !== null && binding.authority === authority) bindings.push(binding);
+      if (binding === null) {
+        undecodable += 1;
+        continue;
+      }
+      if (binding.authority === authority) bindings.push(binding);
     }
-    return bindings;
+    return { bindings, undecodable } as const;
   });
 
   /** Revision directories present on disk, plus stray paths no revision can own. */
@@ -1083,9 +1094,16 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
    * reclaimed. Bindings are the only authority on what is protected, so an index
    * that is missing, stale, or corrupt can never cause a referenced revision to
    * be deleted.
+   *
+   * That guarantee only holds while every binding can be read: a binding this
+   * pass could not decode names revisions nothing in the protection set knows
+   * about, and with the index also unavailable they would look exactly like
+   * orphans. So a pass that skipped any binding reclaims nothing — it keeps
+   * serving, reports why, and leaves the real orphans for a later pass that can
+   * see the whole picture.
    */
   const rebuildRetentionState = Effect.gen(function* () {
-    const bindings = yield* listPersistedBindings;
+    const { bindings, undecodable } = yield* listPersistedBindings;
     const protectedKeys = new Set<string>();
     const protectionByDocument = new Map<string, ReadonlySet<string>>();
     for (const binding of bindings) {
@@ -1148,12 +1166,26 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     yield* Ref.set(retainedRevisions, ordered);
     yield* persistRetentionIndex(ordered);
 
-    const orphans = [...onDisk.entries()].filter(([key]) => !retainedKeys.has(key));
+    const unaccounted = [...onDisk.entries()].filter(([key]) => !retainedKeys.has(key));
+    // A pass that could not read every binding cannot tell an orphan from a
+    // revision an unreadable binding still points at, so it reclaims neither.
+    const orphans = undecodable > 0 ? [] : unaccounted;
+    if (undecodable > 0 && unaccounted.length > 0) {
+      yield* Effect.logWarning(
+        "Skipping generated document orphan reclamation: some bindings could not be read.",
+        {
+          undecodableBindings: undecodable,
+          unaccountedRevisions: unaccounted.length,
+        },
+      );
+    }
     yield* Effect.forEach(
       orphans,
       ([, entry]) => removeRevisionDirectory(entry.artifactId, entry.revisionId),
       { discard: true },
     );
+    // Strays are outside that caution: no branded identifier decodes to their
+    // names, so no binding — readable or not — can be pointing at one.
     yield* Effect.forEach(
       strays,
       (stray) => fileSystem.remove(stray, { recursive: true, force: true }).pipe(Effect.ignore),
