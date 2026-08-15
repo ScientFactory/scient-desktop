@@ -15,12 +15,19 @@ the PDF you're looking at is older than the source it was built from, a stale
 badge tells you so.
 
 Scient compiles with pdfLaTeX, driven through `latexmk` — or through Tectonic
-instead, if that's what it finds. XeLaTeX and LuaLaTeX aren't run yet: if a
-document asks for one, through a `% !TEX program = xelatex` (or `lualatex`)
-comment or by loading a package pdfLaTeX can't process, such as `fontspec` or
-`unicode-math`, Scient detects that before the build starts and the error
-explains what the document needs instead of failing partway through a compile
-that was never going to work.
+instead, if that's what it finds. On the `latexmk` path, XeLaTeX and LuaLaTeX
+aren't run: if a document asks for one, through a `% !TEX program = xelatex`
+(or `lualatex`) comment or by loading a package pdfLaTeX can't process, such as
+`fontspec` or `unicode-math`, Scient detects that before the build starts and
+the error explains what the document needs instead of failing partway through a
+compile that was never going to work. Tectonic's engine is XeTeX-based, so with
+Tectonic installed those same documents build normally and nothing is refused.
+
+A document that loads `fontspec` only inside an engine test — the
+`\usepackage{iftex}` and `\ifPDFTeX … \else … \fi` pattern Pandoc's default
+template writes — isn't refused either. That document compiles fine under
+pdfLaTeX, because the branch loading those packages is never taken, so Scient
+lets the build run and answer for itself.
 
 If Scient can't find a LaTeX installation on your computer, it offers to
 install TinyTeX for you — a small distribution, about 70 MB, that lives with

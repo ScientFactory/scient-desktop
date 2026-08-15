@@ -95,17 +95,64 @@ is what should stand.
 process-tree kill, not just the parent) is invoked so a wedged engine cannot
 outlive the request, and the build finishes with `TIMEOUT_SUMMARY`.
 
-**Cancel semantics, including the known stale-binding effect.** `cancel` sets
-`cancelRequested`, tree-kills the running process if any, and — if this build
-owns a production handle — calls `store.failProduction` with
-`CANCELLED_SUMMARY`. `failDocumentProduction` does not distinguish "this
-attempt was cut short" from "this attempt proved the content bad": if the
-binding already had a `lastSuccessfulRevision`, the transition sets
-`status: "stale"` with `staleReason: "Build cancelled."` even though the prior
-PDF is still perfectly valid — a user who cancels a rebuild sees their still-
-good PDF marked stale for no content reason. This is a known effect of reusing
-`failProduction` for cancellation rather than a dedicated abandon path; see
-Deferred decisions.
+**Cancel semantics.** `cancel` sets `cancelRequested`, tree-kills the running
+process if any, and — if this build owns a production handle — calls
+`store.abandonProduction` with `CANCELLED_SUMMARY`. The distinction that
+matters is between "this attempt stopped" and "this attempt proved the content
+bad": abandoning releases the production without discrediting anything, so a
+reader who cancels a rebuild keeps a still-valid PDF marked `current` instead
+of watching it go stale for no content reason. `abandonProduction` is
+idempotent — a handle that no longer owns the binding settles as a no-op — so
+every path that might need it can run it unconditionally.
+
+Two of those paths are races a first reading of the code misses. A cancel can
+land between `beginProduction` claiming the binding and the handle reaching the
+entry, where it reads `entry.production === null` and finds nothing to release;
+`compileAndPublish` therefore re-checks supersession immediately after that
+entry write and abandons there, which is the same guard `runProcess` already
+keeps around the spawn. And the unexpected-failure handler in `runOnce`
+abandons rather than fails: everything reachable there is infrastructure — a
+full disk, a state directory that vanished, a defect in this service — and
+never a claim about the sources, so the entry reports `failed` with
+`UNEXPECTED_FAILURE_SUMMARY` while the binding stays as the last real build
+left it. That handler also lets pure interruption through untouched
+(`Cause.hasInterruptsOnly`), because closing `buildScope` on shutdown
+interrupts every in-flight build fiber straight into it, and a stopped server
+is not a failed build. What that leaves behind — a binding still marked
+`producing` for an attempt no process is running any more — is the store's to
+settle: `GeneratedDocumentStore` reconciles interrupted productions at startup,
+before it is published to any caller, so no reader ever observes one.
+
+**The engine gate.** `latexEngineGate.ts` reads the root document's head
+before any process starts and refuses, with one plain sentence, a document that
+asks for an engine this lane does not drive. `latexmk -pdf` drives pdfLaTeX,
+and handing it a XeLaTeX document produces pages of macro errors no reader can
+map back to "wrong engine"; saying so up front is the honest alternative. Only
+the `latexmk` path is gated — Tectonic's engine is XeTeX-based, so those
+documents build fine there and `compileAndPublish` skips the check entirely
+when that is the resolved toolchain.
+
+Two findings, deliberately unequal in strength. A `% !TEX program = xelatex`
+magic comment (or TeXShop's `TS-program` spelling) is an author's declaration
+of intent, and it refuses unconditionally. A load of `fontspec` or
+`unicode-math` is only an inference, and it is suppressed whenever the document
+shows an engine-conditional idiom: a load of `iftex`, `ifxetex` or `ifluatex`,
+or a use of `\ifPDFTeX`/`\ifxetex`/`\ifluatex`/`\iftutex` in any of the casings
+those get written in. That suppression exists because Pandoc's default template
+is exactly such a document —
+
+```latex
+\usepackage{iftex}
+\ifPDFTeX ... \else \usepackage{unicode-math} \usepackage{fontspec} \fi
+```
+
+— which compiles perfectly under pdfLaTeX, since pdfLaTeX never reaches the
+branch. The gate reads text, not TeX: it cannot evaluate the conditional, so
+where one is present it stands down and lets the compile decide. `\ifpdf` is
+deliberately not in that set, because it tests PDF output mode rather than the
+engine. Detection is comment-stripped, so a commented-out conditional cannot
+switch the refusal off, and the scan covers only the root's head — wiring the
+included texts the preamble scan already resolves into the gate is deferred.
 
 **Only a clean run publishes; the last clean PDF stays visible as stale.** The
 engine still runs to the end of the document — `-interaction=nonstopmode`, no
@@ -523,18 +570,34 @@ extraction, the bounds, and the paths deliberately not followed),
 `flsManifest.test.ts` (recorder parsing: POSIX and Windows paths, the
 distribution's own files and this run's outputs excluded, a parent walk that
 cannot name a file outside the workspace, and the truncation fallback at the
-256-input ceiling), `latexBuildEvidence.test.ts` (evidence round trip through
-JSON, the refusal to read a state file it does not understand, missing- and
-deleted-dependency markers, content change detected, an mtime-only rewrite
-deliberately _not_ detected, and the root-only narrowing on truncation),
+256-input ceiling), `latexEngineGate.test.ts` (the magic comment in the
+spellings and casings real editors write, engine-only package loads including
+one named among others in a group, the comment-stripping that keeps prose and
+commented-out lines from firing it, and the engine-conditional suppression: a
+pandoc-shaped preamble and the older `ifxetex` idiom both pass, an unguarded
+`\usepackage{fontspec}` is still refused, `\ifpdf` does not count as an engine
+test, and a magic comment is still refused even when `iftex` is present),
+`latexBuildEvidence.test.ts` (evidence round trip through JSON, the refusal to
+read a state file it does not understand, missing- and deleted-dependency
+markers, content change detected, an mtime-only rewrite deliberately _not_
+detected, the root-only narrowing on truncation, and — over a fake filesystem,
+because a real temporary directory cannot portably be put in this state — that
+a file which exists and cannot be read is recorded `unverified` rather than
+missing, never argues for a rebuild from either side of the probe, and keeps
+its recorded digest so a real edit is still caught once the lock lifts),
 `LatexPackageInstaller.test.ts` (the perl-direct `tlmgr` invocation shape, the
 unknown-package search fallback, the `kpsewhich` visibility gate with its one
 `mktexlsr` refresh, the fail-open probe, the tail-keeping output bound, and — on
 a `TestClock` — that a `tlmgr` outliving its budget is cancelled through the
 port rather than left running), `managedLatexInstall.test.ts` (install-root naming and
 the containment rule that keeps a tampered state file from pointing the engine
-outside the managed directory), and `tinytexManifest.test.ts` (manifest shape
-and pinned-asset resolution) — plus `LatexBuildService.test.ts` for the
+outside the managed directory), and `tinytexManifest.test.ts` (manifest shape,
+pinned-asset resolution, and the arch-keyed table itself: every
+platform/architecture pair is listed explicitly whether or not it is pinned, a
+pinned entry carries an HTTPS host and a digest and a relative executable path
+that neither starts at the root nor walks upward, and an unpinned pair resolves
+to a refusal naming the pair rather than to silence) — plus
+`LatexBuildService.test.ts` for the
 coordinator's lifecycle, coalescing, admission, cancel/supersession behavior,
 the upfront preamble batch (one install call carrying every unresolvable name,
 then a single compile) against the reactive loop that still handles what only a
@@ -550,7 +613,17 @@ stays `succeeded` across twenty consecutive polls with exactly one compile ever
 run, a restored binding is reported built only while its evidence holds, one
 whose sources moved on while the server was down rebuilds with its stale PDF
 still on screen, and one whose state predates evidence entirely rebuilds once
-and then stops. Two suites self-skip at collection time when the machine cannot run
+and then stops. Two of its cases stand inside windows the harness could not
+otherwise reach, through a `beginProductionGate` seam that parks a build inside
+`store.beginProduction`: a cancel landing in that window still releases the
+binding (watched on `store.changes`, because `getDescriptor` reports anything
+not stale as current and so cannot see `producing` at all), and a build that
+dies of infrastructure leaves a good PDF `current` rather than staling it. The
+shutdown case asserts the end-to-end property — a server stopped mid-compile
+comes back with its last good PDF still current — rather than isolating the
+interrupt branch, since an interrupted fiber's handler is itself interrupted
+before it can reach the store; `Cause.hasInterruptsOnly` there is defence in
+depth that this suite cannot discriminate. Two suites self-skip at collection time when the machine cannot run
 them: `LatexArchiveUnpacker.test.ts`'s last case expands a real archive
 through the resolved system `tar`, which is the only coverage of the actual
 spawn the stubs stand in for, and `LatexRealEngine.test.ts` runs a real TeX
@@ -582,33 +655,23 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   future producer lanes (Typst, Quarto) could reuse is raised to the platform
   owner of `docs/internals/scient-pdf-export-rendering-plan.md` rather than
   decided unilaterally here.
-- **`abandonProduction` binding transition.** Cancel currently reuses
-  `failProduction`, which is why cancelling a build stales an otherwise still-
-  good last success (see Build lifecycle). A dedicated `abandonProduction`
-  transition — "this attempt stopped" without implying "the content is now
-  known bad" — is a shared-foundation contract request against
-  `@scientfactory/document-artifacts`, not a private workaround in this lane.
-- **Build-dir and superseded-install GC.** Neither `<latexDir>/builds/<digest>`
-  work directories nor a superseded `<latexDir>/managed/tinytex-<version>-<8
-hex>` tree are ever cleaned up automatically today. Every install now leaves
-  the previous root in place deliberately (see Managed TinyTeX install), so
-  this is the collector that owes it: a reinstall, or a future manifest version
-  bump, leaves a full distribution behind on disk.
-- **Restart reconciliation of in-flight bindings.** Build state lives only in
-  an in-memory `Ref`. A binding that says a PDF was _published_ is now
-  reconciled on the next start — the evidence check above decides whether it is
-  still current — but a binding the server exited in the middle of is not: it
-  can be left in `producing` (no `lastSuccessfulRevision` yet) or `stale`
-  indefinitely, with nothing on the next start to resolve it either way.
+- **Build-dir GC.** `<latexDir>/builds/<digest>` work directories are never
+  cleaned up automatically, so every document a workspace has ever built leaves
+  its aux directory behind. Superseded
+  `<latexDir>/managed/tinytex-<version>-<8hex>` trees are no longer part of
+  this: `cleanupSupersededInstalls` reclaims them once a new install is
+  promoted.
 - **Evidence garbage collection.** `<latexDir>/evidence/<digest>.json` is
   written per document and never removed, so a workspace whose documents are
   renamed or deleted leaves small orphan files behind. This belongs with the
-  build-directory collector below rather than in a second sweep of its own.
+  build-directory collector above rather than in a second sweep of its own.
 - **Binding-change push subscription.** The web client polls the status
   endpoint on a self-scheduling timeout (1.5 s active, 5 s after a transport
-  error) rather than subscribing to a push notification. Polling is the
-  documented interim until the shared foundation offers a binding-change
-  subscription.
+  error) rather than subscribing to a push notification. The shared foundation
+  now publishes binding transitions on `store.changes`, so what is missing is
+  no longer the source but the transport: nothing carries those changes from
+  the server to the browser yet, and polling stays the documented interim until
+  something does.
 - **Diagnostics-click source jump and SyncTeX navigation** are the next
   increment on top of the diagnostics list and the SyncTeX index this lane
   already emits.
