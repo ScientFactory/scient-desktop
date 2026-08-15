@@ -269,21 +269,25 @@ function descriptorsEqual(left: LatexPdfDescriptor, right: LatexPdfDescriptor): 
   ) {
     return false;
   }
-  if (left._tag === "generated-pdf") {
-    return (
-      right._tag === "generated-pdf" &&
-      left.artifactId === right.artifactId &&
-      left.revisionId === right.revisionId &&
-      left.bindingGeneration === right.bindingGeneration &&
-      left.bindingStatus === right.bindingStatus &&
-      left.staleReason === right.staleReason
-    );
+  switch (left._tag) {
+    case "generated-pdf":
+      return (
+        right._tag === "generated-pdf" &&
+        left.artifactId === right.artifactId &&
+        left.revisionId === right.revisionId &&
+        left.bindingGeneration === right.bindingGeneration &&
+        left.bindingStatus === right.bindingStatus &&
+        left.staleReason === right.staleReason
+      );
+    case "workspace-pdf":
+      return (
+        right._tag === "workspace-pdf" &&
+        left.workspaceRoot === right.workspaceRoot &&
+        left.relativePath === right.relativePath
+      );
+    case "environment-pdf":
+      return right._tag === "environment-pdf" && left.path === right.path;
   }
-  return (
-    right._tag === "workspace-pdf" &&
-    left.absolutePath === right.absolutePath &&
-    left.threadId === right.threadId
-  );
 }
 
 /**
