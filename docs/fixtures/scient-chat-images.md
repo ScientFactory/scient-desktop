@@ -18,27 +18,29 @@ The axes, confidence region, Unicode unit, and Hebrew annotation must remain
 crisp at maximum zoom. Cycle the card background through automatic, light, and
 dark.
 
-![Treatment response with confidence interval](docs/fixtures/assets/scient-inline-treatment-response.svg)
+![Treatment response with confidence interval](assets/scient-inline-treatment-response.svg)
 
 ## PNG control
 
 This existing project PNG verifies raster loading and original-byte download.
 
-![Scient development application icon](assets/dev/blueprint-universal-1024.png)
+![Scient development application icon](../../assets/dev/blueprint-universal-1024.png)
 
 ## Encoded space
 
 The destination uses an encoded space but must open the correctly named source
 file.
 
-![Compact vector figure](docs/fixtures/assets/scient%20inline%20compact.svg)
+![Compact vector figure](assets/scient%20inline%20compact.svg)
 
 ## Missing image recovery
 
 This file deliberately does not exist. The card must show a contained recovery
 state with Try again and Open file, without breaking the surrounding document.
 
-![Deliberately missing scientific figure](docs/fixtures/assets/missing-scient-figure.png)
+<!-- markdown-link-check: ignore-next-line -->
+
+![Deliberately missing scientific figure](assets/missing-scient-figure.png)
 
 Text after the missing image must remain visible.
 

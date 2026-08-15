@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
@@ -20,8 +20,8 @@ const GIF_BYTES = Buffer.from("GIF89a-generated", "ascii");
 describe("generatedImageAttachments", () => {
   const tempDirs: string[] = [];
   const makeTempDir = () => {
-    const directory = NodeFs.mkdtempSync(
-      NodePath.join(NodeOs.tmpdir(), "scient-generated-attachment-"),
+    const directory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "scient-generated-attachment-"),
     );
     tempDirs.push(directory);
     return directory;
@@ -29,7 +29,7 @@ describe("generatedImageAttachments", () => {
 
   afterEach(() => {
     for (const directory of tempDirs.splice(0)) {
-      NodeFs.rmSync(directory, { recursive: true, force: true });
+      NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
 
@@ -37,7 +37,7 @@ describe("generatedImageAttachments", () => {
     const root = makeTempDir();
     const attachmentsDir = NodePath.join(root, "attachments");
     const sourcePath = NodePath.join(root, "generated.png");
-    NodeFs.writeFileSync(sourcePath, PNG_BYTES);
+    NodeFS.writeFileSync(sourcePath, PNG_BYTES);
 
     const first = await materializeGeneratedImageAttachment({
       threadId: "thread-1",
@@ -62,15 +62,15 @@ describe("generatedImageAttachments", () => {
       sizeBytes: PNG_BYTES.length,
     });
     const persisted = resolveAttachmentPath({ attachmentsDir, attachment: first });
-    expect(NodeFs.readFileSync(persisted!)).toEqual(PNG_BYTES);
-    expect(NodeFs.readdirSync(attachmentsDir).some((name) => name.includes(".tmp-"))).toBe(false);
+    expect(NodeFS.readFileSync(persisted!)).toEqual(PNG_BYTES);
+    expect(NodeFS.readdirSync(attachmentsDir).some((name) => name.includes(".tmp-"))).toBe(false);
   });
 
   it("recovers its durable copy when the provider source disappeared after restart", async () => {
     const root = makeTempDir();
     const attachmentsDir = NodePath.join(root, "attachments");
     const sourcePath = NodePath.join(root, "generated.png");
-    NodeFs.writeFileSync(sourcePath, PNG_BYTES);
+    NodeFS.writeFileSync(sourcePath, PNG_BYTES);
     const first = await materializeGeneratedImageAttachment({
       threadId: "thread-1",
       sourcePath,
@@ -78,7 +78,7 @@ describe("generatedImageAttachments", () => {
       allowedSourceRoots: [root],
       attachmentsDir,
     });
-    NodeFs.rmSync(sourcePath);
+    NodeFS.rmSync(sourcePath);
 
     await expect(
       materializeGeneratedImageAttachment({
@@ -96,9 +96,9 @@ describe("generatedImageAttachments", () => {
     const root = makeTempDir();
     const outside = makeTempDir();
     const outsidePath = NodePath.join(outside, "outside.png");
-    NodeFs.writeFileSync(outsidePath, PNG_BYTES);
+    NodeFS.writeFileSync(outsidePath, PNG_BYTES);
     const symlinkPath = NodePath.join(root, "escaped.png");
-    NodeFs.symlinkSync(outsidePath, symlinkPath);
+    NodeFS.symlinkSync(outsidePath, symlinkPath);
     await expect(
       materializeGeneratedImageAttachment({
         threadId: "thread-1",
@@ -110,7 +110,7 @@ describe("generatedImageAttachments", () => {
     ).rejects.toThrow("outside");
 
     const svgPath = NodePath.join(root, "unsafe.svg");
-    NodeFs.writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>');
+    NodeFS.writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>');
     await expect(
       materializeGeneratedImageAttachment({
         threadId: "thread-1",
@@ -126,9 +126,9 @@ describe("generatedImageAttachments", () => {
     const root = makeTempDir();
     const attachmentsDir = NodePath.join(root, "attachments");
     const oversized = NodePath.join(root, "oversized.png");
-    const descriptor = NodeFs.openSync(oversized, "w");
-    NodeFs.ftruncateSync(descriptor, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
-    NodeFs.closeSync(descriptor);
+    const descriptor = NodeFS.openSync(oversized, "w");
+    NodeFS.ftruncateSync(descriptor, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+    NodeFS.closeSync(descriptor);
     await expect(
       materializeGeneratedImageAttachment({
         threadId: "thread-1",
@@ -140,7 +140,7 @@ describe("generatedImageAttachments", () => {
     ).rejects.toThrow("exceeds");
 
     const sourcePath = NodePath.join(root, "generated.png");
-    NodeFs.writeFileSync(sourcePath, PNG_BYTES);
+    NodeFS.writeFileSync(sourcePath, PNG_BYTES);
     await materializeGeneratedImageAttachment({
       threadId: "thread-1",
       sourcePath,
@@ -148,7 +148,7 @@ describe("generatedImageAttachments", () => {
       allowedSourceRoots: [root],
       attachmentsDir,
     });
-    NodeFs.writeFileSync(sourcePath, GIF_BYTES);
+    NodeFS.writeFileSync(sourcePath, GIF_BYTES);
     await expect(
       materializeGeneratedImageAttachment({
         threadId: "thread-1",
@@ -163,14 +163,14 @@ describe("generatedImageAttachments", () => {
   it("cleans only stale temp files created by this publisher", async () => {
     const root = makeTempDir();
     const attachmentsDir = NodePath.join(root, "attachments");
-    NodeFs.mkdirSync(attachmentsDir);
+    NodeFS.mkdirSync(attachmentsDir);
     const stale =
       "thread-1-11111111-1111-4111-8111-111111111111.png.tmp-22222222-2222-4222-8222-222222222222";
     const unrelated = "keep.tmp-33333333-3333-4333-8333-333333333333";
-    NodeFs.writeFileSync(NodePath.join(attachmentsDir, stale), PNG_BYTES);
-    NodeFs.writeFileSync(NodePath.join(attachmentsDir, unrelated), PNG_BYTES);
+    NodeFS.writeFileSync(NodePath.join(attachmentsDir, stale), PNG_BYTES);
+    NodeFS.writeFileSync(NodePath.join(attachmentsDir, unrelated), PNG_BYTES);
     const now = 2_000_000_000_000;
-    NodeFs.utimesSync(
+    NodeFS.utimesSync(
       NodePath.join(attachmentsDir, stale),
       (now - 48 * 60 * 60 * 1_000) / 1_000,
       (now - 48 * 60 * 60 * 1_000) / 1_000,
@@ -179,7 +179,7 @@ describe("generatedImageAttachments", () => {
     await expect(cleanupStaleGeneratedImageAttachmentTemps({ attachmentsDir, now })).resolves.toBe(
       1,
     );
-    expect(NodeFs.existsSync(NodePath.join(attachmentsDir, stale))).toBe(false);
-    expect(NodeFs.existsSync(NodePath.join(attachmentsDir, unrelated))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(attachmentsDir, stale))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(attachmentsDir, unrelated))).toBe(true);
   });
 });

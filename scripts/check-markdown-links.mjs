@@ -6,6 +6,7 @@ import * as NodeURL from "node:url";
 const INLINE_LINK = /!?\[[^\]]*\]\((<[^>]+>|[^\s)]+)(?:\s+["'][^)]*["'])?\)/g;
 const REFERENCE_LINK = /^\s{0,3}\[[^\]]+\]:\s*(<[^>]+>|\S+)/gm;
 const EXTERNAL_OR_ANCHOR = /^(?:[a-z][a-z\d+.-]*:|#|\/\/)/i;
+const IGNORE_NEXT_LINE = "<!-- markdown-link-check: ignore-next-line -->";
 
 function unwrapDestination(destination) {
   return destination.startsWith("<") && destination.endsWith(">")
@@ -17,14 +18,59 @@ function lineNumberAt(markdown, index) {
   return markdown.slice(0, index).split("\n").length;
 }
 
+function maskExcludedMarkdown(markdown) {
+  let openFence = null;
+  let ignoreNextLine = false;
+
+  return markdown
+    .split("\n")
+    .map((line) => {
+      if (openFence) {
+        const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})[\t ]*$/);
+        if (
+          closingFence &&
+          closingFence[1][0] === openFence.character &&
+          closingFence[1].length >= openFence.length
+        ) {
+          openFence = null;
+        }
+        return " ".repeat(line.length);
+      }
+
+      if (ignoreNextLine) {
+        if (line.trim() === "") return line;
+        ignoreNextLine = false;
+        return " ".repeat(line.length);
+      }
+
+      if (line.trim() === IGNORE_NEXT_LINE) {
+        ignoreNextLine = true;
+        return " ".repeat(line.length);
+      }
+
+      const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (openingFence) {
+        openFence = {
+          character: openingFence[1][0],
+          length: openingFence[1].length,
+        };
+        return " ".repeat(line.length);
+      }
+
+      return line;
+    })
+    .join("\n");
+}
+
 export function markdownDestinations(markdown) {
+  const checkableMarkdown = maskExcludedMarkdown(markdown);
   const destinations = [];
   for (const pattern of [INLINE_LINK, REFERENCE_LINK]) {
     pattern.lastIndex = 0;
-    for (const match of markdown.matchAll(pattern)) {
+    for (const match of checkableMarkdown.matchAll(pattern)) {
       destinations.push({
         destination: unwrapDestination(match[1]),
-        line: lineNumberAt(markdown, match.index),
+        line: lineNumberAt(checkableMarkdown, match.index),
       });
     }
   }
