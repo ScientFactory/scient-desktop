@@ -19,7 +19,9 @@
  * shapes get a marker instead of a digest: a missing file, and one too large to
  * hash on a status poll (`OVERSIZE_FILE_DIGEST`), whose identity falls back to
  * its size — a fifty-megabyte figure is not worth rehashing every 1.5 seconds
- * and does not change without changing size in practice.
+ * and does not change without changing size in practice. A third marker,
+ * `UNVERIFIED_FILE_DIGEST`, covers a file that exists but could not be read;
+ * see its own note for why that must never be recorded as a missing one.
  *
  * The probe is built to be run on every poll, which is the constraint that
  * shapes it: one `stat` per dependency, and a content hash only where the size
@@ -41,6 +43,21 @@ import * as Schema from "effect/Schema";
 export const MISSING_FILE_DIGEST = "missing";
 /** Recorded for a dependency too large to rehash on a status poll. */
 export const OVERSIZE_FILE_DIGEST = "oversize";
+/**
+ * Recorded for a dependency that is *there* and could not be read anyway.
+ *
+ * A file locked by another writer, an antivirus scanner holding it open, a
+ * OneDrive placeholder mid-sync: on Windows these surface as `EBUSY` or
+ * `EACCES` from the same call that reports a genuinely deleted file, and
+ * conflating the two is how a transient lock became an unbounded rebuild loop.
+ * Recording "absent" for a file that exists makes the very next poll see it
+ * present, call that a change, and rebuild — into the same lock, recording
+ * absent again, forever. This marker says the opposite of `missing`: nothing
+ * is known about this file, so nothing about it may argue for a rebuild, and
+ * the probe skips it entirely. The next successful build records a real digest
+ * and the dependency starts being checked again.
+ */
+export const UNVERIFIED_FILE_DIGEST = "unverified";
 /** Beyond this a dependency is identified by its size alone. */
 export const MAX_HASHED_DEPENDENCY_BYTES = 16 * 1_024 * 1_024;
 /** The same ceiling the recorder manifest applies, enforced again here. */
@@ -106,22 +123,51 @@ interface StatSnapshot {
   readonly mtimeMs: number | null;
 }
 
+/**
+ * The three answers a filesystem read can give, kept apart on purpose.
+ *
+ * `absent` is a fact about the world — the file is not there — and it is
+ * evidence. `unreadable` is a fact about this attempt only: the file may be
+ * identical to what was recorded and simply unavailable for the millisecond
+ * this call ran. Collapsing the second into the first is what turns an
+ * antivirus scan into a compile loop, so nothing here ever does.
+ */
+type ReadOutcome<A> =
+  | { readonly _tag: "ok"; readonly value: A }
+  | { readonly _tag: "absent" }
+  | { readonly _tag: "unreadable" };
+
+const OK = <A>(value: A): ReadOutcome<A> => ({ _tag: "ok", value });
+const ABSENT: ReadOutcome<never> = { _tag: "absent" };
+const UNREADABLE: ReadOutcome<never> = { _tag: "unreadable" };
+
+/**
+ * Only a genuine `NotFound` earns `absent`. Every other platform error — a
+ * lock, a permission, a device that went away — is `unreadable`, because the
+ * one thing this call has established is that it does not know.
+ */
+const classifyError = (error: { readonly reason: { readonly _tag: string } }): ReadOutcome<never> =>
+  error.reason._tag === "NotFound" ? ABSENT : UNREADABLE;
+
 const statOf = (absolutePath: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     return yield* fileSystem.stat(absolutePath).pipe(
       Effect.map((info) =>
         info.type === "File"
-          ? Option.some<StatSnapshot>({
+          ? OK<StatSnapshot>({
               size: Number(info.size),
               mtimeMs: Option.match(info.mtime, {
                 onNone: () => null,
                 onSome: (mtime) => mtime.getTime(),
               }),
             })
-          : Option.none<StatSnapshot>(),
+          : // A directory where a `.tex` file used to be is not a transient
+            // condition; the file the compile read is gone either way.
+            ABSENT,
       ),
-      Effect.orElseSucceed(() => Option.none<StatSnapshot>()),
+      Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
+      Effect.orElseSucceed(() => UNREADABLE),
     );
   });
 
@@ -129,10 +175,9 @@ const digestOf = (absolutePath: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     return yield* fileSystem.readFile(absolutePath).pipe(
-      Effect.map((bytes) =>
-        Option.some(NodeCrypto.createHash("sha256").update(bytes).digest("hex")),
-      ),
-      Effect.orElseSucceed(() => Option.none<string>()),
+      Effect.map((bytes) => OK(NodeCrypto.createHash("sha256").update(bytes).digest("hex"))),
+      Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
+      Effect.orElseSucceed(() => UNREADABLE),
     );
   });
 
@@ -183,8 +228,15 @@ export const collectLatexBuildEvidence = (input: {
     for (const relativePath of paths) {
       const absolutePath = path.resolve(input.workspaceRoot, relativePath);
       const info = yield* statOf(absolutePath);
-      if (Option.isNone(info)) {
-        dependencies.push({ path: relativePath, sha256: MISSING_FILE_DIGEST, byteLength: -1 });
+      if (info._tag !== "ok") {
+        // Both markers carry `-1`: no bytes were hashed either way, and a
+        // length recorded beside a marker digest only invites a later reader to
+        // compare the two.
+        dependencies.push({
+          path: relativePath,
+          sha256: info._tag === "absent" ? MISSING_FILE_DIGEST : UNVERIFIED_FILE_DIGEST,
+          byteLength: -1,
+        });
         continue;
       }
       if (info.value.size > MAX_HASHED_DEPENDENCY_BYTES) {
@@ -197,8 +249,14 @@ export const collectLatexBuildEvidence = (input: {
         continue;
       }
       const digest = yield* digestOf(absolutePath);
-      if (Option.isNone(digest)) {
-        dependencies.push({ path: relativePath, sha256: MISSING_FILE_DIGEST, byteLength: -1 });
+      if (digest._tag !== "ok") {
+        // It was there a moment ago at `stat` time, so an `absent` here means
+        // it was deleted between the two calls — still a real absence.
+        dependencies.push({
+          path: relativePath,
+          sha256: digest._tag === "absent" ? MISSING_FILE_DIGEST : UNVERIFIED_FILE_DIGEST,
+          byteLength: -1,
+        });
         continue;
       }
       dependencies.push({
@@ -220,6 +278,34 @@ export const collectLatexBuildEvidence = (input: {
       marks,
     };
   });
+
+/**
+ * Whether two evidence records describe the same document identity — same
+ * dependency list, same digests, same lengths. Recording time is deliberately
+ * not compared: the question is whether anything the PDF was built from has
+ * moved, and when the measurement was taken is not part of that.
+ *
+ * This is what makes a probe disagreement terminate. `probeLatexEvidence` is a
+ * fast path built out of `stat` shortcuts, and a fast path can be wrong in
+ * ways a full re-read is not; before a disagreement is allowed to cost a
+ * compile, the caller re-collects and asks this. Equal means the probe was
+ * mistaken and there is nothing to rebuild, which bounds any probe-versus-
+ * collect disagreement at one rebuild instead of one per poll.
+ */
+export function latexEvidenceMatches(a: LatexBuildEvidence, b: LatexBuildEvidence): boolean {
+  if (a.rootRelativePath !== b.rootRelativePath) return false;
+  if (a.truncated !== b.truncated) return false;
+  if (a.dependencies.length !== b.dependencies.length) return false;
+  return a.dependencies.every((dependency, index) => {
+    const other = b.dependencies[index];
+    return (
+      other !== undefined &&
+      dependency.path === other.path &&
+      dependency.sha256 === other.sha256 &&
+      dependency.byteLength === other.byteLength
+    );
+  });
+}
 
 export interface LatexEvidenceProbe {
   /** At least one dependency no longer matches what the PDF was built from. */
@@ -253,9 +339,19 @@ export const probeLatexEvidence = (input: {
     });
 
     for (const dependency of input.evidence.dependencies) {
+      // Nothing was ever established about this file, so nothing about it can
+      // argue for a rebuild. Checked before the `stat`, because the whole point
+      // is that reading it is not the way to settle anything.
+      if (dependency.sha256 === UNVERIFIED_FILE_DIGEST) continue;
       const absolutePath = path.resolve(input.workspaceRoot, dependency.path);
       const info = yield* statOf(absolutePath);
-      if (Option.isNone(info)) {
+      if (info._tag === "unreadable") {
+        // Present and unavailable. The recorded digest stands, the mark stands
+        // with it — an unreadable poll is not a reason to rebuild, and not a
+        // reason to forget what the last readable one verified either.
+        continue;
+      }
+      if (info._tag === "absent") {
         marks.delete(dependency.path);
         // A file that was already gone when the evidence was taken is not news.
         if (dependency.sha256 === MISSING_FILE_DIGEST) continue;
@@ -284,7 +380,10 @@ export const probeLatexEvidence = (input: {
         continue;
       }
       const digest = yield* digestOf(absolutePath);
-      if (Option.isNone(digest) || digest.value !== dependency.sha256) {
+      // Same rule as the `stat` above: only an answer decides. A read that
+      // could not happen leaves the recorded digest exactly where it was.
+      if (digest._tag === "unreadable") continue;
+      if (digest._tag === "absent" || digest.value !== dependency.sha256) {
         marks.delete(dependency.path);
         return verdict(dependency.path);
       }
