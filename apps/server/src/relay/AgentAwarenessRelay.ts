@@ -42,7 +42,7 @@ import {
 } from "../cloud/config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { SCIENT_GENERAL_CHAT_SERVER_LABEL } from "../scient/generalChat/ServerCapability.ts";
+import { SCIENT_QUICK_CHAT_SERVER_LABEL } from "../scient/quickChat/ServerCapability.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -255,7 +255,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
         state: sanitizeRelayAgentActivityState(
           projectThreadAwareness({
             environmentId: input.environmentId,
-            project: { title: SCIENT_GENERAL_CHAT_SERVER_LABEL },
+            project: { title: SCIENT_QUICK_CHAT_SERVER_LABEL },
             thread: input.thread.value,
           }),
         ),
@@ -291,7 +291,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
     .filter((thread) => {
       const project =
         thread.projectId === null
-          ? { title: SCIENT_GENERAL_CHAT_SERVER_LABEL }
+          ? { title: SCIENT_QUICK_CHAT_SERVER_LABEL }
           : projectById.get(thread.projectId);
       if (!project) {
         return false;

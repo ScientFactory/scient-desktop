@@ -20,7 +20,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import { SCIENT_QUICK_CHAT_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import { EnvironmentId } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -730,7 +730,7 @@ export function NewTaskDraftScreen(props: {
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
-      projectTitle: selectedProject?.title ?? SCIENT_GENERAL_CHAT_LABEL,
+      projectTitle: selectedProject?.title ?? SCIENT_QUICK_CHAT_LABEL,
     });
     const result = await createProjectThread({
       project: selectedProject,
@@ -812,7 +812,7 @@ export function NewTaskDraftScreen(props: {
     !flow.submitting &&
     (!flow.isProjectless || environmentConnected) &&
     !(!flow.isProjectless && flow.workspaceMode === "worktree" && !flow.selectedBranchName);
-  const targetTitle = selectedProject?.title ?? SCIENT_GENERAL_CHAT_LABEL;
+  const targetTitle = selectedProject?.title ?? SCIENT_QUICK_CHAT_LABEL;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}

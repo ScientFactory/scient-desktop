@@ -275,7 +275,7 @@ export class TerminalWorkspaceMismatchError extends Schema.TaggedErrorClass<Term
   },
 ) {
   override get message() {
-    return `Terminal cwd must match the General Chat workspace: ${this.expectedCwd}`;
+    return `Terminal cwd must match the Quick Chat workspace: ${this.expectedCwd}`;
   }
 }
 

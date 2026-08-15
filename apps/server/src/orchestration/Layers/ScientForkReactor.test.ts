@@ -241,11 +241,11 @@ const seedProjectlessOrigin = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   yield* engine.dispatch({
     type: "thread.create",
-    commandId: CommandId.make("cmd-general-chat-origin"),
+    commandId: CommandId.make("cmd-quick-chat-origin"),
     threadId: ORIGIN,
     projectId: null,
     workspaceRoot: process.cwd(),
-    title: "General chat origin",
+    title: "Quick chat origin",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
@@ -258,10 +258,10 @@ const seedProjectlessOrigin = Effect.gen(function* () {
   });
   yield* engine.dispatch({
     type: "thread.turn.start",
-    commandId: CommandId.make("cmd-general-chat-turn-start"),
+    commandId: CommandId.make("cmd-quick-chat-turn-start"),
     threadId: ORIGIN,
     message: {
-      messageId: MessageId.make("general-chat-user-1"),
+      messageId: MessageId.make("quick-chat-user-1"),
       role: "user",
       text: "Discuss the result",
       attachments: [],
@@ -272,10 +272,10 @@ const seedProjectlessOrigin = Effect.gen(function* () {
   });
   yield* engine.dispatch({
     type: "thread.message.assistant.complete",
-    commandId: CommandId.make("cmd-general-chat-assistant-complete"),
+    commandId: CommandId.make("cmd-quick-chat-assistant-complete"),
     threadId: ORIGIN,
     messageId: SOURCE_ASSISTANT_MESSAGE_ID,
-    turnId: TurnId.make("general-chat-turn-1"),
+    turnId: TurnId.make("quick-chat-turn-1"),
     createdAt: CREATED_AT,
   });
 });
@@ -586,7 +586,7 @@ describe("ScientForkReactor", () => {
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
 
-  it.live("forks a General Chat in its environment without requiring a project", () => {
+  it.live("forks a Quick Chat in its environment without requiring a project", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
     const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];
 
@@ -598,7 +598,7 @@ describe("ScientForkReactor", () => {
       yield* seedProjectlessOrigin;
 
       const completionFiber = yield* Effect.forkChild(reactor.awaitCompletion(NEW));
-      yield* dispatchFork("local", "cmd-fork-general-chat");
+      yield* dispatchFork("local", "cmd-fork-quick-chat");
       yield* Fiber.join(completionFiber);
       yield* reactor.drain;
 

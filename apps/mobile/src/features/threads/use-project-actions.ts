@@ -21,7 +21,7 @@ import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
-import { validateGeneralChatCreation } from "../scient-general-chat/generalChatCreationValidation";
+import { validateQuickChatCreation } from "../scient-quick-chat/quickChatCreationValidation";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -54,7 +54,7 @@ export function useCreateProjectThread() {
             branch: input.branch,
             initialMessageText,
           })
-        : validateGeneralChatCreation({
+        : validateQuickChatCreation({
             environmentId: input.environmentId,
             initialMessageText,
           });

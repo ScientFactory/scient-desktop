@@ -39,9 +39,9 @@
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
     },
-    "./scient/general-chat": {
-      "types": "./src/scient/generalChat.ts",
-      "default": "./src/scient/generalChat.ts"
+    "./scient/quick-chat": {
+      "types": "./src/scient/quickChat.ts",
+      "default": "./src/scient/quickChat.ts"
     },
     "./state/auth": {
       "types": "./src/state/auth.ts",

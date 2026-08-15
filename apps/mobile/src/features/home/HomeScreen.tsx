@@ -7,7 +7,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import { SCIENT_QUICK_CHAT_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
@@ -812,7 +812,7 @@ export function HomeScreen(props: HomeScreenProps) {
           }
           projectTitle={
             thread.projectId === null
-              ? SCIENT_GENERAL_CHAT_LABEL
+              ? SCIENT_QUICK_CHAT_LABEL
               : v2ProjectTitleByProjectKey.get(
                   scopedProjectKey(thread.environmentId, thread.projectId),
                 )

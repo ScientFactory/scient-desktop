@@ -1,9 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
-  SCIENT_GENERAL_CHAT_LABEL,
-  supportsScientGeneralChat,
-} from "@t3tools/client-runtime/scient/general-chat";
+  SCIENT_QUICK_CHAT_LABEL,
+  supportsScientQuickChat,
+} from "@t3tools/client-runtime/scient/quick-chat";
 import { FolderPlusIcon, MessageCircleIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
@@ -105,7 +105,7 @@ export function DraftHeroHeadline({
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
   const activeProjectDisplayName =
     activeProjectRef?.projectId === null
-      ? SCIENT_GENERAL_CHAT_LABEL
+      ? SCIENT_QUICK_CHAT_LABEL
       : (activeProjectGroup?.displayName ?? activeProjectTitle);
   const hasResolvedProject =
     activeProjectRef?.projectId != null &&
@@ -115,7 +115,7 @@ export function DraftHeroHeadline({
     activeProjectRef?.environmentId ?? primaryEnvironmentId;
   const canCreateProjectlessThread =
     projectlessEnvironmentId !== null &&
-    supportsScientGeneralChat(serverConfigs.get(projectlessEnvironmentId));
+    supportsScientQuickChat(serverConfigs.get(projectlessEnvironmentId));
   const shouldShowProjectMenu = projectlessEnvironmentId !== null;
 
   const projectSelector = shouldShowProjectMenu ? (
@@ -170,7 +170,7 @@ export function DraftHeroHeadline({
             }}
           >
             <MessageCircleIcon />
-            {SCIENT_GENERAL_CHAT_LABEL}
+            {SCIENT_QUICK_CHAT_LABEL}
           </MenuItem>
         ) : null}
       </MenuPopup>

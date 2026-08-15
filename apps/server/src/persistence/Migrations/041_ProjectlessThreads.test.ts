@@ -87,20 +87,20 @@ layer("041_ProjectlessThreads", (it) => {
           thread_id, project_id, workspace_root, title, model_selection_json,
           runtime_mode, interaction_mode, created_at, updated_at
         ) VALUES (
-          'thread-general-chat', NULL, '/tmp/environment-workspace', 'General chat',
+          'thread-quick-chat', NULL, '/tmp/environment-workspace', 'Quick chat',
           '{"instanceId":"codex","model":"gpt-5"}', 'full-access',
           'default', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
         )
       `;
-      const generalChat = yield* sql<{
+      const quickChat = yield* sql<{
         readonly projectId: string | null;
         readonly workspaceRoot: string | null;
       }>`
         SELECT project_id AS projectId, workspace_root AS workspaceRoot
         FROM projection_threads
-        WHERE thread_id = 'thread-general-chat'
+        WHERE thread_id = 'thread-quick-chat'
       `;
-      assert.deepEqual(generalChat, [
+      assert.deepEqual(quickChat, [
         { projectId: null, workspaceRoot: "/tmp/environment-workspace" },
       ]);
     }),

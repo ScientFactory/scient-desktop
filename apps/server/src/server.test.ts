@@ -7097,9 +7097,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects moving a General Chat while a terminal is running", () =>
+  it.effect("rejects moving a Quick Chat while a terminal is running", () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-general-chat-terminal-open");
+      const threadId = ThreadId.make("thread-quick-chat-terminal-open");
       let dispatched = false;
 
       yield* buildAppUnderTest({
@@ -7123,7 +7123,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.meta.update",
-            commandId: CommandId.make("cmd-move-general-chat-terminal-open"),
+            commandId: CommandId.make("cmd-move-quick-chat-terminal-open"),
             threadId,
             moveToProjectId: ProjectId.make("project-destination"),
           }),
@@ -8309,14 +8309,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("authorizes General Chat terminals only at the authoritative workspace", () =>
+  it.effect("authorizes Quick Chat terminals only at the authoritative workspace", () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-general-chat-terminal");
+      const threadId = ThreadId.make("thread-quick-chat-terminal");
       const openedCwds: string[] = [];
       const snapshot = {
         threadId,
         terminalId: "default",
-        cwd: "/tmp/general-chat-workspace",
+        cwd: "/tmp/quick-chat-workspace",
         worktreePath: null,
         status: "running" as const,
         pid: 1234,
@@ -8336,7 +8336,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   makeDefaultOrchestrationThreadShell({
                     id: threadId,
                     projectId: null,
-                    workspaceRoot: "/tmp/general-chat-workspace",
+                    workspaceRoot: "/tmp/quick-chat-workspace",
                   }),
                 ),
               ),
@@ -8357,11 +8357,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.terminalOpen]({
             threadId,
             terminalId: "default",
-            cwd: "/tmp/general-chat-workspace",
+            cwd: "/tmp/quick-chat-workspace",
           }),
         ),
       );
-      assert.equal(opened.cwd, "/tmp/general-chat-workspace");
+      assert.equal(opened.cwd, "/tmp/quick-chat-workspace");
 
       const rejected = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -8401,7 +8401,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assertTrue(rejectedRestart._tag === "Failure");
       assertTrue(rejectedRestart.failure._tag === "TerminalWorkspaceMismatchError");
-      assert.deepEqual(openedCwds, ["/tmp/general-chat-workspace"]);
+      assert.deepEqual(openedCwds, ["/tmp/quick-chat-workspace"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

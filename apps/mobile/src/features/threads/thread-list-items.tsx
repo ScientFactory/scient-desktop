@@ -21,7 +21,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
-import type { ScientThreadGroupContext } from "../scient-general-chat/threadGroupContext";
+import type { ScientThreadGroupContext } from "../scient-quick-chat/threadGroupContext";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { resolveThreadStatus } from "./threadPresentation";
@@ -129,8 +129,8 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
         accessibilityHint={
           props.collapsed
-            ? `Expands ${props.context.kind === "project" ? "the project" : "General chat"}`
-            : `Collapses ${props.context.kind === "project" ? "the project" : "General chat"}`
+            ? `Expands ${props.context.kind === "project" ? "the project" : "Quick chats"}`
+            : `Collapses ${props.context.kind === "project" ? "the project" : "Quick chats"}`
         }
         className={
           compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"

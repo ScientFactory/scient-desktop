@@ -37,9 +37,8 @@ export const ORCHESTRATION_WS_METHODS = {
 // SCIENT-FORK:START — stable discriminator for the one relocation race the
 // client may retry: an accepted provider stop request reaching the command
 // projection just before the authoritative stopped session.
-export const GENERAL_CHAT_MOVE_SESSION_STOP_PENDING =
-  "SCIENT_GENERAL_CHAT_MOVE_SESSION_STOP_PENDING";
-export const GENERAL_CHAT_MOVE_TERMINALS_OPEN = "SCIENT_GENERAL_CHAT_MOVE_TERMINALS_OPEN";
+export const QUICK_CHAT_MOVE_SESSION_STOP_PENDING = "SCIENT_QUICK_CHAT_MOVE_SESSION_STOP_PENDING";
+export const QUICK_CHAT_MOVE_TERMINALS_OPEN = "SCIENT_QUICK_CHAT_MOVE_TERMINALS_OPEN";
 // SCIENT-FORK:END
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -808,7 +807,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  // SCIENT-FORK:START — a General Chat can be relocated into one project.
+  // SCIENT-FORK:START — a Quick Chat can be relocated into one project.
   // The server owns the target workspace lookup and only permits the
   // projectless -> project transition after the provider session has stopped.
   moveToProjectId: Schema.optional(ProjectId),

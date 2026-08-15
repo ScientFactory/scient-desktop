@@ -567,20 +567,20 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
-  it("durably relocates a projectless General Chat without changing its identity", async () => {
+  it("durably relocates a projectless Quick Chat without changing its identity", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
     const createdAt = now();
-    const targetProjectId = asProjectId("project-general-chat-target");
-    const threadId = ThreadId.make("thread-general-chat-relocation");
+    const targetProjectId = asProjectId("project-quick-chat-target");
+    const threadId = ThreadId.make("thread-quick-chat-relocation");
 
     await system.run(
       engine.dispatch({
         type: "project.create",
-        commandId: CommandId.make("cmd-general-chat-target-create"),
+        commandId: CommandId.make("cmd-quick-chat-target-create"),
         projectId: targetProjectId,
         title: "Research Project",
-        workspaceRoot: "/tmp/general-chat-target",
+        workspaceRoot: "/tmp/quick-chat-target",
         defaultModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
@@ -591,26 +591,26 @@ describe("OrchestrationEngine", () => {
     await system.run(
       engine.dispatch({
         type: "thread.create",
-        commandId: CommandId.make("cmd-general-chat-create"),
+        commandId: CommandId.make("cmd-quick-chat-create"),
         threadId,
         projectId: null,
-        workspaceRoot: "/tmp/general-chat-environment",
-        title: "General chat",
+        workspaceRoot: "/tmp/quick-chat-environment",
+        title: "Quick chat",
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
-        branch: "general-chat-branch",
-        worktreePath: "/tmp/general-chat-worktree",
+        branch: "quick-chat-branch",
+        worktreePath: "/tmp/quick-chat-worktree",
         createdAt,
       }),
     );
     await system.run(
       engine.dispatch({
         type: "thread.meta.update",
-        commandId: CommandId.make("cmd-general-chat-move"),
+        commandId: CommandId.make("cmd-quick-chat-move"),
         threadId,
         moveToProjectId: targetProjectId,
       }),
@@ -624,7 +624,7 @@ describe("OrchestrationEngine", () => {
       workspaceRoot: null,
       branch: null,
       worktreePath: null,
-      title: "General chat",
+      title: "Quick chat",
     });
 
     await system.dispose();

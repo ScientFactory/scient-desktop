@@ -777,11 +777,11 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
-it.effect("accepts a single-purpose General Chat relocation", () =>
+it.effect("accepts a single-purpose Quick Chat relocation", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({
       type: "thread.meta.update",
-      commandId: "cmd-move-general-chat",
+      commandId: "cmd-move-quick-chat",
       threadId: "thread-general",
       moveToProjectId: "project-research",
     });

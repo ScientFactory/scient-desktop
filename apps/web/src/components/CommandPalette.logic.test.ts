@@ -487,6 +487,19 @@ describe("buildThreadActionItems", () => {
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
   });
+
+  it("keeps the former General Chat term as a search alias for Quick Chat threads", () => {
+    const [item] = buildThreadActionItems({
+      threads: [makeThread({ projectId: null, title: "Unsorted idea" })],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    expect(item?.description).toBe("Quick chat");
+    expect(item?.searchTerms).toContain("general chat");
+  });
 });
 
 describe("buildBrowseGroups", () => {

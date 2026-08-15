@@ -14,7 +14,7 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { normalizeScientThreadCreateTarget } from "../scient/generalChat/Policy.ts";
+import { normalizeScientThreadCreateTarget } from "../scient/quickChat/Policy.ts";
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,

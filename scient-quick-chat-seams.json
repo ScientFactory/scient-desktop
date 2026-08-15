@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "owner": "ScientFactory",
+  "ownedRoots": [
+    "apps/server/src/scient/quickChat",
+    "apps/web/src/scient/quickChat",
+    "apps/web/src/components/scient-quick-chat",
+    "apps/mobile/src/features/scient-quick-chat",
+    "packages/client-runtime/src/scient"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/server/src/orchestration/Normalizer.ts",
+      "anchor": "normalizeScientThreadCreateTarget",
+      "purpose": "Normalize Quick Chat creation to the environment workspace."
+    },
+    {
+      "path": "apps/server/src/orchestration/decider.ts",
+      "anchor": "validateScientQuickChatMove",
+      "purpose": "Apply Scient relocation invariants inside the shared event decider."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "ensureScientQuickChatMoveHasNoRunningTerminals",
+      "purpose": "Enforce runtime terminal safety at authenticated RPC ingress."
+    },
+    {
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "scientThreadAllowsCapability",
+      "purpose": "Mount workspace tools and deny project-only tools in the shared chat shell."
+    },
+    {
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "anchor": "buildScientQuickChatSidebarModel",
+      "purpose": "Mount the Scient-owned Quick Chat section and sidebar projection in the shared shell."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatHeader.tsx",
+      "anchor": "ScientQuickChatMoveMenu",
+      "purpose": "Mount the persistent header relocation action."
+    },
+    {
+      "path": "apps/mobile/src/features/home/homeThreadList.ts",
+      "anchor": "ScientThreadGroupContext",
+      "purpose": "Group Quick Chats without fabricating a project."
+    },
+    {
+      "path": "apps/mobile/src/features/archive/archivedThreadList.ts",
+      "anchor": "ScientThreadGroupContext",
+      "purpose": "Group archived Quick Chats without fabricating a project."
+    }
+  ],
+  "projectlessDecisionAllowlist": [
+    "apps/mobile/src/features/archive/archivedThreadList.ts",
+    "apps/mobile/src/features/home/HomeScreen.tsx",
+    "apps/mobile/src/features/home/homeThreadList.ts",
+    "apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx",
+    "apps/mobile/src/lib/projectThreadStartTurn.ts",
+    "apps/mobile/src/state/use-thread-selection.ts",
+    "apps/server/src/checkpointing/Utils.ts",
+    "apps/server/src/mcp/toolkits/sources/handlers.ts",
+    "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+    "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+    "apps/server/src/orchestration/Normalizer.ts",
+    "apps/server/src/orchestration/decider.ts",
+    "apps/server/src/orchestration/scient-fork/forkDecider.ts",
+    "apps/server/src/pullRequest/PullRequestService.ts",
+    "apps/server/src/relay/AgentAwarenessRelay.ts",
+    "apps/server/src/scient/quickChat/Policy.ts",
+    "apps/server/src/scient/quickChat/TerminalPolicy.ts",
+    "apps/server/src/ws.ts",
+    "apps/web/src/components/ChatView.tsx",
+    "apps/web/src/components/CommandPalette.logic.ts",
+    "apps/web/src/components/CommandPalette.tsx",
+    "apps/web/src/components/LegacySidebar.tsx",
+    "apps/web/src/components/Sidebar.logic.ts",
+    "apps/web/src/components/Sidebar.tsx",
+    "apps/web/src/components/ThreadStatusIndicators.tsx",
+    "apps/web/src/components/chat/ChatComposer.tsx",
+    "apps/web/src/components/chat/DraftHeroHeadline.tsx",
+    "apps/web/src/composerDraftStore.ts",
+    "apps/web/src/hooks/useHandleNewThread.ts",
+    "apps/web/src/hooks/useThreadActionMenu.ts",
+    "apps/web/src/hooks/useThreadActions.ts",
+    "apps/web/src/lib/chatThreadActions.ts",
+    "apps/web/src/routes/_chat.draft.$draftId.tsx",
+    "apps/web/src/scient/quickChat/sidebarModel.ts",
+    "packages/client-runtime/src/scient/quickChat.ts",
+    "packages/client-runtime/src/state/threadShell.ts"
+  ]
+}
