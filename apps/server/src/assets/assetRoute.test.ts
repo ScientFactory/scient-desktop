@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import { ThreadId } from "@t3tools/contracts";
+import { EnvironmentFilePath, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -15,7 +15,7 @@ import { assetRouteHandler } from "../http.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { issueAssetUrl } from "./AssetAccess.ts";
+import { ASSET_ROUTE_PREFIX, issueAssetUrl } from "./AssetAccess.ts";
 
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-pdf-route-test-",
@@ -94,6 +94,76 @@ describe("asset route", () => {
       yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF changed"));
       const changed = yield* runRequest(asset.relativeUrl);
       expect(changed.status).toBe(409);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("serves and invalidates revision-pinned files outside a workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-route-" });
+      const filePath = path.join(root, "dataset.csv");
+      const original = new TextEncoder().encode("x,y\n1,2\n");
+      yield* fileSystem.writeFile(filePath, original);
+      const asset = yield* issueAssetUrl({
+        resource: {
+          _tag: "environment-file",
+          path: EnvironmentFilePath.make(filePath),
+          access: "exact",
+        },
+      });
+
+      const partial = yield* runRequest(asset.relativeUrl, { headers: { Range: "bytes=4-6" } });
+      expect(partial.status).toBe(206);
+      expect(partial.headers.get("content-type")).toContain("text/csv");
+      expect(yield* Effect.promise(() => partial.text())).toBe("1,2");
+
+      yield* fileSystem.writeFileString(filePath, "changed");
+      expect((yield* runRequest(asset.relativeUrl)).status).toBe(409);
+
+      const refreshed = yield* issueAssetUrl({
+        resource: {
+          _tag: "environment-file",
+          path: EnvironmentFilePath.make(filePath),
+          access: "exact",
+        },
+      });
+      expect((yield* runRequest(refreshed.relativeUrl)).status).toBe(200);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("serves interactive HTML and its nested local resources with normal MIME types", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-html-route-" });
+      const htmlPath = path.join(root, "interactive.html");
+      const scriptPath = path.join(root, "assets", "app.js");
+      yield* fileSystem.makeDirectory(path.dirname(scriptPath), { recursive: true });
+      yield* fileSystem.writeFileString(htmlPath, '<script src="assets/app.js"></script>');
+      yield* fileSystem.writeFileString(scriptPath, "document.body.textContent = 'ready';");
+      const asset = yield* issueAssetUrl({
+        resource: {
+          _tag: "environment-file",
+          path: EnvironmentFilePath.make(htmlPath),
+          access: "html-document",
+        },
+      });
+      const suffix = asset.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      const html = yield* runRequest(asset.relativeUrl);
+      expect(html.status).toBe(200);
+      expect(html.headers.get("content-type")).toContain("text/html");
+      expect(html.headers.get("content-security-policy")).toBeNull();
+      expect(html.headers.get("cache-control")).toBe("no-store");
+
+      const script = yield* runRequest(`${ASSET_ROUTE_PREFIX}/${token}/assets/app.js`);
+      expect(script.status).toBe(200);
+      expect(script.headers.get("content-type")).toContain("javascript");
+      expect(script.headers.get("cache-control")).toBe("no-store");
+      expect(yield* Effect.promise(() => script.text())).toContain("ready");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

@@ -1,11 +1,29 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  extractMarkdownLinkHrefs,
+  markdownLinkLookupKey,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+describe("extractMarkdownLinkHrefs", () => {
+  it("extracts ordinary and angle-bracketed destinations containing spaces", () => {
+    expect(
+      extractMarkdownLinkHrefs(
+        '[figure](/tmp/figure.svg) and [report](</Users/scient/My Results/report.pdf> "PDF")',
+      ),
+    ).toEqual(["/tmp/figure.svg", "</Users/scient/My Results/report.pdf>"]);
+  });
+
+  it("matches an angle-bracket path before and after React Markdown encodes its spaces", () => {
+    expect(markdownLinkLookupKey("</Users/scient/My Results/report.pdf>")).toBe(
+      markdownLinkLookupKey("/Users/scient/My%20Results/report.pdf"),
+    );
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
@@ -104,6 +122,19 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("does not create a preview path for files outside the workspace", () => {
     expect(resolveMarkdownFileLinkMeta("/tmp/report.ts", "/repo/project")).toMatchObject({
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("resolves links from an external document without assigning them to its thread workspace", () => {
+    expect(resolveMarkdownFileLinkMeta("figure.svg", "/tmp/report-pack", null)).toMatchObject({
+      filePath: "/tmp/report-pack/figure.svg",
+      workspaceRelativePath: null,
+    });
+    expect(
+      resolveInlineCodeFileLinkMeta("./data/results.csv", "/tmp/report-pack", null),
+    ).toMatchObject({
+      filePath: "/tmp/report-pack/./data/results.csv",
       workspaceRelativePath: null,
     });
   });

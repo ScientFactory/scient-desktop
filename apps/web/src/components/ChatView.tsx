@@ -476,6 +476,7 @@ const ScientArtifactPreview = lazy(() =>
     default: module.ScientArtifactPreview,
   })),
 );
+const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/EnvironmentFilePreview"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -6461,6 +6462,18 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
+    ) : activeRightPanelSurface?.kind === "scient" &&
+      activeRightPanelSurface.module === "file" &&
+      activeThreadRef ? (
+      <Suspense fallback={null}>
+        <EnvironmentFilePreview
+          availableEditors={availableEditors}
+          environmentId={activeThreadRef.environmentId}
+          keybindings={keybindings}
+          surface={activeRightPanelSurface}
+          threadRef={activeThreadRef}
+        />
+      </Suspense>
     ) : activeRightPanelSurface?.kind === "scient" &&
       activeRightPanelSurface.module === "artifact" ? (
       <Suspense fallback={null}>

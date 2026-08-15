@@ -132,6 +132,10 @@ export const PdfSourceDescriptor = Schema.Union([
     bindingStatus: Schema.Literals(["current", "stale"]),
     staleReason: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_048))),
   }),
+  Schema.TaggedStruct("environment-pdf", {
+    ...PdfSourceBase,
+    path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  }),
 ]);
 export type PdfSourceDescriptor = typeof PdfSourceDescriptor.Type;
 

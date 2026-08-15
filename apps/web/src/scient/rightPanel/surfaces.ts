@@ -17,6 +17,13 @@ export type ScientRightPanelSurface =
       readonly kind: "scient";
       readonly module: "artifact";
       readonly artifact: PreviewStaticImageSurfaceDescriptor;
+    }
+  | {
+      readonly id: `scient:file:${string}`;
+      readonly kind: "scient";
+      readonly module: "file";
+      readonly path: string;
+      readonly line: number | null;
     };
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
@@ -53,6 +60,22 @@ export function scientArtifactSurface(
   };
 }
 
+export function scientEnvironmentFileSurface(input: {
+  readonly path: string;
+  readonly line?: number | null;
+}): Extract<ScientRightPanelSurface, { module: "file" }> {
+  return {
+    id: `scient:file:${encodeURIComponent(input.path)}`,
+    kind: "scient",
+    module: "file",
+    path: input.path,
+    line:
+      typeof input.line === "number" && Number.isFinite(input.line)
+        ? Math.max(1, Math.trunc(input.line))
+        : null,
+  };
+}
+
 export function normalizeScientRightPanelSurface(value: unknown): ScientRightPanelSurface | null {
   if (typeof value !== "object" || value === null) return null;
   const surface = value as Record<string, unknown>;
@@ -75,6 +98,18 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   if (surface.module === "artifact" && isPreviewStaticImageSurfaceDescriptor(surface.artifact)) {
     return scientArtifactSurface(surface.artifact);
   }
+  if (
+    surface.module === "file" &&
+    typeof surface.path === "string" &&
+    surface.path.length > 0 &&
+    surface.path.length <= 4_096 &&
+    !surface.path.includes("\0")
+  ) {
+    return scientEnvironmentFileSurface({
+      path: surface.path,
+      line: typeof surface.line === "number" ? surface.line : null,
+    });
+  }
   return null;
 }
 
@@ -86,5 +121,9 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
       return surface.fileName;
     case "artifact":
       return surface.artifact.label;
+    case "file": {
+      const normalized = surface.path.replaceAll("\\", "/");
+      return normalized.slice(normalized.lastIndexOf("/") + 1) || surface.path;
+    }
   }
 }

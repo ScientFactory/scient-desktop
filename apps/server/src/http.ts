@@ -50,9 +50,12 @@ const DESKTOP_RENDERER_ORIGINS = [
 ];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-export function assetResponseHeaders(filePath: string): Record<string, string> {
+export function assetResponseHeaders(
+  filePath: string,
+  cacheControl = "private, max-age=3600",
+): Record<string, string> {
   return {
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": cacheControl,
     // Asset images are also fetched as bytes for copy/download. The initial
     // <img> request and the later CORS fetch can otherwise share a cache entry
     // even though only the latter carries Origin, which Chromium correctly
@@ -241,10 +244,10 @@ export const assetRouteHandler = Effect.gen(function* () {
     onNone: () => null,
     onSome: (mtime) => mtime.getTime(),
   });
+  const revision = "revision" in asset ? asset.revision : undefined;
   if (
-    asset.revision &&
-    (asset.revision.size !== fileSize ||
-      (asset.revision.mtimeMs !== null && asset.revision.mtimeMs !== fileMtimeMs))
+    revision &&
+    (revision.size !== fileSize || (revision.mtimeMs !== null && revision.mtimeMs !== fileMtimeMs))
   ) {
     return HttpServerResponse.text("Asset changed", { status: 409 });
   }
@@ -254,7 +257,7 @@ export const assetRouteHandler = Effect.gen(function* () {
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
     "Content-Type": Mime.getType(asset.path) ?? "application/octet-stream",
     ETag: etag,
-    ...assetResponseHeaders(asset.path),
+    ...assetResponseHeaders(asset.path, asset.cacheControl),
   };
   const rangeHeader = request.headers["range"];
   const parsedRange =

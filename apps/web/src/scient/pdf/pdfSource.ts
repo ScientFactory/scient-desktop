@@ -6,11 +6,28 @@ import {
   type PdfSourceDescriptor as PdfSourceDescriptorType,
   type PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
-import { EnvironmentId, ThreadId, type AssetResource } from "@t3tools/contracts";
+import { sha256 } from "@noble/hashes/sha2";
+import {
+  EnvironmentFilePath,
+  EnvironmentId,
+  ThreadId,
+  type AssetResource,
+} from "@t3tools/contracts";
 import { isWorkspacePdfPreviewPath } from "@t3tools/shared/filePreview";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 import { useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
+
+function sha256Hex(value: string): string {
+  return [...sha256(new TextEncoder().encode(value))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function environmentPdfFileName(fileName: string): string {
+  const suffix = /\.pdf$/iu.test(fileName) ? "" : ".pdf";
+  return `${fileName.slice(0, 255 - suffix.length)}${suffix}`;
+}
 
 function workspacePdfIdentityPath(workspaceRoot: string, relativePath: string): string {
   const joined = `${workspaceRoot.replace(/[\\/]+$/u, "")}/${relativePath.replace(/^[\\/]+/u, "")}`;
@@ -54,6 +71,25 @@ export function workspacePdfSource(input: {
     workspaceRoot: input.workspaceRoot,
     relativePath: input.relativePath,
     ...(input.legacyLocator ? { legacyLocator: input.legacyLocator } : {}),
+  });
+}
+
+export function environmentPdfSource(input: {
+  readonly environmentId: EnvironmentId;
+  readonly canonicalPath: string;
+  readonly fileName: string;
+}): PdfSourceDescriptorType {
+  const identityPath = isWindowsAbsolutePath(input.canonicalPath)
+    ? input.canonicalPath.replaceAll("/", "\\").toLowerCase()
+    : input.canonicalPath;
+  return PdfSourceDescriptor.make({
+    _tag: "environment-pdf",
+    authority: ArtifactAuthority.make(input.environmentId),
+    logicalDocumentKey: LogicalDocumentKey.make(`environment:${sha256Hex(identityPath)}`),
+    title: input.fileName.slice(0, 512),
+    fileName: environmentPdfFileName(input.fileName),
+    capabilities: { canSaveCopy: true, canRevealSource: false },
+    path: input.canonicalPath,
   });
 }
 
@@ -101,8 +137,9 @@ export const webPdfSourceResolver: PdfSourceResolver = {
 };
 
 export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetResource {
-  return source._tag === "workspace-pdf"
-    ? {
+  switch (source._tag) {
+    case "workspace-pdf":
+      return {
         _tag: "workspace-file",
         cwd: source.workspaceRoot,
         relativePath: source.relativePath,
@@ -112,13 +149,21 @@ export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetRe
               path: source.legacyLocator.absolutePath,
             }
           : {}),
-      }
-    : {
+      };
+    case "generated-pdf":
+      return {
         _tag: "generated-document",
         authority: source.authority,
         artifactId: source.artifactId,
         revisionId: source.revisionId,
       };
+    case "environment-pdf":
+      return {
+        _tag: "environment-file",
+        path: EnvironmentFilePath.make(source.path),
+        access: "exact",
+      };
+  }
 }
 
 export const webPdfSourceActions: PdfSourceActions = {

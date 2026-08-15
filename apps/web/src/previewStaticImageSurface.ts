@@ -39,6 +39,8 @@ export function previewStaticImageRevisionKey(image: PreviewStaticImageSurfaceDe
         resource.artifactId,
         resource.representationId,
       ]);
+    case "environment-file":
+      return JSON.stringify([resource._tag, resource.path, resource.access]);
   }
 }
 

@@ -9,6 +9,7 @@ const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d
 const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\((<[^>\n]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
 // prefixes like /app/ or /chat/ so SPA routes never read as files.
 const POSIX_FILE_ROOT_PREFIXES = [
@@ -48,6 +49,15 @@ export interface MarkdownFileLinkMeta {
   column?: number;
 }
 
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  const hrefs: string[] = [];
+  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
+    const href = match[1]?.trim();
+    if (href) hrefs.push(href);
+  }
+  return hrefs;
+}
+
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -62,6 +72,17 @@ function unwrapMarkdownLinkDestination(value: string): string {
 
 export function normalizeMarkdownLinkDestination(value: string): string {
   return unwrapMarkdownLinkDestination(value.trim());
+}
+
+/**
+ * React Markdown percent-encodes spaces from angle-bracket destinations before
+ * invoking a link component. Canonicalize only the map key so its parsed href
+ * still matches the original source candidate; file-path resolution continues
+ * to receive the original normalized destination and therefore decodes once.
+ */
+export function markdownLinkLookupKey(href: string): string {
+  const normalized = normalizeMarkdownLinkDestination(href);
+  return safeDecode(rewriteMarkdownFileUriHref(normalized) ?? normalized);
 }
 
 function stripSearchAndHash(value: string): { path: string; hash: string } {
@@ -313,6 +334,7 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
+  workspaceRoot: string | null | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const trimmed = codeText.trim();
   if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
@@ -342,7 +364,7 @@ export function resolveInlineCodeFileLinkMeta(
     }
   }
 
-  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd);
+  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd, workspaceRoot);
   if (resolved) return resolved;
 
   // `Makefile:12` — conventional extensionless names fail the generic
@@ -353,7 +375,7 @@ export function resolveInlineCodeFileLinkMeta(
     BARE_EXTENSIONLESS_POSITION_PATTERN.test(candidate) &&
     EXTENSIONLESS_FILE_NAMES.has(candidate.replace(POSITION_SUFFIX_PATTERN, ""))
   ) {
-    return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, cwd), cwd);
+    return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, cwd), cwd, workspaceRoot);
   }
   return null;
 }
@@ -379,13 +401,18 @@ function workspaceRelativePath(path: string, workspaceRoot: string | undefined):
 export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
+  workspaceRoot: string | null | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
   if (!targetPath) return null;
-  return buildFileLinkMetaFromTarget(targetPath, cwd);
+  return buildFileLinkMetaFromTarget(targetPath, cwd, workspaceRoot);
 }
 
-function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {
+function buildFileLinkMetaFromTarget(
+  targetPath: string,
+  cwd?: string,
+  workspaceRoot: string | null | undefined = cwd,
+): MarkdownFileLinkMeta {
   const { path, line, column } = splitPathAndPosition(targetPath);
   const parsedLine = line ? Number.parseInt(line, 10) : Number.NaN;
   const parsedColumn = column ? Number.parseInt(column, 10) : Number.NaN;
@@ -396,7 +423,7 @@ function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): Markdown
     filePath: path,
     targetPath,
     displayPath: formatWorkspaceRelativePath(targetPath, cwd),
-    workspaceRelativePath: workspaceRelativePath(path, cwd),
+    workspaceRelativePath: workspaceRelativePath(path, workspaceRoot ?? undefined),
     basename: basenameOfPath(path),
     ...(lineNumber !== undefined ? { line: lineNumber } : {}),
     ...(columnNumber !== undefined ? { column: columnNumber } : {}),

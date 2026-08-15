@@ -31,6 +31,7 @@ import type {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
+import type { EnvironmentFilePrepareInput, EnvironmentFilePrepareResult } from "./fileOpening.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
   ProjectListEntriesInput,
@@ -1284,6 +1285,7 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+    prepareFileOpen: (input: EnvironmentFilePrepareInput) => Promise<EnvironmentFilePrepareResult>;
   };
   assets: {
     createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;
