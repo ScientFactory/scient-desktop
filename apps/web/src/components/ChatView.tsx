@@ -158,13 +158,13 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
-import { ScientGeneralChatMoveMenu } from "./scient-general-chat/ScientGeneralChatMoveMenu";
-import { resolveScientGeneralChatMovePlacement } from "./scient-general-chat/movePlacement";
+import { ScientQuickChatMoveMenu } from "./scient-quick-chat/ScientQuickChatMoveMenu";
+import { resolveScientQuickChatMovePlacement } from "./scient-quick-chat/movePlacement";
 import {
-  isScientGeneralChatRightPanelKindAllowed,
+  isScientQuickChatRightPanelKindAllowed,
   scientThreadAllowsCapability,
-  shouldCloseSurfaceAfterScientGeneralChatMove,
-} from "../scient/generalChat/policy";
+  shouldCloseSurfaceAfterScientQuickChatMove,
+} from "../scient/quickChat/policy";
 import { AgentsPanel } from "./AgentsPanel";
 import {
   deriveAgentPanelModel,
@@ -276,7 +276,7 @@ import {
   resolveTimelineIsAtEnd,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
-import { useScientGeneralChatMove } from "./scient-general-chat/useScientGeneralChatMove";
+import { useScientQuickChatMove } from "./scient-quick-chat/useScientQuickChatMove";
 import { restoreForkPdfContinuity } from "./scient-fork/forkViewContinuity";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -343,12 +343,12 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
-import { startNewThreadForTarget } from "../scient/generalChat/projectlessDraftTarget";
+import { startNewThreadForTarget } from "../scient/quickChat/projectlessDraftTarget";
 import {
   buildScientThreadTerminalOpenInput,
   resolveScientThreadTerminalTarget,
-  SCIENT_GENERAL_CHAT_LABEL,
-} from "../scient/generalChat/policy";
+  SCIENT_QUICK_CHAT_LABEL,
+} from "../scient/quickChat/policy";
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -1567,7 +1567,7 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
-  const isGeneralChat = activeThread?.projectId === null;
+  const isQuickChat = activeThread?.projectId === null;
   const terminalCapabilityAllowed = scientThreadAllowsCapability(
     activeThread?.projectId,
     "terminal",
@@ -1742,8 +1742,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const generalChatMovePlacement = resolveScientGeneralChatMovePlacement({
-    isGeneralChat,
+  const quickChatMovePlacement = resolveScientQuickChatMovePlacement({
+    isQuickChat,
     isServerThread,
     rightPanelOpen,
   });
@@ -1756,7 +1756,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || activeThread?.projectId !== null) return;
     const panel = useRightPanelStore.getState();
     for (const surface of rightPanelState.surfaces) {
-      if (!isScientGeneralChatRightPanelKindAllowed(surface.kind)) {
+      if (!isScientQuickChatRightPanelKindAllowed(surface.kind)) {
         panel.closeSurface(activeThreadRef, surface.id);
       }
     }
@@ -1909,7 +1909,7 @@ function ChatViewContent(props: ChatViewProps) {
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
   const allProjects = useProjects();
-  const generalChatMoveTargets = useMemo(
+  const quickChatMoveTargets = useMemo(
     () =>
       activeServerThread?.projectId === null
         ? allProjects
@@ -1918,18 +1918,18 @@ function ChatViewContent(props: ChatViewProps) {
         : [],
     [activeServerThread, allProjects],
   );
-  const handleGeneralChatMoved = useCallback(() => {
+  const handleQuickChatMoved = useCallback(() => {
     if (!activeThreadRef) return;
     const panel = useRightPanelStore.getState();
     for (const surface of panel.byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces ?? []) {
-      if (shouldCloseSurfaceAfterScientGeneralChatMove(surface.kind)) {
+      if (shouldCloseSurfaceAfterScientQuickChatMove(surface.kind)) {
         panel.closeSurface(activeThreadRef, surface.id);
       }
     }
     useTerminalUiStateStore.getState().clearTerminalUiState(activeThreadRef);
   }, [activeThreadRef]);
-  const { isMoving: isMovingGeneralChat, moveToProject: moveGeneralChatToProject } =
-    useScientGeneralChatMove({
+  const { isMoving: isMovingQuickChat, moveToProject: moveQuickChatToProject } =
+    useScientQuickChatMove({
       environmentId: activeServerThread?.environmentId ?? null,
       threadId: activeServerThread?.id ?? null,
       currentProjectId: activeServerThread?.projectId ?? null,
@@ -1938,7 +1938,7 @@ function ChatViewContent(props: ChatViewProps) {
         activeKnownTerminalIds.length > 0 ||
         panelTerminalIds.size > 0 ||
         terminalUiState.terminalIds.length > 0,
-      onMoved: handleGeneralChatMoved,
+      onMoved: handleQuickChatMoved,
     });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {
@@ -2922,7 +2922,7 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Project threads retain T3's loading behavior. A workspace-backed General
   // Chat never gains Git authority merely because no status query ran.
-  const isGitRepo = !isGeneralChat && (gitStatusQuery.data?.isRepo ?? true);
+  const isGitRepo = !isQuickChat && (gitStatusQuery.data?.isRepo ?? true);
   const diffAvailable = diffCapabilityAllowed && isServerThread && isGitRepo;
   const forkWorktreeAvailability: ForkWorktreeAvailability = useMemo(() => {
     if (!isGitRepo) {
@@ -6310,8 +6310,8 @@ function ChatViewContent(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const generalChatMoveDisabledReason =
-    generalChatMoveTargets.length === 0
+  const quickChatMoveDisabledReason =
+    quickChatMoveTargets.length === 0
       ? "Add a project before moving this chat"
       : activeKnownTerminalIds.length > 0 ||
           panelTerminalIds.size > 0 ||
@@ -6340,14 +6340,14 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const rightPanelHeaderControls = (
     <>
-      {generalChatMovePlacement.panel ? (
-        <ScientGeneralChatMoveMenu
+      {quickChatMovePlacement.panel ? (
+        <ScientQuickChatMoveMenu
           environmentId={activeThread.environmentId}
-          targets={generalChatMoveTargets}
-          isMoving={isMovingGeneralChat}
-          disabledReason={generalChatMoveDisabledReason}
+          targets={quickChatMoveTargets}
+          isMoving={isMovingQuickChat}
+          disabledReason={quickChatMoveDisabledReason}
           onMove={(projectId) => {
-            void moveGeneralChatToProject(projectId);
+            void moveQuickChatToProject(projectId);
           }}
         />
       ) : null}
@@ -6505,7 +6505,7 @@ function ChatViewContent(props: ChatViewProps) {
           key={`${activeThread.environmentId}:${activeWorkspaceRoot}`}
           environmentId={activeThread.environmentId}
           cwd={activeWorkspaceRoot}
-          projectName={activeProject?.title ?? SCIENT_GENERAL_CHAT_LABEL}
+          projectName={activeProject?.title ?? SCIENT_QUICK_CHAT_LABEL}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
@@ -6563,10 +6563,10 @@ function ChatViewContent(props: ChatViewProps) {
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
-            isGeneralChat={isGeneralChat}
-            generalChatMoveTargets={generalChatMoveTargets}
-            isMovingGeneralChat={isMovingGeneralChat}
-            generalChatMoveDisabledReason={generalChatMoveDisabledReason}
+            isQuickChat={isQuickChat}
+            quickChatMoveTargets={quickChatMoveTargets}
+            isMovingQuickChat={isMovingQuickChat}
+            quickChatMoveDisabledReason={quickChatMoveDisabledReason}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             preferredScriptId={
@@ -6577,8 +6577,8 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
-            onMoveGeneralChatToProject={(projectId) => {
-              void moveGeneralChatToProject(projectId);
+            onMoveQuickChatToProject={(projectId) => {
+              void moveQuickChatToProject(projectId);
             }}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}

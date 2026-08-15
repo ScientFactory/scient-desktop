@@ -844,7 +844,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { worktreePath: event.payload.worktreePath }
               : {}),
             // SCIENT-FORK:START — keep the durable thread shell/detail
-            // projection aligned with an atomic General Chat relocation.
+            // projection aligned with an atomic Quick Chat relocation.
             ...(event.payload.projectId !== undefined
               ? { projectId: event.payload.projectId }
               : {}),

@@ -7,7 +7,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import { SCIENT_QUICK_CHAT_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -39,7 +39,7 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { ScientGeneralChatMoveMenu } from "../scient-general-chat/ScientGeneralChatMoveMenu";
+import { ScientQuickChatMoveMenu } from "../scient-quick-chat/ScientQuickChatMoveMenu";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -59,15 +59,15 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
-  isGeneralChat: boolean;
-  generalChatMoveTargets: ReadonlyArray<{
+  isQuickChat: boolean;
+  quickChatMoveTargets: ReadonlyArray<{
     readonly id: ProjectId;
     readonly title: string;
     readonly workspaceRoot: string;
     readonly faviconPath?: string | null | undefined;
   }>;
-  isMovingGeneralChat: boolean;
-  generalChatMoveDisabledReason: string | null;
+  isMovingQuickChat: boolean;
+  quickChatMoveDisabledReason: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -77,7 +77,7 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
-  onMoveGeneralChatToProject: (projectId: ProjectId) => void;
+  onMoveQuickChatToProject: (projectId: ProjectId) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -130,10 +130,10 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
-  isGeneralChat,
-  generalChatMoveTargets,
-  isMovingGeneralChat,
-  generalChatMoveDisabledReason,
+  isQuickChat,
+  quickChatMoveTargets,
+  isMovingQuickChat,
+  quickChatMoveDisabledReason,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -143,7 +143,7 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   onOpenPullRequest,
   onNewThreadInProject,
-  onMoveGeneralChatToProject,
+  onMoveQuickChatToProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -278,12 +278,12 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
           </>
-        ) : isGeneralChat ? (
+        ) : isQuickChat ? (
           <>
             <WorkspaceBreadcrumbItem>
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <MessageSquareIcon aria-hidden className="size-3.5" />
-                <span className="max-w-40 truncate">{SCIENT_GENERAL_CHAT_LABEL}</span>
+                <span className="max-w-40 truncate">{SCIENT_QUICK_CHAT_LABEL}</span>
               </span>
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
@@ -346,13 +346,13 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        {isGeneralChat && isServerThread ? (
-          <ScientGeneralChatMoveMenu
+        {isQuickChat && isServerThread ? (
+          <ScientQuickChatMoveMenu
             environmentId={activeThreadEnvironmentId}
-            targets={generalChatMoveTargets}
-            isMoving={isMovingGeneralChat}
-            disabledReason={generalChatMoveDisabledReason}
-            onMove={onMoveGeneralChatToProject}
+            targets={quickChatMoveTargets}
+            isMoving={isMovingQuickChat}
+            disabledReason={quickChatMoveDisabledReason}
+            onMove={onMoveQuickChatToProject}
           />
         ) : null}
         {activeProjectScripts && (

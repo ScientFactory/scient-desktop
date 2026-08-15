@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import { SCIENT_QUICK_CHATS_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import { LegendList } from "@legendapp/list/react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -29,7 +29,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import {
   scientThreadGroupEnvironmentId,
   type ScientThreadGroupContext,
-} from "../scient-general-chat/threadGroupContext";
+} from "../scient-quick-chat/threadGroupContext";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
   createNativeMailSearchToolbarItem,
@@ -368,7 +368,7 @@ function ProjectGroupLabel(props: {
 }) {
   const iconColor = useThemeColor("--color-icon-muted");
   const title =
-    props.context.kind === "project" ? props.context.project.title : SCIENT_GENERAL_CHAT_LABEL;
+    props.context.kind === "project" ? props.context.project.title : SCIENT_QUICK_CHATS_LABEL;
   return (
     <View className="flex-row items-center gap-2.5 px-1 pb-2">
       {props.context.kind === "project" ? (

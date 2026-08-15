@@ -62,15 +62,15 @@ function relocationReadModel(input?: {
         id: ThreadId.make("thread-general"),
         projectId: input?.threadProjectId ?? null,
         workspaceRoot: "/tmp/environment-root",
-        title: "General chat",
+        title: "Quick chat",
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
         runtimeMode: "full-access",
         interactionMode: "default",
-        branch: "general-chat-branch",
-        worktreePath: "/tmp/general-chat-worktree",
+        branch: "quick-chat-branch",
+        worktreePath: "/tmp/quick-chat-worktree",
         latestTurn:
           input?.workInFlight === true
             ? {
@@ -112,9 +112,9 @@ function relocationReadModel(input?: {
   };
 }
 
-const moveGeneralChatCommand = {
+const moveQuickChatCommand = {
   type: "thread.meta.update" as const,
-  commandId: CommandId.make("cmd-move-general-chat"),
+  commandId: CommandId.make("cmd-move-quick-chat"),
   threadId: ThreadId.make("thread-general"),
   moveToProjectId: ProjectId.make("project-target"),
 };
@@ -147,10 +147,10 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
     }),
   );
 
-  it.effect("moves one stopped general chat into a project without changing its identity", () =>
+  it.effect("moves one stopped quick chat into a project without changing its identity", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({
-        command: moveGeneralChatCommand,
+        command: moveQuickChatCommand,
         readModel: relocationReadModel({ sessionStatus: "stopped" }),
       });
       const event = Array.isArray(result) ? result[0] : result;
@@ -172,7 +172,7 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
     Effect.gen(function* () {
       const result = yield* Effect.exit(
         decideOrchestrationCommand({
-          command: moveGeneralChatCommand,
+          command: moveQuickChatCommand,
           readModel: relocationReadModel({ sessionStatus: "ready" }),
         }),
       );
@@ -185,7 +185,7 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
     Effect.gen(function* () {
       const result = yield* Effect.exit(
         decideOrchestrationCommand({
-          command: moveGeneralChatCommand,
+          command: moveQuickChatCommand,
           readModel: relocationReadModel({
             threadProjectId: ProjectId.make("project-existing"),
           }),
@@ -200,7 +200,7 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
     Effect.gen(function* () {
       const result = yield* Effect.exit(
         decideOrchestrationCommand({
-          command: moveGeneralChatCommand,
+          command: moveQuickChatCommand,
           readModel: relocationReadModel({
             sessionStatus: "stopped",
             threadProjectId: ProjectId.make("project-target"),
@@ -216,7 +216,7 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
     Effect.gen(function* () {
       const result = yield* Effect.exit(
         decideOrchestrationCommand({
-          command: moveGeneralChatCommand,
+          command: moveQuickChatCommand,
           readModel: relocationReadModel({ sessionStatus: "stopped", workInFlight: true }),
         }),
       );
@@ -229,7 +229,7 @@ it.layer(NodeServices.layer)("decider projectless threads", (it) => {
     Effect.gen(function* () {
       const result = yield* Effect.exit(
         decideOrchestrationCommand({
-          command: moveGeneralChatCommand,
+          command: moveQuickChatCommand,
           readModel: relocationReadModel({ targetDeletedAt: now }),
         }),
       );

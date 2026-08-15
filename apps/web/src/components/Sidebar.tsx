@@ -158,21 +158,21 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import {
-  ScientGeneralChatIcon,
-  ScientGeneralChatSection,
-} from "./scient-general-chat/ScientGeneralChatSection";
-import { ScientGeneralChatPinnedList } from "./scient-general-chat/ScientGeneralChatPinnedList";
-import { shouldCreateScientThreadInCurrentProject } from "./scient-general-chat/newThreadTarget";
-import { useScientGeneralChatDisclosure } from "./scient-general-chat/useScientGeneralChatDisclosure";
+  ScientQuickChatIcon,
+  ScientQuickChatSection,
+} from "./scient-quick-chat/ScientQuickChatSection";
+import { ScientQuickChatPinnedList } from "./scient-quick-chat/ScientQuickChatPinnedList";
+import { shouldCreateScientThreadInCurrentProject } from "./scient-quick-chat/newThreadTarget";
+import { useScientQuickChatDisclosure } from "./scient-quick-chat/useScientQuickChatDisclosure";
 import {
-  buildScientGeneralChatSidebarModel,
+  buildScientQuickChatSidebarModel,
   isScientSidebarThreadVisible,
-} from "../scient/generalChat/sidebarModel";
+} from "../scient/quickChat/sidebarModel";
 import {
-  resolveScientGeneralChatCreationEnvironment,
-  SCIENT_GENERAL_CHAT_LABEL,
-  supportsScientGeneralChat,
-} from "../scient/generalChat/policy";
+  resolveScientQuickChatCreationEnvironment,
+  SCIENT_QUICK_CHAT_LABEL,
+  supportsScientQuickChat,
+} from "../scient/quickChat/policy";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -1186,7 +1186,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 cwd={props.projectCwd ?? ""}
                 faviconPath={props.projectFaviconPath}
                 className="size-4"
-                fallbackIcon={thread.projectId === null ? ScientGeneralChatIcon : MessageSquareIcon}
+                fallbackIcon={thread.projectId === null ? ScientQuickChatIcon : MessageSquareIcon}
               />
             </span>
             {title}
@@ -1609,7 +1609,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             cwd={props.projectCwd ?? ""}
             faviconPath={props.projectFaviconPath}
             className="size-4 shrink-0"
-            fallbackIcon={thread.projectId === null ? ScientGeneralChatIcon : MessageSquareIcon}
+            fallbackIcon={thread.projectId === null ? ScientQuickChatIcon : MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
@@ -2068,12 +2068,12 @@ export default function Sidebar() {
     generalActiveThreads,
     generalSnoozedThreads,
     generalSettledThreads,
-    generalChatThreads,
-    activeGeneralChatKey,
+    quickChatThreads,
+    activeQuickChatKey,
     searchableThreads,
   } = useMemo(
     () =>
-      buildScientGeneralChatSidebarModel({
+      buildScientQuickChatSidebarModel({
         shelves: {
           pinned: sortedPinnedThreads,
           active: sortedActiveThreads,
@@ -2097,8 +2097,8 @@ export default function Sidebar() {
       sortedSnoozedThreads,
     ],
   );
-  const { expanded: generalChatExpanded, toggle: toggleGeneralChat } =
-    useScientGeneralChatDisclosure(activeGeneralChatKey);
+  const { expanded: quickChatExpanded, toggle: toggleQuickChat } =
+    useScientQuickChatDisclosure(activeQuickChatKey);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
@@ -2219,7 +2219,7 @@ export default function Sidebar() {
 
   const orderedThreads = useMemo(
     () => [
-      ...(generalChatExpanded ? generalChatThreads : []),
+      ...(quickChatExpanded ? quickChatThreads : []),
       ...pinnedThreads,
       ...activeThreads,
       ...visibleSnoozedThreads,
@@ -2227,8 +2227,8 @@ export default function Sidebar() {
     ],
     [
       activeThreads,
-      generalChatExpanded,
-      generalChatThreads,
+      quickChatExpanded,
+      quickChatThreads,
       pinnedThreads,
       renderedSettledThreads,
       visibleSnoozedThreads,
@@ -3307,37 +3307,37 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  const generalChatCapableEnvironmentIds = useMemo(
+  const quickChatCapableEnvironmentIds = useMemo(
     () =>
       [...serverConfigs.entries()].flatMap(([environmentId, config]) =>
-        supportsScientGeneralChat(config) ? [environmentId] : [],
+        supportsScientQuickChat(config) ? [environmentId] : [],
       ),
     [serverConfigs],
   );
-  const supportsProjectlessThreads = generalChatCapableEnvironmentIds.length > 0;
-  const generalChatCreationEnvironmentId = resolveScientGeneralChatCreationEnvironment({
+  const supportsProjectlessThreads = quickChatCapableEnvironmentIds.length > 0;
+  const quickChatCreationEnvironmentId = resolveScientQuickChatCreationEnvironment({
     activeEnvironmentId:
       newThreadContext.activeDraftThread?.environmentId ??
       newThreadContext.activeThread?.environmentId ??
       null,
     primaryEnvironmentId,
-    capableEnvironmentIds: generalChatCapableEnvironmentIds,
+    capableEnvironmentIds: quickChatCapableEnvironmentIds,
   });
-  const handleNewGeneralChat = useCallback(() => {
-    if (generalChatCreationEnvironmentId === null) {
-      if (generalChatCapableEnvironmentIds.length > 1) {
+  const handleNewQuickChat = useCallback(() => {
+    if (quickChatCreationEnvironmentId === null) {
+      if (quickChatCapableEnvironmentIds.length > 1) {
         openCommandPalette({ open: "new-thread-in" });
       }
       return;
     }
     if (isMobile) setOpenMobile(false);
     void newThreadContext.handleNewThread({
-      environmentId: generalChatCreationEnvironmentId,
+      environmentId: quickChatCreationEnvironmentId,
       projectId: null,
     });
   }, [
-    generalChatCapableEnvironmentIds.length,
-    generalChatCreationEnvironmentId,
+    quickChatCapableEnvironmentIds.length,
+    quickChatCreationEnvironmentId,
     isMobile,
     newThreadContext.handleNewThread,
     setOpenMobile,
@@ -3432,7 +3432,7 @@ export default function Sidebar() {
         }
         projectTitle={
           thread.projectId === null
-            ? SCIENT_GENERAL_CHAT_LABEL
+            ? SCIENT_QUICK_CHAT_LABEL
             : (projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null)
         }
         providerEntryByInstanceId={providerEntryByInstanceId}
@@ -3557,11 +3557,11 @@ export default function Sidebar() {
               </div>
             </div>
             {supportsProjectlessThreads ? (
-              <ScientGeneralChatSection
-                expanded={generalChatExpanded}
-                itemCount={generalChatThreads.length}
-                onToggle={toggleGeneralChat}
-                onCreate={handleNewGeneralChat}
+              <ScientQuickChatSection
+                expanded={quickChatExpanded}
+                itemCount={quickChatThreads.length}
+                onToggle={toggleQuickChat}
+                onCreate={handleNewQuickChat}
               >
                 <SidebarDraftBlock
                   projectDisplayNameByKey={projectDisplayNameByKey}
@@ -3572,7 +3572,7 @@ export default function Sidebar() {
                   routeDraftId={routeDraftIdForRows}
                   onNavigateToDraft={navigateToDraft}
                 />
-                <ScientGeneralChatPinnedList
+                <ScientQuickChatPinnedList
                   threads={generalPinnedThreads}
                   reorderableKeys={reorderablePinnedKeys}
                   onReorder={async (thread, orderKey) => {
@@ -3605,7 +3605,7 @@ export default function Sidebar() {
                 {generalSettledThreads.map((thread) =>
                   renderThreadRow(thread, "settled", undefined, true),
                 )}
-              </ScientGeneralChatSection>
+              </ScientQuickChatSection>
             ) : null}
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
@@ -3741,7 +3741,7 @@ export default function Sidebar() {
                         }
                         projectTitle={
                           thread.projectId === null
-                            ? SCIENT_GENERAL_CHAT_LABEL
+                            ? SCIENT_QUICK_CHAT_LABEL
                             : (projectDisplayNameByKey.get(
                                 `${thread.environmentId}:${thread.projectId}`,
                               ) ?? null)

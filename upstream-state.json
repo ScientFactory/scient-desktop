@@ -36,7 +36,7 @@
       "attribution": "Frozen projectless-thread snapshot adopted as the historical foundation for Scient General Chat.",
       "followUpdates": false,
       "includedInIntegrationBase": false,
-      "replacementRecord": "docs/internals/scient-general-chat.md",
+      "replacementRecord": "docs/internals/scient-quick-chat.md",
       "replacementPullRequest": null,
       "replacementMerge": null
     }

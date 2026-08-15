@@ -8,9 +8,9 @@ import {
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
-  SCIENT_GENERAL_CHAT_LABEL,
-  supportsScientGeneralChat,
-} from "@t3tools/client-runtime/scient/general-chat";
+  SCIENT_QUICK_CHAT_LABEL,
+  supportsScientQuickChat,
+} from "@t3tools/client-runtime/scient/quick-chat";
 import { useEffect, useRef } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -115,7 +115,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const projectlessEnvironment = environments.find((environment) =>
-    supportsScientGeneralChat(serverConfigs.get(environment.environmentId)),
+    supportsScientQuickChat(serverConfigs.get(environment.environmentId)),
   );
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
@@ -163,7 +163,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     navigation.dispatch(
       StackActions.push("NewTaskDraft", {
         environmentId: projectlessEnvironment.environmentId,
-        title: SCIENT_GENERAL_CHAT_LABEL,
+        title: SCIENT_QUICK_CHAT_LABEL,
         projectless: "true",
       }),
     );
@@ -264,7 +264,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         {!incomingShare && projectlessEnvironment ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={SCIENT_GENERAL_CHAT_LABEL}
+            accessibilityLabel={SCIENT_QUICK_CHAT_LABEL}
             onPress={selectProjectless}
             className="flex-row items-center gap-3 rounded-[24px] bg-card px-4 py-3.5 active:opacity-70"
           >
@@ -272,9 +272,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <SymbolView name="xmark" size={18} tintColor={accentColor} type="monochrome" />
             </View>
             <View className="min-w-0 flex-1">
-              <Text className="text-base leading-snug font-t3-bold">
-                {SCIENT_GENERAL_CHAT_LABEL}
-              </Text>
+              <Text className="text-base leading-snug font-t3-bold">{SCIENT_QUICK_CHAT_LABEL}</Text>
               <Text className="text-xs leading-snug text-foreground-muted">
                 Start in {projectlessEnvironment.label}
               </Text>

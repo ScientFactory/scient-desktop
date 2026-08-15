@@ -171,7 +171,7 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
-General Chat is a Scient-owned product and compatibility boundary. Its
+Quick Chat is a Scient-owned product and compatibility boundary. Its
 capability authority, product policy, naming, workspace routing, navigation,
 mobile behavior, and relocation controllers live under explicit Scient
 modules; inherited files retain only shared thread-engine support and narrow
@@ -183,12 +183,12 @@ code, not a runtime or update dependency. Scient does not refresh from open PR
 heads. Only an official T3 `main` merge enters through the bounded upstream
 process, where equivalent generic primitives may replace adopted compatibility
 patches without changing Scient's product contract. See
-[Scient General Chat](docs/internals/scient-general-chat.md).
+[Scient Quick Chat](docs/internals/scient-quick-chat.md).
 
 The exact #5822 snapshot and import merge are frozen as a historical exception
 in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
 workflow rejects new non-official merge parents, while
-`scient-general-chat-seams.json` keeps raw projectless decisions and inherited
+`scient-quick-chat-seams.json` keeps raw projectless decisions and inherited
 mounts explicit for future upstream reconciliation.
 
 Local voice dictation is isolated under `packages/scient-voice`,

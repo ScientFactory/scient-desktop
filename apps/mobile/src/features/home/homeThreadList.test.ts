@@ -746,28 +746,34 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
   });
 
-  it("represents General Chat as an environment workspace, never a fake project", () => {
-    const environmentId = EnvironmentId.make("environment-general-chat");
+  it("represents Quick Chat as an environment workspace, never a fake project", () => {
+    const environmentId = EnvironmentId.make("environment-quick-chat");
     const thread = makeThread({
       environmentId,
-      id: ThreadId.make("thread-general-chat"),
+      id: ThreadId.make("thread-quick-chat"),
       projectId: null,
       title: "Plan the week",
-      workspaceRoot: "/workspaces/general-chat",
+      workspaceRoot: "/workspaces/quick-chat",
     });
 
     const groups = buildGroups([], [thread]);
 
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
-      title: "General chat",
+      title: "Quick chats",
       context: {
-        kind: "general-chat",
+        kind: "quick-chat",
         environmentId,
-        workspaceRoot: "/workspaces/general-chat",
+        workspaceRoot: "/workspaces/quick-chat",
       },
       projects: [],
       newThreadTarget: null,
     });
+
+    expect(
+      buildGroups([], [thread], {
+        searchQuery: "general chat",
+      }),
+    ).toHaveLength(1);
   });
 });

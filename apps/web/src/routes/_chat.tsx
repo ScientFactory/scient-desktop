@@ -1,6 +1,6 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { supportsScientGeneralChat } from "@t3tools/client-runtime/scient/general-chat";
+import { supportsScientQuickChat } from "@t3tools/client-runtime/scient/quick-chat";
 import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -46,7 +46,7 @@ function ChatRouteGlobalShortcuts() {
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
   const supportsProjectlessThreads = [...serverConfigs.values()].some((config) =>
-    supportsScientGeneralChat(config),
+    supportsScientQuickChat(config),
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef

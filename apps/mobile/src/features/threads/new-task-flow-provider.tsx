@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { supportsScientGeneralChat } from "@t3tools/client-runtime/scient/general-chat";
+import { supportsScientQuickChat } from "@t3tools/client-runtime/scient/quick-chat";
 
 import type {
   EnvironmentId,
@@ -337,7 +337,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (isProjectless) {
       return Object.values(savedConnectionsById)
         .filter((environment) =>
-          supportsScientGeneralChat(serverConfigs.get(environment.environmentId)),
+          supportsScientQuickChat(serverConfigs.get(environment.environmentId)),
         )
         .map((environment) => ({
           environmentId: environment.environmentId,

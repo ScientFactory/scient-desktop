@@ -18,7 +18,7 @@ import {
 import {
   projectlessDraftKey,
   type DraftThreadTargetRef,
-} from "../scient/generalChat/projectlessDraftTarget";
+} from "../scient/quickChat/projectlessDraftTarget";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {

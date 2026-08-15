@@ -111,10 +111,11 @@ import {
 } from "../wslPaths";
 import { recordScientAnalytics } from "../scient/analytics/client";
 import {
-  SCIENT_GENERAL_CHAT_LABEL,
-  shouldAssignScientGeneralChatNewThreadShortcut,
-  supportsScientGeneralChat,
-} from "../scient/generalChat/policy";
+  SCIENT_QUICK_CHAT_LABEL,
+  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
+  shouldAssignScientQuickChatNewThreadShortcut,
+  supportsScientQuickChat,
+} from "../scient/quickChat/policy";
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
@@ -760,11 +761,11 @@ function OpenCommandPaletteDialog(props: {
   const projectlessEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
   const supportsProjectlessThreads =
     projectlessEnvironmentId !== null &&
-    supportsScientGeneralChat(serverConfigs.get(projectlessEnvironmentId));
+    supportsScientQuickChat(serverConfigs.get(projectlessEnvironmentId));
   const projectlessTargets = useMemo(
     () =>
       [...serverConfigs.entries()]
-        .filter(([, config]) => supportsScientGeneralChat(config))
+        .filter(([, config]) => supportsScientQuickChat(config))
         .map(([environmentId]) => ({
           environmentId,
           environmentLabel: environmentLabelById.get(environmentId) ?? "Environment",
@@ -1093,13 +1094,14 @@ function OpenCommandPaletteDialog(props: {
         value: `new-thread-in:${environmentId}:projectless`,
         searchTerms: [
           "new thread",
-          "general chat",
+          "quick chat",
+          ...SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
           "without project",
           "no project",
           "chat",
           environmentLabel,
         ],
-        title: SCIENT_GENERAL_CHAT_LABEL,
+        title: SCIENT_QUICK_CHAT_LABEL,
         description: showEnvironmentLabel ? environmentLabel : "Chat without a project",
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         run: async () => {
@@ -1585,11 +1587,18 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
-      searchTerms: ["new thread", "without project", "no project", "chat"],
-      title: SCIENT_GENERAL_CHAT_LABEL,
+      searchTerms: [
+        "new thread",
+        "quick chat",
+        ...SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
+        "without project",
+        "no project",
+        "chat",
+      ],
+      title: SCIENT_QUICK_CHAT_LABEL,
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-      ...(shouldAssignScientGeneralChatNewThreadShortcut({
-        hasGeneralChatTarget: true,
+      ...(shouldAssignScientQuickChatNewThreadShortcut({
+        hasQuickChatTarget: true,
         hasProjectShortcutTarget: activeProjectTitle !== null,
       })
         ? { shortcutCommand: "chat.new" as const }

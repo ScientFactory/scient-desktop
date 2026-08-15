@@ -108,8 +108,8 @@ import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
-import { nextScientGeneralChatRenameKey } from "./scient-general-chat/renameState";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import { nextScientQuickChatRenameKey } from "./scient-quick-chat/renameState";
+import { SCIENT_QUICK_CHATS_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
@@ -2953,7 +2953,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         }
       }
       setRenamingThreadKey((current) => {
-        const next = nextScientGeneralChatRenameKey(current, threadKey);
+        const next = nextScientQuickChatRenameKey(current, threadKey);
         if (next === null) renamingInputRef.current = null;
         return next;
       });
@@ -3223,7 +3223,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           return (
             <div key={group.environmentId} className="mt-2">
               <div className="px-2 py-1 text-xs font-medium text-sidebar-muted-foreground/80">
-                {SCIENT_GENERAL_CHAT_LABEL} · {group.environmentLabel}
+                {SCIENT_QUICK_CHATS_LABEL} · {group.environmentLabel}
               </div>
               <SidebarMenu ref={attachThreadListAutoAnimateRef}>
                 {renderedThreads.map((thread) => {

@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { supportsScientGeneralChat } from "@t3tools/client-runtime/scient/general-chat";
+import { supportsScientQuickChat } from "@t3tools/client-runtime/scient/quick-chat";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -88,7 +88,7 @@ function IndexDraftLanding() {
   return (
     <NoProjectsHero
       onStartWithoutProject={
-        primaryEnvironmentId && supportsScientGeneralChat(serverConfigs.get(primaryEnvironmentId))
+        primaryEnvironmentId && supportsScientQuickChat(serverConfigs.get(primaryEnvironmentId))
           ? async () => {
               await handleNewThread(
                 { environmentId: primaryEnvironmentId, projectId: null },
@@ -139,7 +139,7 @@ function NoProjectsHero({
                 What should we work on?
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project, or start a general chat.
+                Add a project, or start a quick chat.
               </EmptyDescription>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 <Button size="sm" onClick={openAddProject}>
@@ -148,7 +148,7 @@ function NoProjectsHero({
                 </Button>
                 {onStartWithoutProject ? (
                   <Button size="sm" variant="outline" onClick={() => void onStartWithoutProject()}>
-                    Start a general chat
+                    Start a quick chat
                   </Button>
                 ) : null}
               </div>

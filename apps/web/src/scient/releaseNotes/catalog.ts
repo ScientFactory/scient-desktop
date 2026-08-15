@@ -119,10 +119,10 @@ export const SCIENT_RELEASE_NOTES = [
   {
     version: "0.6.1",
     publishedAt: "2026-08-12",
-    kicker: "Pull requests, General Chat improvements, and reliability fixes",
+    kicker: "Pull requests, Quick Chat improvements, and reliability fixes",
     headline: "Scient 0.6.1",
     summary:
-      "This release adds pull-request tools and improves General Chat, Codex sign-in, themes, and platform reliability.",
+      "This release adds pull-request tools and improves Quick Chat, Codex sign-in, themes, and platform reliability.",
     highlights: [
       {
         id: "pull-requests",
@@ -131,10 +131,10 @@ export const SCIENT_RELEASE_NOTES = [
           "Browse and manage pull requests from GitHub, GitLab, Bitbucket, and Azure DevOps. View code and timelines, submit reviews, and create local checkouts.",
       },
       {
-        id: "general-chat-improvements",
-        title: "General Chat improvements",
+        id: "quick-chat-improvements",
+        title: "Quick Chat improvements",
         description:
-          "General Chat now has direct creation controls, persistent sidebar state, better workspace tools, and safer movement into a project.",
+          "Quick Chat now has direct creation controls, persistent sidebar state, better workspace tools, and safer movement into a project.",
       },
       {
         id: "codex-setup-and-sign-in",

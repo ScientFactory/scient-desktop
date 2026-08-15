@@ -1,5 +1,8 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import {
+  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
+  SCIENT_QUICK_CHATS_LABEL,
+} from "@t3tools/client-runtime/scient/quick-chat";
 import {
   scopeProject,
   scopeThreadShell,
@@ -10,7 +13,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import type { ScientThreadGroupContext } from "../scient-general-chat/threadGroupContext";
+import type { ScientThreadGroupContext } from "../scient-quick-chat/threadGroupContext";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
@@ -98,7 +101,8 @@ export function buildArchivedThreadGroups(input: {
     }
     const matchingProjectlessThreads =
       query.length === 0 ||
-      matchesQuery(SCIENT_GENERAL_CHAT_LABEL, query) ||
+      matchesQuery(SCIENT_QUICK_CHATS_LABEL, query) ||
+      SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS.some((term) => matchesQuery(term, query)) ||
       matchesQuery(environmentLabel, query)
         ? projectlessThreads
         : projectlessThreads.filter((thread) => matchesQuery(thread.title, query));
@@ -107,7 +111,7 @@ export function buildArchivedThreadGroups(input: {
       groups.push({
         key: `projectless:${entry.environmentId}`,
         context: {
-          kind: "general-chat",
+          kind: "quick-chat",
           environmentId: entry.environmentId,
           workspaceRoot: firstProjectlessThread.workspaceRoot ?? "",
         },
@@ -138,9 +142,7 @@ export function buildArchivedThreadGroups(input: {
       (group: ArchivedThreadGroup) => ({
         timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : 0,
         title:
-          group.context.kind === "project"
-            ? group.context.project.title
-            : SCIENT_GENERAL_CHAT_LABEL,
+          group.context.kind === "project" ? group.context.project.title : SCIENT_QUICK_CHATS_LABEL,
         key: group.key,
       }),
     ),
