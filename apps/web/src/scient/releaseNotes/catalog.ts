@@ -46,12 +46,6 @@ export const SCIENT_RELEASE_NOTES = [
         description:
           "Structured abstracts preserve their sections and text more reliably, source search handles multiple terms consistently, and stalled imports now fail clearly instead of hanging.",
       },
-      {
-        id: "everyday-navigation",
-        title: "Fewer interruptions around the workspace",
-        description:
-          "Project folders open on the first Enter, browser previews prioritize relevant local servers, and pull-request panels stay within the available window.",
-      },
     ],
   },
   {
