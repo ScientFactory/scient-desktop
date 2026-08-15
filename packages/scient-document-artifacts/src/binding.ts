@@ -34,6 +34,17 @@ export function isActiveDocumentProduction(
   );
 }
 
+/**
+ * Opens a new production over whatever the binding already holds.
+ *
+ * Starting an attempt is not evidence about the revision already published, so
+ * it never re-credits one: a binding a previous failure left `stale` carries
+ * that condition — and the reason recorded for it — into the producing binding.
+ * Only {@link completeDocumentProduction} clears them, because only a published
+ * revision earns `current` back. Without that carry-forward a begin would
+ * launder the discredited revision, and the abandon that may follow would settle
+ * it as `current` with no reason to show the reader.
+ */
 export function beginDocumentProduction(
   current: DocumentArtifactBinding | null,
   input: ProductionIdentity & { readonly nowEpochMs: number },
@@ -50,6 +61,7 @@ export function beginDocumentProduction(
   }
 
   const lastSuccessfulRevision = current?.lastSuccessfulRevision ?? null;
+  const keptStale = lastSuccessfulRevision !== null && current?.status === "stale";
   return {
     _tag: "Accepted",
     binding: {
@@ -58,7 +70,7 @@ export function beginDocumentProduction(
       logicalDocumentKey: input.logicalDocumentKey,
       artifactId: input.artifactId,
       generation: input.generation,
-      status: lastSuccessfulRevision === null ? "producing" : "current",
+      status: lastSuccessfulRevision === null ? "producing" : keptStale ? "stale" : "current",
       activeRevision: lastSuccessfulRevision,
       lastSuccessfulRevision,
       latestAttempt: {
@@ -68,7 +80,7 @@ export function beginDocumentProduction(
         state: "running",
         failureReason: null,
       },
-      staleReason: null,
+      staleReason: keptStale ? (current?.staleReason ?? null) : null,
       updatedAtEpochMs: input.nowEpochMs,
     },
   };
@@ -105,6 +117,12 @@ export function completeDocumentProduction(
   };
 }
 
+/**
+ * Records a production whose inputs are discredited: the produced document can
+ * no longer be trusted to match its source, so a surviving revision is marked
+ * stale. Use {@link abandonDocumentProduction} when the attempt merely stopped
+ * mattering.
+ */
 export function failDocumentProduction(
   current: DocumentArtifactBinding,
   input: Pick<ProductionIdentity, "generation" | "operationId" | "producerId"> & {
@@ -128,6 +146,49 @@ export function failDocumentProduction(
         failureReason: input.reason,
       },
       staleReason: input.reason,
+      updatedAtEpochMs: input.nowEpochMs,
+    },
+  };
+}
+
+/**
+ * Releases a production that stopped mattering — cancelled by its requester,
+ * superseded by its own producer, or interrupted by a restart — without
+ * discrediting the inputs.
+ *
+ * The binding returns to the condition it held before the attempt started: a
+ * published revision keeps the standing it already had — `current` is never
+ * marked stale by an abandon, and a revision a previous failure discredited
+ * stays `stale` with its original reason — and a binding that never published
+ * anything settles to `unbound`. That condition is read back off the producing
+ * binding, which {@link beginDocumentProduction} carried it into, so this
+ * transition restores and never promotes. Abandoning a non-running attempt is a
+ * `Superseded` no-op, which makes the transition idempotent.
+ */
+export function abandonDocumentProduction(
+  current: DocumentArtifactBinding,
+  input: Pick<ProductionIdentity, "generation" | "operationId" | "producerId"> & {
+    readonly reason: string;
+    readonly nowEpochMs: number;
+  },
+): BindingTransition {
+  if (!isActiveDocumentProduction(current, input)) {
+    return { _tag: "Superseded", binding: current };
+  }
+  const lastSuccessfulRevision = current.lastSuccessfulRevision;
+  const keptStale = lastSuccessfulRevision !== null && current.status === "stale";
+  return {
+    _tag: "Accepted",
+    binding: {
+      ...current,
+      status: lastSuccessfulRevision === null ? "unbound" : keptStale ? "stale" : "current",
+      activeRevision: lastSuccessfulRevision,
+      latestAttempt: {
+        ...current.latestAttempt,
+        state: "abandoned",
+        failureReason: input.reason,
+      },
+      staleReason: keptStale ? current.staleReason : null,
       updatedAtEpochMs: input.nowEpochMs,
     },
   };

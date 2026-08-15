@@ -211,6 +211,15 @@ four tokens in `apps/web/src/scient/typography/profile.css`; do not spread those
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
 
+LaTeX compilation is isolated under `apps/server/src/scient/latex` and
+`apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
+`packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
+outside those roots. The inherited-host seams are limited to file-preview
+recognition, the file-panel surface mount, server config and service wiring, and
+the contract and client export points. Future T3 merges should preserve those
+narrow mounts rather than moving build coordination or toolchain discovery into
+inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
+
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient
 gates even when inherited T3 code contains the capability.

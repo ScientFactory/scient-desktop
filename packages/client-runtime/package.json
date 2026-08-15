@@ -123,6 +123,10 @@
       "types": "./src/state/scientProjectHttp.ts",
       "default": "./src/state/scientProjectHttp.ts"
     },
+    "./state/scient-latex": {
+      "types": "./src/state/scientLatexHttp.ts",
+      "default": "./src/state/scientLatexHttp.ts"
+    },
     "./state/scient-sources": {
       "types": "./src/state/scientSourcesHttp.ts",
       "default": "./src/state/scientSourcesHttp.ts"

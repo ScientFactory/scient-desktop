@@ -863,6 +863,15 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/.bin/**",
 ] as const;
 export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
+/**
+ * Loose files the Scient voice runtime adds to the Windows payload on top of
+ * the inherited T3 inventory the limit above was sized for: whisper-server.exe,
+ * 14 DLLs (11 ggml variants, whisper, parakeet, SDL2), LICENSE.whisper.cpp,
+ * and provenance.json. Counted from the staged v1.9.1 win/x64 runtime; a
+ * whisper release that ships a different inventory should trip the payload
+ * validation and get this number re-counted, not estimated.
+ */
+export const SCIENT_VOICE_RUNTIME_PAYLOAD_FILES = 17;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
@@ -3084,6 +3093,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
+      // The upstream limit is sized for T3's own payload. Scient additionally
+      // stages the pinned whisper.cpp voice runtime — 17 loose files on
+      // win/x64 (whisper-server.exe, 14 DLLs, LICENSE.whisper.cpp,
+      // provenance.json) — which the cap must admit without loosening the
+      // guard for anything else. A whisper release that changes its file
+      // inventory should fail here and get this allowance re-counted.
+      fileLimit: WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT + SCIENT_VOICE_RUNTIME_PAYLOAD_FILES,
       verbose: options.verbose,
     });
   }

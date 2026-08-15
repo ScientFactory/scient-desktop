@@ -71,7 +71,13 @@ export const DocumentProductionAttempt = Schema.Struct({
   generation: BindingGeneration,
   operationId: ProducingOperationId,
   producerId: ArtifactProducerId,
-  state: Schema.Literals(["running", "succeeded", "failed"]),
+  // `abandoned` records an attempt that stopped mattering (cancelled or superseded
+  // by its own producer) without discrediting the inputs, so it must never be
+  // conflated with `failed`. Literal widening keeps `schemaVersion: 1` readable:
+  // older persisted attempts decode unchanged.
+  state: Schema.Literals(["running", "succeeded", "failed", "abandoned"]),
+  // Reason recorded for a terminal attempt: the failure detail for `failed`, or
+  // the abandon reason for `abandoned`.
   failureReason: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_048))),
 });
 export type DocumentProductionAttempt = typeof DocumentProductionAttempt.Type;
@@ -82,7 +88,10 @@ export const DocumentArtifactBinding = Schema.Struct({
   logicalDocumentKey: LogicalDocumentKey,
   artifactId: ArtifactId,
   generation: BindingGeneration,
-  status: Schema.Literals(["producing", "current", "stale", "failed-production"]),
+  // `unbound` is the settled no-revision condition reached when the only
+  // production a binding ever had was abandoned; unlike `failed-production` it
+  // records no discredited input and no failure to surface.
+  status: Schema.Literals(["producing", "current", "stale", "failed-production", "unbound"]),
   activeRevision: Schema.NullOr(ArtifactRevisionRef),
   lastSuccessfulRevision: Schema.NullOr(ArtifactRevisionRef),
   latestAttempt: DocumentProductionAttempt,
@@ -90,6 +99,39 @@ export const DocumentArtifactBinding = Schema.Struct({
   updatedAtEpochMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type DocumentArtifactBinding = typeof DocumentArtifactBinding.Type;
+
+/**
+ * Producer-neutral cause of a binding transition. `supersede` reports an attempt
+ * that lost its claim on the binding; the binding state itself is unchanged.
+ */
+export const DocumentBindingChangeKind = Schema.Literals([
+  "begin",
+  "publish",
+  "fail",
+  "abandon",
+  "supersede",
+  "reconcile",
+]);
+export type DocumentBindingChangeKind = typeof DocumentBindingChangeKind.Type;
+
+/**
+ * Notification payload for the binding-change seam. It carries binding identity
+ * and the observable state, never producer-specific detail: a consumer either
+ * uses the snapshot directly or re-reads the authoritative binding through
+ * `getDescriptor`. Delivery may be coalesced, so the persisted binding stays
+ * authoritative.
+ */
+export const DocumentBindingChange = Schema.Struct({
+  changeKind: DocumentBindingChangeKind,
+  authority: ArtifactAuthority,
+  logicalDocumentKey: LogicalDocumentKey,
+  artifactId: ArtifactId,
+  generation: BindingGeneration,
+  status: DocumentArtifactBinding.fields.status,
+  activeRevision: Schema.NullOr(ArtifactRevisionRef),
+  updatedAtEpochMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type DocumentBindingChange = typeof DocumentBindingChange.Type;
 
 export const PdfSourceCapabilities = Schema.Struct({
   canSaveCopy: Schema.Boolean,

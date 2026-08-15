@@ -64,7 +64,23 @@ export async function validatePdfBytes(
         "The PDF is password protected and cannot be validated before publication.",
       );
     }
-    return rejectedPdf(profile, "invalid", "The output is not a complete readable PDF.");
+    // A missing fake-worker module is the validation environment failing, not
+    // the document; say so instead of blaming the producer's output.
+    const summary = `${errorName(error) ?? "Error"}: ${
+      error instanceof Error ? error.message : String(error)
+    }`.slice(0, 300);
+    if (summary.includes("Setting up fake worker failed")) {
+      return rejectedPdf(
+        profile,
+        "worker-failed",
+        `The PDF validation environment is missing its pdfjs worker module. (${summary})`,
+      );
+    }
+    return rejectedPdf(
+      profile,
+      "invalid",
+      `The output is not a complete readable PDF. (${summary})`,
+    );
   } finally {
     await loadingTask.destroy().catch(() => undefined);
   }
