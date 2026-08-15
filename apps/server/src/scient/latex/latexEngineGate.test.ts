@@ -183,6 +183,120 @@ describe("evaluateLatexEngineGate", () => {
     });
   });
 
+  describe("engine-conditional documents", () => {
+    // Pandoc's default LaTeX template, near enough: it loads iftex and then
+    // loads fontspec and unicode-math only on the branch pdfLaTeX never takes.
+    const PANDOC_SHAPED_PREAMBLE = [
+      "\\documentclass[11pt]{article}",
+      "\\usepackage{iftex}",
+      "\\ifPDFTeX",
+      "  \\usepackage[T1]{fontenc}",
+      "  \\usepackage[utf8]{inputenc}",
+      "\\else % if luatex or xetex",
+      "  \\usepackage{unicode-math}",
+      "  \\usepackage{fontspec}",
+      "\\fi",
+      "\\begin{document}",
+      "Hello, world.",
+      "\\end{document}",
+    ].join("\n");
+
+    it("passes the pandoc-shaped preamble that guards fontspec behind \\ifPDFTeX", () => {
+      expect(evaluateLatexEngineGate({ rootText: PANDOC_SHAPED_PREAMBLE })).toEqual({
+        supported: true,
+      });
+    });
+
+    it("passes the older ifxetex idiom templates still carry", () => {
+      const source = [
+        "\\documentclass{article}",
+        "\\usepackage{ifxetex}",
+        "\\ifxetex",
+        "  \\usepackage{fontspec}",
+        "\\else",
+        "  \\usepackage[T1]{fontenc}",
+        "\\fi",
+      ].join("\n");
+      expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
+    });
+
+    it.each([
+      "\\ifPDFTeX",
+      "\\ifpdftex",
+      "\\ifxetex",
+      "\\ifXeTeX",
+      "\\ifluatex",
+      "\\ifLuaTeX",
+      "\\iftutex",
+    ])("suppresses the package-load refusal on %s alone", (conditional) => {
+      const source = [conditional, "\\usepackage{fontspec}", "\\fi"].join("\n");
+      expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
+    });
+
+    it.each(["iftex", "ifxetex", "ifluatex"])(
+      "suppresses the package-load refusal on \\usepackage{%s} alone",
+      (guardPackage) => {
+        const source = `\\usepackage{${guardPackage}}\n\\usepackage{fontspec}`;
+        expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
+      },
+    );
+
+    it("accepts a guard package named alongside others in one load", () => {
+      const source = "\\usepackage{amsmath, iftex, geometry}\n\\usepackage{fontspec}";
+      expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
+    });
+
+    it("still refuses an unguarded \\usepackage{fontspec}", () => {
+      const source = [
+        "\\documentclass{article}",
+        "\\usepackage{fontspec}",
+        "\\begin{document}",
+      ].join("\n");
+      expect(evaluateLatexEngineGate({ rootText: source })).toMatchObject({
+        supported: false,
+        requiredEngine: "xelatex",
+        evidence: "\\usepackage{fontspec}",
+      });
+    });
+
+    it("still refuses the magic comment even when iftex is present too", () => {
+      // The comment is a declaration, not an inference, so nothing suppresses
+      // it: this author said which engine the document is for.
+      const source = [
+        "% !TEX program = xelatex",
+        "\\usepackage{iftex}",
+        "\\ifPDFTeX\\else\\usepackage{fontspec}\\fi",
+      ].join("\n");
+      expect(evaluateLatexEngineGate({ rootText: source })).toMatchObject({
+        supported: false,
+        requiredEngine: "xelatex",
+        evidence: "% !TEX program = xelatex",
+      });
+    });
+
+    it("does not let a commented-out conditional switch the refusal off", () => {
+      const source = ["% \\ifPDFTeX -- we dropped this branch", "\\usepackage{fontspec}"].join(
+        "\n",
+      );
+      expect(evaluateLatexEngineGate({ rootText: source })).toMatchObject({ supported: false });
+    });
+
+    it("does not treat \\ifpdf as an engine test", () => {
+      // ifpdf asks about PDF output mode, not about the engine; a document
+      // branching on it has said nothing about wanting XeLaTeX.
+      const source = "\\usepackage{ifpdf}\n\\ifpdf\\else\\fi\n\\usepackage{fontspec}";
+      expect(evaluateLatexEngineGate({ rootText: source })).toMatchObject({ supported: false });
+    });
+
+    it("accepts a guard found in an included text while the root does the loading", () => {
+      const verdict = evaluateLatexEngineGate({
+        rootText: "\\usepackage{fontspec}",
+        includedTexts: ["\\usepackage{iftex}"],
+      });
+      expect(verdict).toEqual({ supported: true });
+    });
+  });
+
   describe("checked texts beyond the root", () => {
     it("checks included texts when the root itself is clean", () => {
       const verdict = evaluateLatexEngineGate({
