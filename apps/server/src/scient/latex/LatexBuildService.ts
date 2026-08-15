@@ -6,7 +6,7 @@
  * `GeneratedDocumentStore` that turns a produced PDF into an immutable
  * revision the viewer can render.
  *
- * Four invariants shape the code below:
+ * Five invariants shape the code below:
  *   - A rebuild requested while one is in flight coalesces into a single
  *     follow-up run, so a save-happy editor cannot queue a hundred compiles.
  *   - At most `MAX_CONCURRENT_COMPILES` documents compile at once; the rest
@@ -16,6 +16,8 @@
  *   - A build that loses the binding race (`superseded`) reports itself
  *     cancelled and leaves the store alone; only the newest generation may
  *     record a failure.
+ *   - Only a run that exited clean publishes. An error-carrying run fails and
+ *     the last PDF that did compile stays visible, marked stale.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -814,8 +816,8 @@ export const make = Effect.gen(function* () {
       for (let round = 0; ; round += 1) {
         // The work directory outlives a single build, so the previous run's PDF
         // is still sitting at `pdfPath`. Drop it first: afterwards "a PDF is
-        // there" means "this run produced one", which is what lets a run that
-        // exits non-zero still publish honestly.
+        // there" means "this run produced one", so a run that fails cannot be
+        // credited with its predecessor's output.
         yield* fileSystem.remove(invocation.pdfPath, { force: true }).pipe(Effect.ignoreCause());
 
         const outcome = yield* runProcess({
@@ -848,9 +850,6 @@ export const make = Effect.gen(function* () {
           return;
         }
 
-        // Overleaf parity: a document with errors that still typeset a PDF is
-        // published, with the errors alongside it. Only an empty-handed run
-        // fails, because then there is nothing new for the viewer to show.
         const producedBytes = yield* fileSystem.stat(invocation.pdfPath).pipe(
           Effect.map((info) => Number(info.size)),
           Effect.orElseSucceed(() => 0),
@@ -905,26 +904,44 @@ export const make = Effect.gen(function* () {
                 ),
               ];
 
-        if (producedBytes <= 0) {
-          // A run that produced nothing always has a reason, even when it
-          // never reached TeX and so printed nothing TeX-shaped.
-          const failureDiagnostics =
-            outcome.exitCode === 0
-              ? withFailureReason(diagnostics, MISSING_PDF_SUMMARY)
-              : withFailureReason(diagnostics, () =>
-                  transcriptFailureDiagnostic({
-                    transcript: outcome.transcript,
-                    exitCode: outcome.exitCode,
-                  }),
-                );
+        // A run the engine ended in error does not publish, whatever it left at
+        // `pdfPath`.
+        //
+        // The engine still runs to the end of the document — that is what makes
+        // the diagnostics complete — but "it typeset some pages" is not the same
+        // claim as "this is the document". A PDF from an error-carrying run is
+        // missing whatever the error swallowed: the section after it, a
+        // bibliography that never ran, every cross-reference that resolved to
+        // `??`. Publishing it puts "Built" over a document nobody produced, and
+        // the errors shown beside it read as advisory. So the attempt fails, and
+        // `failProduction` leaves the last PDF that did compile in place, marked
+        // stale with this run's reason — the reader keeps something true to look
+        // at and is told plainly that it is behind the source.
+        if (outcome.exitCode !== 0) {
+          const failureDiagnostics = withFailureReason(diagnostics, () =>
+            transcriptFailureDiagnostic({
+              transcript: outcome.transcript,
+              exitCode: outcome.exitCode,
+            }),
+          );
           yield* recordFailure({
             key,
             generation,
             production,
-            summary:
-              outcome.exitCode === 0
-                ? MISSING_PDF_SUMMARY
-                : summarizeLatexFailure(failureDiagnostics),
+            summary: summarizeLatexFailure(failureDiagnostics),
+            diagnostics: failureDiagnostics,
+          });
+          return;
+        }
+        if (producedBytes <= 0) {
+          // Exited clean and produced nothing: still a failure, and one whose
+          // reason the transcript does not carry, so it is stated outright.
+          const failureDiagnostics = withFailureReason(diagnostics, MISSING_PDF_SUMMARY);
+          yield* recordFailure({
+            key,
+            generation,
+            production,
+            summary: MISSING_PDF_SUMMARY,
             diagnostics: failureDiagnostics,
           });
           return;

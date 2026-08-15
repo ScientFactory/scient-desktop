@@ -5,9 +5,13 @@
  * into a Scient-owned work directory outside the project tree, so builds never
  * dirty the workspace or the agent's checkpoints.
  *
- * Nothing here stops at the first error: Overleaf publishes whatever PDF the
- * engine managed to produce and shows the errors beside it, so the engine runs
- * to the end of the document and the caller decides what the exit code means.
+ * Nothing here stops at the first error, and that is about diagnostics rather
+ * than about output: `-interaction=nonstopmode` with no `-halt-on-error` runs
+ * the engine to the end of the document, so one compile reports every error it
+ * can reach instead of only the first. What that run is worth is not decided
+ * here — `LatexBuildService` refuses to publish a PDF from a run that exited
+ * non-zero, however many pages it managed to typeset, and keeps the last clean
+ * PDF visible as stale instead.
  */
 
 export type LatexToolchainKind = "latexmk" | "tectonic";

@@ -107,16 +107,33 @@ good PDF marked stale for no content reason. This is a known effect of reusing
 `failProduction` for cancellation rather than a dedicated abandon path; see
 Deferred decisions.
 
-**Publish-despite-errors, Overleaf parity, pre-deleted stale PDFs.** Before
-each compile, `compileAndPublish` force-removes any PDF left at the expected
-output path from a previous run. Afterwards, "a PDF exists at `pdfPath`"
-therefore means "this run produced it," which is what lets a run that exits
-non-zero still publish honestly: if the engine leaves a nonzero-size PDF
-behind, it is published with that run's diagnostics attached, matching
-Overleaf's behavior of typesetting whatever it can and showing errors beside
-it. Only a run that produces no bytes at all (`producedBytes <= 0`) is treated
-as a failure — `MISSING_PDF_SUMMARY` if the engine claimed success anyway, or
-the first parsed error otherwise (`summarizeLatexFailure`).
+**Only a clean run publishes; the last clean PDF stays visible as stale.** The
+engine still runs to the end of the document — `-interaction=nonstopmode`, no
+`-halt-on-error` — because that is what makes one compile report every error it
+can reach instead of only the first. What that run is _worth_ is a separate
+question, and the answer is the exit code: `compileAndPublish` publishes only a
+run that exited `0`, whatever the failing run left at `pdfPath`.
+
+This is deliberately not Overleaf parity, and the reason is that a PDF from an
+error-carrying run is not the document. It is missing whatever the error
+swallowed — the section after it, a bibliography that never ran, every
+cross-reference resolved to `??` — and publishing it puts "Built" over output
+nobody produced while the errors listed beside it read as advisory. So a
+non-zero exit fails the attempt: `store.failProduction` records the reason,
+which leaves the last PDF that _did_ compile in place with `bindingStatus:
+"stale"` and `staleReason` set to this run's summary. The reader keeps something
+true on screen and is told plainly that it is behind the source. A run that
+exits `0` still publishes with its warnings — and with parsed `error`-severity
+lines the engine itself recovered from — because the engine's own verdict on
+its own run is the thing being trusted here.
+
+Before each compile, `compileAndPublish` force-removes any PDF left at the
+expected output path from a previous run, so "a PDF exists at `pdfPath`" means
+"this run produced it" and a failing run can never be credited with its
+predecessor's output. A clean run that produced no bytes at all
+(`producedBytes <= 0`) fails with `MISSING_PDF_SUMMARY`; a non-zero run fails
+with the first parsed error, or with the run's own last words when it left no
+parseable diagnostic (`transcriptFailureDiagnostic`, `summarizeLatexFailure`).
 
 **Forced reprocessing.** Every `latexmk` invocation carries `-g`. The work
 directory outlives a build, and `latexmk` keeps its own decision state there in
@@ -448,10 +465,12 @@ and pinned-asset resolution) — plus `LatexBuildService.test.ts` for the
 coordinator's lifecycle, coalescing, admission, cancel/supersession behavior,
 the upfront preamble batch (one install call carrying every unresolvable name,
 then a single compile) against the reactive loop that still handles what only a
-compile could reveal, and two diagnostics invariants: that no shape of build
+compile could reveal, two diagnostics invariants — that no shape of build
 failure leaves the diagnostics list empty or the summary at the bare fallback,
-and the exact observed production sequence — failed install round, rebuild,
-`latexmk` refusing to rerun — as a regression. Two suites self-skip at collection time when the machine cannot run
+and the exact observed production sequence (failed install round, rebuild,
+`latexmk` refusing to rerun) as a regression — and the publish gate: an
+error-carrying run that _did_ leave a PDF publishes nothing, and a prior clean
+PDF survives it as the stale binding at the same revision. Two suites self-skip at collection time when the machine cannot run
 them: `LatexArchiveUnpacker.test.ts`'s last case expands a real archive
 through the resolved system `tar`, which is the only coverage of the actual
 spawn the stubs stand in for, and `LatexRealEngine.test.ts` runs a real TeX

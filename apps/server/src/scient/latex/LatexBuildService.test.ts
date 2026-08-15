@@ -845,8 +845,13 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("publishes a PDF the engine produced despite errors, keeping the errors", () =>
+  it.live("refuses to publish the half-typeset PDF of a run that ended in error", () =>
     Effect.gen(function* () {
+      // The engine runs to the end of the document, so it can and does leave a
+      // PDF behind after an error: the pages before the error, a bibliography
+      // that never ran, every reference resolved to `??`. Publishing it would
+      // put "Built" over a document nobody produced and turn the errors shown
+      // beside it into advice. There is nothing to publish here.
       const harness = yield* makeHarness({
         compiles: [{ transcript: ERROR_TRANSCRIPT, exitCode: 1, pdf: minimalPdf("partial") }],
       });
@@ -856,22 +861,66 @@ describe("LatexBuildService", () => {
         yield* service.requestBuild(harness.buildInput);
         const finished = yield* awaitTerminal(service, harness.buildInput);
 
-        // Overleaf parity: the reader gets the PDF, the editor gets the errors.
-        expect(finished.state).toBe("succeeded");
-        expect(finished.failureSummary).toBeNull();
+        expect(finished.state).toBe("failed");
+        expect(finished.failureSummary).toContain("main.tex:12:");
         expect(finished.diagnostics[0]).toMatchObject({
           severity: "error",
           file: "main.tex",
           line: 12,
         });
-        expect(finished.descriptor).toMatchObject({
-          _tag: "generated-pdf",
-          bindingStatus: "current",
+        // Nothing was ever published for this document, so there is nothing to
+        // show alongside the errors either.
+        expect(finished.descriptor).toBeNull();
+        const bound = yield* store
+          .getDescriptor(LogicalDocumentKey.make(finished.logicalDocumentKey))
+          .pipe(Effect.flip);
+        expect(bound.reason).toBe("missing-revision");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("keeps the last clean PDF as the stale binding when a later run errors out", () =>
+    Effect.gen(function* () {
+      // The truthful slice: the attempt fails, and the PDF that did compile
+      // stays where the reader can see it, flagged as behind the source.
+      const harness = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("clean") },
+          { transcript: ERROR_TRANSCRIPT, exitCode: 1, pdf: minimalPdf("half-typeset") },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+        yield* service.requestBuild(harness.buildInput);
+        const succeeded = yield* awaitTerminal(service, harness.buildInput);
+        expect(succeeded.state).toBe("succeeded");
+        const publishedRevision =
+          succeeded.descriptor?._tag === "generated-pdf" ? succeeded.descriptor.revisionId : null;
+        expect(publishedRevision).not.toBeNull();
+
+        yield* service.requestBuild(harness.buildInput);
+        const failed = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(failed.state).toBe("failed");
+        expect(failed.failureSummary).toContain("main.tex:12:");
+        expect(failed.diagnostics[0]).toMatchObject({
+          severity: "error",
+          file: "main.tex",
+          line: 12,
         });
+        // `failProduction` is what leaves this behind: the same revision, still
+        // rendered, now carrying the reason it is out of date.
+        expect(failed.descriptor).toMatchObject({
+          revisionId: publishedRevision,
+          bindingStatus: "stale",
+          staleReason: failed.failureSummary,
+        });
+        // The half-typeset PDF never became a revision of anything.
         const bound = yield* store.getDescriptor(
-          LogicalDocumentKey.make(finished.logicalDocumentKey),
+          LogicalDocumentKey.make(failed.logicalDocumentKey),
         );
-        expect(bound).toMatchObject({ bindingStatus: "current", bindingGeneration: 1 });
+        expect(bound).toMatchObject({ bindingStatus: "stale", revisionId: publishedRevision });
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

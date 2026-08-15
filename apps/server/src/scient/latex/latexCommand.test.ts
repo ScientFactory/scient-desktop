@@ -27,9 +27,12 @@ describe("buildLatexInvocation", () => {
       workDirectory: "/state/scient-latex/abc",
     });
 
-    // Overleaf parity: an error-carrying document still typesets a PDF, and the
-    // service publishes it with the errors beside it.
+    // This is about diagnostics, not about output. Running to the end of the
+    // document is what makes one compile report every error it can reach
+    // instead of only the first; whether that run is worth publishing is the
+    // caller's decision, and `LatexBuildService` refuses a non-zero exit.
     expect(invocation.args).not.toContain("-halt-on-error");
+    expect(invocation.args).toContain("-interaction=nonstopmode");
   });
 
   it("keeps a subdirectory root addressable from its own directory", () => {
