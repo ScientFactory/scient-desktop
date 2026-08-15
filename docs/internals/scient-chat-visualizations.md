@@ -1,7 +1,7 @@
 # Scient rich chat visualizations
 
-Status: Vega-Lite implemented as the second renderer on the shared rich-fence
-presentation seam. Source Markdown remains canonical.
+Status: Vega-Lite and Plotly implemented on the shared rich-fence presentation
+seam. Source Markdown remains canonical.
 
 ## Architecture and ownership
 
@@ -15,15 +15,64 @@ they receive the same behavior without a second integration.
 
 This is a representation layer, not an artifact database. The fenced JSON is
 authoritative and `data-markdown-copy` preserves it during whole-message copy.
-SVG, PNG, the Vega runtime, and interaction state are disposable local
+SVG, PNG, the Vega and Plotly runtimes, and interaction state are disposable local
 representations. The [Scientific Artifact Studio roadmap](./scientific-artifact-studio.md)
-defines how a future adapter resolves a durable `.vl.json` artifact and its
-project-relative datasets into this runtime without moving identity,
+defines how a future adapter resolves a durable `.vl.json` or `.plotly.json`
+artifact and its project-relative datasets into these runtimes without moving identity,
 provenance, or persistence into the chat card. It also defines the shared
-renderer direction for Plotly, tables, HTML artifacts, and later scientific
+renderer direction for tables, HTML artifacts, and later scientific
 formats so they do not add more inherited Markdown seams.
 
 ## Runtime contract
+
+Plotly uses the exact-pinned complete 3.7.0 browser distribution, dynamically
+imported only for a settled visible Plotly fence. MathJax 3.2.2 is loaded in a
+separate lazy chunk only when a figure contains TeX-like labels. The versions
+are deliberately paired to the current stable Plotly integration;
+upgrade Plotly and its math runtime together after compatibility verification.
+The original JSON or JSONC is never rewritten: a structured clone receives responsive host
+defaults, current light/dark presentation when the author supplied no template,
+and local interaction policy. The host disables editing and cloud/Chart Studio
+actions, hides Plotly's native modebar, and provides a small Scient-owned
+interaction toolbar instead. The toolbar calls only Plotly's public relayout
+and reset surfaces; it does not rewrite Plotly DOM or depend on private modebar
+handlers. The Scient card exports the current live view.
+
+The lazy Plotly runtime uses the full strict distribution, whose regl-based
+traces avoid function constructors and therefore work under Scient's CSP
+without `unsafe-eval`. Portable Plotly.py typed-array JSON, animation frames, 2D, 3D, WebGL, map,
+financial, statistical, image, table, hierarchy, and flow traces are accepted
+by the complete distribution. Encoded arrays are checked for a supported dtype,
+complete base64 data, and consistent dimensions before reaching Plotly, so a
+truncated payload produces a local source error instead of a misleading WebGL
+fallback. Common named light/dark templates and compatible string title
+shorthand are normalized only in the disposable render copy. Source is bounded to 1,000,000 characters,
+500,000 inspected values, 512 traces, and 2,000 frames before the runtime is
+loaded. Remote images, GeoJSON, map tiles, and Plotly geography topology retain
+Plotly's normal network behavior and are labeled as network content; no CSP
+exception or credential-bearing Scient loader is added.
+
+Inline Plotly state is captured before a WebGL view is released offscreen and
+when a figure moves to or returns from the expanded dialog. SVG figures remain
+mounted after first use; WebGL and map figures release contexts after a short
+offscreen grace period. A Scient-owned activity pool limits the conversation to
+two simultaneously mounted WebGL figures, and one global mutation queue orders
+Plotly mount and purge work. This stays below Chromium's bounded context budget
+without virtualizing WebGL or changing the canonical figure. Before purging an
+offscreen graph, the host uses the standard `WEBGL_lose_context` extension to
+return its canvases immediately instead of waiting for browser garbage
+collection. Plotly cards must not use `content-visibility: auto`: the viewport
+hook mounts WebGL 500px before the card is on screen, and Chromium still skips
+layout of those subtrees, so regl sees a 0×0 canvas. Inline charts also must
+not force `.svg-container { height: 100% }`; that percentage computes to 0 when
+the parent height is auto, which is the same `.no-webgl` failure. Fill-height
+CSS is limited to the expanded dialog, which has a definite flex height.
+Context loss, a zero-size layout, and true context exhaustion become local,
+retryable card errors; Plotly's raw external WebGL fallback never becomes
+viewer UI. Reset, SVG, PNG, and clipboard export operate on the current graph,
+including
+zoom, legend, and animation state. WebGL layers embedded in SVG export are
+truthfully reported as rasterized.
 
 The exact-pinned Vega 6.3.1, Vega-Lite 6.4.3, vega-embed 7.1.0, and
 vega-tooltip 1.0.0 packages are bundled locally. The renderer and tooltip
@@ -80,6 +129,14 @@ Vega state, preserving brushes, legend selections, and bound controls while
 still recompiling theme-dependent presentation. State is not transferred when
 the authored chart or an explicit incoming state changes.
 
+Plotly keeps direct manipulation, hover, legends, animation controls, and 3D
+orbit inside the figure. A fixed horizontal Scient interaction row replaces
+the native modebar: Cartesian figures expose zoom, pan, box selection, lasso
+selection, and reset through the view controller, while other trace families
+show the universally valid reset action. This keeps the controls stable across
+mounts without pretending that two-dimensional drag modes apply to every
+Plotly subplot type.
+
 Tooltips use Vega's formatter and viewport-aware mark positioning, but a
 Scient-owned adapter suppresses redundant DOM measurement while pointer events
 continue over the same item and content. A compiled-spec patch supplies a
@@ -98,9 +155,9 @@ titles without replacing the author's semantic color encoding.
 
 ## Provider discovery and platform fallback
 
-The shared provider instruction tells capable agents when to choose Mermaid or
-Vega-Lite, how to emit accessible self-contained source, and when to create a
-durable artifact instead. It reaches Codex and Claude through their existing
+The shared provider instruction tells capable agents when to choose Mermaid,
+Vega-Lite, or Plotly, how to emit accessible self-contained source, and when to
+create a durable artifact instead. It reaches Codex and Claude through their existing
 developer/system seams, OpenCode through its SDK `system` field, and Grok
 through the supported CLI `--rules` append seam. Cursor's ACP transport does
 not currently expose a per-session system extension; Scient does not inject
@@ -117,10 +174,13 @@ bounds, responsive preparation, real Vega-Lite compilation and Vega parsing
 of root and composition-nested layered hover/legend selections, resource
 policy, fetch/CORS diagnostics, limits, theme-state remount policy, theme
 defaults, stable tooltip deduplication, cursor preservation, export bounds,
-lazy-runtime/CSP invariants, server fallback, and the single T3 seam. Provider
+lazy-runtime/CSP invariants, Plotly source limits and typed arrays, runtime
+state transfer, animation lifecycle, math loading, server fallback, and the
+single T3 seam. Provider
 tests cover OpenCode and Grok injection alongside the existing Codex and Claude
-assertions. A production build must keep Vega in lazy chunks.
-`docs/fixtures/scient-chat-visualizations.md` is the interactive light/dark and
+assertions. A production build must keep both engines in lazy chunks.
+`docs/fixtures/scient-chat-visualizations.md` and
+`docs/fixtures/scient-chat-plotly.md` are the interactive light/dark and
 recovery corpus.
 
 On a T3 refresh, reapply only the shared settled-fence branch in
