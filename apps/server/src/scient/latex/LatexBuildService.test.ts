@@ -99,6 +99,27 @@ const NO_TOOLCHAIN: ScientLatexToolchainStatus = {
 const TERMINAL_STATES: ReadonlySet<string> = new Set(["succeeded", "failed", "cancelled"]);
 
 const SOURCE = "\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}\n";
+const SOURCE_WITH_INCLUDE = [
+  "\\documentclass{article}",
+  "\\begin{document}",
+  "\\input{sections/intro}",
+  "\\end{document}",
+  "",
+].join("\n");
+/**
+ * What `latexmk -recorder` leaves at `<jobname>.fls`. A real one opens with an
+ * absolute `PWD`; without one the parser reads relative paths against the
+ * compile directory, which is what lets this fixture name no temporary path of
+ * its own. The distribution's files are absolute and outside the workspace.
+ */
+const RECORDER_MANIFEST = [
+  "INPUT /opt/texlive/2026/texmf.cnf",
+  "INPUT /opt/texlive/2026/tex/latex/base/article.cls",
+  "INPUT main.tex",
+  "INPUT sections/intro.tex",
+  "OUTPUT main.pdf",
+  "",
+].join("\n");
 const WARNING_TRANSCRIPT =
   "This is pdfTeX\nLaTeX Warning: Reference `fig:1' undefined on input line 12.\n";
 const ERROR_TRANSCRIPT = "./main.tex:12: Undefined control sequence.\nl.12 \\nosuchmacro\n";
@@ -152,6 +173,12 @@ interface FakeCompile {
   readonly exitCode: number;
   /** Written into the engine's `-outdir` just before the process exits. */
   readonly pdf: Uint8Array | null;
+  /**
+   * Recorder output, written beside the PDF as `<jobname>.fls` the way
+   * `latexmk -recorder` writes it. Relative `INPUT` paths are read against the
+   * compile directory, so a fixture never has to know the temporary workspace.
+   */
+  readonly fls?: string;
   /** When present the process only exits once the test resolves it. */
   readonly hold?: Deferred.Deferred<void>;
 }
@@ -161,16 +188,23 @@ function outputDirectory(request: ExecutionProcessRequest): string {
   return flag === undefined ? "" : flag.slice("-outdir=".length);
 }
 
-/** Mirrors `buildLatexInvocation`'s own PDF path so the fake writes where the service looks. */
-function producedPdfPath(request: ExecutionProcessRequest): string {
+/** Mirrors `buildLatexInvocation`'s own output paths so the fake writes where the service looks. */
+function producedPath(request: ExecutionProcessRequest, extension: string): string {
   const root = (request.args.at(-1) ?? "").replaceAll("\\", "/");
   const baseName = (root.split("/").at(-1) ?? root).replace(/\.\w+$/u, "");
-  return `${outputDirectory(request)}/${baseName}.pdf`;
+  return `${outputDirectory(request)}/${baseName}.${extension}`;
 }
 
 const makeHarness = (input: {
   readonly compiles: ReadonlyArray<FakeCompile>;
   readonly toolchain?: ScientLatexToolchainStatus;
+  /**
+   * Reuse an earlier harness's workspace and state root. A second service over
+   * the same two directories is exactly what a server restart looks like from
+   * this lane: the same sources, the same persisted binding and evidence, and
+   * no in-memory build state at all.
+   */
+  readonly reuse?: { readonly workspaceRoot: string; readonly baseDir: string };
   /** Extra sources, keyed by workspace-relative posix path. */
   readonly files?: Readonly<Record<string, string>>;
   /** The document `buildInput` points at; defaults to the root-level `main.tex`. */
@@ -189,11 +223,15 @@ const makeHarness = (input: {
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "scient-latex-workspace-",
-    });
-    const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-state-" });
-    yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), SOURCE);
+    const workspaceRoot =
+      input.reuse?.workspaceRoot ??
+      (yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-workspace-" }));
+    const baseDir =
+      input.reuse?.baseDir ??
+      (yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-state-" }));
+    if (input.reuse === undefined) {
+      yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), SOURCE);
+    }
     for (const [relativePath, contents] of Object.entries(input.files ?? {})) {
       const absolutePath = path.join(workspaceRoot, relativePath);
       yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });
@@ -219,9 +257,14 @@ const makeHarness = (input: {
           yield* Queue.offer(started, request);
           const exitSignal = yield* Deferred.make<number>();
           const finish = Effect.gen(function* () {
-            if (compile.pdf !== null) {
+            if (compile.pdf !== null || compile.fls !== undefined) {
               yield* fileSystem.makeDirectory(outputDirectory(request), { recursive: true });
-              yield* fileSystem.writeFile(producedPdfPath(request), compile.pdf);
+            }
+            if (compile.pdf !== null) {
+              yield* fileSystem.writeFile(producedPath(request, "pdf"), compile.pdf);
+            }
+            if (compile.fls !== undefined) {
+              yield* fileSystem.writeFileString(producedPath(request, "fls"), compile.fls);
             }
             yield* Deferred.succeed(exitSignal, compile.exitCode);
           }).pipe(Effect.orDie);
@@ -293,12 +336,39 @@ const makeHarness = (input: {
       installRequests,
       installCount,
       workspaceRoot,
+      baseDir,
+      /** Where `ServerConfig.layerTest` derives this environment's LaTeX state. */
+      latexDir: path.join(baseDir, "userdata", "latex"),
       inputFor: (relativePath: string): LatexBuildInput => ({ workspaceRoot, relativePath }),
       buildInput: {
         workspaceRoot,
         relativePath: input.relativePath ?? "main.tex",
       } satisfies LatexBuildInput,
     };
+  });
+
+/**
+ * Waits for the build-input evidence to reach disk. A build reports
+ * `succeeded` as soon as the PDF is bound and persists its evidence just
+ * afterwards, so a test that simulates a restart has to let the state
+ * directory settle first — a real restart is not instantaneous either.
+ */
+const awaitPersistedEvidence = (latexDir: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = path.join(latexDir, "evidence");
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const entries = yield* fileSystem
+        .readDirectory(directory)
+        .pipe(Effect.orElseSucceed(() => []));
+      // The atomic write stages into a temporary directory alongside the
+      // target, so "something is in here" is not yet "the file has landed".
+      const written = entries.filter((entry) => entry.endsWith(".json"));
+      if (written.length > 0) return written;
+      yield* Effect.sleep(Duration.millis(10));
+    }
+    return [];
   });
 
 const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildInput) =>
@@ -963,6 +1033,205 @@ describe("LatexBuildService", () => {
         );
         expect(bound).toMatchObject({ bindingStatus: "stale", revisionId: publishedRevision });
       }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("rebuilds a published document whose recorded dependency changed under it", () =>
+    Effect.gen(function* () {
+      // The gap this closes: a request carries a workspace root and a path and
+      // nothing about which revision of the sources it means, so a PDF built
+      // once stayed `current` while an agent — or any editor outside Scient —
+      // rewrote the chapter it `\input`s.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness({
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": "The introduction.\n",
+        },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("a"), fls: RECORDER_MANIFEST },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("b"), fls: RECORDER_MANIFEST },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        expect((yield* awaitTerminal(service, harness.buildInput)).state).toBe("succeeded");
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+
+        // Nobody asks for this build: the chapter changes, and the next poll
+        // that would have said "built" says "building" instead.
+        yield* fileSystem.writeFileString(
+          path.join(harness.workspaceRoot, "sections/intro.tex"),
+          "The introduction, rewritten by an agent.\n",
+        );
+        const noticed = yield* service.status(harness.buildInput);
+        expect(TERMINAL_STATES.has(noticed.state)).toBe(false);
+
+        const rebuilt = yield* awaitTerminal(service, harness.buildInput);
+        expect(rebuilt.state).toBe("succeeded");
+        expect(rebuilt.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never rebuilds a document nobody touched, however often it is polled", () =>
+    Effect.gen(function* () {
+      // The regression the freshness check could have introduced. A poll runs
+      // every 1.5 seconds per open document; if it compared timestamps, or
+      // re-hashed on every pass, or forgot what it had already verified, an
+      // untouched document would compile forever.
+      const harness = yield* makeHarness({
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": "The introduction.\n",
+        },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("once"), fls: RECORDER_MANIFEST },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        expect((yield* awaitTerminal(service, harness.buildInput)).state).toBe("succeeded");
+
+        for (let poll = 0; poll < 20; poll += 1) {
+          const snapshot = yield* service.status(harness.buildInput);
+          expect(snapshot.state).toBe("succeeded");
+          expect(snapshot.descriptor).toMatchObject({ bindingStatus: "current" });
+          expect(snapshot.pendingRerun).toBe(false);
+        }
+        // The fake engine only has one compile; a second would have died.
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("reports a binding restored after a restart as built only while its evidence holds", () =>
+    Effect.gen(function* () {
+      const first = yield* makeHarness({
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": "The introduction.\n",
+        },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("before"), fls: RECORDER_MANIFEST },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(first.buildInput);
+        expect((yield* awaitTerminal(service, first.buildInput)).state).toBe("succeeded");
+        yield* awaitPersistedEvidence(first.latexDir);
+      }).pipe(Effect.provide(first.serviceLayer));
+
+      // A second service over the same workspace and state root: the binding
+      // and the evidence survived, the in-memory build map did not.
+      const restarted = yield* makeHarness({
+        reuse: { workspaceRoot: first.workspaceRoot, baseDir: first.baseDir },
+        compiles: [],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const restored = yield* service.status(restarted.buildInput);
+
+        expect(restored.state).toBe("succeeded");
+        expect(restored.descriptor).toMatchObject({ bindingStatus: "current" });
+        // Answered from the files, not from a compile: this harness has none.
+        expect(yield* Ref.get(restarted.startCount)).toBe(0);
+      }).pipe(Effect.provide(restarted.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("rebuilds a binding restored after a restart whose sources have moved on", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const first = yield* makeHarness({
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": "The introduction.\n",
+        },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("before"), fls: RECORDER_MANIFEST },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(first.buildInput);
+        expect((yield* awaitTerminal(service, first.buildInput)).state).toBe("succeeded");
+        yield* awaitPersistedEvidence(first.latexDir);
+      }).pipe(Effect.provide(first.serviceLayer));
+
+      // Edited while nothing was watching, which is the whole scenario: opening
+      // a document only builds an idle one, so without this check the old PDF
+      // would be reported as current indefinitely.
+      yield* fileSystem.writeFileString(
+        path.join(first.workspaceRoot, "sections/intro.tex"),
+        "The introduction, edited while the server was down.\n",
+      );
+
+      const restarted = yield* makeHarness({
+        reuse: { workspaceRoot: first.workspaceRoot, baseDir: first.baseDir },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("after"), fls: RECORDER_MANIFEST },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const restored = yield* service.status(restarted.buildInput);
+        expect(TERMINAL_STATES.has(restored.state)).toBe(false);
+        // The stale PDF stays on screen while its replacement compiles.
+        expect(restored.descriptor).not.toBeNull();
+
+        const rebuilt = yield* awaitTerminal(service, restarted.buildInput);
+        expect(rebuilt.state).toBe("succeeded");
+        expect(yield* Ref.get(restarted.startCount)).toBe(1);
+      }).pipe(Effect.provide(restarted.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("rebuilds once for a binding whose state predates build evidence", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const first = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("legacy") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(first.buildInput);
+        expect((yield* awaitTerminal(service, first.buildInput)).state).toBe("succeeded");
+        yield* awaitPersistedEvidence(first.latexDir);
+      }).pipe(Effect.provide(first.serviceLayer));
+
+      // A binding written by a build that recorded nothing about its inputs —
+      // every binding on disk before this check existed.
+      yield* fileSystem
+        .remove(path.join(first.latexDir, "evidence"), { recursive: true, force: true })
+        .pipe(Effect.ignore);
+
+      const restarted = yield* makeHarness({
+        reuse: { workspaceRoot: first.workspaceRoot, baseDir: first.baseDir },
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("re-established") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        // No evidence is not the same as good evidence: it earns one rebuild,
+        // which is what leaves evidence behind for every poll after it.
+        expect(TERMINAL_STATES.has((yield* service.status(restarted.buildInput)).state)).toBe(
+          false,
+        );
+        expect((yield* awaitTerminal(service, restarted.buildInput)).state).toBe("succeeded");
+        expect(yield* Ref.get(restarted.startCount)).toBe(1);
+
+        for (let poll = 0; poll < 10; poll += 1) {
+          expect((yield* service.status(restarted.buildInput)).state).toBe("succeeded");
+        }
+        expect(yield* Ref.get(restarted.startCount)).toBe(1);
+      }).pipe(Effect.provide(restarted.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

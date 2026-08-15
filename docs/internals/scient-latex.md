@@ -135,6 +135,70 @@ predecessor's output. A clean run that produced no bytes at all
 with the first parsed error, or with the run's own last words when it left no
 parseable diagnostic (`transcriptFailureDiagnostic`, `summarizeLatexFailure`).
 
+**Build-input evidence: a PDF is only current while its sources are.** A build
+request carries a workspace root and a relative path and nothing else — no root
+revision, no content hash, no dependency list — so nothing in the request says
+_which_ revision of the sources a published PDF was made from. Left there, a
+binding published once stays `current` for as long as it survives: across a
+restart, across an agent rewriting the root document, across any editor outside
+Scient changing an `\input`ed chapter. Opening a document only builds an _idle_
+one, so nothing else would notice.
+
+`latexBuildEvidence.ts` closes that. After a compile exits clean and before the
+publish that makes its PDF the document, the service records the identity of
+every file that compile read: a workspace-relative path, the SHA-256 of the
+bytes, and the byte length, under a versioned `schemaVersion: 1` record written
+atomically to `<latexDir>/evidence/<sha256(logicalDocumentKey)[:16]>.json`. A
+dependency that was already gone keeps its place under a `missing` marker,
+because "the chapter was deleted" is a change; one larger than 16 MiB gets an
+`oversize` marker and is identified by size alone, so a fifty-megabyte figure is
+not rehashed on a poll.
+
+The dependency list comes from the engine's own recorder wherever there is one.
+`latexmk` passes `-recorder` by default and writes `<jobname>.fls` beside the
+other aux files; `flsManifest.ts` reads its `INPUT` lines against the run's
+`PWD`, drops everything outside the workspace root (the distribution's classes,
+packages, and fonts) and everything inside the build work directory (the
+`.aux`/`.toc` this very run wrote and read back — inputs by label, outputs in
+fact), normalizes separators, dedupes, and sorts. Windows containment is
+compared case-insensitively and the returned path keeps the case on disk. A run
+naming more than `MAX_RECORDER_DEPENDENCIES = 256` workspace inputs reports
+`truncated: true` with an _empty_ list rather than its first 256, and evidence
+falls back to the root document alone: a narrower claim beats a partial one
+presented as complete. tectonic writes no `.fls`, so there the fallback is the
+root plus what `latexPreamble.ts` already reads out of it.
+
+The check runs on every status poll of a finished, successful entry, and is
+built for that cadence: one `stat` per dependency, a size difference decides on
+its own, and the content hash is read only where size and mtime together leave
+the question open. `LatexEvidenceMark` is the memory that makes it stable — the
+size and mtime last _verified_ to match the recorded digest — so a formatter or
+a checkout that rewrites a file with identical bytes costs one hash and then
+stops costing anything. An mtime alone never forces a rebuild. On a mismatch the
+service triggers the rebuild itself, through the same `startBuild` path a client
+request uses, so it takes the same three-permit admission and the same
+`pendingRerun` coalescing and adds no concurrency; the snapshot then reports an
+active state, which is exactly what the web client's existing poll continuation
+already handles, and the stale PDF stays on screen (`seedDescriptor`) while its
+replacement compiles. No wire contract changed.
+
+Restart synthesis obeys the same rule: a persisted binding that says a PDF was
+published is only reported `succeeded` after the evidence check passes.
+Evidence that is absent — every binding written before this existed — or that
+this version cannot decode counts as a mismatch and earns exactly one rebuild,
+which is what leaves evidence behind for every poll after it.
+
+Two things this accepts and states rather than hides. The evidence is read
+between the engine's exit and the publish, so a save landing in that window is
+recorded as what the PDF was built from when it was not; the cost is one missed
+rebuild of one document, which the next save corrects, against hashing every
+input twice per build forever. And the in-memory copy is written before the
+entry reaches `succeeded` and before the on-disk copy: a status poll must never
+observe a published PDF with no evidence behind it, because that reads as
+"cannot be vouched for" and would rebuild every document on every build. A state
+directory that cannot be written therefore costs a re-check after restart and
+nothing else.
+
 **Forced reprocessing.** Every `latexmk` invocation carries `-g`. The work
 directory outlives a build, and `latexmk` keeps its own decision state there in
 `.fdb_latexmk`: both that the last run failed and which files it could not
@@ -426,8 +490,10 @@ across at most 5 redirect hops.
 other environment-derived state directories — never inside the user's
 workspace. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
-`-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.synctex.gz`,
-and the PDF itself all land there. The workspace directory the user edits
+`-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`,
+`.synctex.gz`, and the PDF itself all land there. Build-input evidence is the
+only other per-document state this lane keeps, one JSON file per document under
+`<latexDir>/evidence/` keyed by the same digest. The workspace directory the user edits
 never receives compiler output, and neither does the agent's own checkpoint
 history. The managed TinyTeX distribution lives under a separate
 `<latexDir>/managed` root, entirely apart from build work directories.
@@ -454,6 +520,13 @@ rather than over it), `latexMissingPackages.test.ts` (missing-input parsing over
 shapes, the file/package pairing, and the deliberate `null` for the author's own
 files), `latexPreamble.test.ts` (comment stripping, package and include
 extraction, the bounds, and the paths deliberately not followed),
+`flsManifest.test.ts` (recorder parsing: POSIX and Windows paths, the
+distribution's own files and this run's outputs excluded, a parent walk that
+cannot name a file outside the workspace, and the truncation fallback at the
+256-input ceiling), `latexBuildEvidence.test.ts` (evidence round trip through
+JSON, the refusal to read a state file it does not understand, missing- and
+deleted-dependency markers, content change detected, an mtime-only rewrite
+deliberately _not_ detected, and the root-only narrowing on truncation),
 `LatexPackageInstaller.test.ts` (the perl-direct `tlmgr` invocation shape, the
 unknown-package search fallback, the `kpsewhich` visibility gate with its one
 `mktexlsr` refresh, the fail-open probe, the tail-keeping output bound, and — on
@@ -468,9 +541,16 @@ then a single compile) against the reactive loop that still handles what only a
 compile could reveal, two diagnostics invariants — that no shape of build
 failure leaves the diagnostics list empty or the summary at the bare fallback,
 and the exact observed production sequence (failed install round, rebuild,
-`latexmk` refusing to rerun) as a regression — and the publish gate: an
+`latexmk` refusing to rerun) as a regression — the publish gate (an
 error-carrying run that _did_ leave a PDF publishes nothing, and a prior clean
-PDF survives it as the stale binding at the same revision. Two suites self-skip at collection time when the machine cannot run
+PDF survives it as the stale binding at the same revision), and the freshness
+contract: a recorded dependency changing under a published document flips the
+next poll out of a terminal state and starts one rebuild, an untouched document
+stays `succeeded` across twenty consecutive polls with exactly one compile ever
+run, a restored binding is reported built only while its evidence holds, one
+whose sources moved on while the server was down rebuilds with its stale PDF
+still on screen, and one whose state predates evidence entirely rebuilds once
+and then stops. Two suites self-skip at collection time when the machine cannot run
 them: `LatexArchiveUnpacker.test.ts`'s last case expands a real archive
 through the resolved system `tar`, which is the only coverage of the actual
 spawn the stubs stand in for, and `LatexRealEngine.test.ts` runs a real TeX
@@ -515,9 +595,15 @@ hex>` tree are ever cleaned up automatically today. Every install now leaves
   this is the collector that owes it: a reinstall, or a future manifest version
   bump, leaves a full distribution behind on disk.
 - **Restart reconciliation of in-flight bindings.** Build state lives only in
-  an in-memory `Ref`. If the server exits mid-build, the on-disk binding can
-  be left in `producing` (no `lastSuccessfulRevision` yet) or `stale`
-  indefinitely, with nothing on the next start to reconcile it.
+  an in-memory `Ref`. A binding that says a PDF was _published_ is now
+  reconciled on the next start — the evidence check above decides whether it is
+  still current — but a binding the server exited in the middle of is not: it
+  can be left in `producing` (no `lastSuccessfulRevision` yet) or `stale`
+  indefinitely, with nothing on the next start to resolve it either way.
+- **Evidence garbage collection.** `<latexDir>/evidence/<digest>.json` is
+  written per document and never removed, so a workspace whose documents are
+  renamed or deleted leaves small orphan files behind. This belongs with the
+  build-directory collector below rather than in a second sweep of its own.
 - **Binding-change push subscription.** The web client polls the status
   endpoint on a self-scheduling timeout (1.5 s active, 5 s after a transport
   error) rather than subscribing to a push notification. Polling is the

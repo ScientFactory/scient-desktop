@@ -6,7 +6,7 @@
  * `GeneratedDocumentStore` that turns a produced PDF into an immutable
  * revision the viewer can render.
  *
- * Five invariants shape the code below:
+ * Six invariants shape the code below:
  *   - A rebuild requested while one is in flight coalesces into a single
  *     follow-up run, so a save-happy editor cannot queue a hundred compiles.
  *   - At most `MAX_CONCURRENT_COMPILES` documents compile at once; the rest
@@ -18,6 +18,8 @@
  *     record a failure.
  *   - Only a run that exited clean publishes. An error-carrying run fails and
  *     the last PDF that did compile stays visible, marked stale.
+ *   - A PDF is only reported `succeeded` while the files it was built from
+ *     still hash to what they hashed then; see `latexBuildEvidence.ts`.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -50,6 +52,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import * as ServerConfig from "../../config.ts";
 import {
   GeneratedDocumentStore,
@@ -58,6 +61,16 @@ import {
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { parseLatexRecorderManifest } from "./flsManifest.ts";
+import {
+  EMPTY_EVIDENCE_MARKS,
+  collectLatexBuildEvidence,
+  decodeLatexBuildEvidence,
+  encodeLatexBuildEvidence,
+  probeLatexEvidence,
+  type LatexBuildEvidence,
+  type LatexEvidenceMarks,
+} from "./latexBuildEvidence.ts";
 import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
 import { parseLatexLog, summarizeLatexFailure, transcriptFailureDiagnostic } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
@@ -243,6 +256,17 @@ interface LatexBuildEntry {
   readonly handle: ExecutionProcessHandle | null;
 }
 
+/**
+ * One document's build-input evidence as this process holds it, plus the stat
+ * memory that keeps re-checking it cheap. `evidence: null` is a real answer —
+ * "this document has none on disk" — cached so a poll does not re-read a file
+ * that is not there.
+ */
+interface LatexEvidenceCacheEntry {
+  readonly evidence: LatexBuildEvidence | null;
+  readonly marks: LatexEvidenceMarks;
+}
+
 interface ResolvedLatexTarget {
   readonly logicalDocumentKey: string;
   readonly workspaceRoot: string;
@@ -378,6 +402,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcessEnvironment;
   const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
+  const evidenceRef = yield* Ref.make(new Map<string, LatexEvidenceCacheEntry>());
   // Monotonic across the process; only `requestBuild` hands one out.
   const generationRef = yield* Ref.make(0);
   // Build fibers outlive the request that started them, so they are supervised
@@ -729,6 +754,189 @@ export const make = Effect.gen(function* () {
       return requested.filter((name) => unresolved.has(`${name.toLowerCase()}.sty`));
     });
 
+  /**
+   * The evidence modules ask for the platform services by name so their own
+   * tests can drive them directly; the service already holds both, and its
+   * public methods declare no requirements, so they are handed over here.
+   */
+  const withPlatform = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
+  /** Beside the build work directory, keyed the same way, one file per document. */
+  const evidenceFilePath = (key: string) =>
+    path.join(config.latexDir, "evidence", `${workDirectoryName(key)}.json`);
+
+  const loadEvidence = (key: string) =>
+    Effect.gen(function* () {
+      const cached = yield* Ref.get(evidenceRef).pipe(Effect.map((all) => all.get(key)));
+      if (cached !== undefined) return cached;
+      const source = yield* fileSystem
+        .readFileString(evidenceFilePath(key))
+        .pipe(Effect.orElseSucceed(() => null));
+      const entry: LatexEvidenceCacheEntry = {
+        evidence: source === null ? null : decodeLatexBuildEvidence(source),
+        marks: EMPTY_EVIDENCE_MARKS,
+      };
+      yield* Ref.update(evidenceRef, (all) => new Map(all).set(key, entry));
+      return entry;
+    });
+
+  /**
+   * What the document itself says it reads, for an engine that keeps no
+   * recorder: the root plus the files it `\input`s or `\include`s one level
+   * down. Narrower than a recorder manifest — no `.bib`, no image, nothing a
+   * package pulled in — and honest about being narrower, because the root is
+   * still the file most edits land in.
+   */
+  const preambleDependencies = (input: {
+    readonly workspaceRoot: string;
+    readonly rootRelativePath: string;
+    readonly rootAbsolutePath: string;
+  }) =>
+    Effect.gen(function* () {
+      const head = yield* readSourceHead(input.rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
+        Effect.orElseSucceed(() => ""),
+      );
+      const rootDirectory = path.dirname(input.rootAbsolutePath);
+      const dependencies: string[] = [];
+      for (const include of latexPreambleIncludes(head)) {
+        const relative = toPosixPath(
+          path.relative(input.workspaceRoot, path.resolve(rootDirectory, include)),
+        );
+        if (!escapesWorkspaceRoot(relative)) dependencies.push(relative);
+      }
+      return dependencies;
+    });
+
+  /**
+   * Reads what this compile was built from, between the engine's exit and the
+   * publish that makes its PDF the document.
+   *
+   * The ordering is the point. A status poll that lands after the entry says
+   * `succeeded` and before the evidence exists would find a published PDF with
+   * nothing behind it, conclude it cannot be vouched for, and start a rebuild —
+   * on every build of every document, forever. So the evidence is in place
+   * before the state that would be checked against it, and the compile's own
+   * inputs are read the moment the compile stops rather than after a round trip
+   * through the artifact store.
+   */
+  const collectBuildEvidence = (input: {
+    readonly key: string;
+    readonly workspaceRoot: string;
+    readonly rootRelativePath: string;
+    readonly rootAbsolutePath: string;
+    readonly compileDirectory: string;
+    readonly workDirectory: string;
+    readonly recorderManifestPath: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const manifest =
+        input.recorderManifestPath === null
+          ? null
+          : yield* fileSystem.readFileString(input.recorderManifestPath).pipe(
+              Effect.map((contents) =>
+                parseLatexRecorderManifest({
+                  contents,
+                  workspaceRoot: input.workspaceRoot,
+                  compileDirectory: input.compileDirectory,
+                  workDirectory: input.workDirectory,
+                }),
+              ),
+              Effect.orElseSucceed(() => null),
+            );
+      // No recorder output at all — tectonic, or a `.fls` this run did not
+      // write — leaves the preamble scan, which is what there is.
+      const dependencies =
+        manifest === null
+          ? yield* preambleDependencies({
+              workspaceRoot: input.workspaceRoot,
+              rootRelativePath: input.rootRelativePath,
+              rootAbsolutePath: input.rootAbsolutePath,
+            })
+          : manifest.dependencies;
+      const nowEpochMs = yield* Clock.currentTimeMillis;
+      const collected = yield* withPlatform(
+        collectLatexBuildEvidence({
+          workspaceRoot: input.workspaceRoot,
+          rootRelativePath: input.rootRelativePath,
+          dependencies,
+          truncated: manifest?.truncated ?? false,
+          nowEpochMs,
+        }),
+      );
+      yield* Ref.update(evidenceRef, (all) =>
+        new Map(all).set(input.key, { evidence: collected.evidence, marks: collected.marks }),
+      );
+      return collected.evidence;
+    });
+
+  /**
+   * Puts the evidence where the next process start will find it, once the
+   * publish it belongs to has actually stood. Best-effort: a state directory
+   * that cannot be written costs a re-check after restart and nothing else,
+   * because the in-memory copy is already in place.
+   */
+  const persistBuildEvidence = (input: {
+    readonly key: string;
+    readonly generation: number;
+    readonly evidence: LatexBuildEvidence;
+  }) =>
+    Effect.gen(function* () {
+      const settled = yield* getEntry(input.key);
+      // A publish that lost the binding race, or a build already replaced, has
+      // nothing to say about what the document currently shows.
+      if (settled === null || settled.generation !== input.generation) return;
+      if (settled.state !== "succeeded") return;
+      yield* writeFileStringAtomically({
+        filePath: evidenceFilePath(input.key),
+        contents: `${encodeLatexBuildEvidence(input.evidence)}\n`,
+      }).pipe(
+        withPlatform,
+        Effect.catchCause((cause) =>
+          Effect.logDebug("latex build evidence could not be persisted", {
+            logicalDocumentKey: input.key,
+            cause,
+          }),
+        ),
+      );
+    });
+
+  /**
+   * Whether the PDF this document currently shows was built from what is on
+   * disk now. `false` also covers "there is no evidence": a binding written
+   * before this check existed, or one whose evidence file was lost, is not a
+   * PDF anyone can vouch for, so it earns exactly one rebuild — after which
+   * there is evidence and this answers on facts.
+   */
+  const evidenceIsCurrent = (target: ResolvedLatexTarget) =>
+    Effect.gen(function* () {
+      const cached = yield* loadEvidence(target.logicalDocumentKey);
+      if (cached.evidence === null) return false;
+      const probe = yield* withPlatform(
+        probeLatexEvidence({
+          workspaceRoot: target.workspaceRoot,
+          evidence: cached.evidence,
+          marks: cached.marks,
+        }),
+      );
+      yield* Ref.update(evidenceRef, (all) =>
+        new Map(all).set(target.logicalDocumentKey, {
+          evidence: cached.evidence,
+          marks: probe.marks,
+        }),
+      );
+      if (probe.changed) {
+        yield* Effect.logDebug("latex build inputs changed since the published PDF", {
+          logicalDocumentKey: target.logicalDocumentKey,
+          changedPath: probe.changedPath,
+        });
+      }
+      return !probe.changed;
+    });
+
   const compileAndPublish = (key: string, generation: number) =>
     Effect.gen(function* () {
       const entry = yield* getEntry(key);
@@ -946,6 +1154,18 @@ export const make = Effect.gen(function* () {
           });
           return;
         }
+        // A build already replaced or cancelled must not stamp its own
+        // evidence over the one the winner has recorded for its own PDF.
+        if (yield* isSuperseded(key, generation)) return;
+        const evidence = yield* collectBuildEvidence({
+          key,
+          workspaceRoot: entry.workspaceRoot,
+          rootRelativePath: entry.rootRelativePath,
+          rootAbsolutePath,
+          compileDirectory,
+          workDirectory,
+          recorderManifestPath: invocation.recorderManifestPath,
+        });
         yield* publish({
           key,
           generation,
@@ -954,6 +1174,7 @@ export const make = Effect.gen(function* () {
           title: documentTitle(entry.rootRelativePath),
           diagnostics,
         });
+        yield* persistBuildEvidence({ key, generation, evidence });
         return;
       }
     });
@@ -1114,7 +1335,10 @@ export const make = Effect.gen(function* () {
         };
       }
       // A published binding survives restarts, so a document with no in-memory
-      // build can still have a PDF (and a recorded reason it went stale).
+      // build can still have a PDF (and a recorded reason it went stale). What
+      // the binding cannot say is whether that PDF still matches its sources;
+      // `status` puts the `succeeded` answer below through the evidence check
+      // before letting it stand.
       const descriptor = yield* store
         .getDescriptor(LogicalDocumentKey.make(target.logicalDocumentKey))
         .pipe(Effect.orElseSucceed(() => null));
@@ -1132,10 +1356,24 @@ export const make = Effect.gen(function* () {
       };
     });
 
-  const requestBuild = (input: LatexBuildInput) =>
+  /**
+   * Starts one build pass for an already-resolved document, or coalesces into
+   * the one already running. Every caller goes through here — the client's own
+   * request and the freshness check that finds a PDF older than its sources —
+   * so an auto-triggered rebuild takes the same admission permit and the same
+   * `pendingRerun` coalescing as one a reader asked for, and adds no
+   * concurrency of its own.
+   *
+   * `seedDescriptor` is what the reader keeps looking at while the rebuild
+   * runs: on a restart there is no in-memory entry to inherit a descriptor
+   * from, and starting one without it would blank a viewer that has a perfectly
+   * good — if stale — PDF to show.
+   */
+  const startBuild = (
+    target: ResolvedLatexTarget,
+    seedDescriptor: PdfSourceDescriptor | null = null,
+  ) =>
     Effect.gen(function* () {
-      const target = yield* resolveTarget("build", input);
-      if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
       const startedAtEpochMs = yield* Clock.currentTimeMillis;
       // Claimed before the entry is written, so the build this call may start
       // is the only one that owns the entry from here on.
@@ -1157,7 +1395,7 @@ export const make = Effect.gen(function* () {
           // Last finished diagnostics and descriptor stay visible while the new
           // build runs; they are replaced only when it produces its own.
           diagnostics: current?.diagnostics ?? [],
-          descriptor: current?.descriptor ?? null,
+          descriptor: current?.descriptor ?? seedDescriptor,
           failureSummary: current?.failureSummary ?? null,
           startedAtEpochMs,
           finishedAtEpochMs: null,
@@ -1175,11 +1413,37 @@ export const make = Effect.gen(function* () {
       return yield* readEntrySnapshot(target.logicalDocumentKey);
     });
 
+  const requestBuild = (input: LatexBuildInput) =>
+    Effect.gen(function* () {
+      const target = yield* resolveTarget("build", input);
+      if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
+      return yield* startBuild(target);
+    });
+
   const status = (input: LatexBuildInput) =>
     Effect.gen(function* () {
       const target = yield* resolveTarget("status", input);
+      if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
       const entry = yield* getEntry(target.logicalDocumentKey);
-      if (entry === null || target.failureSummary !== null) return yield* syntheticSnapshot(target);
+      if (entry === null) {
+        const restored = yield* syntheticSnapshot(target);
+        // A binding that outlived this process says a PDF was published once,
+        // not that it still matches the sources. Nothing in the request carries
+        // a revision, so the only honest answer comes from the files: report
+        // `succeeded` when the evidence still holds, and otherwise say the
+        // document is building — which is true, because it is started here.
+        if (restored.state !== "succeeded") return restored;
+        if (yield* evidenceIsCurrent(target)) return restored;
+        return yield* startBuild(target, restored.descriptor);
+      }
+      // Only a finished, successful entry can be wrong about being current: an
+      // active one is already going to answer with its own compile, and a
+      // failed one is already telling the reader not to trust what it shows.
+      if (entry.state === "succeeded" && !entry.pendingRerun) {
+        if (!(yield* evidenceIsCurrent(target))) {
+          return yield* startBuild(target, entry.descriptor);
+        }
+      }
       return yield* withToolchain(entry);
     });
 

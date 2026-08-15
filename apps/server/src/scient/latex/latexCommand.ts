@@ -57,6 +57,15 @@ export interface LatexInvocation {
   readonly args: ReadonlyArray<string>;
   /** Where the engine leaves the PDF for this invocation. */
   readonly pdfPath: string;
+  /**
+   * Where the engine leaves its recorder output — the `INPUT`/`OUTPUT` list of
+   * every file the run touched, which is what tells the caller whether a
+   * published PDF still matches its sources. `latexmk` passes `-recorder` by
+   * default and writes `<jobname>.fls` beside the other aux files; tectonic has
+   * no equivalent, so it is `null` there and the caller falls back to what it
+   * can read out of the document itself.
+   */
+  readonly recorderManifestPath: string | null;
 }
 
 function pdfBaseName(rootRelativePath: string): string {
@@ -81,9 +90,8 @@ export function buildLatexInvocation(input: {
    */
   readonly forceReprocess?: boolean | undefined;
 }): LatexInvocation {
-  const pdfPath = `${input.workDirectory}/${pdfBaseName(
-    input.rootAbsolutePath.replaceAll("\\", "/"),
-  )}.pdf`;
+  const jobName = pdfBaseName(input.rootAbsolutePath.replaceAll("\\", "/"));
+  const pdfPath = `${input.workDirectory}/${jobName}.pdf`;
 
   if (input.toolchain.kind === "tectonic") {
     // tectonic keeps no cross-run decision state of its own; every run is a run.
@@ -91,6 +99,7 @@ export function buildLatexInvocation(input: {
       command: input.toolchain.executable,
       args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootAbsolutePath],
       pdfPath,
+      recorderManifestPath: null,
     };
   }
 
@@ -107,5 +116,6 @@ export function buildLatexInvocation(input: {
       input.rootAbsolutePath,
     ],
     pdfPath,
+    recorderManifestPath: `${input.workDirectory}/${jobName}.fls`,
   };
 }
