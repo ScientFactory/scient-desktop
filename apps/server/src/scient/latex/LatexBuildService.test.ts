@@ -12,6 +12,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -219,6 +220,15 @@ const makeHarness = (input: {
    * fetching anything.
    */
   readonly missingFiles?: ReadonlyArray<string>;
+  /**
+   * Runs inside `beginProduction`, after the store has claimed the binding and
+   * before the caller ever sees the handle. That gap is a real window in the
+   * service — a cancel landing in it finds no production to release — and this
+   * is the only way to stand inside it deterministically. The argument is the
+   * 1-based attempt, so a test can let the first build through and park the
+   * second.
+   */
+  readonly beginProductionGate?: (attempt: number) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -314,6 +324,32 @@ const makeHarness = (input: {
         ),
     });
 
+    const realStoreLayer = storeLayer.pipe(Layer.provide(serverEnvironment));
+    const beginProductionGate = input.beginProductionGate;
+    const gatedStoreLayer =
+      beginProductionGate === undefined
+        ? realStoreLayer
+        : Layer.effect(
+            GeneratedDocumentStore,
+            Effect.gen(function* () {
+              const underlying = yield* GeneratedDocumentStore;
+              const attempts = yield* Ref.make(0);
+              return GeneratedDocumentStore.of({
+                ...underlying,
+                beginProduction: (request) =>
+                  underlying
+                    .beginProduction(request)
+                    .pipe(
+                      Effect.tap(() =>
+                        Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+                          Effect.flatMap(beginProductionGate),
+                        ),
+                      ),
+                    ),
+              });
+            }),
+          ).pipe(Layer.provide(realStoreLayer));
+
     const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
       Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
@@ -323,7 +359,7 @@ const makeHarness = (input: {
           LatexToolchain.of({ probe: () => Effect.succeed(input.toolchain ?? LATEXMK) }),
         ),
       ),
-      Layer.provideMerge(storeLayer.pipe(Layer.provide(serverEnvironment))),
+      Layer.provideMerge(gatedStoreLayer),
       Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -1033,6 +1069,155 @@ describe("LatexBuildService", () => {
         );
         expect(bound).toMatchObject({ bindingStatus: "stale", revisionId: publishedRevision });
       }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("releases the binding when a cancel lands inside the beginProduction window", () =>
+    Effect.gen(function* () {
+      // The window: `beginProduction` has claimed the binding and marked it
+      // `producing`, and the handle has not yet reached the entry. A cancel
+      // arriving here reads `entry.production === null`, finds nothing to
+      // release, and leaves — and the binding sits in `producing` until the
+      // next build or a restart reconciles it. Nothing in the viewer moves
+      // while it does.
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("never-runs") }],
+        beginProductionGate: () =>
+          Deferred.succeed(reached, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.asVoid,
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+
+        // Every binding transition, in order. `getDescriptor` cannot report
+        // `producing` — it calls anything not stale current — so the change
+        // stream is the only honest observer of the state this leaks into.
+        const changes = yield* Queue.unbounded<string>();
+        yield* Effect.forkScoped(
+          store.changes.pipe(Stream.runForEach((change) => Queue.offer(changes, change.status))),
+        );
+        const nextChange = Queue.take(changes).pipe(Effect.timeoutOption(Duration.seconds(5)));
+
+        // A document with no published PDF, so the claim is the whole of the
+        // binding's state and shows up under its own name.
+        yield* service.requestBuild(harness.buildInput);
+        yield* Deferred.await(reached);
+        expect(yield* nextChange).toStrictEqual(Option.some("producing"));
+
+        // Parked inside `beginProduction`: the store has claimed the binding
+        // and the service has not been handed the receipt, so this cancel
+        // reads `entry.production === null` and has nothing to release.
+        const cancelled = yield* service.cancel(harness.buildInput);
+        expect(cancelled.state).toBe("cancelled");
+        yield* Deferred.succeed(release, undefined);
+
+        // The build fiber comes back to a cancelled entry and releases what it
+        // claimed. Without that nothing further is ever published here and the
+        // binding sits in `producing` until the next build or a restart.
+        const settled = yield* nextChange;
+        expect(Option.isSome(settled)).toBe(true);
+        if (Option.isSome(settled)) expect(settled.value).not.toBe("producing");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("leaves a good PDF current when a build dies of something that is not the document", () =>
+    Effect.gen(function* () {
+      // Everything that reaches the unexpected-failure handler is
+      // infrastructure — a full disk, a state directory that vanished, a
+      // defect in this service — and none of it is a claim about the sources.
+      // Staling on it puts "out of date" over a PDF that matches its inputs
+      // perfectly, and tells the reader to distrust the one thing that was
+      // never at fault. Here the fake engine runs out of compiles, which dies
+      // exactly the way an infrastructure defect does.
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("good") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+        yield* service.requestBuild(harness.buildInput);
+        const succeeded = yield* awaitTerminal(service, harness.buildInput);
+        expect(succeeded.state).toBe("succeeded");
+        const publishedRevision =
+          succeeded.descriptor?._tag === "generated-pdf" ? succeeded.descriptor.revisionId : null;
+        expect(publishedRevision).not.toBeNull();
+
+        yield* service.requestBuild(harness.buildInput);
+        const failed = yield* awaitTerminal(service, harness.buildInput);
+
+        // The build itself still reports failure, with its own reason: that
+        // part was always true and is the half the reader acts on.
+        expect(failed.state).toBe("failed");
+        expect(failed.failureSummary).toBe("The LaTeX build could not be completed.");
+        expect(failed.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(true);
+        // The binding is the half that must not move. `abandonProduction`
+        // releases the attempt without discrediting the revision it was
+        // replacing, so the reader keeps a PDF that is still exactly its
+        // sources rather than one labelled stale by a full disk.
+        const bound = yield* store.getDescriptor(
+          LogicalDocumentKey.make(failed.logicalDocumentKey),
+        );
+        expect(bound).toMatchObject({ bindingStatus: "current", revisionId: publishedRevision });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("does not stale a published PDF when shutdown interrupts a build in flight", () =>
+    Effect.gen(function* () {
+      // `buildScope` closing on shutdown interrupts every in-flight build
+      // fiber, and an interrupt arrives at the same handler a defect does.
+      // Reading it as a build outcome meant a server stopped mid-compile came
+      // back up with its last good PDF marked out of date, on the strength of
+      // nothing but its own shutdown.
+      const hold = yield* Deferred.make<void>();
+      const first = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("published") },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("interrupted"), hold },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(first.buildInput);
+        expect((yield* awaitTerminal(service, first.buildInput)).state).toBe("succeeded");
+        yield* awaitPersistedEvidence(first.latexDir);
+
+        // A second build, parked in the engine, is what shutdown lands on.
+        yield* service.requestBuild(first.buildInput);
+        yield* Queue.take(first.started);
+        // Leaving this scope closes the service layer, whose finalizer closes
+        // `buildScope` and interrupts that fiber — the real shutdown path.
+      }).pipe(Effect.provide(first.serviceLayer));
+
+      const restarted = yield* makeHarness({
+        reuse: { workspaceRoot: first.workspaceRoot, baseDir: first.baseDir },
+        compiles: [],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+        const restored = yield* service.status(restarted.buildInput);
+
+        // The PDF from before the shutdown is still the document, and still
+        // says so: the interrupted attempt was reconciled at startup rather
+        // than recorded as a verdict on the sources.
+        expect(restored.state).toBe("succeeded");
+        expect(restored.descriptor).toMatchObject({ bindingStatus: "current" });
+        const bound = yield* store.getDescriptor(
+          LogicalDocumentKey.make(restored.logicalDocumentKey),
+        );
+        expect(bound).toMatchObject({ bindingStatus: "current" });
+        // Answered from the evidence on disk; this harness has no compiles.
+        expect(yield* Ref.get(restarted.startCount)).toBe(0);
+      }).pipe(Effect.provide(restarted.serviceLayer));
+
+      yield* Deferred.succeed(hold, undefined);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

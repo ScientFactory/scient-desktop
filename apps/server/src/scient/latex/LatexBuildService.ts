@@ -37,6 +37,7 @@ import type {
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -67,6 +68,7 @@ import {
   collectLatexBuildEvidence,
   decodeLatexBuildEvidence,
   encodeLatexBuildEvidence,
+  latexEvidenceMatches,
   probeLatexEvidence,
   type LatexBuildEvidence,
   type LatexEvidenceMarks,
@@ -541,6 +543,24 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Releases a production without discrediting the sources it was reading.
+   *
+   * The distinction from `recordStoreFailure` is the whole point: failing a
+   * production stales whatever PDF is currently published, and staling is a
+   * statement about the sources — "what you are looking at no longer matches
+   * them". A cancel, a supersession, and an infrastructure error are none of
+   * them that, so they end here instead. Idempotent in the store, so any
+   * number of paths may run it for the same handle.
+   */
+  const recordStoreAbandon = (production: GeneratedDocumentProductionHandle, reason: string) =>
+    store.abandonProduction({ ...production, reason }).pipe(
+      Effect.asVoid,
+      Effect.catch((error) =>
+        Effect.logWarning("latex build production could not be released", { error }),
+      ),
+    );
+
   const recordFailure = (input: {
     readonly key: string;
     readonly generation: number;
@@ -890,6 +910,15 @@ export const make = Effect.gen(function* () {
       // A publish that lost the binding race, or a build already replaced, has
       // nothing to say about what the document currently shows.
       if (settled === null || settled.generation !== input.generation) return;
+      // The narrow window this accepts: a cancel landing after `publish` won
+      // the binding settles the entry `cancelled`, and abandoning the
+      // production leaves that fresh revision current at its new generation.
+      // So the binding is right, the PDF is right, and the evidence for it is
+      // never written — the document earns one spurious rebuild the first time
+      // it is polled after a restart, and that rebuild records the evidence.
+      // One extra compile in a race a reader caused deliberately is a better
+      // trade than persisting evidence for an entry that did not settle
+      // `succeeded`, which would risk vouching for a PDF that never published.
       if (settled.state !== "succeeded") return;
       yield* writeFileStringAtomically({
         filePath: evidenceFilePath(input.key),
@@ -929,13 +958,45 @@ export const make = Effect.gen(function* () {
           marks: probe.marks,
         }),
       );
-      if (probe.changed) {
-        yield* Effect.logDebug("latex build inputs changed since the published PDF", {
+      if (!probe.changed) return true;
+      // The probe is a fast path — one `stat` per dependency and a hash only
+      // where that leaves the question open — and it is the only thing standing
+      // between a status poll and a full compile. Before spending one, re-read
+      // the identity of every dependency the slow way and check that the two
+      // agree. When they do not, the probe was wrong about this poll, and
+      // rebuilding would not change what the next poll sees: the same
+      // disagreement, the same rebuild, once every 1.5 seconds for as long as
+      // whatever caused it lasts. This one comparison is what bounds that at a
+      // single rebuild.
+      const recollected = yield* withPlatform(
+        collectLatexBuildEvidence({
+          workspaceRoot: target.workspaceRoot,
+          rootRelativePath: cached.evidence.rootRelativePath,
+          dependencies: cached.evidence.dependencies.map((dependency) => dependency.path),
+          truncated: cached.evidence.truncated,
+          nowEpochMs: cached.evidence.recordedAtEpochMs,
+        }),
+      );
+      if (latexEvidenceMatches(recollected.evidence, cached.evidence)) {
+        yield* Effect.logDebug("latex evidence probe disagreed with a full re-read", {
           logicalDocumentKey: target.logicalDocumentKey,
           changedPath: probe.changedPath,
         });
+        // The freshly verified marks, so the next poll is cheap again rather
+        // than re-entering this path.
+        yield* Ref.update(evidenceRef, (all) =>
+          new Map(all).set(target.logicalDocumentKey, {
+            evidence: cached.evidence,
+            marks: recollected.marks,
+          }),
+        );
+        return true;
       }
-      return !probe.changed;
+      yield* Effect.logDebug("latex build inputs changed since the published PDF", {
+        logicalDocumentKey: target.logicalDocumentKey,
+        changedPath: probe.changedPath,
+      });
+      return false;
     });
 
   const compileAndPublish = (key: string, generation: number) =>
@@ -967,6 +1028,16 @@ export const make = Effect.gen(function* () {
         producerId: LATEX_PRODUCER_ID,
       });
       yield* updateOwnEntry(key, generation, (current) => ({ ...current, production }));
+      // A cancel that landed between `beginProduction` and the write above read
+      // `entry.production === null`, found nothing to release, and left. Without
+      // this the binding would stay `producing` until the next build or a
+      // restart reconciled it — the same window `runProcess` closes around the
+      // spawn, and closed the same way. `abandonProduction` is idempotent, so a
+      // cancel that did reach the handle running it too costs nothing.
+      if (yield* isSuperseded(key, generation)) {
+        yield* recordStoreAbandon(production, CANCELLED_SUMMARY);
+        return;
+      }
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
 
@@ -976,8 +1047,7 @@ export const make = Effect.gen(function* () {
       // errors instead of one honest sentence. Tectonic's engine is XeTeX-based,
       // so only the latexmk path is gated.
       if (toolchain.kind === "latexmk") {
-        const rootHead = yield* fileSystem.readFileString(rootAbsolutePath).pipe(
-          Effect.map((text) => text.slice(0, PREAMBLE_SCAN_HEAD_BYTES)),
+        const rootHead = yield* readSourceHead(rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
           // An unreadable root is the compile's own failure to report.
           Effect.orElseSucceed(() => null),
         );
@@ -1225,12 +1295,25 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
+            // Shutdown closes `buildScope`, which interrupts every in-flight
+            // build fiber straight into this handler. An interrupt is not a
+            // build outcome and has nothing to report: re-raise it untouched
+            // so the fiber dies as interrupted, leaving the entry and the
+            // binding for the store's startup reconciliation to settle.
+            if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause);
             yield* Effect.logWarning("latex build failed", { logicalDocumentKey: key, cause });
             const entry = yield* getEntry(key);
             if (entry === null || entry.generation !== generation) return;
             if (!ACTIVE_STATES.has(entry.state)) return;
             if (entry.production !== null) {
-              yield* recordStoreFailure(entry.production, UNEXPECTED_FAILURE_SUMMARY);
+              // Everything that reaches here is infrastructure — a full disk, a
+              // state directory that vanished, a defect in this service. None
+              // of it is a claim about the document's sources, so the
+              // production is released rather than failed and the PDF the
+              // reader is looking at keeps its `current` binding. The entry
+              // below still reports `failed` with the reason, which is the part
+              // that is actually true.
+              yield* recordStoreAbandon(entry.production, UNEXPECTED_FAILURE_SUMMARY);
             }
             yield* finishBuild(key, generation, (current) => ({
               ...current,
@@ -1499,12 +1582,7 @@ export const make = Effect.gen(function* () {
         // abandoned, not failed: a published PDF stays current instead of
         // being staled by a build the reader chose to stop. Safe to run
         // unconditionally — a handle that lost the binding is a no-op.
-        yield* store.abandonProduction({ ...entry.production, reason: CANCELLED_SUMMARY }).pipe(
-          Effect.asVoid,
-          Effect.catch((error) =>
-            Effect.logWarning("latex build cancellation could not be recorded", { error }),
-          ),
-        );
+        yield* recordStoreAbandon(entry.production, CANCELLED_SUMMARY);
       }
       // Same re-read as `recordFailure`: the snapshot this call returns has to
       // carry whatever the store now says about the binding rather than echo
