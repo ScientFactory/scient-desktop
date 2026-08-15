@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { AssetResource } from "./assets.ts";
+import { AssetCreateUrlResult, AssetResource } from "./assets.ts";
 
 const decodeAssetResource = Schema.decodeUnknownSync(AssetResource);
+const decodeAssetCreateUrlResult = Schema.decodeUnknownSync(AssetCreateUrlResult);
 const decodeLegacyWorkspaceFile = Schema.decodeUnknownSync(
   Schema.TaggedStruct("workspace-file", {
     threadId: Schema.String,
@@ -61,5 +62,46 @@ describe("AssetResource", () => {
     { _tag: "workspace-file", path: "/workspace/paper.pdf" },
   ])("rejects an incomplete workspace locator: %j", (resource) => {
     expect(() => decodeAssetResource(resource)).toThrow();
+  });
+
+  it("accepts exact and HTML-document environment capabilities", () => {
+    expect(
+      decodeAssetResource({
+        _tag: "environment-file",
+        path: "/Users/researcher/report.html",
+        access: "html-document",
+      }),
+    ).toMatchObject({ access: "html-document" });
+    expect(
+      decodeAssetResource({
+        _tag: "environment-file",
+        path: "C:\\Research\\paper.pdf",
+        access: "exact",
+      }),
+    ).toMatchObject({ access: "exact" });
+  });
+
+  it("rejects incomplete or unsafe environment capabilities", () => {
+    expect(() =>
+      decodeAssetResource({ _tag: "environment-file", path: "/tmp/file.txt" }),
+    ).toThrow();
+    expect(() =>
+      decodeAssetResource({
+        _tag: "environment-file",
+        path: "/tmp/file\0.txt",
+        access: "exact",
+      }),
+    ).toThrow();
+  });
+
+  it("allows signed URLs large enough to carry a maximum environment path", () => {
+    const relativeUrl = `/api/assets/${"a".repeat(7_000)}/paper.pdf`;
+    expect(
+      decodeAssetCreateUrlResult({
+        relativeUrl,
+        expiresAt: 1,
+        sourcePath: `/${"p".repeat(4_000)}`,
+      }).relativeUrl,
+    ).toBe(relativeUrl);
   });
 });

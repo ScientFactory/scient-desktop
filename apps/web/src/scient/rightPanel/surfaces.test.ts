@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   normalizeScientRightPanelSurface,
   scientArtifactSurface,
+  scientEnvironmentFileSurface,
   scientRightPanelSurfaceTitle,
   scientSourcePdfSurface,
   scientSourcesSurface,
@@ -59,6 +60,23 @@ describe("Scient right-panel surfaces", () => {
     ).toBeNull();
     expect(
       normalizeScientRightPanelSurface({
+        id: "stale-id",
+        kind: "scient",
+        module: "file",
+        path: "/tmp/figure.svg",
+        line: 0,
+      }),
+    ).toEqual(scientEnvironmentFileSurface({ path: "/tmp/figure.svg", line: 1 }));
+    expect(
+      normalizeScientRightPanelSurface({
+        id: "scient:file:bad",
+        kind: "scient",
+        module: "file",
+        path: "/tmp/bad\0file",
+      }),
+    ).toBeNull();
+    expect(
+      normalizeScientRightPanelSurface({
         id: "scient:artifact:stale-id",
         kind: "scient",
         module: "artifact",
@@ -83,5 +101,22 @@ describe("Scient right-panel surfaces", () => {
       ),
     ).toBe("Paper.pdf");
     expect(scientRightPanelSurfaceTitle(scientArtifactSurface(artifact))).toBe("Figure 1");
+    expect(
+      scientRightPanelSurfaceTitle(
+        scientEnvironmentFileSurface({ path: "C:\\Research\\figures\\result.svg" }),
+      ),
+    ).toBe("result.svg");
+  });
+
+  it("builds stable direct-file descriptors without embedding authorized URLs", () => {
+    const surface = scientEnvironmentFileSurface({ path: "/tmp/results/paper.pdf", line: 42 });
+    expect(surface).toEqual({
+      id: "scient:file:%2Ftmp%2Fresults%2Fpaper.pdf",
+      kind: "scient",
+      module: "file",
+      path: "/tmp/results/paper.pdf",
+      line: 42,
+    });
+    expect(JSON.stringify(surface)).not.toContain("api/assets");
   });
 });

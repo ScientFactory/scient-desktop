@@ -10,6 +10,7 @@ import {
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentFilePath,
   EnvironmentId,
   EventId,
   GitCommandError,
@@ -5351,6 +5352,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertFailure(result, externalLauncherError);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes file preparation and exact asset transport end to end", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-ws-file-open-" });
+      const filePath = path.join(root, "outside-workspace.tsx");
+      const contents = "export const Result = () => <strong>42</strong>;\n";
+      yield* fileSystem.writeFileString(filePath, contents);
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const { prepared, issued } = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const prepared = yield* client[WS_METHODS.filesystemPrepareFileOpen]({
+              path: EnvironmentFilePath.make(filePath),
+            });
+            const issued = yield* client[WS_METHODS.assetsCreateUrl]({
+              resource: {
+                _tag: "environment-file",
+                path: prepared.canonicalPath,
+                access: "exact",
+              },
+            });
+            return { prepared, issued };
+          }),
+        ),
+      );
+      assert.equal(prepared.canonicalPath, yield* fileSystem.realPath(filePath));
+      assert.equal(prepared.presentation.kind, "text");
+      assert.equal(prepared.byteLength, new TextEncoder().encode(contents).byteLength);
+
+      const response = yield* HttpClient.get(issued.relativeUrl);
+      assert.equal(response.status, 200);
+      assert.equal(yield* response.text, contents);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
   );
 
   it.effect("routes websocket rpc git methods", () =>

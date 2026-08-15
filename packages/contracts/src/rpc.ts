@@ -18,6 +18,11 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
+import {
+  EnvironmentFilePrepareError,
+  EnvironmentFilePrepareInput,
+  EnvironmentFilePrepareResult,
+} from "./fileOpening.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
   GitActionProgressEvent,
@@ -256,6 +261,7 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesystemPrepareFileOpen: "filesystem.prepareFileOpen",
   assetsCreateUrl: "assets.createUrl",
 
   // VCS methods
@@ -841,6 +847,12 @@ export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+export const WsFilesystemPrepareFileOpenRpc = Rpc.make(WS_METHODS.filesystemPrepareFileOpen, {
+  payload: EnvironmentFilePrepareInput,
+  success: EnvironmentFilePrepareResult,
+  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
+});
+
 export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -1234,6 +1246,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAnalysisRunsRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemPrepareFileOpenRpc,
   WsAssetsCreateUrlRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

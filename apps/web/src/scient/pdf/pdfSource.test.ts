@@ -12,6 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { createMemoryStorage } from "~/lib/storage";
 
 import {
+  environmentPdfSource,
   pdfSourceAssetResource,
   usePdfSourceState,
   webPdfSourceResolver,
@@ -58,6 +59,52 @@ describe("PDF source resolution", () => {
       cwd: "/workspace",
       relativePath: "reports/paper.pdf",
     });
+  });
+
+  it("resolves direct environment PDFs with stable path identity and exact authorization", () => {
+    const original = environmentPdfSource({
+      environmentId: EnvironmentId.make("environment-1"),
+      canonicalPath: "/Users/researcher/Downloads/Paper.pdf",
+      fileName: "Paper.pdf",
+    });
+    const sameFile = environmentPdfSource({
+      environmentId: EnvironmentId.make("environment-1"),
+      canonicalPath: "/Users/researcher/Downloads/Paper.pdf",
+      fileName: "Paper.pdf",
+    });
+    const otherEnvironment = environmentPdfSource({
+      environmentId: EnvironmentId.make("environment-2"),
+      canonicalPath: "/Users/researcher/Downloads/Paper.pdf",
+      fileName: "Paper.pdf",
+    });
+
+    expect(pdfSourceAssetResource(original)).toEqual({
+      _tag: "environment-file",
+      path: "/Users/researcher/Downloads/Paper.pdf",
+      access: "exact",
+    });
+    expect(original.logicalDocumentKey).toBe(sameFile.logicalDocumentKey);
+    expect(pdfReaderSessionDocumentKey(original)).not.toBe(
+      pdfReaderSessionDocumentKey(otherEnvironment),
+    );
+    expect(original.logicalDocumentKey).not.toContain("/Users/researcher/Downloads/Paper.pdf");
+  });
+
+  it("gives extensionless and unusually long PDFs a valid download filename", () => {
+    const extensionless = environmentPdfSource({
+      environmentId: EnvironmentId.make("environment-1"),
+      canonicalPath: "/outside/paper.data",
+      fileName: "paper.data",
+    });
+    expect(extensionless.fileName).toBe("paper.data.pdf");
+
+    const long = environmentPdfSource({
+      environmentId: EnvironmentId.make("environment-1"),
+      canonicalPath: "/outside/long-paper",
+      fileName: "x".repeat(300),
+    });
+    expect(long.fileName).toHaveLength(255);
+    expect(long.fileName).toMatch(/\.pdf$/u);
   });
 
   it("shares reader state across authorizing threads but isolates environments", () => {

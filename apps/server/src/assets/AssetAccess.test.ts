@@ -14,7 +14,7 @@ import {
   LogicalDocumentKey,
   ProducingOperationId,
 } from "@scientfactory/document-artifacts";
-import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import { AssetPreviewTypeValidationError, EnvironmentFilePath, ThreadId } from "@t3tools/contracts";
 import { ExecutionRunId } from "@scientfactory/execution";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
@@ -688,5 +688,132 @@ describe("AssetAccess", () => {
       expect(error._tag).toBe("AssetProjectFaviconResolutionError");
       expect(error.cause).toBe(resolutionCause);
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues revision-pinned exact capabilities for arbitrary environment files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-exact-file-" });
+      const filePath = path.join(root, "outside workspace", "figure.png");
+      yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+      yield* fileSystem.writeFile(filePath, new Uint8Array([137, 80, 78, 71]));
+
+      const issued = yield* issueAssetUrl({
+        resource: {
+          _tag: "environment-file",
+          path: EnvironmentFilePath.make(filePath),
+          access: "exact",
+        },
+      });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const resolved = yield* resolveAsset(
+        suffix.slice(0, separatorIndex),
+        suffix.slice(separatorIndex + 1),
+      );
+
+      expect(issued.sourcePath).toBe(yield* fileSystem.realPath(filePath));
+      expect(resolved).toMatchObject({
+        kind: "file",
+        path: yield* fileSystem.realPath(filePath),
+        revision: { size: 4 },
+      });
+      expect(yield* resolveAsset(suffix.slice(0, separatorIndex), "sibling.png")).toBeNull();
+
+      const replacementPath = path.join(root, "replacement.png");
+      yield* fileSystem.writeFile(replacementPath, new Uint8Array([137, 80, 78, 71]));
+      yield* fileSystem.remove(filePath);
+      yield* fileSystem.symlink(replacementPath, filePath);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toBeNull();
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("serves an HTML entry and non-hidden local assets without escaping its directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-html-file-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-html-outside-",
+      });
+      const htmlPath = path.join(root, "interactive.html");
+      const scriptPath = path.join(root, "assets", "interactive.js");
+      const dataPath = path.join(root, "data", "measurements.json");
+      yield* fileSystem.makeDirectory(path.dirname(scriptPath), { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(dataPath), { recursive: true });
+      yield* fileSystem.writeFileString(htmlPath, '<script src="assets/interactive.js"></script>');
+      yield* fileSystem.writeFileString(scriptPath, "document.body.dataset.ready = 'true';");
+      yield* fileSystem.writeFileString(dataPath, '{"value":42}');
+      yield* fileSystem.writeFileString(path.join(root, ".env"), "SECRET=value");
+      const outsidePath = path.join(outside, "secret.txt");
+      yield* fileSystem.writeFileString(outsidePath, "secret");
+      yield* fileSystem.symlink(outsidePath, path.join(root, "linked-secret.txt"));
+
+      const issued = yield* issueAssetUrl({
+        resource: {
+          _tag: "environment-file",
+          path: EnvironmentFilePath.make(htmlPath),
+          access: "html-document",
+        },
+      });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "interactive.html")).toMatchObject({
+        path: yield* fileSystem.realPath(htmlPath),
+        cacheControl: "no-store",
+      });
+      expect(yield* resolveAsset(token, "assets/interactive.js")).toMatchObject({
+        path: yield* fileSystem.realPath(scriptPath),
+      });
+      expect(yield* resolveAsset(token, "data/measurements.json")).toMatchObject({
+        path: yield* fileSystem.realPath(dataPath),
+      });
+      expect(yield* resolveAsset(token, ".env")).toBeNull();
+      expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
+      expect(yield* resolveAsset(token, "linked-secret.txt")).toBeNull();
+      expect(yield* resolveAsset(`${token}tampered`, "interactive.html")).toBeNull();
+
+      yield* TestClock.adjust("2 hours");
+      expect(yield* resolveAsset(token, "interactive.html")).not.toBeNull();
+      yield* TestClock.adjust("23 hours");
+      expect(yield* resolveAsset(token, "interactive.html")).toBeNull();
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("rejects relative paths and non-HTML document grants", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-invalid-file-" });
+      const textPath = path.join(root, "notes.txt");
+      yield* fileSystem.writeFileString(textPath, "notes");
+
+      const relative = yield* Effect.flip(
+        issueAssetUrl({
+          resource: {
+            _tag: "environment-file",
+            path: EnvironmentFilePath.make("notes.txt"),
+            access: "exact",
+          },
+        }),
+      );
+      expect(relative._tag).toBe("AssetEnvironmentFilePathValidationError");
+
+      const wrongDocumentType = yield* Effect.flip(
+        issueAssetUrl({
+          resource: {
+            _tag: "environment-file",
+            path: EnvironmentFilePath.make(textPath),
+            access: "html-document",
+          },
+        }),
+      );
+      expect(wrongDocumentType._tag).toBe("AssetEnvironmentFilePathValidationError");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

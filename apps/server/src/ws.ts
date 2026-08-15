@@ -96,6 +96,7 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import { prepareEnvironmentFileOpen } from "./scient/fileOpening/EnvironmentFileOpen.ts";
 import { SCIENT_QUICK_CHAT_SERVER_CAPABILITIES } from "./scient/quickChat/ServerCapability.ts";
 import { ensureScientQuickChatMoveHasNoRunningTerminals } from "./scient/quickChat/MoveCoordinator.ts";
 import { validateScientQuickChatTerminalOpen } from "./scient/quickChat/TerminalPolicy.ts";
@@ -2036,6 +2037,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.filesystemPrepareFileOpen]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemPrepareFileOpen,
+            prepareEnvironmentFileOpen(input),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
@@ -2081,6 +2088,9 @@ const makeWsRpcLayer = (
                 return yield* issueAssetUrl({ resource: input.resource, generatedDocument });
               }
               if (input.resource._tag === "attachment") {
+                return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource._tag === "environment-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }
               if (input.resource._tag === "project-favicon") {

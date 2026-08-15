@@ -56,6 +56,12 @@ environment shares one reader session across threads while identical paths in
 different environments remain isolated. Independent worktrees with different
 paths remain distinct until a later fork feature explicitly maps them.
 
+A direct PDF outside a workspace uses the same rule: its environment authority
+plus a hash of its normalized canonical path forms the logical key, while the
+path itself remains only on the resolvable source descriptor. A file recognized
+by PDF signature without a `.pdf` suffix receives a valid `.pdf` download name
+without changing its logical identity.
+
 The versioned store retains the 100 most recently used document sessions. Writes
 are coalesced and flushed on reader unmount and page teardown. Corrupt entries are
 ignored, and unavailable browser storage degrades to in-memory state without

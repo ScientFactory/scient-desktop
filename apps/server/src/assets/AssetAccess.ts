@@ -8,6 +8,9 @@ import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAnalysisArtifactNotFoundError,
   AssetAttachmentNotFoundError,
+  AssetEnvironmentFileInspectionError,
+  AssetEnvironmentFileNotFoundError,
+  AssetEnvironmentFilePathValidationError,
   AssetGeneratedDocumentAuthorityMismatchError,
   AssetGeneratedDocumentNotFoundError,
   AssetPreviewTypeValidationError,
@@ -58,8 +61,10 @@ export const ASSET_ROUTE_PREFIX = "/api/assets";
 
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
+const ENVIRONMENT_HTML_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
+const ENVIRONMENT_HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -124,6 +129,22 @@ const AssetClaimsSchema = Schema.Union([
     revisionSize: Schema.Number,
     revisionMtimeMs: Schema.NullOr(Schema.Number),
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("environment-file-exact"),
+    path: Schema.String,
+    fileName: Schema.String,
+    expiresAt: Schema.Number,
+    revisionSize: Schema.Number,
+    revisionMtimeMs: Schema.NullOr(Schema.Number),
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("environment-html-document"),
+    baseDirectory: Schema.String,
+    entryFileName: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -135,6 +156,7 @@ export type ResolvedAsset = {
   readonly kind: "file";
   readonly path: string;
   readonly revision?: { readonly size: number; readonly mtimeMs: number | null };
+  readonly cacheControl?: "no-store";
 };
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
@@ -206,6 +228,60 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+const resolveCanonicalEnvironmentDocumentFileForRequest = (input: {
+  readonly baseDirectory: string;
+  readonly relativePath: string;
+}) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const canonicalCandidate = yield* optionOnNotFound(
+      fileSystem.realPath(path.join(input.baseDirectory, input.relativePath)),
+    ).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to resolve environment HTML asset.", {
+          baseDirectory: input.baseDirectory,
+          relativePath: input.relativePath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(canonicalCandidate)) return null;
+    const relative = path.relative(input.baseDirectory, canonicalCandidate.value);
+    if (
+      relative === "" ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      return null;
+    }
+    const info = yield* optionOnNotFound(fileSystem.stat(canonicalCandidate.value)).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File" ? canonicalCandidate.value : null;
+  });
+
+const resolveCanonicalEnvironmentFileForRequest = (canonicalPath: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const resolved = yield* optionOnNotFound(fileSystem.realPath(canonicalPath)).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to resolve exact environment asset.", {
+          canonicalPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(resolved) || resolved.value !== canonicalPath) return null;
+    const info = yield* optionOnNotFound(fileSystem.stat(resolved.value)).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File" ? resolved.value : null;
+  });
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
@@ -216,7 +292,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-  let expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
+  const issuedAt = yield* Clock.currentTimeMillis;
+  let expiresAt = issuedAt + ASSET_TOKEN_TTL_MS;
   let claims: AssetClaims;
   let fileName: string;
   let sourcePath: string | undefined;
@@ -529,6 +606,71 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = resolved.representation.fileName;
       break;
     }
+    case "environment-file": {
+      if (!path.isAbsolute(input.resource.path)) {
+        return yield* new AssetEnvironmentFilePathValidationError({
+          resource: input.resource,
+        });
+      }
+      const canonicalFile = yield* optionOnNotFound(fileSystem.realPath(input.resource.path)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetEnvironmentFileInspectionError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(canonicalFile)) {
+        return yield* new AssetEnvironmentFileNotFoundError({ resource: input.resource });
+      }
+      const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetEnvironmentFileInspectionError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(info) || info.value.type !== "File") {
+        return yield* new AssetEnvironmentFileNotFoundError({ resource: input.resource });
+      }
+      fileName = path.basename(canonicalFile.value);
+      sourcePath = canonicalFile.value;
+      if (input.resource.access === "html-document") {
+        if (!ENVIRONMENT_HTML_EXTENSIONS.has(path.extname(fileName).toLowerCase())) {
+          return yield* new AssetEnvironmentFilePathValidationError({
+            resource: input.resource,
+          });
+        }
+        // Browser tabs cannot replace an expired document token without
+        // reloading and losing interactive state. Keep one normal workday plus
+        // restart headroom while exact file capabilities retain the short TTL.
+        expiresAt = issuedAt + ENVIRONMENT_HTML_TOKEN_TTL_MS;
+        claims = {
+          version: 1,
+          kind: "environment-html-document",
+          baseDirectory: path.dirname(canonicalFile.value),
+          entryFileName: fileName,
+          expiresAt,
+        };
+      } else {
+        claims = {
+          version: 1,
+          kind: "environment-file-exact",
+          path: canonicalFile.value,
+          fileName,
+          expiresAt,
+          revisionSize: Number(info.value.size),
+          revisionMtimeMs: Option.match(info.value.mtime, {
+            onNone: () => null,
+            onSome: (mtime) => mtime.getTime(),
+          }),
+        };
+      }
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -631,6 +773,44 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         mtimeMs: claims.revisionMtimeMs,
       },
     } satisfies ResolvedAsset;
+  }
+
+  if (claims.kind === "environment-file-exact") {
+    const decodedPath = decodeRelativePath(relativePath);
+    if (decodedPath === null || decodedPath !== claims.fileName) return null;
+    const canonicalFile = yield* resolveCanonicalEnvironmentFileForRequest(claims.path);
+    if (canonicalFile === null) return null;
+    return {
+      kind: "file",
+      path: canonicalFile,
+      revision: {
+        size: claims.revisionSize,
+        mtimeMs: claims.revisionMtimeMs,
+      },
+    } satisfies ResolvedAsset;
+  }
+
+  if (claims.kind === "environment-html-document") {
+    const decodedPath = decodeRelativePath(relativePath);
+    if (decodedPath === null) return null;
+    const path = yield* Path.Path;
+    const segments = decodedPath.split(/[\\/]/u);
+    if (
+      decodedPath.length === 0 ||
+      decodedPath.includes("\0") ||
+      path.isAbsolute(decodedPath) ||
+      segments.some((segment) => segment === "" || segment === "." || segment === "..") ||
+      (decodedPath !== claims.entryFileName && segments.some((segment) => segment.startsWith(".")))
+    ) {
+      return null;
+    }
+    const documentFile = yield* resolveCanonicalEnvironmentDocumentFileForRequest({
+      baseDirectory: claims.baseDirectory,
+      relativePath: decodedPath,
+    });
+    return documentFile
+      ? ({ kind: "file", path: documentFile, cacheControl: "no-store" } satisfies ResolvedAsset)
+      : null;
   }
 
   const decodedPath = decodeRelativePath(relativePath);

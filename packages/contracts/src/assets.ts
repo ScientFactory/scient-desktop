@@ -7,11 +7,16 @@ import { AnalysisArtifactResourceRef } from "@scientfactory/analysis";
 import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentFilePath } from "./fileOpening.ts";
 import { ProjectFaviconPath } from "./orchestration.ts";
 
-const ASSET_PATH_MAX_LENGTH = 1024;
+const WORKSPACE_ASSET_PATH_MAX_LENGTH = 1_024;
+const ENVIRONMENT_ASSET_PATH_MAX_LENGTH = 4_096;
+const ASSET_RELATIVE_URL_MAX_LENGTH = 32_768;
 
-const WorkspaceFilePath = TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH));
+const WorkspaceFilePath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH),
+);
 
 const WorkspaceFileAssetResource = Schema.TaggedStruct("workspace-file", {
   // SCIENT-WORKSPACE-ASSET: cwd + relativePath are the document locator.
@@ -46,7 +51,7 @@ export const AssetResource = Schema.Union([
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
   Schema.TaggedStruct("project-favicon", {
-    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH)),
     // A cache-key hint only. The server reads the authoritative path from the
     // project projection before it issues the signed URL.
     path: Schema.optional(ProjectFaviconPath),
@@ -59,6 +64,10 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("analysis-artifact", {
     ...AnalysisArtifactResourceRef.fields,
   }),
+  Schema.TaggedStruct("environment-file", {
+    path: EnvironmentFilePath,
+    access: Schema.Literals(["exact", "html-document"]),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -68,10 +77,13 @@ export const AssetCreateUrlInput = Schema.Struct({
 export type AssetCreateUrlInput = typeof AssetCreateUrlInput.Type;
 
 export const AssetCreateUrlResult = Schema.Struct({
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  // Environment-file claims contain the canonical path in their signed token.
+  // The URL can therefore be longer than the path itself after JSON/base64url
+  // encoding, especially for non-ASCII Windows paths.
+  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_RELATIVE_URL_MAX_LENGTH)),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
   ),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
@@ -284,6 +296,40 @@ export class AssetSigningKeyLoadError extends Schema.TaggedErrorClass<AssetSigni
   }
 }
 
+export class AssetEnvironmentFilePathValidationError extends Schema.TaggedErrorClass<AssetEnvironmentFilePathValidationError>()(
+  "AssetEnvironmentFilePathValidationError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "The environment file path is not valid for this preview.";
+  }
+}
+
+export class AssetEnvironmentFileInspectionError extends Schema.TaggedErrorClass<AssetEnvironmentFileInspectionError>()(
+  "AssetEnvironmentFileInspectionError",
+  {
+    resource: AssetResource,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to inspect the environment file.";
+  }
+}
+
+export class AssetEnvironmentFileNotFoundError extends Schema.TaggedErrorClass<AssetEnvironmentFileNotFoundError>()(
+  "AssetEnvironmentFileNotFoundError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "The environment file was not found.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -302,6 +348,9 @@ export const AssetAccessError = Schema.Union([
   AssetGeneratedDocumentResolutionError,
   AssetAnalysisArtifactNotFoundError,
   AssetAnalysisArtifactResolutionError,
+  AssetEnvironmentFilePathValidationError,
+  AssetEnvironmentFileInspectionError,
+  AssetEnvironmentFileNotFoundError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

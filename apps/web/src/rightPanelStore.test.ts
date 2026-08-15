@@ -13,7 +13,11 @@ import {
   updatePullRequestTabStatus,
   useRightPanelStore,
 } from "./rightPanelStore";
-import { scientSourcePdfSurface, scientSourcesSurface } from "./scient/rightPanel/surfaces";
+import {
+  scientEnvironmentFileSurface,
+  scientSourcePdfSurface,
+  scientSourcesSurface,
+} from "./scient/rightPanel/surfaces";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
@@ -361,6 +365,29 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "scient:sources",
       surfaces: [{ id: "scient:sources", kind: "scient", module: "sources" }],
+    });
+  });
+
+  it("refreshes an existing Scient file surface when its reveal target changes", () => {
+    useRightPanelStore
+      .getState()
+      .openScient(refA, scientEnvironmentFileSurface({ path: "/tmp/results.tsx", line: 12 }));
+    useRightPanelStore
+      .getState()
+      .openScient(refA, scientEnvironmentFileSurface({ path: "/tmp/results.tsx", line: 48 }));
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "scient:file:%2Ftmp%2Fresults.tsx",
+      surfaces: [
+        {
+          id: "scient:file:%2Ftmp%2Fresults.tsx",
+          kind: "scient",
+          module: "file",
+          path: "/tmp/results.tsx",
+          line: 48,
+        },
+      ],
     });
   });
 

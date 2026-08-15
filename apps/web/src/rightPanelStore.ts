@@ -420,9 +420,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         })),
       openScient: (ref, surface) =>
         set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, surface),
-          ),
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const next = upsertSurface(current, surface);
+            if (!current.surfaces.some((entry) => entry.id === surface.id)) return next;
+            return {
+              ...next,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === surface.id ? surface : entry,
+              ),
+            };
+          }),
         })),
       openScientArtifact: (ref, artifact) =>
         set((state) => ({

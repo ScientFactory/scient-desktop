@@ -1,0 +1,50 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Static audit for the inherited chat/view seam.
+import * as NodeFS from "node:fs";
+
+import { describe, expect, it } from "vite-plus/test";
+
+const chatMarkdownSource = NodeFS.readFileSync(
+  new URL("../../components/ChatMarkdown.tsx", import.meta.url),
+  "utf8",
+);
+const chatViewSource = NodeFS.readFileSync(
+  new URL("../../components/ChatView.tsx", import.meta.url),
+  "utf8",
+);
+const environmentPreviewSource = NodeFS.readFileSync(
+  new URL("./EnvironmentFilePreview.tsx", import.meta.url),
+  "utf8",
+);
+const htmlPreviewSource = NodeFS.readFileSync(
+  new URL("./openEnvironmentFileInPreview.ts", import.meta.url),
+  "utf8",
+);
+
+describe("universal chat-file opening seam", () => {
+  it("keeps workspace files on the inherited file surface and sends other files to Scient", () => {
+    expect(chatMarkdownSource).toContain(
+      "useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line);",
+    );
+    expect(chatMarkdownSource).toContain("scientEnvironmentFileSurface({ path: filePath");
+    expect(chatMarkdownSource).not.toContain("if (!threadRef || !workspaceRelativePath)");
+  });
+
+  it("routes HTML through the integrated Browser with an explicit document capability", () => {
+    expect(chatMarkdownSource).toContain("openEnvironmentHtmlInPreview(fileLinkMeta.filePath)");
+    expect(
+      chatMarkdownSource.match(/handleOpenInFilePreview\(\);/gu)?.length,
+    ).toBeGreaterThanOrEqual(3);
+    expect(htmlPreviewSource).toContain('access: "html-document"');
+    expect(htmlPreviewSource).toContain("openUrlInPreview({");
+  });
+
+  it("mounts one lazy Scient-owned file panel without widening the inherited file editor", () => {
+    expect(chatViewSource).toContain(
+      '() => import("../scient/fileOpening/EnvironmentFilePreview")',
+    );
+    expect(chatViewSource.match(/<EnvironmentFilePreview/gu)).toHaveLength(1);
+    expect(environmentPreviewSource).toContain("environmentFilePreparation({");
+    expect(environmentPreviewSource).toContain("fileLinkWorkspaceRoot={null}");
+    expect(environmentPreviewSource).not.toContain("projects.writeFile");
+  });
+});
