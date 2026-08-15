@@ -1297,7 +1297,7 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("reports the binding it just staled when it cancels a build that owned one", () =>
+  it.live("keeps the published PDF current when it cancels a rebuild", () =>
     Effect.gen(function* () {
       const hold = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
@@ -1319,13 +1319,46 @@ describe("LatexBuildService", () => {
 
         expect(cancelled.state).toBe("cancelled");
         expect(cancelled.failureSummary).toBe("Build cancelled.");
-        // The store recorded the cancel against the binding, so the snapshot
-        // that reports the cancel has to carry that status, not the `current`
-        // one the descriptor was holding when the build started.
+        // A cancel says nothing about the sources: the attempt is abandoned,
+        // not failed, so the PDF that did compile keeps its standing instead
+        // of being staled by a build the reader chose to stop.
         expect(cancelled.descriptor).toMatchObject({
-          bindingStatus: "stale",
-          staleReason: "Build cancelled.",
+          bindingStatus: "current",
+          staleReason: null,
         });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("refuses a document that names an engine the lane cannot drive", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [],
+        files: {
+          "main.tex": [
+            "% !TEX program = xelatex",
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "x",
+            "\\end{document}",
+            "",
+          ].join("\n"),
+        },
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        // One honest sentence instead of pages of pdfLaTeX macro errors —
+        // and no engine run at all.
+        expect(finished.state).toBe("failed");
+        expect(finished.failureSummary).toContain("XeLaTeX");
+        expect(
+          finished.diagnostics.some((diagnostic) => diagnostic.message.includes("pdfLaTeX")),
+        ).toBe(true);
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

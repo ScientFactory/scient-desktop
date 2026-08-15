@@ -72,6 +72,7 @@ import {
   type LatexEvidenceMarks,
 } from "./latexBuildEvidence.ts";
 import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
+import { evaluateLatexEngineGate } from "./latexEngineGate.ts";
 import { parseLatexLog, summarizeLatexFailure, transcriptFailureDiagnostic } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
 import { latexPreambleIncludes, latexPreamblePackages } from "./latexPreamble.ts";
@@ -968,6 +969,40 @@ export const make = Effect.gen(function* () {
       yield* updateOwnEntry(key, generation, (current) => ({ ...current, production }));
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
+
+      // A document that names another engine is refused before anything runs.
+      // `latexmk -pdf` drives pdfLaTeX, and handing it a fontspec or
+      // `% !TEX program = xelatex` document yields pages of confusing macro
+      // errors instead of one honest sentence. Tectonic's engine is XeTeX-based,
+      // so only the latexmk path is gated.
+      if (toolchain.kind === "latexmk") {
+        const rootHead = yield* fileSystem.readFileString(rootAbsolutePath).pipe(
+          Effect.map((text) => text.slice(0, PREAMBLE_SCAN_HEAD_BYTES)),
+          // An unreadable root is the compile's own failure to report.
+          Effect.orElseSucceed(() => null),
+        );
+        const verdict = rootHead === null ? null : evaluateLatexEngineGate({ rootText: rootHead });
+        if (verdict !== null && !verdict.supported) {
+          yield* recordFailure({
+            key,
+            generation,
+            production,
+            summary: verdict.message,
+            diagnostics: [
+              {
+                severity: "error",
+                file: entry.rootRelativePath,
+                line: null,
+                // The gate's message already names the engine and quotes the
+                // line that asked for it.
+                message: verdict.message,
+              },
+            ],
+          });
+          return;
+        }
+      }
+
       const invocation = buildLatexInvocation({
         toolchain: {
           kind: toolchain.kind,
@@ -1460,11 +1495,20 @@ export const make = Effect.gen(function* () {
       }));
       if (entry.handle !== null) yield* entry.handle.cancel.pipe(Effect.ignoreCause({ log: true }));
       if (entry.production !== null) {
-        yield* recordStoreFailure(entry.production, CANCELLED_SUMMARY);
+        // A cancel says nothing about the sources, so the production is
+        // abandoned, not failed: a published PDF stays current instead of
+        // being staled by a build the reader chose to stop. Safe to run
+        // unconditionally — a handle that lost the binding is a no-op.
+        yield* store.abandonProduction({ ...entry.production, reason: CANCELLED_SUMMARY }).pipe(
+          Effect.asVoid,
+          Effect.catch((error) =>
+            Effect.logWarning("latex build cancellation could not be recorded", { error }),
+          ),
+        );
       }
-      // Same re-read as `recordFailure`: cancelling a build that owned the
-      // binding marks it stale in the store, and the snapshot this call returns
-      // has to say so rather than echo the `current` status it was holding.
+      // Same re-read as `recordFailure`: the snapshot this call returns has to
+      // carry whatever the store now says about the binding rather than echo
+      // the status it was holding before the cancel.
       const descriptor = yield* store
         .getDescriptor(LogicalDocumentKey.make(target.logicalDocumentKey))
         .pipe(Effect.orElseSucceed(() => null));
