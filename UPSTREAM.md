@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260814-7e01d33f.md`](docs/internals/t3-upstream-sync-20260814-7e01d33f.md)
+[`docs/internals/t3-upstream-sync-20260815-8c628f14.md`](docs/internals/t3-upstream-sync-20260815-8c628f14.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `7e01d33f0eeb9435299791392d546756cc09c5d3` into the refresh
+checkpoint `8c628f14993cb159d467e7a0f8c52578dde77005` into the refresh
 branch, preserving the complete contiguous range after the previously
-integrated tip `5304f3e9d4c912bfa0eb2f5f41fa109b3646236b`. Later observed T3
+integrated tip `7e01d33f0eeb9435299791392d546756cc09c5d3`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -148,6 +148,17 @@ keeps its approved relevant-versus-other server grouping on top of T3's deeper
 server probe, preserves General Chat and Sources, and adds the existing PDF
 canvas runtime to T3's new native external/unpack authority so packaged PDF
 behavior is not lost.
+
+The 2026-08-15 sync through `8c628f14` receives 22 official commits: mobile
+composer, update, Live Activity, and active-turn reliability; desktop updater
+and Windows server-tree improvements; remote-editor opening; terminal, git,
+timestamp, pull-request, titlebar, tooltip, color, and input fixes. Scient
+keeps its identity, projectless General Chat environment routing, provider and
+PDF runtimes, publication gates, and owned release workflow. T3's AUR package
+sources remain as inert ancestry, but Scient does not enable the AUR workflow
+or advertise AUR distribution. The merge also supplies the Scient secret-store
+composition required by T3's new agent-awareness path and preserves the PDF
+canvas native external in the new Windows `server.asar` layout.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
