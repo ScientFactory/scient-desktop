@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,12 +40,12 @@ const spawnFailure = (command: string) =>
     }),
   );
 
-/** Only the win32 slot matters here: the tests pin the platform to match. */
+/** Only the win32-x64 slot matters here: the tests pin the platform and architecture to match. */
 const MANAGED_EXECUTABLE_RELATIVE_PATH = "TinyTeX/bin/windows/latexmk.exe";
 const testManifest: TinyTexManifest = {
   version: "2026.08",
   assets: {
-    win32: {
+    "win32-x64": {
       fileName: "TinyTeX-1-windows.exe",
       url: "https://github.com/rstudio/tinytex-releases/releases/download/v2026.08/TinyTeX-1-windows.exe",
       sha256: "0".repeat(64),
@@ -53,8 +53,11 @@ const testManifest: TinyTexManifest = {
       archive: "seven-zip-sfx",
       executableRelativePath: MANAGED_EXECUTABLE_RELATIVE_PATH,
     },
-    darwin: null,
-    linux: null,
+    "win32-arm64": null,
+    "darwin-x64": null,
+    "darwin-arm64": null,
+    "linux-x64": null,
+    "linux-arm64": null,
   },
 };
 
@@ -104,6 +107,7 @@ const harness = (
         Layer.provide(config),
         Layer.provide(NodeServices.layer),
         Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+        Layer.provide(Layer.succeed(HostProcessArchitecture, "x64")),
         Layer.provide(Layer.succeed(TinyTexManifestRef, testManifest)),
       ),
       calls,

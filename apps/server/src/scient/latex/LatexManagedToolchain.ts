@@ -19,7 +19,7 @@ import * as NodeCrypto from "node:crypto";
 
 import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
 import { ScientLatexManagedInstallFailureReason } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -40,6 +40,7 @@ import * as LatexArchiveUnpacker from "./LatexArchiveUnpacker.ts";
 import { LatexPackageInstaller, clearFailedPackageSearches } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import {
+  decodeManagedLatexInstallRecord,
   encodeManagedLatexInstallRecord,
   managedLatexInstallRoot,
   managedLatexPaths,
@@ -81,6 +82,8 @@ const DOWNLOAD_TIMEOUT = "10 minutes";
 const INSTALL_TIMEOUT = "45 minutes";
 /** Progress is republished per megabyte; a poll every 1.5s cannot see finer. */
 const PROGRESS_STEP_BYTES = 1024 * 1024;
+/** Matches {@link managedLatexInstallRoot}'s naming, so cleanup only ever touches install directories. */
+const MANAGED_INSTALL_DIR_PREFIX = "tinytex-";
 
 /**
  * The two collections that make an ordinary paper compile on the first try.
@@ -176,7 +179,9 @@ export const make = Effect.gen(function* () {
   const toolchain = yield* LatexToolchain;
   const packageInstaller = yield* LatexPackageInstaller;
   const platform = yield* HostProcessPlatform;
-  const asset = resolveTinyTexAsset(platform, manifest);
+  const architecture = yield* HostProcessArchitecture;
+  const assetLookup = resolveTinyTexAsset(platform, architecture, manifest);
+  const asset = assetLookup.supported ? assetLookup.asset : null;
   const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
   // The install runs on a fiber whose callers hold no context, so the atomic
   // write helper's own services are captured here.
@@ -420,6 +425,56 @@ export const make = Effect.gen(function* () {
     );
 
   /**
+   * Removes managed install directories nothing points to any more.
+   *
+   * `promote` deliberately never deletes the tree it supersedes — the whole
+   * point of landing every install in a fresh directory is that an install
+   * which fails after this point leaves the previous, working tree
+   * untouched. But left alone forever, that same carefulness means every
+   * reinstall leaves one more copy of TinyTeX on disk, and nothing ever
+   * reclaims it. This is that reclaiming, run once a promotion has already
+   * succeeded and the state file already names the new tree as current: it
+   * lists what is actually on disk, keeps only the tree just promoted and
+   * whatever the state file names right now (read fresh, not merely trusted
+   * from this run, so a state file changed out from under this call is still
+   * honored), and best-effort removes everything else. A removal that fails
+   * — a locked `latexmk.exe` still running out of an old tree, a permissions
+   * hiccup, anything — is silently tolerated rather than surfaced: the whole
+   * reason `promote` never removed that tree itself is that a failed removal
+   * must never become this install's problem, and an orphaned directory left
+   * for the next cleanup to try again is a fully acceptable outcome.
+   */
+  const cleanupSupersededInstalls = (promotedRoot: string) =>
+    Effect.gen(function* () {
+      const contents = yield* fileSystem
+        .readFileString(paths.statePath)
+        .pipe(Effect.orElseSucceed(() => null));
+      const committedRoot =
+        contents === null
+          ? promotedRoot
+          : yield* decodeManagedLatexInstallRecord(contents).pipe(
+              Effect.map((record) => record.root),
+              Effect.orElseSucceed(() => promotedRoot),
+            );
+      const keep = new Set([promotedRoot, committedRoot]);
+      const entries = yield* fileSystem
+        .readDirectory(paths.managedRoot)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      yield* Effect.forEach(
+        entries.filter((entry) => entry.startsWith(MANAGED_INSTALL_DIR_PREFIX)),
+        (entry) =>
+          Effect.gen(function* () {
+            const candidate = path.join(paths.managedRoot, entry);
+            if (keep.has(candidate)) return;
+            yield* fileSystem
+              .remove(candidate, { recursive: true, force: true })
+              .pipe(Effect.ignoreCause());
+          }),
+        { discard: true },
+      );
+    }).pipe(Effect.ignoreCause());
+
+  /**
    * Fetches the collections an ordinary document needs, while the card still
    * says the install is running. Everything here is best effort: the engine is
    * already in place and every build resolves what it is missing on its own, so
@@ -458,7 +513,9 @@ export const make = Effect.gen(function* () {
         yield* unpack({ asset: installable, archivePath, payloadPath });
         const installRoot = yield* promote({ payloadPath, version: manifest.version });
         // The engine is in place and recorded from here on; everything after
-        // this point can only add to a working install.
+        // this point can only add to a working install. Superseded installs
+        // are reclaimed now, best-effort, rather than left to accumulate.
+        yield* cleanupSupersededInstalls(installRoot);
         return yield* preinstallCollections(
           path.dirname(path.join(installRoot, installable.executableRelativePath)),
         );
@@ -538,6 +595,12 @@ export const make = Effect.gen(function* () {
       const current = yield* Ref.get(stateRef);
       if (isActiveManagedInstallPhase(current.state)) return current;
       if (asset === null) {
+        if (!assetLookup.supported) {
+          yield* Effect.logWarning("scient latex managed install unsupported", {
+            platformArch: assetLookup.platformArch,
+            message: assetLookup.message,
+          });
+        }
         return yield* publish((existing) => ({
           ...existing,
           state: "failed",

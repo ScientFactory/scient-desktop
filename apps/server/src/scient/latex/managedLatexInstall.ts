@@ -6,7 +6,7 @@
  * layout lives here rather than in either of them: neither has to know how the
  * other is wired, and the probe stays free of any dependency on the installer.
  */
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -115,8 +115,10 @@ export const readManagedLatexInstall = Effect.fn("scient.latex.readManagedLatexI
     const path = yield* Path.Path;
     const config = yield* ServerConfig.ServerConfig;
     const platform = yield* HostProcessPlatform;
-    const asset = resolveTinyTexAsset(platform, yield* TinyTexManifestRef);
-    if (asset === null) return null;
+    const architecture = yield* HostProcessArchitecture;
+    const lookup = resolveTinyTexAsset(platform, architecture, yield* TinyTexManifestRef);
+    if (!lookup.supported) return null;
+    const asset = lookup.asset;
 
     const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
     const contents = yield* fileSystem

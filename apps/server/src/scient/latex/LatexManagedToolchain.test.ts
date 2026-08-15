@@ -4,7 +4,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -33,7 +33,11 @@ import {
 } from "./LatexPackageInstaller.ts";
 import { LatexToolchain, make as makeToolchain } from "./LatexToolchain.ts";
 import { decodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
-import { TinyTexManifestRef, type TinyTexManifest } from "./tinytexManifest.ts";
+import {
+  TinyTexManifestRef,
+  type TinyTexManifest,
+  type TinyTexPlatformArch,
+} from "./tinytexManifest.ts";
 
 const VERSION = "2026.08";
 const EXECUTABLE_RELATIVE_PATH = "TinyTeX/bin/windows/latexmk.exe";
@@ -96,7 +100,8 @@ const startArtifactServer = (options: { readonly hold?: boolean } = {}) =>
 const manifestFor = (input: {
   readonly url: string;
   readonly sha256?: string;
-  readonly platform?: "win32" | "darwin";
+  /** Which pair the fixture asset is pinned for; every other pair stays null. */
+  readonly platformArch?: TinyTexPlatformArch;
 }): TinyTexManifest => {
   const asset = {
     fileName: "TinyTeX-1-windows.exe",
@@ -106,7 +111,19 @@ const manifestFor = (input: {
     archive: "seven-zip-sfx" as const,
     executableRelativePath: EXECUTABLE_RELATIVE_PATH,
   };
-  return { version: VERSION, assets: { win32: asset, darwin: null, linux: null } };
+  const platformArch = input.platformArch ?? "win32-x64";
+  return {
+    version: VERSION,
+    assets: {
+      "win32-x64": null,
+      "win32-arm64": null,
+      "darwin-x64": null,
+      "darwin-arm64": null,
+      "linux-x64": null,
+      "linux-arm64": null,
+      [platformArch]: asset,
+    },
+  };
 };
 
 const processOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
@@ -182,6 +199,7 @@ const unpackerLayer = (input: {
 const makeHarness = (input: {
   readonly manifest: TinyTexManifest;
   readonly platform?: NodeJS.Platform;
+  readonly arch?: NodeJS.Architecture;
   readonly unsupportedArchive?: boolean;
   /** The eager collections fetch; everything asked for lands unless a test says otherwise. */
   readonly installPackages?: (
@@ -231,6 +249,7 @@ const makeHarness = (input: {
       Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(Layer.succeed(HostProcessPlatform, input.platform ?? "win32")),
+      Layer.provide(Layer.succeed(HostProcessArchitecture, input.arch ?? "x64")),
       Layer.provide(Layer.succeed(TinyTexManifestRef, input.manifest)),
     );
 
@@ -438,13 +457,56 @@ describe("LatexManagedToolchain", () => {
         expect((yield* awaitInstall(managed)).state).toBe("ready");
         const second = yield* currentInstallRoot(harness.paths.statePath);
 
-        // Reusing the path would mean removing a tree an engine may be running
-        // out of — a removal Windows refuses halfway, leaving no install at
-        // all. The old one is left whole and the state file is what moves.
+        // Promoting the second install never reuses the first's path — removing
+        // a tree in place is how a working install gets destroyed if an engine
+        // still has it open, a removal Windows refuses halfway. The new tree
+        // lands beside the old one and only the state file's pointer moves.
         expect(second).not.toBe(first);
-        expect(yield* fileSystem.exists(path.join(first, EXECUTABLE_RELATIVE_PATH))).toBe(true);
         expect(yield* fileSystem.exists(path.join(second, EXECUTABLE_RELATIVE_PATH))).toBe(true);
         expect(yield* stagingEntries(harness.paths.stagingRoot)).toEqual([]);
+        // What happens to the old tree afterward is the deferred cleanup's job
+        // (exercised on its own below): by the time the second install reports
+        // itself ready, cleanup has already run and nothing in this fake
+        // filesystem was holding the old tree open, so it is gone.
+        expect(yield* fileSystem.exists(path.join(first, EXECUTABLE_RELATIVE_PATH))).toBe(false);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("reclaims superseded managed installs after a successful promotion", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({ manifest: manifestFor({ url: server.handle.url }) });
+
+      yield* Effect.gen(function* () {
+        // Two directories from installs this run never made — as if this
+        // machine already had leftovers from earlier versions before cleanup
+        // existed. Fake, not produced by an install, on purpose: cleanup must
+        // reclaim whatever is on disk, not merely what this run remembers.
+        const staleA = path.join(harness.paths.managedRoot, "tinytex-2026.06-aaaaaaaa");
+        const staleB = path.join(harness.paths.managedRoot, "tinytex-2026.07-bbbbbbbb");
+        yield* fileSystem.makeDirectory(staleA, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(staleA, "marker"), "old");
+        yield* fileSystem.makeDirectory(staleB, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(staleB, "marker"), "older");
+
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+        expect((yield* awaitInstall(managed)).state).toBe("ready");
+        const current = yield* currentInstallRoot(harness.paths.statePath);
+
+        // Both fakes are gone, and only the tree the state file now names is
+        // left — nothing here trusts what this run remembers over what the
+        // state file actually says.
+        expect(yield* fileSystem.exists(staleA)).toBe(false);
+        expect(yield* fileSystem.exists(staleB)).toBe(false);
+        expect(yield* fileSystem.exists(path.join(current, EXECUTABLE_RELATIVE_PATH))).toBe(true);
+
+        const entries = yield* fileSystem.readDirectory(harness.paths.managedRoot);
+        const versionDirectories = entries.filter((entry) => entry.startsWith("tinytex-"));
+        expect(versionDirectories).toEqual([path.join(current).split(/[\\/]/u).at(-1)]);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -514,6 +576,32 @@ describe("LatexManagedToolchain", () => {
         expect(server.handle.requests()).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live(
+    "refuses on an architecture Scient has pinned nothing for, even on a pinned platform",
+    () =>
+      Effect.gen(function* () {
+        // win32-x64 is pinned; win32-arm64 is not. The platform matching is not
+        // enough on its own — an Arm64 Windows machine must never be told it can
+        // install the x64 bundle.
+        const server = yield* startArtifactServer();
+        const harness = yield* makeHarness({
+          manifest: manifestFor({ url: server.handle.url, platformArch: "win32-x64" }),
+          platform: "win32",
+          arch: "arm64",
+        });
+
+        yield* Effect.gen(function* () {
+          const managed = yield* LatexManagedToolchain;
+          expect(managed.canInstall).toBe(false);
+          const refused = yield* managed.install;
+
+          expect(refused.state).toBe("failed");
+          expect(refused.failureReason).toBe("unsupported-platform");
+          expect(server.handle.requests()).toBe(0);
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.live("reports an archive it has no way to expand", () =>
