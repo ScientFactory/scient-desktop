@@ -23,6 +23,12 @@ export const SCIENT_RELEASE_NOTES = [
           "Open a saved .m file, connect your existing MATLAB installation, follow its output and errors, and stop or revisit runs without leaving Scient.",
       },
       {
+        id: "latex-editing-and-preview",
+        title: "Edit and preview LaTeX documents",
+        description:
+          "Open a .tex file to edit the source, compile it, and preview the generated PDF side by side. Scient reports compiler errors and warnings, keeps build files out of your project, and can install TinyTeX automatically on Windows x64 when no LaTeX installation is available.",
+      },
+      {
         id: "matlab-results-and-figures",
         title: "Keep figures and results with each run",
         description:
