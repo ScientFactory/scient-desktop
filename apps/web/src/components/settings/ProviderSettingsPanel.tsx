@@ -68,6 +68,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ProviderConnectionDialog } from "../../scient/providerConnection/ProviderConnectionDialog";
@@ -681,31 +682,41 @@ export function EnvironmentProviderSettings({
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
             {!readOnly ? (
               <>
-                <Button
-                  aria-label="Add provider instance"
-                  className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => setIsAddInstanceDialogOpen(true)}
-                  size="xs"
-                  variant="ghost"
-                >
-                  <PlusIcon className="size-3" />
-                  Add provider
-                </Button>
-                <Button
-                  aria-label="Refresh provider status"
-                  className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  disabled={isRefreshingProviders}
-                  onClick={() => void refreshProviders()}
-                  size="xs"
-                  variant="ghost"
-                >
-                  {isRefreshingProviders ? (
-                    <LoaderIcon className="size-3 animate-spin" />
-                  ) : (
-                    <RefreshCwIcon className="size-3" />
-                  )}
-                  Refresh
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-micro"
+                        variant="ghost-muted"
+                        onClick={() => setIsAddInstanceDialogOpen(true)}
+                        aria-label="Add provider instance"
+                      >
+                        <PlusIcon className="size-3" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Add provider instance</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-micro"
+                        variant="ghost-muted"
+                        disabled={isRefreshingProviders}
+                        onClick={() => void refreshProviders()}
+                        aria-label="Refresh provider status"
+                      >
+                        {isRefreshingProviders ? (
+                          <LoaderIcon className="size-3 animate-spin" />
+                        ) : (
+                          <RefreshCwIcon className="size-3" />
+                        )}
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Refresh provider status</TooltipPopup>
+                </Tooltip>
               </>
             ) : null}
           </div>

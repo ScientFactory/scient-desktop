@@ -35,12 +35,6 @@ macOS:
 brew install --cask t3-code
 ```
 
-Arch Linux:
-
-```bash
-yay -S t3code-bin
-```
-
 ## Providers
 
 Scient drives provider-owned tools. In the local desktop app, **Choose your AI** can privately

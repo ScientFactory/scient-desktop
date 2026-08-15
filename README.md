@@ -115,12 +115,6 @@ winget install T3Tools.T3Code
 brew install --cask t3-code
 ```
 
-#### Arch Linux (AUR)
-
-```bash
-yay -S t3code-bin
-```
-
 ## Some notes
 
 We are very very early in this project. Expect bugs.
