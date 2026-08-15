@@ -13,6 +13,7 @@ import {
   ProducingOperationId,
 } from "./contracts.ts";
 import {
+  abandonDocumentProduction,
   beginDocumentProduction,
   completeDocumentProduction,
   failDocumentProduction,
@@ -148,5 +149,191 @@ describe("document artifact bindings", () => {
     const json = encodeSourceDescriptor(descriptor);
     expect(json).not.toContain("function");
     expect(decodeSourceDescriptor(json)).toEqual(descriptor);
+  });
+});
+
+const accepted = (transition: ReturnType<typeof beginDocumentProduction>) => {
+  if (transition._tag !== "Accepted") throw new Error("expected an accepted transition");
+  return transition.binding;
+};
+
+const revisionOne = {
+  artifactId: identity.artifactId,
+  revisionId: ArtifactRevisionId.make("revision-a"),
+};
+
+/** A production started with no revision ever published for this document. */
+const producingWithoutRevision = () =>
+  accepted(beginDocumentProduction(null, { ...identity, nowEpochMs: 1 }));
+
+/** A rebuild running over an already published revision. */
+const publishedBinding = () =>
+  accepted(
+    completeDocumentProduction(producingWithoutRevision(), {
+      generation: identity.generation,
+      operationId: identity.operationId,
+      producerId: identity.producerId,
+      revision: revisionOne,
+      nowEpochMs: 2,
+    }),
+  );
+
+const rebuildIdentity = {
+  ...identity,
+  generation: BindingGeneration.make(2),
+  operationId: ProducingOperationId.make("build-2"),
+};
+
+const rebuildingOverRevision = () =>
+  accepted(beginDocumentProduction(publishedBinding(), { ...rebuildIdentity, nowEpochMs: 3 }));
+
+describe("abandoning a document production", () => {
+  it("settles a never-published document to unbound without a failure", () => {
+    const abandoned = abandonDocumentProduction(producingWithoutRevision(), {
+      generation: identity.generation,
+      operationId: identity.operationId,
+      producerId: identity.producerId,
+      reason: "Cancelled by the requester.",
+      nowEpochMs: 5,
+    });
+    expect(abandoned).toMatchObject({
+      _tag: "Accepted",
+      binding: {
+        status: "unbound",
+        activeRevision: null,
+        lastSuccessfulRevision: null,
+        staleReason: null,
+        latestAttempt: { state: "abandoned", failureReason: "Cancelled by the requester." },
+      },
+    });
+  });
+
+  it("keeps a published revision current instead of staling it like a failure", () => {
+    const rebuilding = rebuildingOverRevision();
+    const abandoned = abandonDocumentProduction(rebuilding, {
+      generation: rebuildIdentity.generation,
+      operationId: rebuildIdentity.operationId,
+      producerId: rebuildIdentity.producerId,
+      reason: "Superseded by a newer edit.",
+      nowEpochMs: 6,
+    });
+    expect(abandoned).toMatchObject({
+      _tag: "Accepted",
+      binding: {
+        status: "current",
+        activeRevision: revisionOne,
+        lastSuccessfulRevision: revisionOne,
+        staleReason: null,
+        latestAttempt: { state: "abandoned" },
+      },
+    });
+
+    // The same interruption routed through failProduction discredits the inputs.
+    expect(
+      failDocumentProduction(rebuilding, {
+        generation: rebuildIdentity.generation,
+        operationId: rebuildIdentity.operationId,
+        producerId: rebuildIdentity.producerId,
+        reason: "Superseded by a newer edit.",
+        nowEpochMs: 6,
+      }),
+    ).toMatchObject({
+      _tag: "Accepted",
+      binding: { status: "stale", staleReason: "Superseded by a newer edit." },
+    });
+  });
+
+  it("is a no-op for every binding whose latest attempt is no longer running", () => {
+    const published = publishedBinding();
+    const failedRebuild = accepted(
+      failDocumentProduction(rebuildingOverRevision(), {
+        ...rebuildIdentity,
+        reason: "Compilation failed.",
+        nowEpochMs: 4,
+      }),
+    );
+    const failedFirstProduction = accepted(
+      failDocumentProduction(producingWithoutRevision(), {
+        ...identity,
+        reason: "Compilation failed.",
+        nowEpochMs: 4,
+      }),
+    );
+    const alreadyUnbound = accepted(
+      abandonDocumentProduction(producingWithoutRevision(), {
+        ...identity,
+        reason: "Cancelled.",
+        nowEpochMs: 4,
+      }),
+    );
+    const alreadyAbandonedRebuild = accepted(
+      abandonDocumentProduction(rebuildingOverRevision(), {
+        ...rebuildIdentity,
+        reason: "Cancelled.",
+        nowEpochMs: 4,
+      }),
+    );
+
+    const settled = [
+      { label: "succeeded", binding: published, attempt: identity },
+      { label: "failed-after-success", binding: failedRebuild, attempt: rebuildIdentity },
+      { label: "failed-production", binding: failedFirstProduction, attempt: identity },
+      { label: "unbound", binding: alreadyUnbound, attempt: identity },
+      { label: "abandoned-rebuild", binding: alreadyAbandonedRebuild, attempt: rebuildIdentity },
+    ] as const;
+
+    for (const { label, binding, attempt } of settled) {
+      expect(
+        abandonDocumentProduction(binding, {
+          generation: attempt.generation,
+          operationId: attempt.operationId,
+          producerId: attempt.producerId,
+          reason: "Cancelled again.",
+          nowEpochMs: 9,
+        }),
+        label,
+      ).toEqual({ _tag: "Superseded", binding });
+    }
+  });
+
+  it("refuses to release a production it does not own", () => {
+    const rebuilding = rebuildingOverRevision();
+    const mismatches = [
+      { ...rebuildIdentity, generation: identity.generation },
+      { ...rebuildIdentity, operationId: ProducingOperationId.make("build-3") },
+      { ...rebuildIdentity, producerId: ArtifactProducerId.make("another-producer") },
+    ];
+    for (const mismatch of mismatches) {
+      expect(
+        abandonDocumentProduction(rebuilding, {
+          generation: mismatch.generation,
+          operationId: mismatch.operationId,
+          producerId: mismatch.producerId,
+          reason: "Cancelled.",
+          nowEpochMs: 9,
+        }),
+      ).toEqual({ _tag: "Superseded", binding: rebuilding });
+    }
+  });
+
+  it("lets the next production start from an abandoned binding and round-trips it", () => {
+    const abandoned = accepted(
+      abandonDocumentProduction(producingWithoutRevision(), {
+        ...identity,
+        reason: "Cancelled.",
+        nowEpochMs: 4,
+      }),
+    );
+    expect(decodeBinding(encodeBinding(abandoned))).toEqual(abandoned);
+
+    const restarted = accepted(
+      beginDocumentProduction(abandoned, { ...rebuildIdentity, nowEpochMs: 5 }),
+    );
+    expect(restarted).toMatchObject({
+      status: "producing",
+      generation: BindingGeneration.make(2),
+      activeRevision: null,
+      latestAttempt: { state: "running" },
+    });
   });
 });

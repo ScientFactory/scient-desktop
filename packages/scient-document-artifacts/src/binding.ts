@@ -105,6 +105,12 @@ export function completeDocumentProduction(
   };
 }
 
+/**
+ * Records a production whose inputs are discredited: the produced document can
+ * no longer be trusted to match its source, so a surviving revision is marked
+ * stale. Use {@link abandonDocumentProduction} when the attempt merely stopped
+ * mattering.
+ */
 export function failDocumentProduction(
   current: DocumentArtifactBinding,
   input: Pick<ProductionIdentity, "generation" | "operationId" | "producerId"> & {
@@ -128,6 +134,44 @@ export function failDocumentProduction(
         failureReason: input.reason,
       },
       staleReason: input.reason,
+      updatedAtEpochMs: input.nowEpochMs,
+    },
+  };
+}
+
+/**
+ * Releases a production that stopped mattering — cancelled by its requester,
+ * superseded by its own producer, or interrupted by a restart — without
+ * discrediting the inputs.
+ *
+ * The binding returns to the condition it held before the attempt started: a
+ * published revision stays `current` and is never marked stale, and a binding
+ * that never published anything settles to `unbound`. Abandoning a non-running
+ * attempt is a `Superseded` no-op, which makes the transition idempotent.
+ */
+export function abandonDocumentProduction(
+  current: DocumentArtifactBinding,
+  input: Pick<ProductionIdentity, "generation" | "operationId" | "producerId"> & {
+    readonly reason: string;
+    readonly nowEpochMs: number;
+  },
+): BindingTransition {
+  if (!isActiveDocumentProduction(current, input)) {
+    return { _tag: "Superseded", binding: current };
+  }
+  const lastSuccessfulRevision = current.lastSuccessfulRevision;
+  return {
+    _tag: "Accepted",
+    binding: {
+      ...current,
+      status: lastSuccessfulRevision === null ? "unbound" : "current",
+      activeRevision: lastSuccessfulRevision,
+      latestAttempt: {
+        ...current.latestAttempt,
+        state: "abandoned",
+        failureReason: input.reason,
+      },
+      staleReason: null,
       updatedAtEpochMs: input.nowEpochMs,
     },
   };

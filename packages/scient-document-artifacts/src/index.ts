@@ -8,6 +8,8 @@ export {
   BindingGeneration,
   ContentSha256,
   DocumentArtifactBinding,
+  DocumentBindingChange,
+  DocumentBindingChangeKind,
   DocumentProductionAttempt,
   GeneratedDocumentArtifact,
   LogicalDocumentKey,
@@ -20,6 +22,7 @@ export {
   type ResolvedPdfSource,
 } from "./contracts.ts";
 export {
+  abandonDocumentProduction,
   beginDocumentProduction,
   completeDocumentProduction,
   failDocumentProduction,
