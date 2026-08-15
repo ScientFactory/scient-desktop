@@ -109,7 +109,10 @@ import {
 import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
-import { MermaidDiagramCard } from "../scient/diagrams/MermaidDiagramCard";
+import {
+  resolveScientRichFenceKind,
+  ScientRichFence,
+} from "../scient/presentation/ScientRichFence";
 import {
   isScientMathCodeClassName,
   remarkScientMath,
@@ -1754,11 +1757,13 @@ function ChatMarkdown({
         const language = extractFenceLanguage(codeBlock.className);
         const fenceMeta = extractPreCodeMeta(node);
         const fenceTitle = extractFenceTitle(fenceMeta);
-        if (!isStreaming && language.toLowerCase() === "mermaid") {
+        const richFenceKind = !isStreaming ? resolveScientRichFenceKind(language) : null;
+        if (richFenceKind != null) {
           return (
             <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <MermaidDiagramCard
+              <ScientRichFence
                 fenceMeta={fenceMeta}
+                kind={richFenceKind}
                 language={language}
                 source={codeBlock.code}
                 theme={resolvedTheme}

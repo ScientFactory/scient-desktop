@@ -28,6 +28,7 @@ import {
   type MermaidTheme,
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
+import { useNearViewport } from "../presentation/useNearViewport";
 
 import "./scient-diagrams.css";
 
@@ -45,36 +46,6 @@ type DiagramState =
   | { readonly status: "error"; readonly message: string };
 
 type DiagramAction = "copy-source" | "copy-png" | "download-png" | null;
-
-function useNearViewport(): {
-  readonly ref: (node: HTMLDivElement | null) => void;
-  readonly isNearViewport: boolean;
-} {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
-  const [isNearViewport, setNearViewport] = useState(false);
-
-  useEffect(() => {
-    if (element == null || isNearViewport) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setNearViewport(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setNearViewport(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "400px 0px" },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [element, isNearViewport]);
-
-  return { ref: setElement, isNearViewport };
-}
 
 function diagramErrorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.trim().length > 0

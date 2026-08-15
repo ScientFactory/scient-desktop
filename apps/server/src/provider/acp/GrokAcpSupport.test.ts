@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
@@ -17,7 +18,7 @@ describe("resolveGrokAcpBaseModelId", () => {
 });
 
 describe("buildGrokAcpSpawnInput", () => {
-  it("passes the Scient referrer through Grok OAuth env", () => {
+  it("passes the Scient referrer without changing non-chat Grok argv", () => {
     const spawn = buildGrokAcpSpawnInput({ binaryPath: "/usr/local/bin/grok" }, "/tmp/project", {
       XAI_API_KEY: "secret",
       GROK_OAUTH2_REFERRER: "other-client",
@@ -32,6 +33,22 @@ describe("buildGrokAcpSpawnInput", () => {
         GROK_OAUTH2_REFERRER: "t3code",
       },
     });
+  });
+
+  it("adds presentation rules only when the interactive adapter requests them", () => {
+    const spawn = buildGrokAcpSpawnInput(
+      { binaryPath: "/usr/local/bin/grok" },
+      "/tmp/project",
+      undefined,
+      SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+    );
+
+    expect(spawn.args).toEqual([
+      "--rules",
+      SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+      "agent",
+      "stdio",
+    ]);
   });
 });
 

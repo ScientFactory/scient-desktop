@@ -1,18 +1,16 @@
 import type { MermaidTheme } from "./mermaidRuntime";
+import {
+  downloadPresentationBlob,
+  markdownFenceCopySource,
+  presentationFileBaseName,
+} from "../presentation/presentationExport";
 
 const MAX_PNG_DIMENSION = 8_192;
 const MAX_PNG_PIXELS = 16_777_216;
 const DEFAULT_PNG_SCALE = 2;
 
 export function diagramFileBaseName(title: string | null): string {
-  const withoutExtension = title?.replace(/\.[^.]+$/, "") ?? "diagram";
-  const slug = withoutExtension
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-  return slug || "diagram";
+  return presentationFileBaseName(title, "diagram");
 }
 
 export function mermaidMarkdownCopySource(
@@ -20,13 +18,7 @@ export function mermaidMarkdownCopySource(
   language: string,
   fenceMeta: string | undefined,
 ): string {
-  const info = [language || "mermaid", fenceMeta?.trim()].filter(Boolean).join(" ");
-  const longestRun = [...(source.match(/`{3,}/g) ?? [])].reduce(
-    (maximum, run) => Math.max(maximum, run.length),
-    0,
-  );
-  const fence = "`".repeat(Math.max(3, longestRun + 1));
-  return `${fence}${info}\n${source.replace(/\n+$/, "")}\n${fence}\n\n`;
+  return markdownFenceCopySource(source, language || "mermaid", fenceMeta);
 }
 
 export function prepareSvgForExport(svg: string, theme: MermaidTheme): string {
@@ -45,19 +37,7 @@ export function prepareSvgForExport(svg: string, theme: MermaidTheme): string {
 }
 
 export function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
-  try {
-    document.body.append(anchor);
-    anchor.click();
-  } finally {
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-  }
+  downloadPresentationBlob(blob, fileName);
 }
 
 export function downloadMermaidSvg(svg: string, title: string | null, theme: MermaidTheme): void {

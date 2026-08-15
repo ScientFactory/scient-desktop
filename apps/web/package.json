@@ -54,6 +54,10 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "6.0.0",
     "tailwind-merge": "^3.4.0",
+    "vega": "6.3.1",
+    "vega-embed": "7.1.0",
+    "vega-lite": "6.4.3",
+    "vega-tooltip": "1.0.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

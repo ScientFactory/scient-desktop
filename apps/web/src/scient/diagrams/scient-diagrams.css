@@ -6,7 +6,6 @@
 .scient-mermaid-inline svg {
   display: block;
   width: 100%;
-  max-width: 100% !important;
   height: auto;
   margin-inline: auto;
 }
