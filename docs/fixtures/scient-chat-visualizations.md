@@ -121,6 +121,9 @@ viewport at both edges, and show a crosshair over inspectable marks.
 
 ## Bound scientific control
 
+Move the threshold away from `0.5`, change Scient's light/dark appearance, and
+confirm the slider and classification state survive the theme remount.
+
 ```vega-lite
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
@@ -255,6 +258,66 @@ failure or a conflicting-legend warning.
 {"data":{"values":[{"x":"A","y":2},{"x":"B","y":1}]},"mark":"line","encoding":{"x":{"field":"x"},"y":{"field":"y","type":"quantitative"}}}
 ```
 
+## Composed layered-selection compatibility
+
+Both vertically concatenated child charts deliberately leave their layered
+selection unscoped. Each hover must reveal only its own label without a
+duplicate signal error.
+
+```vega-lite title="composed-layered-hover.vl.json"
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Two composed layered charts with independently scoped hover selections.",
+  "vconcat": [
+    {
+      "width": 480,
+      "data": {"values": [{"sample": "A", "value": 4}, {"sample": "B", "value": 7}]},
+      "params": [{"name": "upperHover", "select": {"type": "point", "on": "pointerover", "clear": "pointerout"}}],
+      "layer": [
+        {"mark": "bar", "encoding": {"x": {"field": "sample"}, "y": {"field": "value", "type": "quantitative"}, "opacity": {"condition": {"param": "upperHover", "value": 1}, "value": 0.45}}},
+        {"transform": [{"filter": {"param": "upperHover"}}], "mark": {"type": "text", "dy": -8}, "encoding": {"x": {"field": "sample"}, "y": {"field": "value", "type": "quantitative"}, "text": {"field": "value"}}}
+      ]
+    },
+    {
+      "width": 480,
+      "data": {"values": [{"sample": "C", "value": 3}, {"sample": "D", "value": 6}]},
+      "params": [{"name": "lowerHover", "select": {"type": "point", "on": "pointerover", "clear": "pointerout"}}],
+      "layer": [
+        {"mark": "point", "encoding": {"x": {"field": "sample"}, "y": {"field": "value", "type": "quantitative"}, "size": {"condition": {"param": "lowerHover", "value": 220}, "value": 80}}},
+        {"transform": [{"filter": {"param": "lowerHover"}}], "mark": {"type": "text", "dy": -10}, "encoding": {"x": {"field": "sample"}, "y": {"field": "value", "type": "quantitative"}, "text": {"field": "value"}}}
+      ]
+    }
+  ]
+}
+```
+
+## Faceted authored sizing
+
+This fixed-size facet must preserve its two-column composition rather than
+turning each child into a full-container-width chart.
+
+```vega-lite title="faceted-response.vl.json"
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "A fixed-width faceted response chart used to verify authored composition sizing.",
+  "data": {"values": [
+    {"arm": "Control", "week": 0, "response": 8.0},
+    {"arm": "Control", "week": 4, "response": 7.6},
+    {"arm": "Treatment", "week": 0, "response": 8.1},
+    {"arm": "Treatment", "week": 4, "response": 6.2}
+  ]},
+  "facet": {"column": {"field": "arm", "type": "nominal"}},
+  "spec": {
+    "width": 220,
+    "mark": {"type": "line", "point": true},
+    "encoding": {
+      "x": {"field": "week", "type": "quantitative", "title": "Week"},
+      "y": {"field": "response", "type": "quantitative", "title": "Response"}
+    }
+  }
+}
+```
+
 ## Deliberately malformed JSON
 
 ```vega-lite
@@ -271,4 +334,16 @@ failure or a conflicting-legend warning.
 
 ```vega-lite
 {"data":{"url":"./results.csv"},"mark":"point","encoding":{"x":{"field":"x","type":"quantitative"},"y":{"field":"y","type":"quantitative"}}}
+```
+
+## Deliberately empty source
+
+```vega-lite title="empty.vl.json"
+
+```
+
+## Deliberately unsupported future major
+
+```vega-lite title="future-major.vl.json"
+{"$schema":"https://vega.github.io/schema/vega-lite/v999.json","description":"This must report an unsupported future major without changing its source.","data":{"values":[{"x":"A","y":1}]},"mark":"bar","encoding":{"x":{"field":"x"},"y":{"field":"y","type":"quantitative"}}}
 ```

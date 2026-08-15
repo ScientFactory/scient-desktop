@@ -27,6 +27,25 @@ export interface VegaLiteViewController {
   readonly toSvg: () => Promise<string>;
 }
 
+interface VegaLiteViewMountIdentity {
+  readonly initialState: VegaLiteViewState | null | undefined;
+  readonly parsed: ParsedVegaLiteSource;
+  readonly theme: VegaLiteTheme;
+  readonly title: string;
+}
+
+export function shouldPreserveVegaLiteStateForThemeRemount(
+  current: VegaLiteViewMountIdentity,
+  next: VegaLiteViewMountIdentity,
+): boolean {
+  return (
+    current.parsed === next.parsed &&
+    current.initialState === next.initialState &&
+    current.title === next.title &&
+    current.theme !== next.theme
+  );
+}
+
 interface VegaLiteViewProps extends Omit<
   HTMLAttributes<HTMLDivElement>,
   "children" | "onError" | "title"
@@ -49,9 +68,17 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
     const onErrorRef = useRef(onError);
     const onReadyRef = useRef(onReady);
     const observedWidthRef = useRef<number | null>(null);
+    const preservedThemeStateRef = useRef<VegaLiteViewState | null>(null);
     const resizeQueueRef = useRef<Promise<void>>(Promise.resolve());
     const resizeFrameRef = useRef<number | null>(null);
     const renderPlan = useMemo(() => buildVegaLiteRenderPlan(parsed.spec), [parsed]);
+    const latestMountIdentityRef = useRef<VegaLiteViewMountIdentity>({
+      initialState,
+      parsed,
+      theme,
+      title,
+    });
+    latestMountIdentityRef.current = { initialState, parsed, theme, title };
 
     useEffect(() => {
       onErrorRef.current = onError;
@@ -106,14 +133,29 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
       if (container == null) return;
 
       let disposed = false;
-      container.replaceChildren();
-      void mountVegaLiteView({ container, initialState, parsed, renderPlan, theme, title }).then(
+      const mountIdentity = { initialState, parsed, theme, title };
+      const stateToRestore = preservedThemeStateRef.current ?? initialState;
+      // Embed each generation into a detached-on-cleanup host. A superseded
+      // async embed may still finish, but it can no longer replace the current
+      // generation's DOM while it is being finalized.
+      const mountHost = document.createElement("div");
+      mountHost.className = "w-full";
+      container.replaceChildren(mountHost);
+      void mountVegaLiteView({
+        container: mountHost,
+        initialState: stateToRestore,
+        parsed,
+        renderPlan,
+        theme,
+        title,
+      }).then(
         (mounted) => {
           if (disposed) {
             mounted.result.finalize();
             return;
           }
           mountedRef.current = mounted;
+          preservedThemeStateRef.current = null;
           onReadyRef.current(mounted);
         },
         (cause) => {
@@ -127,9 +169,19 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
 
       return () => {
         disposed = true;
-        mountedRef.current?.result.finalize();
+        const mounted = mountedRef.current;
+        const preserveState = shouldPreserveVegaLiteStateForThemeRemount(
+          mountIdentity,
+          latestMountIdentityRef.current,
+        );
+        if (mounted != null && preserveState) {
+          preservedThemeStateRef.current = mounted.result.view.getState();
+        } else if (!preserveState) {
+          preservedThemeStateRef.current = null;
+        }
+        mounted?.result.finalize();
         mountedRef.current = null;
-        container.replaceChildren();
+        if (mountHost.parentNode === container) mountHost.remove();
       };
     }, [initialState, parsed, renderPlan, theme, title]);
 

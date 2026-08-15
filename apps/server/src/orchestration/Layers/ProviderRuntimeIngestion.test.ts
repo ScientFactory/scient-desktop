@@ -19,7 +19,6 @@ import {
   type OrchestrationCommand,
   ProjectId,
   ProviderItemId,
-  type ServerSettings,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -55,7 +54,9 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
-function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
+type TestServerSettingsOverrides = Parameters<typeof ServerSettingsService.layerTest>[0];
+
+function makeTestServerSettingsLayer(overrides: TestServerSettingsOverrides = {}) {
   return ServerSettingsService.layerTest(overrides);
 }
 
@@ -221,8 +222,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: { serverSettings?: TestServerSettingsOverrides }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
+    const serverBaseDir = makeTempDir("t3-provider-server-");
+    const attachmentsDir = NodePath.join(serverBaseDir, "userdata", "attachments");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -247,7 +250,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -319,6 +322,7 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      attachmentsDir,
     };
   }
 
@@ -2615,6 +2619,111 @@ describe("ProviderRuntimeIngestion", () => {
       );
     });
     expect(completionEvents).toHaveLength(1);
+  });
+
+  it("materializes a generated image and persists it on the terminal assistant message", async () => {
+    const codexHome = makeTempDir("t3-provider-codex-home-");
+    const providerThreadId = "provider-thread-generated-image";
+    const generatedRoot = NodePath.join(codexHome, "generated_images", providerThreadId);
+    NodeFS.mkdirSync(generatedRoot, { recursive: true });
+    const sourcePath = NodePath.join(generatedRoot, "image-call.png");
+    const pngBytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    NodeFS.writeFileSync(sourcePath, pngBytes);
+    const harness = await createHarness({
+      serverSettings: { providers: { codex: { homePath: codexHome } } },
+    });
+    const now = "2026-08-15T00:00:00.000Z";
+    const turnId = asTurnId("turn-generated-image");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-generated-image-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-generated-image"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("image-call"),
+      payload: {
+        itemType: "image_view",
+        status: "completed",
+        title: "Generated image",
+        data: {
+          kind: "scient.codex-generated-image",
+          callId: "image-call",
+          providerThreadId,
+          sourcePath,
+        },
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-generated-image-assistant"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("terminal-image-message"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const withImage = await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message) =>
+          message.id === "assistant:terminal-image-message" &&
+          message.attachments?.length === 1 &&
+          message.streaming === false,
+      ),
+    );
+    const message = withImage.messages.find(
+      (entry) => entry.id === "assistant:terminal-image-message",
+    );
+    expect(message?.text).toBe("");
+    expect(message?.attachments).toHaveLength(1);
+    expect(message?.attachments?.[0]).toMatchObject({
+      type: "image",
+      name: "generated-image.png",
+      mimeType: "image/png",
+      sizeBytes: pngBytes.length,
+    });
+    const attachmentId = message?.attachments?.[0]?.id;
+    expect(attachmentId).toBeDefined();
+    expect(
+      NodeFS.readFileSync(NodePath.join(harness.attachmentsDir, `${attachmentId}.png`)),
+    ).toEqual(pngBytes);
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-generated-image-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+    const completed = await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready",
+    );
+    expect(
+      completed.messages.find((entry) => entry.id === "assistant:terminal-image-message")
+        ?.attachments,
+    ).toHaveLength(1);
   });
 
   it("maps canonical request events into approval activities with requestKind", async () => {

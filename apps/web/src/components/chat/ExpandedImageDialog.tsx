@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useState } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { copyInlineImage, downloadInlineImage } from "~/scient/images/inlineImageActions";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -13,6 +15,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   onClose,
 }: ExpandedImageDialogProps) {
   const [imageOffset, setImageOffset] = useState(0);
+  const [activeAction, setActiveAction] = useState<"copy" | "download" | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
 
   const navigateImage = useCallback((direction: -1 | 1) => {
@@ -44,7 +48,28 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   }, [navigateImage, onClose, preview.images.length]);
 
   const item = preview.images[index];
+  useEffect(() => {
+    setActionMessage(null);
+  }, [item?.src]);
   if (!item) return null;
+
+  const runImageAction = async (action: "copy" | "download") => {
+    setActiveAction(action);
+    setActionMessage(null);
+    try {
+      if (action === "copy") {
+        await copyInlineImage(item.src);
+        setActionMessage("Image copied");
+      } else {
+        await downloadInlineImage(item.src, item.name);
+        setActionMessage("Download started");
+      }
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : `Unable to ${action} the image.`);
+    } finally {
+      setActiveAction(null);
+    }
+  };
 
   return (
     <div
@@ -72,26 +97,73 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         </Button>
       )}
       <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="absolute right-2 top-2"
-          onClick={onClose}
-          aria-label="Close image preview"
-        >
-          <XIcon />
-        </Button>
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md bg-background/85 p-1 shadow-sm backdrop-blur-sm">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Copy image"
+                  disabled={activeAction !== null}
+                  onClick={() => void runImageAction("copy")}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                />
+              }
+            >
+              <CopyIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              {activeAction === "copy" ? "Copying image…" : "Copy image"}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Download image"
+                  disabled={activeAction !== null}
+                  onClick={() => void runImageAction("download")}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                />
+              }
+            >
+              <DownloadIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              {activeAction === "download" ? "Preparing download…" : "Download image"}
+            </TooltipPopup>
+          </Tooltip>
+          <Button
+            aria-label="Close image preview"
+            onClick={onClose}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <XIcon />
+          </Button>
+        </div>
         <img
           src={item.src}
           alt={item.name}
           className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
+          crossOrigin="anonymous"
           draggable={false}
         />
-        <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
-          {item.name}
-          {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
-        </p>
+        <div className="mt-2 max-w-[92vw] text-center text-xs text-white/80">
+          <p className="truncate">
+            {item.name}
+            {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
+          </p>
+          {actionMessage ? (
+            <p aria-live="polite" className="mt-1 text-white/70">
+              {actionMessage}
+            </p>
+          ) : null}
+        </div>
       </div>
       {preview.images.length > 1 && (
         <Button

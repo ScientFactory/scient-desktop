@@ -46,7 +46,6 @@ type ChartStatus =
   | { readonly kind: "idle" | "loading" }
   | {
       readonly kind: "ready";
-      readonly externalResources: ReadonlyArray<string>;
       readonly warnings: ReadonlyArray<string>;
     }
   | { readonly kind: "error"; readonly message: string };
@@ -161,7 +160,7 @@ export function VegaLiteChartCard({
       failureMessage: string,
     ) => {
       const controller = controllerRef.current;
-      if (controller == null) return;
+      if (controller == null || activeAction != null) return;
       setActiveAction(action);
       void operation(controller).then(
         () => {
@@ -175,10 +174,11 @@ export function VegaLiteChartCard({
         },
       );
     },
-    [showPersistentMessage, showTransientMessage],
+    [activeAction, showPersistentMessage, showTransientMessage],
   );
 
   const handleCopySource = useCallback(() => {
+    if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
       showPersistentMessage("Clipboard access is unavailable.");
       return;
@@ -194,7 +194,7 @@ export function VegaLiteChartCard({
         showPersistentMessage("Unable to copy the chart source.");
       },
     );
-  }, [showPersistentMessage, showTransientMessage, source]);
+  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
 
   const handleExpand = useCallback(() => {
     setExpandedState(controllerRef.current?.getState() ?? null);
@@ -212,7 +212,6 @@ export function VegaLiteChartCard({
   const handleReady = useCallback((mounted: MountedVegaLiteView) => {
     setStatus({
       kind: "ready",
-      externalResources: mounted.externalResources,
       warnings: mounted.warnings,
     });
   }, []);
@@ -221,6 +220,7 @@ export function VegaLiteChartCard({
   const visibleStatus: ChartStatus =
     parseError == null ? status : { kind: "error", message: parseError.message };
   const ready = visibleStatus.kind === "ready";
+  const hasNetworkResources = (parsedSource.parsed?.externalResources.length ?? 0) > 0;
 
   return (
     <div
@@ -236,18 +236,29 @@ export function VegaLiteChartCard({
         <span className="min-w-0 flex-1 truncate text-xs font-medium" dir="auto">
           {displayTitle}
         </span>
-        {ready && visibleStatus.externalResources.length > 0 ? (
-          <span className="hidden rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">
-            External data
+        {hasNetworkResources ? (
+          <span
+            className="shrink-0 rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            title="This chart loads HTTP(S) resources from the viewing device"
+          >
+            Network data
           </span>
         ) : null}
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Chart actions">
           {ready ? (
-            <ChartActionButton label="Expand interactive chart" onClick={handleExpand}>
+            <ChartActionButton
+              disabled={activeAction != null}
+              label="Expand interactive chart"
+              onClick={handleExpand}
+            >
               <ExpandIcon className="size-3" />
             </ChartActionButton>
           ) : null}
-          <ChartActionButton label="Copy chart source" onClick={handleCopySource}>
+          <ChartActionButton
+            disabled={activeAction != null}
+            label="Copy chart source"
+            onClick={handleCopySource}
+          >
             {actionMessage === "Source copied" ? (
               <CheckIcon className="size-3" />
             ) : (
@@ -425,13 +436,15 @@ export function VegaLiteChartCard({
         </div>
       ) : null}
 
-      {ready && parsedSource.parsed != null ? (
+      {(ready || expanded) && parsedSource.parsed != null ? (
         <VegaLiteChartDialog
+          exportTitle={title}
           initialState={expandedState}
           onOpenChange={setExpanded}
           onReturnState={handleReturnState}
           open={expanded}
           parsed={parsedSource.parsed}
+          source={source}
           theme={theme}
           title={displayTitle}
         />

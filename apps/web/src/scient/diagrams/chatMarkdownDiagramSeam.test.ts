@@ -15,6 +15,10 @@ const diagramCardSource = NodeFS.readFileSync(
   new URL("./MermaidDiagramCard.tsx", import.meta.url),
   "utf8",
 );
+const diagramDialogSource = NodeFS.readFileSync(
+  new URL("./MermaidDiagramDialog.tsx", import.meta.url),
+  "utf8",
+);
 const diagramStyles = NodeFS.readFileSync(
   new URL("./scient-diagrams.css", import.meta.url),
   "utf8",
@@ -72,5 +76,17 @@ describe("Mermaid inline sizing", () => {
     expect(inlineStyles).toContain("width: 100%");
     expect(inlineStyles).toContain("height: auto");
     expect(inlineStyles).not.toContain("max-width:");
+  });
+});
+
+describe("Mermaid expanded actions", () => {
+  it("keeps source and image exports available while the diagram is expanded", () => {
+    for (const label of ["Copy source", "Download SVG", "Copy image", "Download PNG"]) {
+      expect(diagramDialogSource).toContain(label);
+    }
+    for (const callback of ["onCopySource", "onDownloadSvg", "onCopyPng", "onDownloadPng"]) {
+      expect(diagramCardSource).toContain(callback);
+      expect(diagramDialogSource).toContain(callback);
+    }
   });
 });

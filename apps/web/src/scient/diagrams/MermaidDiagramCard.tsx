@@ -55,10 +55,12 @@ function diagramErrorMessage(cause: unknown): string {
 
 function DiagramActionButton({
   children,
+  disabled,
   label,
   onClick,
 }: {
   readonly children: ReactNode;
+  readonly disabled?: boolean | undefined;
   readonly label: string;
   readonly onClick: () => void;
 }) {
@@ -69,6 +71,7 @@ function DiagramActionButton({
           <Button
             aria-label={label}
             className="chat-markdown-chrome-action"
+            disabled={disabled}
             onClick={onClick}
             size="icon-xs"
             type="button"
@@ -156,6 +159,7 @@ export function MermaidDiagramCard({
   }, []);
 
   const handleCopySource = useCallback(() => {
+    if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
       showPersistentMessage("Clipboard access is unavailable.");
       return;
@@ -172,12 +176,12 @@ export function MermaidDiagramCard({
         showPersistentMessage("Unable to copy the diagram source.");
       },
     );
-  }, [showPersistentMessage, showTransientMessage, source]);
+  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
 
   const readyResult = diagramState.status === "ready" ? diagramState.result : null;
 
   const handleCopyPng = useCallback(() => {
-    if (readyResult == null) return;
+    if (readyResult == null || activeAction != null) return;
     setActiveAction("copy-png");
     void copyMermaidPng(readyResult.svg, theme).then(
       () => {
@@ -190,10 +194,10 @@ export function MermaidDiagramCard({
         showPersistentMessage("Copy image is unavailable. You can download the PNG instead.");
       },
     );
-  }, [readyResult, showPersistentMessage, showTransientMessage, theme]);
+  }, [activeAction, readyResult, showPersistentMessage, showTransientMessage, theme]);
 
   const handleDownloadPng = useCallback(() => {
-    if (readyResult == null) return;
+    if (readyResult == null || activeAction != null) return;
     setActiveAction("download-png");
     void downloadMermaidPng(readyResult.svg, title, theme).then(
       () => setActiveAction(null),
@@ -203,17 +207,17 @@ export function MermaidDiagramCard({
         showPersistentMessage("Unable to create the PNG image.");
       },
     );
-  }, [readyResult, showPersistentMessage, theme, title]);
+  }, [activeAction, readyResult, showPersistentMessage, theme, title]);
 
   const handleDownloadSvg = useCallback(() => {
-    if (readyResult == null) return;
+    if (readyResult == null || activeAction != null) return;
     try {
       downloadMermaidSvg(readyResult.svg, title, theme);
     } catch (cause) {
       console.error("[scient-diagrams] Failed to download Mermaid SVG", cause);
       showPersistentMessage("Unable to download the SVG image.");
     }
-  }, [readyResult, showPersistentMessage, theme, title]);
+  }, [activeAction, readyResult, showPersistentMessage, theme, title]);
 
   return (
     <div
@@ -236,11 +240,19 @@ export function MermaidDiagramCard({
         ) : null}
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Diagram actions">
           {readyResult != null ? (
-            <DiagramActionButton label="Expand diagram" onClick={() => setExpanded(true)}>
+            <DiagramActionButton
+              disabled={activeAction != null}
+              label="Expand diagram"
+              onClick={() => setExpanded(true)}
+            >
               <ExpandIcon className="size-3" />
             </DiagramActionButton>
           ) : null}
-          <DiagramActionButton label="Copy diagram source" onClick={handleCopySource}>
+          <DiagramActionButton
+            disabled={activeAction != null}
+            label="Copy diagram source"
+            onClick={handleCopySource}
+          >
             {actionMessage === "Source copied" ? (
               <CheckIcon className="size-3" />
             ) : (
@@ -299,7 +311,7 @@ export function MermaidDiagramCard({
         </span>
       </div>
 
-      {actionMessage != null ? (
+      {actionMessage != null && !expanded ? (
         <div
           aria-live="polite"
           className="border-b border-border/40 bg-background/45 px-3 py-1.5 text-muted-foreground text-xs"
@@ -354,6 +366,12 @@ export function MermaidDiagramCard({
 
       {readyResult != null ? (
         <MermaidDiagramDialog
+          actionMessage={actionMessage}
+          activeAction={activeAction}
+          onCopyPng={handleCopyPng}
+          onCopySource={handleCopySource}
+          onDownloadPng={handleDownloadPng}
+          onDownloadSvg={handleDownloadSvg}
           onOpenChange={setExpanded}
           open={expanded}
           svg={readyResult.svg}

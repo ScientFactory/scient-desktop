@@ -120,6 +120,38 @@ const moveQuickChatCommand = {
 };
 
 it.layer(NodeServices.layer)("decider projectless threads", (it) => {
+  it.effect("carries assistant attachments into the canonical message event", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-assistant-image-complete"),
+          threadId: ThreadId.make("thread-general"),
+          messageId: MessageId.make("assistant-image"),
+          attachments: [
+            {
+              type: "image",
+              id: "thread-general-11111111-1111-4111-8111-111111111111",
+              name: "generated-image.png",
+              mimeType: "image/png",
+              sizeBytes: 12,
+            },
+          ],
+          createdAt: now,
+        },
+        readModel: relocationReadModel(),
+      });
+      const event = Array.isArray(result) ? result[0] : result;
+
+      expect(event.type).toBe("thread.message-sent");
+      if (event.type === "thread.message-sent") {
+        expect(event.payload.role).toBe("assistant");
+        expect(event.payload.attachments).toHaveLength(1);
+        expect(event.payload.attachments?.[0]?.name).toBe("generated-image.png");
+      }
+    }),
+  );
+
   it.effect("creates a thread with an explicit environment workspace root", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({

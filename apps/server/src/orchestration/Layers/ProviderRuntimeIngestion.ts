@@ -1,6 +1,8 @@
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
+  CodexSettings,
+  type ChatImageAttachment,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -18,6 +20,8 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  ProviderInstanceId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -26,6 +30,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -43,6 +49,17 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ServerConfig } from "../../config.ts";
+import { resolveCodexHomeLayout } from "../../provider/Drivers/CodexHomeLayout.ts";
+import {
+  codexGeneratedImageArtifactFromActivityPayload,
+  codexGeneratedImageArtifactFromRuntimeEvent,
+  type CodexGeneratedImageArtifact,
+} from "../../provider/codexGeneratedImages.ts";
+import {
+  cleanupStaleGeneratedImageAttachmentTemps,
+  materializeGeneratedImageAttachment,
+} from "../../generatedImageAttachments.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -88,6 +105,13 @@ interface AssistantSegmentState {
   activeMessageId: MessageId | null;
 }
 
+interface PendingGeneratedImages {
+  readonly attachments: ReadonlyArray<ChatImageAttachment>;
+  readonly failedProvenanceKeys: ReadonlySet<string>;
+  readonly omittedProvenanceKeys: ReadonlySet<string>;
+  readonly seenProvenanceKeys: ReadonlySet<string>;
+}
+
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
@@ -96,8 +120,23 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
+const PENDING_GENERATED_IMAGES_CACHE_CAPACITY = 10_000;
+const PENDING_GENERATED_IMAGES_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+const decodeCodexSettingsOption = Schema.decodeUnknownOption(CodexSettings);
+
+class GeneratedImageIngestionError extends Schema.TaggedErrorClass<GeneratedImageIngestionError>()(
+  "GeneratedImageIngestionError",
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -875,6 +914,8 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const serverConfig = yield* ServerConfig;
+  const path = yield* Path.Path;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -915,6 +956,18 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(""),
   });
 
+  const pendingGeneratedImagesByTurnKey = yield* Cache.make<string, PendingGeneratedImages>({
+    capacity: PENDING_GENERATED_IMAGES_CACHE_CAPACITY,
+    timeToLive: PENDING_GENERATED_IMAGES_TTL,
+    lookup: () =>
+      Effect.succeed({
+        attachments: [],
+        failedProvenanceKeys: new Set<string>(),
+        omittedProvenanceKeys: new Set<string>(),
+        seenProvenanceKeys: new Set<string>(),
+      }),
+  });
+
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
 
@@ -932,6 +985,189 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  const generatedImageProvenanceKey = (artifact: CodexGeneratedImageArtifact): string | null => {
+    if (!artifact.providerThreadId) return null;
+    const sourceIdentity = artifact.callId ?? artifact.sourcePath;
+    return sourceIdentity ? `${artifact.providerThreadId}\0${sourceIdentity}` : null;
+  };
+
+  const materializeCodexGeneratedImage = Effect.fn("materializeCodexGeneratedImage")(
+    function* (input: {
+      readonly artifact: CodexGeneratedImageArtifact;
+      readonly threadId: ThreadId;
+    }) {
+      const provenanceKey = generatedImageProvenanceKey(input.artifact);
+      const providerThreadId = input.artifact.providerThreadId;
+      if (!provenanceKey || !providerThreadId) {
+        return yield* new GeneratedImageIngestionError({
+          detail: "Generated image is missing its provider-thread identity.",
+        });
+      }
+      const settings = yield* serverSettingsService.getSettings;
+      const configuredInstance = input.artifact.providerInstanceId
+        ? settings.providerInstances[ProviderInstanceId.make(input.artifact.providerInstanceId)]
+        : undefined;
+      const instanceCodexConfig =
+        configuredInstance?.driver === "codex"
+          ? Option.getOrUndefined(decodeCodexSettingsOption(configuredInstance.config ?? {}))
+          : undefined;
+      const layout = yield* resolveCodexHomeLayout(instanceCodexConfig ?? settings.providers.codex);
+      const homes = Array.from(
+        new Set(
+          [layout.effectiveHomePath, layout.sharedHomePath].filter(
+            (home): home is string => home !== undefined,
+          ),
+        ),
+      );
+      const roots = homes.map((home) => path.join(home, "generated_images", providerThreadId));
+      const candidates = input.artifact.sourcePath
+        ? [input.artifact.sourcePath]
+        : input.artifact.callId
+          ? homes.map((home) =>
+              path.join(home, "generated_images", providerThreadId, `${input.artifact.callId}.png`),
+            )
+          : [];
+      if (candidates.length === 0) {
+        return yield* new GeneratedImageIngestionError({
+          detail: "Generated image has no recoverable source path.",
+        });
+      }
+
+      return yield* Effect.tryPromise({
+        try: async () => {
+          let lastError: unknown;
+          for (const sourcePath of candidates) {
+            try {
+              return await materializeGeneratedImageAttachment({
+                threadId: input.threadId,
+                sourcePath,
+                provenanceKey,
+                allowedSourceRoots: roots,
+                attachmentsDir: serverConfig.attachmentsDir,
+                allowDurableFallbackWhenSourceUnavailable: true,
+              });
+            } catch (error) {
+              lastError = error;
+            }
+          }
+          throw lastError ?? "Generated image could not be materialized.";
+        },
+        catch: (cause) =>
+          new GeneratedImageIngestionError({
+            detail: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
+    },
+  );
+
+  const emptyPendingGeneratedImages = (): PendingGeneratedImages => ({
+    attachments: [],
+    failedProvenanceKeys: new Set<string>(),
+    omittedProvenanceKeys: new Set<string>(),
+    seenProvenanceKeys: new Set<string>(),
+  });
+
+  const updatePendingGeneratedImages = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    artifact: CodexGeneratedImageArtifact,
+    attachment: ChatImageAttachment | null,
+  ) =>
+    Cache.getOption(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.flatMap((existingOption) => {
+        const existing = Option.getOrElse(existingOption, emptyPendingGeneratedImages);
+        const provenanceKey = generatedImageProvenanceKey(artifact);
+        if (!provenanceKey || existing.seenProvenanceKeys.has(provenanceKey)) return Effect.void;
+        const seenProvenanceKeys = new Set(existing.seenProvenanceKeys).add(provenanceKey);
+        if (!attachment) {
+          return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), {
+            ...existing,
+            seenProvenanceKeys,
+            failedProvenanceKeys: new Set(existing.failedProvenanceKeys).add(provenanceKey),
+          });
+        }
+        if (existing.attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+          return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), {
+            ...existing,
+            seenProvenanceKeys,
+            omittedProvenanceKeys: new Set(existing.omittedProvenanceKeys).add(provenanceKey),
+          });
+        }
+        return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), {
+          ...existing,
+          seenProvenanceKeys,
+          attachments: [...existing.attachments, attachment],
+        });
+      }),
+    );
+
+  const takePendingGeneratedImages = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.getOption(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.flatMap((pending) =>
+        Cache.invalidate(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+          Effect.as(Option.getOrElse(pending, emptyPendingGeneratedImages)),
+        ),
+      ),
+    );
+
+  const generatedImageWarning = (pending: PendingGeneratedImages): string | null => {
+    const failures = pending.failedProvenanceKeys.size;
+    const omitted = pending.omittedProvenanceKeys.size;
+    const parts = [
+      failures > 0
+        ? `${failures === 1 ? "One generated image" : `${failures} generated images`} could not be displayed because Scient could not store the image bytes.`
+        : null,
+      omitted > 0
+        ? `${omitted === 1 ? "One additional generated image was" : `${omitted} additional generated images were`} omitted because a chat message supports at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`
+        : null,
+    ].filter((part): part is string => part !== null);
+    return parts.length > 0 ? parts.join("\n\n") : null;
+  };
+
+  const mergeImageAttachments = (
+    current: ReadonlyArray<ChatImageAttachment> | undefined,
+    incoming: ReadonlyArray<ChatImageAttachment>,
+  ): ReadonlyArray<ChatImageAttachment> => {
+    const byId = new Map<string, ChatImageAttachment>();
+    for (const attachment of [...(current ?? []), ...incoming]) byId.set(attachment.id, attachment);
+    return Array.from(byId.values()).slice(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
+  };
+
+  const recoverGeneratedImagesForTurn = Effect.fn("recoverGeneratedImagesForTurn")(function* (
+    threadId: ThreadId,
+    turnId: TurnId,
+    pending: PendingGeneratedImages,
+  ) {
+    const detail = yield* resolveThreadDetail(threadId);
+    const attachments = [...pending.attachments];
+    const failedProvenanceKeys = new Set(pending.failedProvenanceKeys);
+    const omittedProvenanceKeys = new Set(pending.omittedProvenanceKeys);
+    const seenProvenanceKeys = new Set(pending.seenProvenanceKeys);
+    for (const activity of detail?.activities ?? []) {
+      if (activity.turnId !== turnId || activity.kind !== "tool.completed") continue;
+      const artifact = codexGeneratedImageArtifactFromActivityPayload(activity.payload);
+      if (!artifact) continue;
+      const provenanceKey = generatedImageProvenanceKey(artifact);
+      if (!provenanceKey || seenProvenanceKeys.has(provenanceKey)) continue;
+
+      seenProvenanceKeys.add(provenanceKey);
+      const attachment = yield* materializeCodexGeneratedImage({ artifact, threadId }).pipe(
+        Effect.match({ onFailure: () => null, onSuccess: (value) => value }),
+      );
+      if (!attachment) {
+        failedProvenanceKeys.add(provenanceKey);
+        continue;
+      }
+      if (attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+        omittedProvenanceKeys.add(provenanceKey);
+        continue;
+      }
+      attachments.push(attachment);
+    }
+    return { attachments, failedProvenanceKeys, omittedProvenanceKeys, seenProvenanceKeys };
   });
 
   const resolveThreadShell = Effect.fn("resolveThreadShell")(function* (threadId: ThreadId) {
@@ -1189,15 +1425,22 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    attachments?: ReadonlyArray<ChatImageAttachment>;
+    noticeText?: string;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
-      const text =
+      const primaryText =
         bufferedText.length > 0
           ? bufferedText
           : (input.fallbackText?.trim().length ?? 0) > 0
             ? input.fallbackText!
             : "";
+      const text = input.noticeText
+        ? [primaryText, `> Note: ${input.noticeText}`]
+            .filter((part) => part.length > 0)
+            .join("\n\n")
+        : primaryText;
       const hasRenderableText = hasRenderableAssistantText(text);
 
       if (hasRenderableText) {
@@ -1212,18 +1455,88 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (input.hasProjectedMessage || hasRenderableText) {
+      if (input.hasProjectedMessage || hasRenderableText || (input.attachments?.length ?? 0) > 0) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
           commandId: yield* providerCommandId(input.event, input.commandTag),
           threadId: input.threadId,
           messageId: input.messageId,
+          ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
       }
       yield* clearAssistantMessageState(input.messageId);
     });
+
+  const appendGeneratedImagesToMessage = Effect.fn("appendGeneratedImagesToMessage")(
+    function* (input: {
+      readonly event: ProviderRuntimeEvent;
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly turnId?: TurnId;
+      readonly pending: PendingGeneratedImages;
+      readonly createdAt: string;
+      readonly commandTag: string;
+    }) {
+      const detail = yield* resolveThreadDetail(input.threadId);
+      const current = findMessageById(detail?.messages ?? [], input.messageId);
+      const attachments = mergeImageAttachments(current?.attachments, input.pending.attachments);
+      const generatedNotice = generatedImageWarning(input.pending);
+      const noticeText =
+        generatedNotice && !current?.text.includes(generatedNotice) ? generatedNotice : null;
+      yield* finalizeAssistantMessage({
+        event: input.event,
+        threadId: input.threadId,
+        messageId: input.messageId,
+        ...(input.turnId ? { turnId: input.turnId } : {}),
+        createdAt: input.createdAt,
+        commandTag: input.commandTag,
+        finalDeltaCommandTag: `${input.commandTag}-notice`,
+        hasProjectedMessage: current !== undefined,
+        attachments,
+        ...(noticeText ? { noticeText } : {}),
+      });
+    },
+  );
+
+  const flushGeneratedImagesForTurn = Effect.fn("flushGeneratedImagesForTurn")(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly createdAt: string;
+    readonly commandTag: string;
+    readonly preferredMessageId?: MessageId;
+  }) {
+    const pending = yield* recoverGeneratedImagesForTurn(
+      input.threadId,
+      input.turnId,
+      yield* takePendingGeneratedImages(input.threadId, input.turnId),
+    );
+    if (
+      pending.attachments.length === 0 &&
+      pending.failedProvenanceKeys.size === 0 &&
+      pending.omittedProvenanceKeys.size === 0
+    ) {
+      return;
+    }
+    const detail = yield* resolveThreadDetail(input.threadId);
+    const existingTarget = (detail?.messages ?? [])
+      .toReversed()
+      .find((message) => message.role === "assistant" && message.turnId === input.turnId);
+    yield* appendGeneratedImagesToMessage({
+      event: input.event,
+      threadId: input.threadId,
+      messageId:
+        input.preferredMessageId ??
+        existingTarget?.id ??
+        MessageId.make(`assistant:image:${input.turnId}`),
+      turnId: input.turnId,
+      pending,
+      createdAt: input.createdAt,
+      commandTag: input.commandTag,
+    });
+  });
 
   const finalizeActiveAssistantSegmentForTurn = (input: {
     event: ProviderRuntimeEvent;
@@ -1353,6 +1666,7 @@ const make = Effect.gen(function* () {
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       const taskDescriptionKeys = Array.from(yield* Cache.keys(taskDescriptionByTaskKey));
+      const generatedImageKeys = Array.from(yield* Cache.keys(pendingGeneratedImagesByTurnKey));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -1392,6 +1706,14 @@ const make = Effect.gen(function* () {
         taskDescriptionKeys,
         (key) =>
           key.startsWith(prefix) ? Cache.invalidate(taskDescriptionByTaskKey, key) : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        generatedImageKeys,
+        (key) =>
+          key.startsWith(prefix)
+            ? Cache.invalidate(pendingGeneratedImagesByTurnKey, key)
+            : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });
@@ -1739,6 +2061,67 @@ const make = Effect.gen(function* () {
         yield* appendBufferedProposedPlan(planId, proposedPlanDelta, now);
       }
 
+      const generatedImageArtifact = codexGeneratedImageArtifactFromRuntimeEvent(event);
+      if (generatedImageArtifact) {
+        const attachment = yield* materializeCodexGeneratedImage({
+          artifact: generatedImageArtifact,
+          threadId: thread.id,
+        }).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.logWarning("failed to materialize Codex generated image", {
+                threadId: thread.id,
+                turnId: event.turnId,
+                eventId: event.eventId,
+                detail: error.message,
+              }).pipe(Effect.as(null)),
+            onSuccess: Effect.succeed,
+          }),
+        );
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          yield* updatePendingGeneratedImages(
+            thread.id,
+            turnId,
+            generatedImageArtifact,
+            attachment,
+          );
+
+          const turnAlreadyTerminal =
+            thread.latestTurn?.turnId === turnId && thread.latestTurn.state !== "running";
+          if (turnAlreadyTerminal) {
+            yield* flushGeneratedImagesForTurn({
+              event,
+              threadId: thread.id,
+              turnId,
+              createdAt: now,
+              commandTag: "assistant-generated-image-late",
+            });
+          }
+        } else {
+          const pending: PendingGeneratedImages = {
+            attachments: attachment ? [attachment] : [],
+            failedProvenanceKeys: attachment
+              ? new Set<string>()
+              : new Set([generatedImageProvenanceKey(generatedImageArtifact) ?? event.eventId]),
+            omittedProvenanceKeys: new Set<string>(),
+            seenProvenanceKeys: new Set(
+              [generatedImageProvenanceKey(generatedImageArtifact)].filter(
+                (value): value is string => value !== null,
+              ),
+            ),
+          };
+          yield* appendGeneratedImagesToMessage({
+            event,
+            threadId: thread.id,
+            messageId: MessageId.make(`assistant:image:${event.itemId ?? event.eventId}`),
+            pending,
+            createdAt: now,
+            commandTag: "assistant-generated-image-turnless",
+          });
+        }
+      }
+
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
@@ -1771,6 +2154,23 @@ const make = Effect.gen(function* () {
           () => assistantCompletion.messageId,
         );
         const existingAssistantMessage = findMessageById(messages, assistantMessageId);
+        const generatedImages = turnId
+          ? yield* recoverGeneratedImagesForTurn(
+              thread.id,
+              turnId,
+              yield* takePendingGeneratedImages(thread.id, turnId),
+            )
+          : emptyPendingGeneratedImages();
+        const hasGeneratedImageResult =
+          generatedImages.attachments.length > 0 ||
+          generatedImages.failedProvenanceKeys.size > 0 ||
+          generatedImages.omittedProvenanceKeys.size > 0;
+        const generatedImageNotice = generatedImageWarning(generatedImages);
+        const generatedImageNoticeToAppend =
+          generatedImageNotice !== null &&
+          !existingAssistantMessage?.text.includes(generatedImageNotice)
+            ? generatedImageNotice
+            : undefined;
         const shouldApplyFallbackCompletionText =
           !existingAssistantMessage || existingAssistantMessage.text.length === 0;
 
@@ -1778,7 +2178,8 @@ const make = Effect.gen(function* () {
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
           hasAssistantMessagesForTurn &&
-          (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
+          (assistantCompletion.fallbackText?.trim().length ?? 0) === 0 &&
+          !hasGeneratedImageResult;
 
         if (!shouldSkipRedundantCompletion) {
           if (turnId && Option.isNone(activeAssistantMessageId)) {
@@ -1794,6 +2195,17 @@ const make = Effect.gen(function* () {
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
             hasProjectedMessage: existingAssistantMessage !== undefined,
+            ...(hasGeneratedImageResult
+              ? {
+                  attachments: mergeImageAttachments(
+                    existingAssistantMessage?.attachments,
+                    generatedImages.attachments,
+                  ),
+                  ...(generatedImageNoticeToAppend
+                    ? { noticeText: generatedImageNoticeToAppend }
+                    : {}),
+                }
+              : {}),
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
@@ -1828,7 +2240,9 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
+          const assistantMessageIds = Array.from(
+            yield* getAssistantMessageIdsForTurn(thread.id, turnId),
+          );
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
@@ -1844,6 +2258,18 @@ const make = Effect.gen(function* () {
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
+
+          const preferredGeneratedImageMessageId = assistantMessageIds.at(-1);
+          yield* flushGeneratedImagesForTurn({
+            event,
+            threadId: thread.id,
+            turnId,
+            ...(preferredGeneratedImageMessageId
+              ? { preferredMessageId: preferredGeneratedImageMessageId }
+              : {}),
+            createdAt: now,
+            commandTag: "assistant-generated-image-turn-complete",
+          });
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
 
@@ -1858,7 +2284,33 @@ const make = Effect.gen(function* () {
         }
       }
 
+      if (event.type === "turn.aborted" && eventTurnId) {
+        yield* flushGeneratedImagesForTurn({
+          event,
+          threadId: thread.id,
+          turnId: eventTurnId,
+          createdAt: now,
+          commandTag: "assistant-generated-image-turn-aborted",
+        });
+      }
+
       if (event.type === "session.exited") {
+        const prefix = `${thread.id}:`;
+        const pendingKeys = Array.from(yield* Cache.keys(pendingGeneratedImagesByTurnKey)).filter(
+          (key) => key.startsWith(prefix),
+        );
+        yield* Effect.forEach(
+          pendingKeys,
+          (key) =>
+            flushGeneratedImagesForTurn({
+              event,
+              threadId: thread.id,
+              turnId: TurnId.make(key.slice(prefix.length)),
+              createdAt: now,
+              commandTag: "assistant-generated-image-session-exit",
+            }),
+          { concurrency: 1 },
+        ).pipe(Effect.asVoid);
         yield* clearTurnStateForSession(thread.id);
       }
 
@@ -2044,6 +2496,25 @@ const make = Effect.gen(function* () {
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
+      const cleanupNow = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
+      yield* Effect.tryPromise({
+        try: () =>
+          cleanupStaleGeneratedImageAttachmentTemps({
+            attachmentsDir: serverConfig.attachmentsDir,
+            now: cleanupNow,
+          }),
+        catch: (cause) =>
+          new GeneratedImageIngestionError({
+            detail: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to clean stale generated-image attachment temps", {
+            detail: error.message,
+          }),
+        ),
+      );
       yield* forkParked(
         Stream.runForEach(providerService.streamEvents, (event) =>
           worker.enqueue({ source: "runtime", event }),

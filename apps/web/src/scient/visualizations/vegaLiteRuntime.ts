@@ -12,7 +12,6 @@ export type VegaLiteTheme = "light" | "dark";
 export type VegaLiteViewState = ReturnType<View["getState"]>;
 
 export interface MountedVegaLiteView {
-  readonly externalResources: ReadonlyArray<string>;
   readonly initialState: VegaLiteViewState;
   readonly result: VegaEmbedResult;
   readonly warnings: ReadonlyArray<string>;
@@ -137,6 +136,12 @@ export async function fetchVegaRemoteResource(
   } catch (cause) {
     if (controller.signal.aborted) {
       throw new Error("The chart data request timed out after 15 seconds.", { cause });
+    }
+    if (cause instanceof TypeError) {
+      throw new Error(
+        "Unable to load chart data from this viewing device. The address may be unavailable or may not allow browser access (CORS).",
+        { cause },
+      );
     }
     throw cause;
   } finally {
@@ -277,6 +282,16 @@ export function applyScientVegaRuntimeDefaults(spec: VegaSpec): VegaSpec {
   return spec;
 }
 
+/** Restores transferred interaction state before the mounted view is exposed as ready. */
+export async function restoreVegaLiteViewState(
+  view: Pick<View, "runAsync" | "setState">,
+  state: VegaLiteViewState | null | undefined,
+): Promise<void> {
+  if (state == null) return;
+  view.setState(state);
+  await view.runAsync();
+}
+
 export async function mountVegaLiteView(input: {
   readonly container: HTMLElement;
   readonly initialState?: VegaLiteViewState | null | undefined;
@@ -295,13 +310,14 @@ export async function mountVegaLiteView(input: {
     if (warning.length > 0 && !warnings.includes(warning)) warnings.push(warning);
   });
 
+  let result: VegaEmbedResult | null = null;
   try {
     const renderSpec = prepareVegaLiteSpecForRuntime(
       input.renderPlan.spec,
       runtime.vegaLite.version,
     );
     const resourceLoader = createVegaResourceLoader(runtime.vega);
-    const result = await runtime.default(input.container, renderSpec as VisualizationSpec, {
+    result = await runtime.default(input.container, renderSpec as VisualizationSpec, {
       actions: false,
       ast: true,
       config: vegaLiteThemeConfig(input.theme),
@@ -321,23 +337,22 @@ export async function mountVegaLiteView(input: {
 
     const firstResourceFailure = resourceLoader.failures[0];
     if (firstResourceFailure != null) {
-      result.finalize();
       throw firstResourceFailure;
     }
 
     // Capture the authored default before restoring a transferred interaction state.
     // Both inline and expanded views can then reset to the same canonical chart.
     const initialState = result.view.getState();
-    if (input.initialState != null) result.view.setState(input.initialState);
+    await restoreVegaLiteViewState(result.view, input.initialState);
     if (vegaLiteDescription(input.parsed.spec) == null) result.view.description(input.title);
     result.view.globalCursor(false);
     return {
-      externalResources: input.parsed.externalResources,
       initialState,
       result,
       warnings,
     };
   } catch (cause) {
+    result?.finalize();
     throw normalizedVegaLiteError(cause);
   }
 }

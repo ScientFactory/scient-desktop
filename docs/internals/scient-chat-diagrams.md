@@ -51,8 +51,9 @@ registered.
 The settled card has explicit loading, ready, source, and error states. A parse
 failure shows a concise error, the complete readable source, and retry; it
 cannot fail the surrounding Markdown render. The expanded dialog supports fit,
-25-400% zoom, actual-size layout, and two-dimensional scrolling. SVG download
-adds standalone namespaces and an appearance background. PNG copy/download
+25-400% zoom, actual-size layout, two-dimensional scrolling, source copy, and
+the same SVG/PNG export actions as the compact card. SVG download adds
+standalone namespaces and an appearance background. PNG copy/download
 rasterizes the same SVG at up to 2x, bounded to 8192 px per dimension.
 
 `data-markdown-copy` carries a complete fenced source block, so selection and

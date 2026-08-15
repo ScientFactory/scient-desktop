@@ -49,6 +49,28 @@ const ContextMenuInput = Schema.Struct({
   position: Schema.optionalKey(ContextMenuPosition),
 });
 
+// The web renderers are capped at 16,777,216 pixels. A lossless RGBA PNG for
+// that surface is roughly 64 MiB before modest encoding overhead.
+export const MAX_CLIPBOARD_PNG_BYTES = 80 * 1024 * 1024;
+
+export class DesktopClipboardPngWriteError extends Schema.TaggedErrorClass<DesktopClipboardPngWriteError>()(
+  "DesktopClipboardPngWriteError",
+  {
+    reason: Schema.Literals(["empty", "too-large", "decode-failed"]),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "empty":
+        return "The PNG clipboard payload is empty.";
+      case "too-large":
+        return "The PNG clipboard payload is too large.";
+      case "decode-failed":
+        return "Electron could not decode the PNG clipboard payload.";
+    }
+  }
+}
+
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
   const url = new URL(httpBaseUrl.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -231,6 +253,25 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+  }),
+});
+
+export const copyPngToClipboard = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.COPY_PNG_TO_CLIPBOARD_CHANNEL,
+  payload: Schema.Uint8Array,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.copyPngToClipboard")(function* (png) {
+    if (png.byteLength === 0) {
+      return yield* new DesktopClipboardPngWriteError({ reason: "empty" });
+    }
+    if (png.byteLength > MAX_CLIPBOARD_PNG_BYTES) {
+      return yield* new DesktopClipboardPngWriteError({ reason: "too-large" });
+    }
+
+    const shell = yield* ElectronShell.ElectronShell;
+    if (!(yield* shell.copyPng(png))) {
+      return yield* new DesktopClipboardPngWriteError({ reason: "decode-failed" });
+    }
   }),
 });
 

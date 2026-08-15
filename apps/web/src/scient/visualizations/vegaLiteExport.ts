@@ -3,6 +3,7 @@ import {
   markdownFenceCopySource,
   presentationFileBaseName,
 } from "../presentation/presentationExport";
+import { copyPngBlobToClipboard } from "../presentation/imageClipboard";
 import type { VegaLiteViewController } from "./VegaLiteView";
 
 const MAX_PNG_DIMENSION = 8_192;
@@ -85,9 +86,6 @@ export async function downloadVegaLitePng(
 }
 
 export async function copyVegaLitePng(controller: VegaLiteViewController): Promise<void> {
-  if (typeof ClipboardItem === "undefined" || navigator.clipboard?.write == null) {
-    throw new Error("Copy image is unavailable in this environment.");
-  }
   const blob = await vegaLitePngBlob(controller);
-  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  await copyPngBlobToClipboard(blob);
 }

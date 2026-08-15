@@ -37,6 +37,7 @@ describe("assetResponseHeaders", () => {
   it("sandboxes SVG assets", () => {
     expect(assetResponseHeaders("/attachments/user-image.svg")).toMatchObject({
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      Vary: "Origin",
       "X-Content-Type-Options": "nosniff",
     });
     expect(assetResponseHeaders("/attachments/user-image.SVG")).toHaveProperty(
@@ -47,6 +48,7 @@ describe("assetResponseHeaders", () => {
   it("does not apply document policy to raster images", () => {
     expect(assetResponseHeaders("/attachments/user-image.png")).toEqual({
       "Cache-Control": "private, max-age=3600",
+      Vary: "Origin",
       "X-Content-Type-Options": "nosniff",
     });
   });

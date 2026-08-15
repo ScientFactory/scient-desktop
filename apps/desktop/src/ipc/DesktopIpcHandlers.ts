@@ -31,6 +31,7 @@ import {
   setUpdateChannel,
 } from "./methods/updates.ts";
 import {
+  copyPngToClipboard,
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
@@ -83,6 +84,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
+  yield* ipc.handle(copyPngToClipboard);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(probeRemoteEditors);

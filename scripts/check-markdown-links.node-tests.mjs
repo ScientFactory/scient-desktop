@@ -33,6 +33,35 @@ NodeTest.test("ignores external URLs and document anchors", () => {
   NodeAssert.equal(resolveLocalDestination(file, "#section", root), null);
 });
 
+NodeTest.test("ignores link examples inside fenced code blocks", () => {
+  const markdown = [
+    "[Before](./before.md)",
+    "```markdown",
+    "[Backtick example](./not-a-link.md)",
+    "```",
+    "~~~md",
+    "![Tilde example](./not-an-image.png)",
+    "~~~",
+    "[After](./after.md)",
+  ].join("\n");
+
+  NodeAssert.deepEqual(markdownDestinations(markdown), [
+    { destination: "./before.md", line: 1 },
+    { destination: "./after.md", line: 8 },
+  ]);
+});
+
+NodeTest.test("supports an explicit exception for an intentional broken-link fixture", () => {
+  const markdown = [
+    "<!-- markdown-link-check: ignore-next-line -->",
+    "",
+    "![Deliberately missing](./missing.png)",
+    "[Checked](./checked.md)",
+  ].join("\n");
+
+  NodeAssert.deepEqual(markdownDestinations(markdown), [{ destination: "./checked.md", line: 4 }]);
+});
+
 NodeTest.test("resolves repository-root and relative links without allowing escape", () => {
   const root = "/repository";
   const file = "/repository/docs/readme.md";

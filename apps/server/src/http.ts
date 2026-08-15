@@ -53,6 +53,11 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 export function assetResponseHeaders(filePath: string): Record<string, string> {
   return {
     "Cache-Control": "private, max-age=3600",
+    // Asset images are also fetched as bytes for copy/download. The initial
+    // <img> request and the later CORS fetch can otherwise share a cache entry
+    // even though only the latter carries Origin, which Chromium correctly
+    // rejects as an unusable CORS response.
+    Vary: "Origin",
     "X-Content-Type-Options": "nosniff",
     ...(filePath.toLowerCase().endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }

@@ -153,6 +153,30 @@ function collectUnitLayerCandidates(layer: unknown, candidates: Array<UnitLayerC
   }
 }
 
+function visitCompositionRecords(
+  root: Record<string, unknown>,
+  visit: (record: Record<string, unknown>) => void,
+): void {
+  const stack = [root];
+  while (stack.length > 0) {
+    const record = stack.pop()!;
+    visit(record);
+
+    const children: Array<Record<string, unknown>> = [];
+    if (isRecord(record.spec)) children.push(record.spec);
+    for (const key of ["layer", "concat", "hconcat", "vconcat"] as const) {
+      const value = record[key];
+      if (!Array.isArray(value)) continue;
+      for (const child of value) {
+        if (isRecord(child)) children.push(child);
+      }
+    }
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]!);
+    }
+  }
+}
+
 function selectionFields(parameter: Record<string, unknown>): ReadonlySet<string> {
   const select = parameter.select;
   if (!isRecord(select) || !Array.isArray(select.fields)) return new Set();
@@ -229,18 +253,13 @@ function chooseInteractionOwner(
   );
 }
 
-function collectViewNameCounts(
-  layer: unknown,
-  counts: Map<string, number> = new Map(),
-): Map<string, number> {
-  if (!Array.isArray(layer)) return counts;
-  for (const child of layer) {
-    if (!isRecord(child)) continue;
-    if (typeof child.name === "string") {
-      counts.set(child.name, (counts.get(child.name) ?? 0) + 1);
+function collectViewNameCounts(root: Record<string, unknown>): Map<string, number> {
+  const counts = new Map<string, number>();
+  visitCompositionRecords(root, (record) => {
+    if (typeof record.name === "string") {
+      counts.set(record.name, (counts.get(record.name) ?? 0) + 1);
     }
-    collectViewNameCounts(child.layer, counts);
-  }
+  });
   return counts;
 }
 
@@ -293,14 +312,15 @@ function preserveRequiredSharedLegend(
   }
 }
 
-function scopeLayeredSelections(record: Record<string, unknown>): void {
+function scopeLayeredSelections(
+  record: Record<string, unknown>,
+  viewNameCounts: Map<string, number>,
+  usedViewNames: Set<string>,
+): void {
   if (!Array.isArray(record.layer) || !Array.isArray(record.params)) return;
   const candidates: Array<UnitLayerCandidate> = [];
   collectUnitLayerCandidates(record.layer, candidates);
   if (candidates.length === 0) return;
-
-  const viewNameCounts = collectViewNameCounts(record.layer);
-  const usedViewNames = new Set(viewNameCounts.keys());
 
   record.params = record.params.map((value) => {
     if (!isSelectionParameter(value) || value.views != null) return value;
@@ -321,16 +341,35 @@ function scopeLayeredSelections(record: Record<string, unknown>): void {
   });
 }
 
+function hasUnscopedLayerSelection(root: Record<string, unknown>): boolean {
+  let found = false;
+  visitCompositionRecords(root, (record) => {
+    if (
+      Array.isArray(record.layer) &&
+      Array.isArray(record.params) &&
+      record.params.some((parameter) => isSelectionParameter(parameter) && parameter.views == null)
+    ) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+function scopeComposedLayerSelections(root: Record<string, unknown>): void {
+  const viewNameCounts = collectViewNameCounts(root);
+  const usedViewNames = new Set(viewNameCounts.keys());
+  visitCompositionRecords(root, (record) => {
+    scopeLayeredSelections(record, viewNameCounts, usedViewNames);
+  });
+}
+
 /** Builds a disposable render copy without changing the canonical fenced source. */
 export function buildVegaLiteRenderPlan(spec: TopLevelSpec): VegaLiteRenderPlan {
   const source = spec as unknown as Record<string, unknown>;
   const needsResponsiveDefaults = source.width == null && isSingleOrLayerSpec(source);
-  const hasUnscopedLayerSelection =
-    Array.isArray(source.layer) &&
-    Array.isArray(source.params) &&
-    source.params.some((parameter) => isSelectionParameter(parameter) && parameter.views == null);
+  const needsSelectionScoping = hasUnscopedLayerSelection(source);
   const responsive = source.width === "container" || needsResponsiveDefaults;
-  if (!needsResponsiveDefaults && !hasUnscopedLayerSelection) {
+  if (!needsResponsiveDefaults && !needsSelectionScoping) {
     return { responsive, spec };
   }
 
@@ -341,7 +380,7 @@ export function buildVegaLiteRenderPlan(spec: TopLevelSpec): VegaLiteRenderPlan 
       prepared.autosize = { type: "fit", contains: "padding", resize: true };
     }
   }
-  if (hasUnscopedLayerSelection) scopeLayeredSelections(prepared);
+  if (needsSelectionScoping) scopeComposedLayerSelections(prepared);
 
   return {
     responsive,
