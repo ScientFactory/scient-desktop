@@ -25,7 +25,7 @@ import { projectEvent } from "./projector.ts";
 import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
 import { forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
-import { validateScientGeneralChatMove } from "../scient/generalChat/Policy.ts";
+import { validateScientQuickChatMove } from "../scient/quickChat/Policy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -820,7 +820,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      // SCIENT-FORK:START — relocate one projectless General Chat without
+      // SCIENT-FORK:START — relocate one projectless Quick Chat without
       // changing its identity or replaying its conversation. A stopped
       // provider session is an authoritative workspace boundary: the client
       // asks the provider reactor to stop first, and this invariant closes the
@@ -836,7 +836,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const moveRejection =
         moveTarget === undefined
           ? null
-          : validateScientGeneralChatMove({
+          : validateScientQuickChatMove({
               thread,
               target: moveTarget,
               hasQueuedTurnStart: threadHasQueuedTurnStart(thread, occurredAt),

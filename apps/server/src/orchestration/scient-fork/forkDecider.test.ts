@@ -996,11 +996,11 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("preserves a General Chat environment root on a local fork", () =>
+  it.effect("preserves a Quick Chat environment root on a local fork", () =>
     Effect.gen(function* () {
       const origin = makeOriginThread({
         projectId: null,
-        workspaceRoot: "/tmp/general-chat-environment",
+        workspaceRoot: "/tmp/quick-chat-environment",
         branch: null,
         worktreePath: null,
         checkpoints: [],
@@ -1014,7 +1014,7 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(created?.type).toBe("thread.created");
       if (created?.type === "thread.created") {
         expect(created.payload.projectId).toBeNull();
-        expect(created.payload.workspaceRoot).toBe("/tmp/general-chat-environment");
+        expect(created.payload.workspaceRoot).toBe("/tmp/quick-chat-environment");
         expect(created.payload.branch).toBeNull();
         expect(created.payload.worktreePath).toBeNull();
       }

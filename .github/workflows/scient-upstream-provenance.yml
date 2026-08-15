@@ -23,7 +23,7 @@ jobs:
       - name: Fetch official T3 main
         run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream-verification/main
 
-      - name: Verify provenance and General Chat seams
+      - name: Verify provenance and Quick Chat seams
         env:
           VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -34,7 +34,7 @@ jobs:
             --head "$VERIFY_HEAD" \
             --allow-owned-head-merge "$ALLOW_OWNED_HEAD_MERGE" \
             --official-ref refs/remotes/upstream-verification/main
-          node scripts/verify-scient-general-chat-seams.mjs
+          node scripts/verify-scient-quick-chat-seams.mjs
           node scripts/verify-scient-analysis-seams.mjs \
             --base "$VERIFY_BASE" \
             --head "$VERIFY_HEAD" \

@@ -458,7 +458,7 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-            // SCIENT-FORK:START — General Chat relocation preserves the
+            // SCIENT-FORK:START — Quick Chat relocation preserves the
             // thread while changing its owning project/workspace seam.
             ...(payload.projectId !== undefined ? { projectId: payload.projectId } : {}),
             ...(payload.workspaceRoot !== undefined

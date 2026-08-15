@@ -96,9 +96,9 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
-import { SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES } from "./scient/generalChat/ServerCapability.ts";
-import { ensureScientGeneralChatMoveHasNoRunningTerminals } from "./scient/generalChat/MoveCoordinator.ts";
-import { validateScientGeneralChatTerminalOpen } from "./scient/generalChat/TerminalPolicy.ts";
+import { SCIENT_QUICK_CHAT_SERVER_CAPABILITIES } from "./scient/quickChat/ServerCapability.ts";
+import { ensureScientQuickChatMoveHasNoRunningTerminals } from "./scient/quickChat/MoveCoordinator.ts";
+import { validateScientQuickChatTerminalOpen } from "./scient/quickChat/TerminalPolicy.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -1041,7 +1041,7 @@ const makeWsRpcLayer = (
           environment,
           auth,
           cwd: config.cwd,
-          ...SCIENT_GENERAL_CHAT_SERVER_CAPABILITIES,
+          ...SCIENT_QUICK_CHAT_SERVER_CAPABILITIES,
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -1072,7 +1072,7 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       const authorizeScientTerminalWorkspace = Effect.fn(
-        "ScientGeneralChat.authorizeTerminalWorkspace",
+        "ScientQuickChat.authorizeTerminalWorkspace",
       )(function* (input: {
         readonly threadId: string;
         readonly cwd?: string | undefined;
@@ -1092,7 +1092,7 @@ const makeWsRpcLayer = (
             cause: new Error("Thread does not exist"),
           });
         }
-        const terminalRejection = validateScientGeneralChatTerminalOpen({
+        const terminalRejection = validateScientQuickChatTerminalOpen({
           thread: thread.value,
           request: input,
           environmentWorkspaceRoot: config.cwd,
@@ -1107,7 +1107,7 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              yield* ensureScientGeneralChatMoveHasNoRunningTerminals({
+              yield* ensureScientQuickChatMoveHasNoRunningTerminals({
                 command: normalizedCommand,
                 hasRunningSessionsForThread: terminalManager.hasRunningSessionsForThread,
               });

@@ -3,7 +3,10 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
-import { SCIENT_GENERAL_CHAT_LABEL } from "@t3tools/client-runtime/scient/general-chat";
+import {
+  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
+  SCIENT_QUICK_CHATS_LABEL,
+} from "@t3tools/client-runtime/scient/quick-chat";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -27,7 +30,7 @@ import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import type { ScientThreadGroupContext } from "../scient-general-chat/threadGroupContext";
+import type { ScientThreadGroupContext } from "../scient-quick-chat/threadGroupContext";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
@@ -161,7 +164,7 @@ export interface HomeThreadGroup {
    * groups (same repo on several machines) this is the member that owns the
    * group's most recent thread — the machine the user last worked on — rather
    * than the arbitrary first member; the draft's computer picker covers
-   * switching from there. Null for General Chat and synthetic pending-project
+   * switching from there. Null for Quick Chat and synthetic pending-project
    * groups because neither owns a real destination project.
    */
   readonly newThreadTarget: EnvironmentProject | null;
@@ -288,11 +291,11 @@ export function buildHomeThreadGroups(input: {
     if (thread.projectId === null) {
       const groupKey = `projectless:${thread.environmentId}`;
       if (!groups.has(groupKey)) {
-        groupTitleByKey.set(groupKey, SCIENT_GENERAL_CHAT_LABEL);
+        groupTitleByKey.set(groupKey, SCIENT_QUICK_CHATS_LABEL);
         groups.set(groupKey, {
           key: groupKey,
           context: {
-            kind: "general-chat",
+            kind: "quick-chat",
             environmentId: thread.environmentId,
             workspaceRoot: thread.workspaceRoot ?? "",
           },
@@ -321,8 +324,8 @@ export function buildHomeThreadGroups(input: {
     }
 
     const title =
-      group.context.kind === "general-chat"
-        ? SCIENT_GENERAL_CHAT_LABEL
+      group.context.kind === "quick-chat"
+        ? SCIENT_QUICK_CHATS_LABEL
         : (groupTitleByKey.get(group.key) ??
           deriveProjectGroupLabel({
             representative: group.context.project,
@@ -331,6 +334,8 @@ export function buildHomeThreadGroups(input: {
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||
+      (group.context.kind === "quick-chat" &&
+        SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS.some((term) => term.includes(query))) ||
       group.projects.some((project) => project.title.toLocaleLowerCase().includes(query));
     const matchingThreads = groupMatches
       ? group.threads
@@ -391,7 +396,7 @@ export function buildHomeThreadGroups(input: {
       threads: sortedThreads,
       recentThreads,
       newThreadTarget:
-        group.key.startsWith("pending-project:") || group.context.kind === "general-chat"
+        group.key.startsWith("pending-project:") || group.context.kind === "quick-chat"
           ? null
           : (lastActiveProject ??
             (group.context.kind === "project" ? group.context.project : null)),

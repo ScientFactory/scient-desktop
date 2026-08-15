@@ -220,7 +220,7 @@ export function applyThreadDetailEvent(
             ? { worktreePath: event.payload.worktreePath }
             : {}),
           // SCIENT-FORK:START — update the open chat immediately when it is
-          // relocated from General Chat into a project.
+          // relocated from Quick Chat into a project.
           ...(event.payload.projectId !== undefined ? { projectId: event.payload.projectId } : {}),
           ...(event.payload.workspaceRoot !== undefined
             ? { workspaceRoot: event.payload.workspaceRoot }
