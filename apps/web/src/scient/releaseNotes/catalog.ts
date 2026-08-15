@@ -11,40 +11,40 @@ export const SCIENT_RELEASE_NOTES = [
   {
     version: "0.6.4",
     publishedAt: "2026-08-14",
-    kicker: "MATLAB analysis, source notes, and smoother project work",
-    headline: "Run MATLAB analyses inside Scient",
+    kicker: "MATLAB analysis, math in chat, and source notes",
+    headline: "Scient 0.6.4",
     summary:
-      "Scient can now run project MATLAB files with your installed MATLAB, keep their results and figures close to the code, and make sources, projects, and local previews more dependable.",
+      "Scient can now run project MATLAB files with your installed MATLAB, keep figures and results with the code, show mathematics and scientific charts in chat, and let you write notes on research sources.",
     highlights: [
       {
         id: "matlab-run-file",
         title: "Run MATLAB files from your project",
         description:
-          "Open a saved .m file, connect your existing MATLAB installation, follow its output and errors, and stop or revisit runs without leaving Scient.",
+          "Open a saved .m file in an initialized Scient project, connect your existing MATLAB installation, follow output and errors, and stop or revisit runs without leaving Scient.",
       },
       {
         id: "matlab-results-and-figures",
         title: "Keep figures and results with each run",
         description:
-          "Review captured figures in the workspace, open movable figure cards, download native FIG files, and see when results no longer match the saved source.",
+          "Review captured figures, open movable figure cards, download native FIG files, and choose Save to project when a run should travel with the code.",
+      },
+      {
+        id: "math-in-chat",
+        title: "Read mathematics in chat",
+        description:
+          "TeX in the conversation now renders as real math, including display equations, and stays readable while a reply is still streaming.",
+      },
+      {
+        id: "diagrams-and-charts",
+        title: "See diagrams and charts in chat",
+        description:
+          "Mermaid diagrams and Vega-Lite or Plotly charts render in the conversation, and you can copy that rich media more reliably.",
       },
       {
         id: "source-notes",
         title: "Add notes directly to research sources",
         description:
-          "Write persistent source notes with bold, italic, and bidirectional text support. Agents can work with the same project-owned notes when you ask them to.",
-      },
-      {
-        id: "source-reliability",
-        title: "More trustworthy source details",
-        description:
-          "Structured abstracts preserve their sections and text more reliably, source search handles multiple terms consistently, and stalled imports now fail clearly instead of hanging.",
-      },
-      {
-        id: "everyday-navigation",
-        title: "Fewer interruptions around the workspace",
-        description:
-          "Project folders open on the first Enter, browser previews prioritize relevant local servers, and pull-request panels stay within the available window.",
+          "Write persistent source notes with bold, italic, and bidirectional text. Abstracts, search, and stalled imports are also more trustworthy.",
       },
     ],
   },
