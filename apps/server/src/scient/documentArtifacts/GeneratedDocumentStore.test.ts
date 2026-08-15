@@ -505,6 +505,71 @@ describe("GeneratedDocumentStore production lifecycle", () => {
     ),
   );
 
+  it.effect("keeps a discredited revision stale through a cancelled retry", () =>
+    Effect.gen(function* () {
+      const store = yield* GeneratedDocumentStore;
+      const published = yield* publishRevision(store, 1, "revision-a");
+
+      const failing = yield* store.beginProduction(operation(2));
+      yield* store.failProduction({ ...failing, reason: "LaTeX compilation failed." });
+      expect(yield* store.getDescriptor(logicalDocumentKey)).toMatchObject({
+        bindingStatus: "stale",
+        staleReason: "LaTeX compilation failed.",
+      });
+
+      // Starting a retry is not evidence that the PDF caught up with its
+      // sources, so the reader keeps seeing the stale revision and the reason.
+      const retry = yield* store.beginProduction(operation(3));
+      expect(yield* store.getDescriptor(logicalDocumentKey)).toMatchObject({
+        revisionId: published.revisionId,
+        bindingGeneration: 3,
+        bindingStatus: "stale",
+        staleReason: "LaTeX compilation failed.",
+      });
+
+      // Cancelling the retry restores the condition the binding held before it,
+      // rather than laundering the discredited revision into `current`.
+      expect(
+        yield* store.abandonProduction({ ...retry, reason: "The requester cancelled this build." }),
+      ).toMatchObject({
+        status: "stale",
+        staleReason: "LaTeX compilation failed.",
+        latestAttempt: { state: "abandoned", failureReason: "The requester cancelled this build." },
+      });
+      expect(yield* store.getDescriptor(logicalDocumentKey)).toMatchObject({
+        revisionId: published.revisionId,
+        bindingStatus: "stale",
+        staleReason: "LaTeX compilation failed.",
+      });
+
+      // Only a published revision earns `current` back.
+      const succeeding = yield* store.beginProduction(operation(4));
+      const republished = generatedSource(
+        yield* store.publishPdf({
+          ...succeeding,
+          bytes: minimalPdf("revision-b"),
+          title: "Paper",
+          provenanceKind: "document-build",
+        }),
+      );
+      expect(republished.revisionId).not.toBe(published.revisionId);
+      expect(yield* store.getDescriptor(logicalDocumentKey)).toMatchObject({
+        revisionId: republished.revisionId,
+        bindingStatus: "current",
+        staleReason: null,
+      });
+    }).pipe(
+      Effect.provide(
+        makeStoreLayer(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), {
+            prefix: "scient-document-store-stale-retry-",
+          }),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("reconciles productions interrupted by a restart", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

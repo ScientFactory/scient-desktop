@@ -187,6 +187,103 @@ const rebuildIdentity = {
 const rebuildingOverRevision = () =>
   accepted(beginDocumentProduction(publishedBinding(), { ...rebuildIdentity, nowEpochMs: 3 }));
 
+const COMPILATION_FAILED = "LaTeX compilation failed.";
+
+/** A published revision a failed rebuild already discredited. */
+const staleBinding = () =>
+  accepted(
+    failDocumentProduction(rebuildingOverRevision(), {
+      ...rebuildIdentity,
+      reason: COMPILATION_FAILED,
+      nowEpochMs: 4,
+    }),
+  );
+
+const retryIdentity = {
+  ...identity,
+  generation: BindingGeneration.make(3),
+  operationId: ProducingOperationId.make("build-3"),
+};
+
+/** A retry running over a revision an earlier failure left stale. */
+const rebuildingOverStaleRevision = () =>
+  accepted(beginDocumentProduction(staleBinding(), { ...retryIdentity, nowEpochMs: 5 }));
+
+describe("beginning a production over a discredited revision", () => {
+  it("carries the stale condition and its reason into the producing binding", () => {
+    const retrying = rebuildingOverStaleRevision();
+    expect(retrying).toMatchObject({
+      status: "stale",
+      staleReason: COMPILATION_FAILED,
+      generation: retryIdentity.generation,
+      activeRevision: revisionOne,
+      lastSuccessfulRevision: revisionOne,
+      latestAttempt: { state: "running", failureReason: null },
+    });
+  });
+
+  it("keeps the stale condition and the original reason when the retry is abandoned", () => {
+    // The laundering this closes: begin used to reset the binding to
+    // `current`/no reason, so a cancel after a failed build handed the viewer a
+    // PDF whose last compile failed with nothing left saying so.
+    const abandoned = abandonDocumentProduction(rebuildingOverStaleRevision(), {
+      generation: retryIdentity.generation,
+      operationId: retryIdentity.operationId,
+      producerId: retryIdentity.producerId,
+      reason: "The requester cancelled this build.",
+      nowEpochMs: 6,
+    });
+    expect(abandoned).toMatchObject({
+      _tag: "Accepted",
+      binding: {
+        status: "stale",
+        staleReason: COMPILATION_FAILED,
+        activeRevision: revisionOne,
+        lastSuccessfulRevision: revisionOne,
+        latestAttempt: { state: "abandoned", failureReason: "The requester cancelled this build." },
+      },
+    });
+  });
+
+  it("returns to current with no reason once the retry publishes", () => {
+    const revisionTwo = {
+      artifactId: identity.artifactId,
+      revisionId: ArtifactRevisionId.make("revision-b"),
+    };
+    const published = completeDocumentProduction(rebuildingOverStaleRevision(), {
+      generation: retryIdentity.generation,
+      operationId: retryIdentity.operationId,
+      producerId: retryIdentity.producerId,
+      revision: revisionTwo,
+      nowEpochMs: 6,
+    });
+    expect(published).toMatchObject({
+      _tag: "Accepted",
+      binding: {
+        status: "current",
+        staleReason: null,
+        activeRevision: revisionTwo,
+        lastSuccessfulRevision: revisionTwo,
+        latestAttempt: { state: "succeeded", failureReason: null },
+      },
+    });
+  });
+
+  it("replaces the carried reason when the retry fails for its own reason", () => {
+    const failed = failDocumentProduction(rebuildingOverStaleRevision(), {
+      generation: retryIdentity.generation,
+      operationId: retryIdentity.operationId,
+      producerId: retryIdentity.producerId,
+      reason: "Undefined control sequence.",
+      nowEpochMs: 6,
+    });
+    expect(failed).toMatchObject({
+      _tag: "Accepted",
+      binding: { status: "stale", staleReason: "Undefined control sequence." },
+    });
+  });
+});
+
 describe("abandoning a document production", () => {
   it("settles a never-published document to unbound without a failure", () => {
     const abandoned = abandonDocumentProduction(producingWithoutRevision(), {
