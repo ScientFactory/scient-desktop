@@ -14,6 +14,7 @@ import {
 } from "../../auth/http.ts";
 import { LatexBuildService } from "./LatexBuildService.ts";
 import { LatexManagedToolchain } from "./LatexManagedToolchain.ts";
+import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 
 function handle<A, E>(
@@ -36,6 +37,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
     const builds = yield* LatexBuildService;
     const toolchain = yield* LatexToolchain;
     const managed = yield* LatexManagedToolchain;
+    const syncTex = yield* LatexSyncTex;
 
     /** The probe result plus what this server can do about a missing engine. */
     const toolchainReport = (refresh: boolean) =>
@@ -77,6 +79,22 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
           AuthOrchestrationOperateScope,
           "scient_latex_build_failed",
           builds.cancel(args.payload),
+        ),
+      )
+      .handle("forwardSync", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_build_failed",
+          syncTex.forward(args.payload),
+        ),
+      )
+      .handle("inverseSync", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_build_failed",
+          syncTex.inverse(args.payload),
         ),
       )
       .handle("toolchain", (args) =>

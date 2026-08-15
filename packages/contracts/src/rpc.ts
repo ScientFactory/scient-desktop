@@ -1,6 +1,10 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import {
+  DocumentBindingChange,
+  DocumentBindingSubscriptionInput,
+} from "@scientfactory/document-artifacts";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
@@ -373,6 +377,7 @@ export const WS_METHODS = {
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
   subscribeAnalysisRuns: "subscribeAnalysisRuns",
+  subscribeDocumentBindingChanges: "documents.subscribeBindingChanges",
   projectsSubscribeFileChanges: "projects.subscribeFileChanges",
 } as const;
 
@@ -1176,6 +1181,16 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+export const WsSubscribeDocumentBindingChangesRpc = Rpc.make(
+  WS_METHODS.subscribeDocumentBindingChanges,
+  {
+    payload: DocumentBindingSubscriptionInput,
+    success: DocumentBindingChange,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1288,6 +1303,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribeDocumentBindingChangesRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,

@@ -3556,9 +3556,9 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadRef],
   );
   const openFileSourceSurface = useCallback(
-    (relativePath: string) => {
+    (relativePath: string, line?: number) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
     },
     [activeThreadRef, activeWorkspaceRoot],
   );

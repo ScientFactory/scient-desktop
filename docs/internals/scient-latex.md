@@ -12,8 +12,9 @@ persistence, cloud, or mobile contracts.
 ## Ownership
 
 `scient-latex-seams.json` is the machine-readable inventory this section
-mirrors. It declares two owned roots — `apps/server/src/scient/latex` and
-`apps/web/src/scient/latex` — and two owned files outside those roots:
+mirrors. Its owned roots keep the build lane, shared generated-document/PDF
+foundation, and reader implementation outside inherited T3 paths. Two owned
+files sit outside those roots:
 `packages/contracts/src/scientLatex.ts` (the wire contract: toolchain status,
 build snapshot, diagnostic, and managed-install schemas) and
 `packages/client-runtime/src/state/scientLatexHttp.ts` (the typed HTTP client
@@ -24,12 +25,17 @@ inherited T3 code:
 
 | Inherited file                                       | Anchor                                | Purpose                                                                                                                                                                                                      |
 | ---------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/auth/RpcAuthorization.ts`           | `subscribeDocumentBindingChanges`     | Authorize the producer-neutral document-binding subscription as a read operation.                                                                                                                            |
 | `apps/server/src/config.ts`                          | `latexDir`                            | Derive the server-owned LaTeX build state from the configured state root.                                                                                                                                    |
 | `apps/server/src/server.ts`                          | `LatexBuildService`                   | Provide the build coordinator and toolchain probe to the shared server layer.                                                                                                                                |
+| `apps/server/src/ws.ts`                              | `subscribeDocumentBindingChanges`     | Carry the shared document store's binding-change hints over the existing RPC transport.                                                                                                                      |
+| `apps/web/src/components/ChatView.tsx`               | `openFile(..., line)`                 | Open diagnostics and inverse-SyncTeX results at their reported source line through the inherited right-panel store.                                                                                          |
 | `apps/web/src/components/files/filePreviewMode.ts`   | `isLatexPreviewFile`                  | Recognize LaTeX sources in the inherited file preview mode selection.                                                                                                                                        |
 | `apps/web/src/components/files/FilePreviewPanel.tsx` | `export function EditableFileSurface` | Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination. |
+| `packages/client-runtime/src/rpc/client.ts`          | `subscribeDocumentBindingChanges`     | Classify the binding-change method as a subscription in the inherited transport client.                                                                                                                      |
 | `packages/contracts/src/environmentHttp.ts`          | `scientLatex`                         | Register the LaTeX endpoint group in the shared environment HTTP API.                                                                                                                                        |
 | `packages/contracts/src/index.ts`                    | `./scientLatex.ts`                    | Export the additive Scient LaTeX contract from the inherited contract package.                                                                                                                               |
+| `packages/contracts/src/rpc.ts`                      | `subscribeDocumentBindingChanges`     | Register the producer-neutral binding subscription in the shared RPC contract.                                                                                                                               |
 | `packages/client-runtime/package.json`               | `./state/scient-latex`                | Expose the Scient LaTeX HTTP client module through the package export map.                                                                                                                                   |
 
 `scripts/verify-scient-latex-seams.mjs` (`pnpm latex:seams:check`) checks the
@@ -73,6 +79,16 @@ pass reaches a terminal state and loops again, so a save-happy editor
 coalesces into exactly one follow-up compile no matter how many saves land
 mid-build. Clients poll until a terminal state _and_ `pendingRerun: false`,
 because a terminal snapshot with `pendingRerun` still has another pass coming.
+
+**Binding-change wake-ups.** `GeneratedDocumentStore.changes` is exposed over
+the existing RPC subscription transport as a producer-neutral document-binding
+stream keyed by authority and logical document key. The LaTeX surface uses an
+event only as a wake-up hint: it immediately re-reads authoritative build
+status rather than trying to reconstruct state from the event. The successful
+document's 15-second currentness check deliberately remains. A build binding
+can announce Scient's own publishes and failures, but an agent, another editor,
+or a changed included file has no binding event to emit; the slower evidence
+poll is the correctness backstop for those external changes.
 
 **Three-permit admission.** A single `Semaphore` bounds compilation itself to
 `MAX_CONCURRENT_COMPILES = 3` — a compile is CPU- and disk-bound, and three at
@@ -516,11 +532,21 @@ into a directory no install has used before,
 `<latexDir>/managed/tinytex-<version>-<8 hex>`, and then writes
 `managed-state.json` — one atomic write recording version, install time, and
 root — which is the install's single commit point, because that file is the
-only thing that says which root is current. An earlier install root is never
-removed inline:
-its engine may be running, and on Windows a partial removal of a locked tree
-followed by a failed rename is exactly how a working installation becomes no
-installation. Superseded roots are left to the deferred GC. The whole run also
+only thing that says which root is current. Before promotion, the staged
+`latexmk` is made executable on POSIX and run with `-v` under a 30-second,
+64-KiB-output bound with its own `bin` directory prepended to the child PATH.
+An archive that verifies but cannot start on this host therefore never becomes
+current. This same gate runs on Windows, macOS, and Linux; the dedicated native
+asset workflow downloads, verifies, expands, and starts every pinned Windows
+x64, Linux x64, macOS arm64, and macOS x64 release asset on its matching GitHub
+runner.
+
+An earlier install root is never removed during promotion: its engine may be
+running, and on Windows a partial removal of a locked tree followed by a failed
+rename is exactly how a working installation becomes no installation. Once the
+new state file is committed, `cleanupSupersededInstalls` best-effort removes
+unreferenced roots; a locked tree is left for the next successful install to
+retry and cannot turn this install into a failure. The whole run also
 sits under one 45-minute ceiling — above the sum of the per-phase budgets (ten
 minutes of download plus fifteen of package collections, plus the expansion
 between them), so it only cuts what they cannot — and a download that stalls
@@ -531,8 +557,12 @@ gate rather than leaving the state saying an install is forever in flight.
 **Eagerly installed collections.** Promotion is not the last step. Once the
 state file names the new root — that is, once the engine is installed and
 discoverable — the run enters the `installing-packages` phase and asks
-`LatexPackageInstaller` for `collection-latexrecommended` and
-`collection-fontsrecommended` under a 15-minute bound. TinyTeX-1's base set
+`LatexPackageInstaller` for the `synctex` navigation CLI,
+`collection-latexrecommended`, and `collection-fontsrecommended` under a
+15-minute bound. TinyTeX-1's engines can emit an index, but its base archive
+does not include the CLI that reads it; the explicit `synctex` package gives a
+managed install the same forward/inverse navigation path as a full TeX Live.
+The base set
 holds neither `mathtools` nor `siunitx` nor most fonts, so without this a first
 build almost always stops on a missing `.sty` and waits for the per-build
 resolver to fetch one package at a time. The step can only ever add to a
@@ -564,16 +594,35 @@ only other per-document state this lane keeps, one JSON file per document under
 `<latexDir>/evidence/` keyed by the same digest. The workspace directory the user edits
 never receives compiler output, and neither does the agent's own checkpoint
 history. The managed TinyTeX distribution lives under a separate
-`<latexDir>/managed` root, entirely apart from build work directories.
+`<latexDir>/managed` root, entirely apart from build work directories. Published
+navigation indexes live under
+`<latexDir>/synctex/<artifact-id>/<revision-id>` and are swept when the shared
+PDF store no longer retains the matching immutable revision.
 
 ## SyncTeX
 
 Every invocation asks the engine for a SyncTeX index (`-synctex=1` for
 `latexmk`, `--synctex` for tectonic), and it is written next to the PDF in the
-build work directory like any other aux file. Nothing in this lane reads it
-back yet: there is no PDF-to-source or source-to-PDF navigation. Emitting it
-now is free and avoids a second build-invocation change later; wiring it up is
-listed under Deferred decisions.
+build work directory like any other aux file. A successful publish copies that
+index into an exact-revision navigation directory after the immutable PDF is
+published and before the build reports success. Navigation metadata records the
+workspace/root identity, compile directory, synthetic output name, and the
+matching `synctex` command; managed installs resolve the command beside their
+own `latexmk`, while system installations use `synctex` from their normal PATH.
+Failure to retain this auxiliary index never invalidates an otherwise valid
+PDF.
+
+Forward search starts on a source-editor double click and asks `synctex view`
+for the current successful descriptor's exact artifact/revision. The PDF reader
+converts SyncTeX's top-left big-point coordinates into PDF.js's bottom-left
+coordinate system before scrolling. Inverse search starts on a PDF double
+click, converts the page position back to top-left big points, asks `synctex
+edit`, confines the returned input to the workspace, and opens it at the
+reported line. Diagnostics with a valid workspace-relative file are buttons
+through the same line-aware open seam. Any revision change invalidates the
+in-flight navigation request and target, and a missing/evicted revision or
+index returns a typed `unavailable` result rather than navigating against a
+newer PDF.
 
 ## Verification
 
@@ -583,8 +632,13 @@ managed-PATH construction), `latexLog.test.ts` (diagnostics parsing),
 `LatexToolchain.test.ts` (discovery, caching, version parsing),
 `LatexManagedToolchain.test.ts` and `LatexArchiveUnpacker.test.ts` (the
 install pipeline, including `artifactUrlRejection`, unpack argument and
-unpacker-path construction, and that a second install lands beside the first
-rather than over it), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
+unpacker-path construction, staged-engine execution on Windows/macOS/Linux,
+refusal before promotion when that execution fails, and that a second install
+lands beside the first rather than over it), `syncTexOutput.test.ts` (multi-block
+command output, Windows-path colons, forward coordinates, legacy fields, and
+inverse locations), `LatexSyncTex.test.ts` (exact-revision publishing, command
+arguments, source confinement, unavailable stale revisions, and retained-index
+sweeping), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
 shapes, the file/package pairing, and the deliberate `null` for the author's own
 files), `latexPreamble.test.ts` (comment stripping, package and include
 extraction, the bounds, and the paths deliberately not followed),
@@ -655,13 +709,23 @@ actually produces a PDF, and that a root document living in a subdirectory
 still finds what it `\input`s and `\include`s.
 
 Web-side coverage is `latexBuildStore.test.ts` (the watch-loop and coalescing
-contract), `latexToolchainSetupModel.test.ts` (setup-card state derivation),
+contract, including immediate authoritative reconciliation after a binding
+event and the retained external-change poll), `latexToolchainSetupModel.test.ts` (setup-card state derivation),
 `scientLatexSurfaceModel.test.ts` (status-strip and diagnostics-row
 derivation), and `scientLatexSurfaceSeam.test.ts`, a static source audit of
 the `FilePreviewPanel` mount — lazy import, path-kind gating, exact prop
 parity between what the panel passes and what the surface declares, and that
 the surface never imports the chat Markdown pipeline — following the same
 pattern as `pdfFilePreviewSeam.test.ts` and `chatMarkdownMathSeam.test.ts`.
+
+`.github/workflows/scient-latex-managed-install.yml` is the opt-in native
+release-asset lane. On relevant pull-request changes it runs
+`TinyTexAssetSmoke.test.ts` on Windows x64, Linux x64, Apple Silicon, and Intel
+macOS runners; each job downloads the manifest pin, checks byte count and
+SHA-256, expands it with the host path the app relies on, applies POSIX execute
+permissions, starts the real `latexmk`, installs the SyncTeX CLI through the
+distribution's own `tlmgr`, compiles a minimal PDF/index, and exercises both
+forward and inverse navigation against the retained-index layout.
 
 `scient-latex-seams.json` plus `scripts/verify-scient-latex-seams.mjs`
 (`pnpm latex:seams:check`) is the lane seam verifier described under
@@ -687,17 +751,17 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   written per document and never removed, so a workspace whose documents are
   renamed or deleted leaves small orphan files behind. This belongs with the
   build-directory collector above rather than in a second sweep of its own.
-- **Binding-change push subscription.** The web client polls the status
-  endpoint on a self-scheduling timeout (1.5 s active, 15 s for successful
-  currentness, 5 s after a transport error) rather than subscribing to a push
-  notification. The shared foundation
-  now publishes binding transitions on `store.changes`, so what is missing is
-  no longer the source but the transport: nothing carries those changes from
-  the server to the browser yet, and polling stays the documented interim until
-  something does.
-- **Diagnostics-click source jump and SyncTeX navigation** are the next
-  increment on top of the diagnostics list and the SyncTeX index this lane
-  already emits.
+- **Selectable LaTeX providers.** Discovery currently prefers an existing
+  system `latexmk`, falls back to Tectonic, and offers the pinned TinyTeX
+  install only when neither is available. A user-facing provider registry and
+  preference (TinyTeX, tex-to-PDF services, or future engines) is deliberately
+  deferred to a later PR so this lane does not prematurely freeze provider
+  vocabulary or send document sources to a network service without a separate
+  consent and privacy design.
+- **Overleaf integration.** Import/export, project synchronization, identity,
+  and remote build behavior are outside this PR. They should consume the shared
+  document-artifact and source-navigation contracts rather than being folded
+  into the local compiler coordinator.
 - **Warning file-attribution.** `parseLatexLog`'s `WARNING_PATTERN` branch
   captures a line number from the "on input line N." suffix but never a file,
   so every LaTeX/Package/Class warning is reported without a file even when it

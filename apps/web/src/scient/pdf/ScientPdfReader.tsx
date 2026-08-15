@@ -50,6 +50,24 @@ import { useScientPdfReader } from "./useScientPdfReader";
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
 
+export interface PdfForwardSyncTarget {
+  readonly requestId: number;
+  readonly page: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface PdfInverseSyncPoint {
+  readonly page: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface PdfSyncNavigation {
+  readonly forwardTarget: PdfForwardSyncTarget | null;
+  readonly onInverseSearch: (point: PdfInverseSyncPoint) => void;
+}
+
 function ReaderButton(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
   const { label, className, children, ...buttonProps } = props;
   return (
@@ -107,6 +125,7 @@ export function ScientPdfReader(props: {
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
   readonly source: PdfSourceDescriptor;
+  readonly syncNavigation?: PdfSyncNavigation;
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
@@ -147,6 +166,7 @@ export function ScientPdfReader(props: {
       sourceExpiresAt={asset.expiresAt}
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
+      {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
   );
 }
@@ -158,6 +178,7 @@ function LoadedScientPdfReader(props: {
   readonly refreshSource: () => void;
   readonly sourceExpiresAt: number;
   readonly sourceUrl: string;
+  readonly syncNavigation?: PdfSyncNavigation;
 }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
@@ -196,6 +217,11 @@ function LoadedScientPdfReader(props: {
     reader.prepareSearch();
     searchRef.current?.focus();
   }, [reader.prepareSearch, searchOpen]);
+  useEffect(() => {
+    const target = props.syncNavigation?.forwardTarget;
+    if (target === null || target === undefined || state.phase !== "ready") return;
+    reader.goToSyncPoint(target);
+  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, state.phase]);
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
@@ -487,7 +513,29 @@ function LoadedScientPdfReader(props: {
           </aside>
         ) : null}
         <div className="scient-pdf-content">
-          <div ref={setContainer} className="scient-pdf-viewer-container" tabIndex={0}>
+          <div
+            ref={setContainer}
+            className="scient-pdf-viewer-container"
+            tabIndex={0}
+            title={
+              props.syncNavigation === undefined
+                ? undefined
+                : "Double-click the PDF to open the matching source line"
+            }
+            onDoubleClick={(event) => {
+              if (props.syncNavigation === undefined) return;
+              const pageElement = (event.target as Element).closest<HTMLElement>(
+                ".page[data-page-number]",
+              );
+              if (pageElement === null) return;
+              const point = reader.syncPointFromClient({
+                pageElement,
+                clientX: event.clientX,
+                clientY: event.clientY,
+              });
+              if (point !== null) props.syncNavigation.onInverseSearch(point);
+            }}
+          >
             <div ref={setViewerElement} className="pdfViewer" />
           </div>
           {state.phase === "loading" ? (

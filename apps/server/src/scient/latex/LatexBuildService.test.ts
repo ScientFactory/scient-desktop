@@ -41,6 +41,7 @@ import {
   type LatexPackageInstallResult,
 } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexSyncTex } from "./LatexSyncTex.ts";
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
 function minimalPdf(marker: string): Uint8Array {
@@ -73,6 +74,14 @@ const serverEnvironment = Layer.succeed(
   ServerEnvironment.ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(authority),
     getDescriptor: Effect.die("unused environment descriptor"),
+  }),
+);
+const syncTexLayer = Layer.succeed(
+  LatexSyncTex,
+  LatexSyncTex.of({
+    publishIndex: () => Effect.void,
+    forward: () => Effect.die("unused forward SyncTeX lookup"),
+    inverse: () => Effect.die("unused inverse SyncTeX lookup"),
   }),
 );
 
@@ -351,6 +360,7 @@ const makeHarness = (input: {
           ).pipe(Layer.provide(realStoreLayer));
 
     const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
+      Layer.provide(syncTexLayer),
       Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
       Layer.provide(

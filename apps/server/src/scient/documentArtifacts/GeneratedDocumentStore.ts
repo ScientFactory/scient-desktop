@@ -234,6 +234,15 @@ export class GeneratedDocumentStore extends Context.Service<
       readonly revisionId: ArtifactRevisionId;
     }) => Effect.Effect<ResolvedGeneratedDocumentRevision, GeneratedDocumentStoreError>;
     /**
+     * Cheap existence check for revision-scoped auxiliary data. Unlike
+     * `resolveRevision`, this does not read or hash the PDF bytes.
+     */
+    readonly revisionExists: (input: {
+      readonly authority: ArtifactAuthority;
+      readonly artifactId: ArtifactId;
+      readonly revisionId: ArtifactRevisionId;
+    }) => Effect.Effect<boolean, GeneratedDocumentStoreError>;
+    /**
      * Resolves immutable bytes and durably protects them for exactly as long as
      * the signed asset capability returned to the reader will remain valid.
      */
@@ -1026,6 +1035,29 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     readonly revisionId: ArtifactRevisionId;
   }) => resolveRevisionUnlocked(input);
 
+  const revisionExists = (input: {
+    readonly authority: ArtifactAuthority;
+    readonly artifactId: ArtifactId;
+    readonly revisionId: ArtifactRevisionId;
+  }) =>
+    Effect.gen(function* () {
+      if (input.authority !== authority) return false;
+      const [metadataExists, pdfExists] = yield* Effect.all([
+        fileSystem.exists(revisionMetadataPath(input.artifactId, input.revisionId)),
+        fileSystem.exists(revisionPdfPath(input.artifactId, input.revisionId)),
+      ]).pipe(
+        Effect.mapError((cause) =>
+          makeStoreError(
+            "resolve",
+            "filesystem",
+            "Unable to inspect generated PDF revision evidence.",
+            cause,
+          ),
+        ),
+      );
+      return metadataExists && pdfExists;
+    });
+
   const resolveRevisionForAsset = (input: {
     readonly authority: ArtifactAuthority;
     readonly artifactId: ArtifactId;
@@ -1353,6 +1385,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     abandonProduction,
     getDescriptor,
     resolveRevision,
+    revisionExists,
     resolveRevisionForAsset,
     retainRevision,
     changes: Stream.fromPubSub(changesPubSub),

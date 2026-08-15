@@ -1954,6 +1954,18 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.subscribeDocumentBindingChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDocumentBindingChanges,
+            generatedDocuments.changes.pipe(
+              Stream.filter(
+                (change) =>
+                  change.authority === input.authority &&
+                  change.logicalDocumentKey === input.logicalDocumentKey,
+              ),
+            ),
+            { "rpc.aggregate": "document-artifacts" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,

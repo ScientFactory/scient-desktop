@@ -62,6 +62,7 @@ import {
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { parseLatexRecorderManifest } from "./flsManifest.ts";
 import {
   EMPTY_EVIDENCE_MARKS,
@@ -405,6 +406,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const store = yield* GeneratedDocumentStore;
   const toolchainProbe = yield* LatexToolchain;
+  const syncTex = yield* LatexSyncTex;
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -641,6 +643,12 @@ export const make = Effect.gen(function* () {
     readonly generation: number;
     readonly production: GeneratedDocumentProductionHandle;
     readonly pdfPath: string;
+    readonly syncTexPath: string;
+    readonly workspaceRoot: string;
+    readonly rootRelativePath: string;
+    readonly compileDirectory: string;
+    readonly toolchainExecutable: string;
+    readonly managedToolchain: boolean;
     readonly title: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
   }) =>
@@ -659,14 +667,41 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.flatMap((descriptor) =>
-            finishBuild(input.key, input.generation, (entry) => ({
-              ...entry,
-              state: "succeeded",
-              descriptor,
-              // Warnings survive a successful build; they are the point of the log.
-              diagnostics: input.diagnostics,
-              failureSummary: null,
-            })),
+            Effect.gen(function* () {
+              if (descriptor._tag !== "generated-pdf") {
+                return yield* Effect.die("LaTeX publication returned a non-generated PDF");
+              }
+              // The index is auxiliary: persist it before the terminal build
+              // state becomes visible, but never discredit an otherwise valid
+              // PDF if navigation data was absent or could not be retained.
+              yield* syncTex
+                .publishIndex({
+                  artifactId: descriptor.artifactId,
+                  revisionId: descriptor.revisionId,
+                  workspaceRoot: input.workspaceRoot,
+                  rootRelativePath: input.rootRelativePath,
+                  compileDirectory: input.compileDirectory,
+                  syncTexPath: input.syncTexPath,
+                  toolchainExecutable: input.toolchainExecutable,
+                  managed: input.managedToolchain,
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("latex synctex index could not be persisted", {
+                      logicalDocumentKey: input.key,
+                      cause,
+                    }),
+                  ),
+                );
+              yield* finishBuild(input.key, input.generation, (entry) => ({
+                ...entry,
+                state: "succeeded",
+                descriptor,
+                // Warnings survive a successful build; they are the point of the log.
+                diagnostics: input.diagnostics,
+                failureSummary: null,
+              }));
+            }),
           ),
           Effect.catch((error) => {
             if (error.reason === "superseded") {
@@ -1293,6 +1328,12 @@ export const make = Effect.gen(function* () {
           generation,
           production,
           pdfPath: invocation.pdfPath,
+          syncTexPath: invocation.syncTexPath,
+          workspaceRoot: entry.workspaceRoot,
+          rootRelativePath: entry.rootRelativePath,
+          compileDirectory,
+          toolchainExecutable,
+          managedToolchain: managedBinDirectory !== null,
           title: documentTitle(entry.rootRelativePath),
           diagnostics,
         });

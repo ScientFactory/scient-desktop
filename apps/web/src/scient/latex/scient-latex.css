@@ -169,6 +169,21 @@
   line-height: 16px;
 }
 
+.scient-latex-diagnostic-link {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  text-align: start;
+}
+
+.scient-latex-diagnostic-link:hover .scient-latex-diagnostic-location,
+.scient-latex-diagnostic-link:hover .scient-latex-diagnostic-message {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .scient-latex-diagnostic-location {
   flex: none;
   color: var(--muted-foreground);

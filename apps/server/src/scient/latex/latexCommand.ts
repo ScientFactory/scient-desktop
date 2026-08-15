@@ -57,6 +57,8 @@ export interface LatexInvocation {
   readonly args: ReadonlyArray<string>;
   /** Where the engine leaves the PDF for this invocation. */
   readonly pdfPath: string;
+  /** Revision navigation index emitted beside the PDF when the engine supports it. */
+  readonly syncTexPath: string;
   /**
    * Where the engine leaves its recorder output — the `INPUT`/`OUTPUT` list of
    * every file the run touched, which is what tells the caller whether a
@@ -92,6 +94,7 @@ export function buildLatexInvocation(input: {
 }): LatexInvocation {
   const jobName = pdfBaseName(input.rootAbsolutePath.replaceAll("\\", "/"));
   const pdfPath = `${input.workDirectory}/${jobName}.pdf`;
+  const syncTexPath = `${input.workDirectory}/${jobName}.synctex.gz`;
 
   if (input.toolchain.kind === "tectonic") {
     // tectonic keeps no cross-run decision state of its own; every run is a run.
@@ -99,6 +102,7 @@ export function buildLatexInvocation(input: {
       command: input.toolchain.executable,
       args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootAbsolutePath],
       pdfPath,
+      syncTexPath,
       recorderManifestPath: null,
     };
   }
@@ -116,6 +120,7 @@ export function buildLatexInvocation(input: {
       input.rootAbsolutePath,
     ],
     pdfPath,
+    syncTexPath,
     recorderManifestPath: `${input.workDirectory}/${jobName}.fls`,
   };
 }

@@ -19,7 +19,11 @@ import * as NodeCrypto from "node:crypto";
 
 import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
 import { ScientLatexManagedInstallFailureReason } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -36,7 +40,9 @@ import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import * as LatexArchiveUnpacker from "./LatexArchiveUnpacker.ts";
+import { latexEngineEnvironment } from "./latexCommand.ts";
 import { LatexPackageInstaller, clearFailedPackageSearches } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import {
@@ -84,6 +90,8 @@ const INSTALL_TIMEOUT = "45 minutes";
 const PROGRESS_STEP_BYTES = 1024 * 1024;
 /** Matches {@link managedLatexInstallRoot}'s naming, so cleanup only ever touches install directories. */
 const MANAGED_INSTALL_DIR_PREFIX = "tinytex-";
+const ENGINE_VALIDATION_TIMEOUT = "30 seconds";
+const ENGINE_VALIDATION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /**
  * The two collections that make an ordinary paper compile on the first try.
@@ -93,14 +101,18 @@ const MANAGED_INSTALL_DIR_PREFIX = "tinytex-";
  * a first build that works and a first build that stops on a missing `.sty`
  * while the per-build resolver catches up one package at a time.
  */
-const RECOMMENDED_COLLECTIONS: ReadonlyArray<string> = [
+const RECOMMENDED_PACKAGES: ReadonlyArray<string> = [
+  // TinyTeX-1's engines can emit `.synctex.gz`, but the minimal bundle does
+  // not include the CLI that reads it. Install that tool explicitly so the
+  // managed path supports the same source navigation as a full TeX Live.
+  "synctex",
   "collection-latexrecommended",
   "collection-fontsrecommended",
 ];
 /** Two collections over a slow connection; the ceiling above accommodates it. */
 const COLLECTIONS_TIMEOUT = "15 minutes";
 const COLLECTIONS_WARNING =
-  "Common packages could not be preinstalled; missing ones will install on first use.";
+  "Some recommended LaTeX tools or packages could not be preinstalled; document packages may still install on first use.";
 
 const ACTIVE_PHASES: ReadonlySet<ScientLatexManagedInstallState["state"]> = new Set([
   "downloading",
@@ -178,8 +190,11 @@ export const make = Effect.gen(function* () {
   const unpacker = yield* LatexArchiveUnpacker.LatexArchiveUnpacker;
   const toolchain = yield* LatexToolchain;
   const packageInstaller = yield* LatexPackageInstaller;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const pathDelimiter = platform === "win32" ? ";" : ":";
   const assetLookup = resolveTinyTexAsset(platform, architecture, manifest);
   const asset = assetLookup.supported ? assetLookup.asset : null;
   const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
@@ -384,6 +399,57 @@ export const make = Effect.gen(function* () {
           "The LaTeX download did not contain the engine Scient expected.",
         );
       }
+      // GNU tar and bsdtar normally preserve executable bits, but a one-click
+      // install must not depend on archive-mode fidelity. Make the actual
+      // entry point executable on POSIX, then prove it starts before the tree
+      // is promoted or the state file can name it.
+      if (platform !== "win32") {
+        yield* fileSystem
+          .chmod(executable, 0o755)
+          .pipe(
+            Effect.catchTag("PlatformError", (cause) =>
+              failInstall(
+                "unpack-failed",
+                `Scient could not make the LaTeX engine executable: ${cause.message}`,
+              ),
+            ),
+          );
+      }
+      const validation = yield* processRunner
+        .run({
+          command: executable,
+          args: ["-v"],
+          env: latexEngineEnvironment({
+            base: {},
+            hostEnvironment,
+            binDirectory: path.dirname(executable),
+            pathDelimiter,
+          }),
+          timeout: ENGINE_VALIDATION_TIMEOUT,
+          maxOutputBytes: ENGINE_VALIDATION_MAX_OUTPUT_BYTES,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            failInstall(
+              "unpack-failed",
+              `Scient could not start the unpacked LaTeX engine: ${cause.message}`,
+            ),
+          ),
+        );
+      if (validation.timedOut || validation.code !== 0) {
+        return yield* failInstall(
+          "unpack-failed",
+          validation.timedOut
+            ? "The unpacked LaTeX engine did not start in time."
+            : `The unpacked LaTeX engine did not run: ${
+                validation.stderr.trim() ||
+                validation.stdout.trim() ||
+                `latexmk exited with ${String(validation.code)}`
+              }`,
+        );
+      }
     });
 
   /**
@@ -395,7 +461,7 @@ export const make = Effect.gen(function* () {
    * wreckage fails, and what was a working TeX is now neither. So each install
    * lands in a directory of its own and the state file — one atomic write, the
    * only thing discovery reads — is the single moment the switch happens.
-   * Superseded trees are the deferred GC's problem, not this path's.
+   * Best-effort cleanup runs only after this commit point.
    */
   const promote = (input: { readonly payloadPath: string; readonly version: string }) =>
     Effect.gen(function* () {
@@ -486,13 +552,21 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* phase("installing-packages");
       const outcome = yield* packageInstaller.install({
-        packages: RECOMMENDED_COLLECTIONS,
+        packages: RECOMMENDED_PACKAGES,
         binDirectory,
         timeout: COLLECTIONS_TIMEOUT,
       });
-      if (outcome.failed.length === 0) return null;
+      const syncTexExecutable = path.join(
+        binDirectory,
+        platform === "win32" ? "synctex.exe" : "synctex",
+      );
+      const syncTexPresent = yield* fileSystem
+        .exists(syncTexExecutable)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (outcome.failed.length === 0 && syncTexPresent) return null;
       yield* Effect.logWarning("scient latex collections could not be preinstalled", {
         packages: outcome.failed,
+        syncTexPresent,
       });
       return COLLECTIONS_WARNING;
     }).pipe(Effect.catchCause(() => Effect.succeed(COLLECTIONS_WARNING)));
@@ -642,4 +716,5 @@ export const make = Effect.gen(function* () {
  */
 export const layer = Layer.effect(LatexManagedToolchain, make).pipe(
   Layer.provide(LatexArchiveUnpacker.layer),
+  Layer.provide(ProcessRunner.layer),
 );

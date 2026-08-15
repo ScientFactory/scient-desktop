@@ -26,7 +26,10 @@ import {
 } from "./scientLatexSurfaceModel";
 
 export const LATEX_POLL_INTERVAL_MS = 1_500;
-/** Interim source-currentness cadence until binding changes have a transport subscription. */
+/**
+ * Backstop for changes outside Scient (editors, agents, and included files),
+ * which cannot emit the document-store binding notification.
+ */
 export const LATEX_CURRENTNESS_POLL_INTERVAL_MS = 15_000;
 /** A transport failure backs the loop off so an unreachable environment is not hammered. */
 export const LATEX_OFFLINE_POLL_INTERVAL_MS = 5_000;
@@ -374,6 +377,19 @@ export function requestLatexRebuild(
     return;
   }
   runBuild(key, target, loop);
+}
+
+/**
+ * A producer-neutral binding event is only a wake-up hint. Re-reading the
+ * LaTeX status keeps the build coordinator authoritative and also preserves
+ * its diagnostics, toolchain phase, and source-evidence checks.
+ */
+export function notifyLatexBindingChange(target: LatexBuildTarget): void {
+  const key = latexBuildKey(target);
+  const loop = loops.get(key);
+  if (loop === undefined || loop.stopped) return;
+  clearTimer(loop);
+  schedulePoll(key, target, loop, 0);
 }
 
 /** The build waits for the probe: an engine found now is one this build can use. */

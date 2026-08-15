@@ -96,6 +96,10 @@ import {
   ScientLatexBuildRequest,
   ScientLatexBuildSnapshot,
   ScientLatexCancelRequest,
+  ScientLatexForwardSyncRequest,
+  ScientLatexForwardSyncResult,
+  ScientLatexInverseSyncRequest,
+  ScientLatexInverseSyncResult,
   ScientLatexManagedInstallState,
   ScientLatexStatusRequest,
   ScientLatexToolchainReport,
@@ -888,6 +892,22 @@ export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLate
       headers: OptionalBearerHeaders,
       payload: ScientLatexCancelRequest,
       success: ScientLatexBuildSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("forwardSync", "/api/scient/latex/synctex/forward", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexForwardSyncRequest,
+      success: ScientLatexForwardSyncResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("inverseSync", "/api/scient/latex/synctex/inverse", {
+      headers: OptionalBearerHeaders,
+      payload: ScientLatexInverseSyncRequest,
+      success: ScientLatexInverseSyncResult,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

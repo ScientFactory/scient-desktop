@@ -1,0 +1,59 @@
+name: Scient LaTeX Managed Install
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/scient-latex-managed-install.yml"
+      - "apps/server/src/scient/latex/**"
+      - "apps/server/src/processRunner.ts"
+      - "packages/shared/src/hostProcess.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scient-latex-managed-install-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  native_asset:
+    name: Native asset / ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows x64
+            runner: windows-2025
+          - platform: Linux x64
+            runner: ubuntu-24.04
+          - platform: macOS Apple Silicon
+            runner: macos-15
+          - platform: macOS Intel
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - name: Verify pinned native TinyTeX asset
+        working-directory: apps/server
+        env:
+          SCIENT_TINYTEX_ASSET_SMOKE: "1"
+        run: vp test run src/scient/latex/TinyTexAssetSmoke.test.ts

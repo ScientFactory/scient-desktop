@@ -348,6 +348,48 @@ export function useScientPdfReader(input: {
     runtime.viewer.currentPageNumber = clampPdfPage(page, runtime.document.numPages);
   }, []);
 
+  const goToSyncPoint = useCallback((input: { page: number; x: number; y: number }) => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const page = clampPdfPage(input.page, runtime.document.numPages);
+    const pageView = runtime.viewer.getPageView(page - 1);
+    const pageHeight = pageView?.viewport.rawDims.pageHeight;
+    if (pageHeight === undefined) {
+      runtime.viewer.currentPageNumber = page;
+      return;
+    }
+    runtime.viewer.scrollPageIntoView({
+      pageNumber: page,
+      // SyncTeX measures from the top-left in 72-dpi big points; PDF
+      // destinations measure from the bottom-left in the same unit.
+      destArray: [null, { name: "XYZ" }, input.x, pageHeight - input.y, null],
+      allowNegativeOffset: true,
+      ignoreDestinationZoom: true,
+    });
+  }, []);
+
+  const syncPointFromClient = useCallback(
+    (input: { pageElement: HTMLElement; clientX: number; clientY: number }) => {
+      const runtime = runtimeRef.current;
+      if (!runtime) return null;
+      const page = Number(input.pageElement.dataset.pageNumber);
+      if (!Number.isSafeInteger(page) || page < 1 || page > runtime.document.numPages) return null;
+      const pageView = runtime.viewer.getPageView(page - 1);
+      if (!pageView) return null;
+      const rect = input.pageElement.getBoundingClientRect();
+      const [pdfX, pdfY] = pageView.viewport.convertToPdfPoint(
+        input.clientX - rect.left,
+        input.clientY - rect.top,
+      );
+      return {
+        page,
+        x: Math.max(0, pdfX),
+        y: Math.max(0, pageView.viewport.rawDims.pageHeight - pdfY),
+      };
+    },
+    [],
+  );
+
   const setZoom = useCallback((scale: number) => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -440,6 +482,8 @@ export function useScientPdfReader(input: {
     runtimeRef,
     submitPassword,
     goToPage,
+    goToSyncPoint,
+    syncPointFromClient,
     setZoom,
     setZoomMode,
     rotate,

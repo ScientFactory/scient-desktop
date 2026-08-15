@@ -34,6 +34,7 @@ import {
   LATEX_POLL_INTERVAL_MS,
   cancelLatexBuild,
   latexBuildKey,
+  notifyLatexBindingChange,
   readLatexBuild,
   requestLatexRebuild,
   requestManagedLatexInstall,
@@ -197,6 +198,23 @@ describe("latexBuildStore", () => {
     await vi.advanceTimersByTimeAsync(LATEX_POLL_INTERVAL_MS);
     expect(readLatexBuild(target).snapshot?.state).toBe("succeeded");
     expect(requestLatexBuild).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("reconciles immediately when the document binding announces a change", async () => {
+    readLatexBuildStatus
+      .mockResolvedValueOnce(snapshot("succeeded"))
+      .mockResolvedValueOnce(snapshot("succeeded", { finishedAtEpochMs: 2 }));
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+
+    notifyLatexBindingChange(target);
+    await settle();
+
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
+    expect(readLatexBuild(target).snapshot?.finishedAtEpochMs).toBe(2);
     stop();
   });
 
