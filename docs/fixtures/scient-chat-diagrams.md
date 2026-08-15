@@ -131,6 +131,24 @@ flowchart RL
   C --> D["תוצאה"]
 ```
 
+## Tall, narrow RTL flowchart
+
+This diagram should keep its intrinsic width and remain centered when the chat
+is wider. It should shrink, without horizontal clipping, when the chat becomes
+narrower than the diagram.
+
+```mermaid
+flowchart TD
+  accTitle: הוכחת נוסחת מספר הזהב
+  accDescr: תרשים המציג את שלבי הגזירה של מספר הזהב, מהגדרת היחס ועד לקשר עם סדרת פיבונאצ'י
+  A["הגדרת היחס:<br/>a+b חלקי a שווה a חלקי b"] --> B["הצבה: x = a/b"]
+  B --> C["משוואה ריבועית:<br/>x בריבוע - x - 1 = 0"]
+  C --> D["פתרון בנוסחה הריבועית"]
+  D --> E["מספר הזהב:<br/>φ = (1 + שורש 5) / 2 ≈ 1.618"]
+  E --> F["קשר לסדרת פיבונאצ'י"]
+  F --> G["Fn+1 חלקי Fn שואף ל-φ"]
+```
+
 ## Two adjacent diagrams
 
 ```mermaid

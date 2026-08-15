@@ -15,20 +15,23 @@ const diagramCardSource = NodeFS.readFileSync(
   new URL("./MermaidDiagramCard.tsx", import.meta.url),
   "utf8",
 );
+const diagramStyles = NodeFS.readFileSync(
+  new URL("./scient-diagrams.css", import.meta.url),
+  "utf8",
+);
 
 describe("ChatMarkdown diagram seam", () => {
-  it("mounts one Scient-owned diagram component", () => {
-    expect(chatMarkdownSource).toContain(
-      'import { MermaidDiagramCard } from "../scient/diagrams/MermaidDiagramCard";',
-    );
-    expect(chatMarkdownSource.match(/<MermaidDiagramCard/gu)).toHaveLength(1);
+  it("mounts one Scient-owned rich-fence component", () => {
+    expect(chatMarkdownSource).toContain('} from "../scient/presentation/ScientRichFence";');
+    expect(chatMarkdownSource.match(/<ScientRichFence/gu)).toHaveLength(1);
+    expect(chatMarkdownSource).not.toContain("MermaidDiagramCard");
   });
 
-  it("renders only settled Mermaid fences and leaves streaming fences on the code path", () => {
+  it("renders only settled rich fences and leaves streaming fences on the code path", () => {
     expect(chatMarkdownSource).toContain(
-      'if (!isStreaming && language.toLowerCase() === "mermaid")',
+      "const richFenceKind = !isStreaming ? resolveScientRichFenceKind(language) : null;",
     );
-    const diagramBranch = chatMarkdownSource.indexOf("<MermaidDiagramCard");
+    const diagramBranch = chatMarkdownSource.indexOf("<ScientRichFence");
     const ordinaryCodeBranch = chatMarkdownSource.indexOf("<MarkdownCodeBlock", diagramBranch);
     expect(diagramBranch).toBeGreaterThan(0);
     expect(ordinaryCodeBranch).toBeGreaterThan(diagramBranch);
@@ -37,6 +40,7 @@ describe("ChatMarkdown diagram seam", () => {
   it("passes canonical source, metadata, title, and theme across the seam", () => {
     for (const prop of [
       "fenceMeta={fenceMeta}",
+      "kind={richFenceKind}",
       "language={language}",
       "source={codeBlock.code}",
       "theme={resolvedTheme}",
@@ -57,5 +61,16 @@ describe("Mermaid runtime boundary", () => {
     expect(mermaidRuntimeSource).toContain('securityLevel: "strict"');
     expect(mermaidRuntimeSource).toContain("startOnLoad: false");
     expect(diagramCardSource).not.toMatch(/\.bindFunctions\s*\(/u);
+  });
+});
+
+describe("Mermaid inline sizing", () => {
+  it("preserves Mermaid's intrinsic maximum width while allowing large diagrams to shrink", () => {
+    const inlineStyles = /\.scient-mermaid-inline svg\s*\{(?<rules>[^}]*)\}/u.exec(diagramStyles)
+      ?.groups?.rules;
+
+    expect(inlineStyles).toContain("width: 100%");
+    expect(inlineStyles).toContain("height: auto");
+    expect(inlineStyles).not.toContain("max-width:");
   });
 });

@@ -1,5 +1,19 @@
 # Third-Party Notices
 
+## Vega, Vega-Lite, Vega-Embed, and Vega Tooltip
+
+Scient renders interactive charts with unmodified, locally bundled
+[`vega`](https://vega.github.io/vega/),
+[`vega-lite`](https://vega.github.io/vega-lite/), and
+[`vega-embed`](https://github.com/vega/vega-embed), and
+[`vega-tooltip`](https://github.com/vega/vega-tooltip) packages. Each project is
+licensed under the BSD 3-Clause License.
+
+- <https://github.com/vega/vega/blob/main/LICENSE>
+- <https://github.com/vega/vega-lite/blob/main/LICENSE>
+- <https://github.com/vega/vega-embed/blob/main/LICENSE>
+- <https://github.com/vega/vega-tooltip/blob/main/LICENSE>
+
 ## Mermaid
 
 Scient renders diagrams with an unmodified, locally bundled

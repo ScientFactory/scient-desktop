@@ -308,14 +308,19 @@ describe("T3 browser developer instructions", () => {
 });
 
 describe("Scient rich chat presentation instructions", () => {
-  it("advertises the same Mermaid capability in both collaboration modes", () => {
+  it("advertises the same rich-fence capabilities in both collaboration modes", () => {
     for (const instructions of [
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
+      NodeAssert.match(instructions, /available in Scient/);
+      NodeAssert.match(instructions, /applies only to chat presentation/);
       NodeAssert.match(instructions, /settled fenced ```mermaid blocks/);
       NodeAssert.match(instructions, /self-contained Mermaid source/);
       NodeAssert.match(instructions, /not a durable project artifact/);
+      NodeAssert.match(instructions, /settled fenced ```vega-lite blocks/);
+      NodeAssert.match(instructions, /Prefer Vega-Lite when the requested visual/);
+      NodeAssert.match(instructions, /selection on one layer or scope it to one named view/);
     }
   });
 });

@@ -67,12 +67,15 @@ a short capability contract through supported provider-level seams:
 
 - Codex receives it in both default and plan developer instructions.
 - Claude Code receives it as an append to its preset system prompt.
+- OpenCode receives it through the SDK's supported per-prompt system field.
+- Grok receives it through the CLI's supported `--rules` system append.
 
 The instruction recommends diagrams only when a relationship is materially
 clearer visually, requires ordinary self-contained Mermaid, asks for accessible
 metadata when useful, and distinguishes inline representation from a durable
-artifact. Other providers can still render Mermaid they emit, but are not
-silently given user-prompt text when they lack a clean system/developer seam.
+artifact. Cursor can still render Mermaid it emits, but its ACP transport does
+not currently expose a clean system/developer seam; Scient does not silently
+inject capability text into the user's prompt.
 
 ## Platforms and fallback
 
