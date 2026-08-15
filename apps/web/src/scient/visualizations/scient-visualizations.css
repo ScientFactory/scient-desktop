@@ -3,6 +3,55 @@
   content-visibility: auto;
 }
 
+/* Plotly cards must not use content-visibility:auto. The viewport hook mounts
+   Plotly 500px before the card is on screen; Chromium skips layout of
+   content-visibility:auto subtrees until then, so regl sees a 0×0 canvas,
+   injects .no-webgl, and the host used to misreport GPU-context exhaustion. */
+.scient-plotly-view {
+  width: 100%;
+  min-width: 0;
+  min-height: 20rem;
+}
+
+.scient-plotly-graph {
+  width: 100%;
+  min-height: inherit;
+}
+
+/* Match the inline view's 20rem minimum plus responsive stage padding so
+   releasing a WebGL slot does not change the card's geometry. */
+.scient-plotly-stage {
+  min-height: calc(20rem + 1.5rem);
+}
+
+@media (min-width: 40rem) {
+  .scient-plotly-stage {
+    min-height: calc(20rem + 2.5rem);
+  }
+}
+
+/* Fill only the expanded dialog, which has a definite flex height. Inline
+   `height: 100% !important` on .svg-container overrides Plotly's pixel size
+   and computes to 0 when the parent height is auto (min-height does not
+   establish a percentage containing block). */
+.scient-plotly-view.h-full,
+.scient-plotly-view.h-full .scient-plotly-graph,
+.scient-plotly-view.h-full .plot-container,
+.scient-plotly-view.h-full .svg-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.scient-plotly-view .slider-container,
+.scient-plotly-view .slider-container * {
+  cursor: pointer;
+}
+
+.scient-plotly-source {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
 .scient-vega-lite-view > .vega-embed,
 .scient-vega-lite-view > .vega-embed > div {
   width: 100%;

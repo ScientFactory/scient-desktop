@@ -28,4 +28,14 @@ describe("Scient chat presentation instructions", () => {
     );
     expect(SCIENT_CHAT_PRESENTATION_INSTRUCTIONS).not.toContain("must use SVG");
   });
+
+  it("advertises the canonical Plotly fence without pinning producers to a runtime version", () => {
+    expect(SCIENT_CHAT_PRESENTATION_INSTRUCTIONS).toContain("fenced ```plotly blocks");
+    expect(SCIENT_CHAT_PRESENTATION_INSTRUCTIONS).toContain("Python, R, or MATLAB");
+    expect(SCIENT_CHAT_PRESENTATION_INSTRUCTIONS).toContain(
+      "complete encoded `dtype`/`bdata` arrays",
+    );
+    expect(SCIENT_CHAT_PRESENTATION_INSTRUCTIONS).toContain("not HTML");
+    expect(SCIENT_CHAT_PRESENTATION_INSTRUCTIONS).not.toContain("Plotly.js 3.7.0");
+  });
 });

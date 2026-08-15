@@ -23,12 +23,17 @@ const diagramStyles = NodeFS.readFileSync(
   new URL("./scient-diagrams.css", import.meta.url),
   "utf8",
 );
+const plotlyRuntimeSource = NodeFS.readFileSync(
+  new URL("../visualizations/plotlyRuntime.ts", import.meta.url),
+  "utf8",
+);
 
 describe("ChatMarkdown diagram seam", () => {
   it("mounts one Scient-owned rich-fence component", () => {
     expect(chatMarkdownSource).toContain('} from "../scient/presentation/ScientRichFence";');
     expect(chatMarkdownSource.match(/<ScientRichFence/gu)).toHaveLength(1);
     expect(chatMarkdownSource).not.toContain("MermaidDiagramCard");
+    expect(chatMarkdownSource).not.toContain("PlotlyChartCard");
   });
 
   it("renders only settled rich fences and leaves streaming fences on the code path", () => {
@@ -52,6 +57,15 @@ describe("ChatMarkdown diagram seam", () => {
     ]) {
       expect(chatMarkdownSource).toContain(prop);
     }
+  });
+});
+
+describe("Plotly runtime boundary", () => {
+  it("keeps the complete Plotly runtime behind one dynamic import", () => {
+    expect(plotlyRuntimeSource).toContain("plotlyRuntimePromise ??=");
+    expect(plotlyRuntimeSource).toContain('import("plotly.js-strict-dist-min")');
+    expect(plotlyRuntimeSource).toContain("plotlyRuntimePromise = null;");
+    expect(plotlyRuntimeSource).not.toMatch(/from ["']plotly\.js-strict-dist-min["']/u);
   });
 });
 
