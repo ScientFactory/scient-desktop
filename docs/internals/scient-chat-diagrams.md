@@ -18,9 +18,10 @@ There is no wire-format, database, attachment, artifact-store, or Markdown AST
 fork. The source already present in the assistant message is authoritative;
 SVG and PNG are disposable local representations. This is intentionally the
 first presentation layer for the future Scientific Artifact Studio, not a
-second artifact model. A future “save as artifact” action should consume the
-studio's producer-neutral artifact contracts rather than adding persistence to
-the diagram card.
+second artifact model. A future “save as artifact” action should follow the
+[Scientific Artifact Studio roadmap](./scientific-artifact-studio.md) and its
+typed artifact-reference boundary rather than adding persistence to the
+diagram card.
 
 ## Rendering pipeline
 

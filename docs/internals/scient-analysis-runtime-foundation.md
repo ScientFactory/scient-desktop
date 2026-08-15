@@ -166,6 +166,12 @@ HTML, SVG, or PDF representations can later be enabled deliberately without chan
 identity. Output-file discovery outside the private runner directory remains later work; this
 slice never infers artifacts by diffing the user's project tree.
 
+The [Scientific Artifact Studio roadmap](./scientific-artifact-studio.md) owns the cross-producer
+presentation direction: typed artifact references in chat, representation selection, Plotly and
+table renderers, capability-gated MATLAB SVG/HTML, later Python/R/Julia/notebook producers, and the
+future composition workspace. Those additions extend this runtime-neutral artifact flow; they do
+not turn `AnalysisService` into a viewer, manuscript editor, or universal artifact database.
+
 ## Platform behavior
 
 - macOS discovery checks `PATH` and `/Applications/MATLAB_R20xx.app/bin/matlab` candidates.
