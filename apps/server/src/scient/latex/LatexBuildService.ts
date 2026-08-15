@@ -1130,7 +1130,7 @@ export const make = Effect.gen(function* () {
           executable: toolchainExecutable,
           version: toolchain.version ?? "unknown",
         },
-        rootAbsolutePath,
+        rootFileName: path.basename(rootAbsolutePath),
         workDirectory,
         // The work directory outlives a build and `latexmk` keeps its own
         // decision state in it, which is state about a run whose inputs this

@@ -136,7 +136,7 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
             "-synctex=1",
             "-interaction=nonstopmode",
             `-outdir=${outputDirectory}`,
-            sourcePath,
+            NodePath.basename(sourcePath),
           ],
           {
             cwd: workspace,

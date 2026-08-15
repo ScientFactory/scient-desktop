@@ -6,7 +6,7 @@ describe("buildLatexInvocation", () => {
   it("builds a safe non-interactive latexmk invocation", () => {
     const invocation = buildLatexInvocation({
       toolchain: { kind: "latexmk", executable: "latexmk", version: "4.86" },
-      rootAbsolutePath: "C:\\work\\paper\\main.tex",
+      rootFileName: "main.tex",
       workDirectory: "C:/state/scient-latex/abc",
     });
 
@@ -16,7 +16,7 @@ describe("buildLatexInvocation", () => {
     expect(invocation.args).toContain("-no-shell-escape");
     expect(invocation.args).toContain("-synctex=1");
     expect(invocation.args).toContain("-outdir=C:/state/scient-latex/abc");
-    expect(invocation.args.at(-1)).toBe("C:\\work\\paper\\main.tex");
+    expect(invocation.args.at(-1)).toBe("main.tex");
     expect(invocation.pdfPath).toBe("C:/state/scient-latex/abc/main.pdf");
     // `latexmk` passes `-recorder` on its own; the caller only has to know
     // where the resulting input list lands.
@@ -26,7 +26,7 @@ describe("buildLatexInvocation", () => {
   it("runs to the end of the document instead of halting on the first error", () => {
     const invocation = buildLatexInvocation({
       toolchain: { kind: "latexmk", executable: "latexmk", version: "4.86" },
-      rootAbsolutePath: "/home/u/paper/main.tex",
+      rootFileName: "main.tex",
       workDirectory: "/state/scient-latex/abc",
     });
 
@@ -41,13 +41,13 @@ describe("buildLatexInvocation", () => {
   it("keeps a subdirectory root addressable from its own directory", () => {
     const invocation = buildLatexInvocation({
       toolchain: { kind: "latexmk", executable: "latexmk", version: "4.86" },
-      rootAbsolutePath: "/home/u/workspace/paper/main.tex",
+      rootFileName: "main.tex",
       workDirectory: "/state/scient-latex/abc",
     });
 
-    // The engine is spawned from the root's own directory so `\input` resolves,
-    // and the absolute root plus an absolute `-outdir` survive that cwd.
-    expect(invocation.args.at(-1)).toBe("/home/u/workspace/paper/main.tex");
+    // The engine is spawned from the root's own directory so `\input` resolves;
+    // only the isolated `-outdir` needs to remain absolute across that cwd.
+    expect(invocation.args.at(-1)).toBe("main.tex");
     expect(invocation.args).toContain("-outdir=/state/scient-latex/abc");
     expect(invocation.pdfPath).toBe("/state/scient-latex/abc/main.pdf");
   });
@@ -62,17 +62,17 @@ describe("buildLatexInvocation", () => {
     // like one that still has not got it.
     const forced = buildLatexInvocation({
       toolchain: { kind: "latexmk", executable: "latexmk", version: "4.88" },
-      rootAbsolutePath: "/home/u/paper/main.tex",
+      rootFileName: "main.tex",
       workDirectory: "/state/scient-latex/abc",
       forceReprocess: true,
     });
     expect(forced.args).toContain("-g");
-    expect(forced.args.at(-1)).toBe("/home/u/paper/main.tex");
+    expect(forced.args.at(-1)).toBe("main.tex");
 
     expect(
       buildLatexInvocation({
         toolchain: { kind: "latexmk", executable: "latexmk", version: "4.88" },
-        rootAbsolutePath: "/home/u/paper/main.tex",
+        rootFileName: "main.tex",
         workDirectory: "/state/scient-latex/abc",
       }).args,
     ).not.toContain("-g");
@@ -81,7 +81,7 @@ describe("buildLatexInvocation", () => {
   it("builds an untrusted tectonic invocation", () => {
     const invocation = buildLatexInvocation({
       toolchain: { kind: "tectonic", executable: "tectonic", version: "0.15" },
-      rootAbsolutePath: "/home/u/paper/thesis.tex",
+      rootFileName: "thesis.tex",
       workDirectory: "/state/scient-latex/xyz",
     });
 
@@ -91,7 +91,7 @@ describe("buildLatexInvocation", () => {
       "/state/scient-latex/xyz",
       "--untrusted",
       "--synctex",
-      "/home/u/paper/thesis.tex",
+      "thesis.tex",
     ]);
     expect(invocation.pdfPath).toBe("/state/scient-latex/xyz/thesis.pdf");
     // No recorder output: the caller falls back to reading the document itself
@@ -102,7 +102,7 @@ describe("buildLatexInvocation", () => {
     expect(
       buildLatexInvocation({
         toolchain: { kind: "tectonic", executable: "tectonic", version: "0.15" },
-        rootAbsolutePath: "/home/u/paper/thesis.tex",
+        rootFileName: "thesis.tex",
         workDirectory: "/state/scient-latex/xyz",
         forceReprocess: true,
       }).args,
