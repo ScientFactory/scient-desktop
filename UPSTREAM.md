@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260815-8c628f14.md`](docs/internals/t3-upstream-sync-20260815-8c628f14.md)
+[`docs/internals/t3-upstream-sync-20260815-6ae9662d8e.md`](docs/internals/t3-upstream-sync-20260815-6ae9662d8e.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `8c628f14993cb159d467e7a0f8c52578dde77005` into the refresh
-branch, preserving the complete contiguous range after the previously
-integrated tip `7e01d33f0eeb9435299791392d546756cc09c5d3`. Later observed T3
+checkpoint `6ae9662d8ed215476e697adc12403ce035500828` into the refresh
+branch, preserving the next clean commit after the previously integrated tip
+`8c628f14993cb159d467e7a0f8c52578dde77005`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -159,6 +159,12 @@ sources remain as inert ancestry, but Scient does not enable the AUR workflow
 or advertise AUR distribution. The merge also supplies the Scient secret-store
 composition required by T3's new agent-awareness path and preserves the PDF
 canvas native external in the new Windows `server.asar` layout.
+
+The follow-up 2026-08-15 sync through `6ae9662d8e` receives T3's dark-mode
+theme-token specificity fix. Selected appearance themes again override the
+generated root dark defaults. The merge was conflict-free; Scient typography,
+stage artwork, and the rest of the inherited stylesheet remain unchanged. No
+Scient-owned package under `apps/web/src/scient` changed.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
