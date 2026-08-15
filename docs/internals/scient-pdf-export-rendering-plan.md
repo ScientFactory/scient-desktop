@@ -597,6 +597,26 @@ integrate against the foundation contracts, but their production release is
 gated on this protected retention implementation; unbounded history and unsafe
 "keep N" deletion are both unacceptable shipping states.
 
+**Status — landed in the shared store.** `GeneratedDocumentStore` now performs
+store-level accounting of every published revision (count and bytes across all
+logical documents) in a `retention-index.json` beside the bindings, and enforces
+the budget opportunistically after each publish with no background timer.
+`GeneratedDocumentRetentionPolicy` carries the byte and artifact caps — the
+plan's 500 MiB / 100 artifacts by default — plus a per-pass eviction bound, and
+is overridable through `layerWith({ retention })`. Protection is derived from
+the bindings, never from the index: the revision every binding currently
+resolves to is never a candidate, and `retainRevision(ref)` adds scope-held
+protection for a revision that in-flight work still references. Eviction removes
+the accounting entry before touching the filesystem, so an interrupted delete
+strands an unreferenced directory rather than a referenced-but-deleted revision;
+the bounded startup sweep re-adopts referenced directories the index has lost,
+drops entries whose directories are gone, and reclaims orphans and crashed
+temporary directories. A budget that cannot be restored without deleting
+protected work is reported through a warning rather than satisfied. Two pieces
+of the policy above remain open for the producer lanes: reader-open and
+pinned/saved lifetime beyond the scope-held pin, and blocking a new export with
+a visible storage-management error when only protected work remains.
+
 Integrity verification is performed when a renewable signed URL is issued,
 not for each HTTP byte-range request. The initial implementation re-hashes the
 immutable revision at that boundary; the client refreshes asset capabilities
@@ -793,6 +813,30 @@ causes `getDescriptor` to run); it is not a LaTeX-, Browser-, Typst-, or
 Quarto-specific event. Delivery may be coalesced, so the persisted binding
 remains authoritative and reconnect always re-reads it. Polling may be a
 temporary diagnostic fallback, not the product lifecycle.
+
+**Status — server-internal seam landed.** `DocumentBindingChange` is a neutral
+schema in `packages/scient-document-artifacts` carrying the change kind
+(`begin`, `publish`, `fail`, `abandon`, `supersede`, `reconcile`), authority,
+logical document key, artifact ID, binding generation, status, active revision,
+and update time. `GeneratedDocumentStore.changes` is a `Stream` over an
+in-process replaying `PubSub` that announces every binding transition, including
+startup reconciliation. This is the foundation contract only: no wire or HTTP
+surface exists yet, so the authenticated subscription still has to be built on
+top of it by exposing the neutral schema through `packages/contracts` rather
+than defining a second wire shape.
+
+**Status — cancellation and restart semantics landed.** The lifecycle now
+separates two outcomes that previously shared one transition. `failProduction`
+keeps its meaning — the inputs are discredited, so a surviving revision is
+marked stale — while `abandonProduction` releases a production that was
+cancelled or superseded without discrediting anything: a published current
+revision stays current and is never staled, a never-published binding settles to
+the new `unbound` status, and the call is idempotent so a cancel path can run
+unconditionally against a handle that no longer owns the binding. A server
+interruption no longer leaves persisted `producing` state unreconciled: the
+store sweeps its bindings on layer initialization and routes every still-running
+attempt through the same abandon transition, restoring the prior published
+revision where one exists and logging what it reconciled.
 
 The foundation PR proves this lifecycle with permanent fixtures, not one static
 file: open revision A; publish validated revision B; preserve reader state while
