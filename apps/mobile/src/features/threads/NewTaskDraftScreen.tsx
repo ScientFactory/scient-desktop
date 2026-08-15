@@ -729,6 +729,7 @@ export function NewTaskDraftScreen(props: {
     // -only Activity start. If creation fails, the token registration's replay
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: selectedEnvironmentId,
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
       projectTitle: selectedProject?.title ?? SCIENT_GENERAL_CHAT_LABEL,
     });
