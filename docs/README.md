@@ -52,6 +52,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient Sources foundation](./internals/scient-sources.md)
 - [Scient PDF export and rendering implementation plan](./internals/scient-pdf-export-rendering-plan.md)
 - [Scient analysis runtime foundation](./internals/scient-analysis-runtime-foundation.md)
+- [Scientific Artifact Studio roadmap](./internals/scientific-artifact-studio.md)
 - [Scient rich chat diagrams](./internals/scient-chat-diagrams.md)
 - [Scient inline workspace images](./internals/scient-chat-images.md)
 - [Scient rich chat visualizations](./internals/scient-chat-visualizations.md)
