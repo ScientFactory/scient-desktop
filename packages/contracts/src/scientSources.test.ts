@@ -218,17 +218,17 @@ describe("Scient sources contracts", () => {
     });
   });
 
-  it("carries the authoritative attachment path with a signed preview URL", () => {
-    expect(
-      decodeScientSourceAttachmentPreviewResult({
-        relativeUrl: "/api/assets/source-token",
-        expiresAt: 1_786_000_000_000,
-        absolutePath: "/project/.scient/sources/files/sha256/ab/abcdef.pdf",
-      }),
-    ).toMatchObject({
+  it("returns a signed preview URL without a host filesystem path", () => {
+    const decoded = decodeScientSourceAttachmentPreviewResult({
       relativeUrl: "/api/assets/source-token",
+      expiresAt: 1_786_000_000_000,
       absolutePath: "/project/.scient/sources/files/sha256/ab/abcdef.pdf",
     });
+    expect(decoded).toEqual({
+      relativeUrl: "/api/assets/source-token",
+      expiresAt: 1_786_000_000_000,
+    });
+    expect(decoded).not.toHaveProperty("absolutePath");
   });
 
   it("keeps journal presentation optional while carrying a signed icon URL when available", () => {
