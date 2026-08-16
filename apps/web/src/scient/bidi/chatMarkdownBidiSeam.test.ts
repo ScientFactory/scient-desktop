@@ -18,6 +18,7 @@ const timelineSource = NodeFS.readFileSync(
   new URL("../../components/chat/MessagesTimeline.tsx", import.meta.url),
   "utf8",
 );
+const bidiCssSource = NodeFS.readFileSync(new URL("./scient-bidi.css", import.meta.url), "utf8");
 
 function renderUserPipeline(markdown: string): string {
   return renderToStaticMarkup(
@@ -67,6 +68,18 @@ describe("ChatMarkdown BiDi seam", () => {
     expect(assistantMount).toBeDefined();
     expect(assistantMount).not.toContain("parseRawHtml");
   });
+
+  it("thickens flow arrows inline and boxes only the lifted long arrow", () => {
+    expect(bidiCssSource).toContain(".chat-markdown .scient-flow-arrow {");
+    expect(bidiCssSource).toContain(".chat-markdown .scient-flow-arrow-long {");
+    expect(bidiCssSource).toMatch(
+      /\.chat-markdown \.scient-flow-arrow \{[^}]*-webkit-text-stroke:/u,
+    );
+    expect(bidiCssSource).not.toMatch(/\.chat-markdown \.scient-flow-arrow \{[^}]*display:/u);
+    expect(bidiCssSource).toMatch(
+      /\.chat-markdown \.scient-flow-arrow-long \{[^}]*display:\s*inline-block;/u,
+    );
+  });
 });
 
 describe("user Markdown plus Scient BiDi", () => {
@@ -102,6 +115,17 @@ describe("user Markdown plus Scient BiDi", () => {
 
     expect(html).toContain("שלב ראשון ← שלב שני");
     expect(html).toContain("שלום → עולם");
+  });
+
+  it("emits thickening and lift classes for the styled RTL arrows", () => {
+    const doubleArrow = renderUserPipeline("שלב ראשון ⇒ שלב שני");
+    expect(doubleArrow).toContain("scient-flow-arrow");
+    expect(doubleArrow).toContain("⇐");
+    expect(doubleArrow).not.toContain("scient-flow-arrow-long");
+
+    const longArrow = renderUserPipeline("שלב ראשון ⟶ שלב שני");
+    expect(longArrow).toContain("scient-flow-arrow-long");
+    expect(longArrow).toContain("⟵");
   });
 });
 

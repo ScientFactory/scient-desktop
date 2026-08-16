@@ -80,3 +80,18 @@
   direction: rtl;
   unicode-bidi: isolate;
 }
+
+/* RTL flow arrows that fall back to thinner fonts (Hiragino Sans for ⇐, STIX
+   Two Math for ⟵ and ⟸) need a tiny stroke to match the visual weight of
+   surrounding text. Thickening stays inline: a layout box is only required
+   for ⟵, whose STIX math baseline sits low and needs translateY. The basic
+   ← (U+2190) is intentionally excluded; its Arial fallback already aligns. */
+.chat-markdown .scient-flow-arrow {
+  -webkit-text-stroke: 0.015em currentColor;
+  paint-order: stroke fill;
+}
+
+.chat-markdown .scient-flow-arrow-long {
+  display: inline-block;
+  transform: translateY(-0.05em);
+}

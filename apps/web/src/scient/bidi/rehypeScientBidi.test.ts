@@ -413,4 +413,193 @@ describe("rehypeScientBidi", () => {
     const list = tree.children?.[0] as { properties?: Record<string, unknown> };
     expect(list.properties?.dir).toBe("ltr");
   });
+
+  it("wraps double arrows in styled spans in RTL prose", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלב ראשון ⇒ שלב שני" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{
+        type?: string;
+        tagName?: string;
+        value?: string;
+        properties?: Record<string, unknown>;
+        children?: Array<{ value?: string }>;
+      }>;
+    };
+    expect(paragraph.children?.[0]?.type).toBe("text");
+    expect(paragraph.children?.[0]?.value).toBe("שלב ראשון ");
+    expect(paragraph.children?.[1]?.type).toBe("element");
+    expect(paragraph.children?.[1]?.tagName).toBe("span");
+    expect(paragraph.children?.[1]?.properties?.className).toEqual(["scient-flow-arrow"]);
+    expect(paragraph.children?.[1]?.children?.[0]?.value).toBe("⇐");
+    expect(paragraph.children?.[2]?.type).toBe("text");
+    expect(paragraph.children?.[2]?.value).toBe(" שלב שני");
+  });
+
+  it("wraps long single arrows with an additional lift class", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלב ראשון ⟶ שלב שני" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{
+        type?: string;
+        tagName?: string;
+        properties?: Record<string, unknown>;
+        children?: Array<{ value?: string }>;
+      }>;
+    };
+    expect(paragraph.children?.[1]?.tagName).toBe("span");
+    expect(paragraph.children?.[1]?.properties?.className).toEqual([
+      "scient-flow-arrow",
+      "scient-flow-arrow-long",
+    ]);
+    expect(paragraph.children?.[1]?.children?.[0]?.value).toBe("⟵");
+  });
+
+  it("wraps long double arrows without the lift class", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלב ראשון ⟹ שלב שני" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{
+        type?: string;
+        tagName?: string;
+        properties?: Record<string, unknown>;
+        children?: Array<{ value?: string }>;
+      }>;
+    };
+    expect(paragraph.children?.[1]?.tagName).toBe("span");
+    expect(paragraph.children?.[1]?.properties?.className).toEqual(["scient-flow-arrow"]);
+    expect(paragraph.children?.[1]?.children?.[0]?.value).toBe("⟸");
+  });
+
+  it("does not wrap basic arrows in spans", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלב ראשון → שלב שני" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{ type?: string; value?: string }>;
+    };
+    expect(paragraph.children?.length).toBe(1);
+    expect(paragraph.children?.[0]?.type).toBe("text");
+    expect(paragraph.children?.[0]?.value).toBe("שלב ראשון ← שלב שני");
+  });
+
+  it("does not wrap styled arrows inside code blocks", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [
+            {
+              type: "element",
+              tagName: "code",
+              children: [{ type: "text", value: "שלום ⇒ עולם" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{
+        type?: string;
+        tagName?: string;
+        children?: Array<{ type?: string; value?: string }>;
+      }>;
+    };
+    expect(paragraph.children?.length).toBe(1);
+    expect(paragraph.children?.[0]?.tagName).toBe("code");
+    expect(paragraph.children?.[0]?.children?.[0]?.type).toBe("text");
+    expect(paragraph.children?.[0]?.children?.[0]?.value).toBe("שלום ⇒ עולם");
+  });
+
+  it("does not wrap arrows in an LTR paragraph inside an RTL message", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "Step one ⇒ step two" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{ type?: string; value?: string }>;
+    };
+    expect(paragraph.children?.length).toBe(1);
+    expect(paragraph.children?.[0]?.type).toBe("text");
+    expect(paragraph.children?.[0]?.value).toBe("Step one ⇒ step two");
+  });
+
+  it("does not wrap arrows when message direction is LTR", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלום ⇒ עולם" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "ltr" })(tree);
+
+    const paragraph = tree.children?.[0] as {
+      children?: Array<{ type?: string; value?: string }>;
+    };
+    expect(paragraph.children?.length).toBe(1);
+    expect(paragraph.children?.[0]?.type).toBe("text");
+    expect(paragraph.children?.[0]?.value).toBe("שלום ⇒ עולם");
+  });
 });
