@@ -90,3 +90,13 @@ export function completedImportCounts(
 export function importedSourceIdToReveal(outcome: ScientSourcesImportOutcome): string | null {
   return outcome.kind === "imported" ? outcome.sourceId : null;
 }
+
+export function importedSourceIds(outcome: ScientSourcesImportOutcome): ReadonlyArray<string> {
+  if (outcome.kind !== "imported") return [];
+  const sourceIds = new Set<string>();
+  for (const item of outcome.operation?.items ?? []) {
+    if (item.state === "imported" && item.sourceId) sourceIds.add(item.sourceId);
+  }
+  if (outcome.sourceId) sourceIds.add(outcome.sourceId);
+  return [...sourceIds];
+}

@@ -1,7 +1,11 @@
+import * as NodeCrypto from "node:crypto";
+
+import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
   discardLocalPdfImportMaterial,
   getLocalPdfImportMaterial,
   prepareLocalPdfSource,
+  prepareProjectPdfSource,
   refreshExistingSourceCandidate,
 } from "./LocalPdfSourceAdapter.ts";
 import {
@@ -17,6 +21,7 @@ import {
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
+  type ScientSourceFieldProvenance,
   type ScientSourceRecord,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
@@ -24,16 +29,21 @@ import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
+  importScientSource,
   importScientSourceOperationItem,
+  attachScientSourcePdf,
+  detachScientSourcePdf,
   inspectScientSourcePdf,
   inspectScientSources,
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
+  retryFailedSourceImportOperationItems,
   removeScientSource,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  updateScientSourceReview,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 
@@ -120,14 +130,14 @@ export async function getScientSourceDetail(input: {
 
 export async function getScientSourceAttachmentPreviewMaterial(input: {
   readonly root: string;
+  readonly sourceId: string;
   readonly attachmentId: string;
 }) {
-  const records = await listScientSourceRecords(input.root);
-  for (const record of records) {
-    const attachment = record.attachments.find(
-      (candidate) => candidate.attachmentId === input.attachmentId,
-    );
-    if (!attachment) continue;
+  const record = await readScientSourceRecord(input.root, input.sourceId);
+  const attachment = record?.attachments.find(
+    (candidate) => candidate.attachmentId === input.attachmentId,
+  );
+  if (attachment) {
     return {
       absolutePath: sourceAttachmentAbsolutePath(input.root, attachment),
       attachment,
@@ -153,6 +163,55 @@ export async function updateSourceNote(input: Parameters<typeof updateScientSour
   return updateScientSourceNote(input);
 }
 
+export async function updateSourceReview(input: Parameters<typeof updateScientSourceReview>[0]) {
+  return updateScientSourceReview(input);
+}
+
+export async function addAgentSource(input: {
+  readonly root: string;
+  readonly candidate: ScientSourceCandidate;
+  readonly allowPossibleMetadataMatch?: boolean;
+  readonly enrich?: boolean;
+  readonly pdfPath?: string;
+  readonly pdfFileName?: string;
+  readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
+}) {
+  const candidate = input.enrich
+    ? await enrichScientSourceCandidate(input.candidate)
+    : input.candidate;
+  const candidateWithPdfName =
+    input.pdfPath && input.pdfFileName
+      ? { ...candidate, pdfFileName: input.pdfFileName }
+      : candidate;
+  return importScientSource({
+    root: input.root,
+    operationId: `agent_${NodeCrypto.randomUUID()}`,
+    candidate: candidateWithPdfName,
+    actor: "agent",
+    intake: input.pdfPath ? "local-pdf" : "identifier",
+    review: "pending",
+    allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+    ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
+    ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
+  });
+}
+
+export async function prepareAgentProjectPdf(input: {
+  readonly sourceKey: string;
+  readonly sourcePath: string;
+  readonly fileName: string;
+}) {
+  return prepareProjectPdfSource(input);
+}
+
+export async function attachSourcePdf(input: Parameters<typeof attachScientSourcePdf>[0]) {
+  return attachScientSourcePdf(input);
+}
+
+export async function detachSourcePdf(input: Parameters<typeof detachScientSourcePdf>[0]) {
+  return detachScientSourcePdf(input);
+}
+
 function candidateEvidenceFields(candidate: ScientSourceCandidate): ReadonlySet<string> {
   return new Set(
     candidate.fieldProvenance.map((entry) =>
@@ -167,26 +226,56 @@ function proposedMetadataValue<A>(input: {
   readonly current: A;
   readonly candidate: A;
   readonly present: boolean;
+  readonly takenFields: Set<ScientSourceEditableField>;
 }): A {
-  return input.evidence.has(input.field) && input.present ? input.candidate : input.current;
+  if (input.evidence.has(input.field) && input.present) {
+    input.takenFields.add(input.field);
+    return input.candidate;
+  }
+  return input.current;
 }
 
-export function proposeRefreshedSourceMetadata(input: {
+function provenanceEditableField(field: string): string {
+  return field.startsWith("identifiers.") ? "identifiers" : field;
+}
+
+function mergeRefreshedFieldProvenance(input: {
+  readonly current: ReadonlyArray<ScientSourceFieldProvenance>;
+  readonly candidate: ReadonlyArray<ScientSourceFieldProvenance>;
+  readonly takenFields: ReadonlySet<ScientSourceEditableField>;
+}): ReadonlyArray<ScientSourceFieldProvenance> {
+  const taken = (field: string) =>
+    input.takenFields.has(provenanceEditableField(field) as ScientSourceEditableField);
+  return [
+    ...input.current.filter((entry) => !taken(entry.field)),
+    ...input.candidate.filter((entry) => taken(entry.field)),
+  ];
+}
+
+function proposeRefreshedSourceUpdate(input: {
   readonly record: ScientSourceRecord;
   readonly candidate: ScientSourceCandidate;
-}): ScientSourceEditableMetadata {
+}): {
+  readonly metadata: ScientSourceEditableMetadata;
+  readonly takenFields: ReadonlySet<ScientSourceEditableField>;
+} {
   const current = editableMetadataFromRecord(input.record);
   const candidate = input.candidate;
   const evidence = candidateEvidenceFields(candidate);
+  const takenFields = new Set<ScientSourceEditableField>();
   const customTypeEvidence = evidence.has("type") ? new Set(["customType"]) : evidence;
   const hasIssuedEvidence = evidence.has("issuedRaw") || evidence.has("issuedYear");
-  return normalizeScientSourceEditableMetadata({
+  const issuedYear =
+    hasIssuedEvidence && candidate.issuedYear !== null ? candidate.issuedYear : current.issuedYear;
+  if (hasIssuedEvidence && candidate.issuedYear !== null) takenFields.add("issuedYear");
+  const metadata = normalizeScientSourceEditableMetadata({
     type: proposedMetadataValue({
       field: "type",
       evidence,
       current: current.type,
       candidate: candidate.type,
       present: true,
+      takenFields,
     }),
     customType: proposedMetadataValue({
       field: "customType",
@@ -194,6 +283,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.customType ?? null,
       candidate: candidate.customType ?? null,
       present: candidate.type === "other" && Boolean(candidate.customType?.trim()),
+      takenFields,
     }),
     title: proposedMetadataValue({
       field: "title",
@@ -201,6 +291,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.title,
       candidate: candidate.title,
       present: Boolean(candidate.title?.trim()),
+      takenFields,
     }),
     creators: proposedMetadataValue({
       field: "creators",
@@ -208,6 +299,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.creators,
       candidate: candidate.creators,
       present: candidate.creators.length > 0,
+      takenFields,
     }),
     issuedRaw: proposedMetadataValue({
       field: "issuedRaw",
@@ -215,17 +307,16 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.issuedRaw,
       candidate: candidate.issuedRaw,
       present: Boolean(candidate.issuedRaw?.trim()),
+      takenFields,
     }),
-    issuedYear:
-      hasIssuedEvidence && candidate.issuedYear !== null
-        ? candidate.issuedYear
-        : current.issuedYear,
+    issuedYear,
     identifiers: proposedMetadataValue({
       field: "identifiers",
       evidence,
       current: current.identifiers,
       candidate: candidate.identifiers,
       present: candidate.identifiers.length > 0,
+      takenFields,
     }),
     abstract: proposedMetadataValue({
       field: "abstract",
@@ -233,6 +324,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.abstract,
       candidate: candidate.abstract,
       present: Boolean(candidate.abstract?.trim()),
+      takenFields,
     }),
     containerTitle: proposedMetadataValue({
       field: "containerTitle",
@@ -240,6 +332,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.containerTitle,
       candidate: candidate.containerTitle,
       present: Boolean(candidate.containerTitle?.trim()),
+      takenFields,
     }),
     publisher: proposedMetadataValue({
       field: "publisher",
@@ -247,6 +340,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.publisher,
       candidate: candidate.publisher,
       present: Boolean(candidate.publisher?.trim()),
+      takenFields,
     }),
     volume: proposedMetadataValue({
       field: "volume",
@@ -254,6 +348,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.volume,
       candidate: candidate.volume,
       present: Boolean(candidate.volume?.trim()),
+      takenFields,
     }),
     issue: proposedMetadataValue({
       field: "issue",
@@ -261,6 +356,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.issue,
       candidate: candidate.issue,
       present: Boolean(candidate.issue?.trim()),
+      takenFields,
     }),
     pages: proposedMetadataValue({
       field: "pages",
@@ -268,6 +364,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.pages,
       candidate: candidate.pages,
       present: Boolean(candidate.pages?.trim()),
+      takenFields,
     }),
     language: proposedMetadataValue({
       field: "language",
@@ -275,6 +372,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.language,
       candidate: candidate.language,
       present: Boolean(candidate.language?.trim()),
+      takenFields,
     }),
     url: proposedMetadataValue({
       field: "url",
@@ -282,6 +380,7 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.url,
       candidate: candidate.url,
       present: Boolean(candidate.url?.trim()),
+      takenFields,
     }),
     tags: proposedMetadataValue({
       field: "tags",
@@ -289,8 +388,17 @@ export function proposeRefreshedSourceMetadata(input: {
       current: current.tags,
       candidate: candidate.tags,
       present: candidate.tags.length > 0,
+      takenFields,
     }),
   });
+  return { metadata, takenFields };
+}
+
+export function proposeRefreshedSourceMetadata(input: {
+  readonly record: ScientSourceRecord;
+  readonly candidate: ScientSourceCandidate;
+}): ScientSourceEditableMetadata {
+  return proposeRefreshedSourceUpdate(input).metadata;
 }
 
 export async function applyRefreshedSourceMetadata(input: {
@@ -299,10 +407,11 @@ export async function applyRefreshedSourceMetadata(input: {
   readonly candidate: ScientSourceCandidate;
 }) {
   const currentMetadata = editableMetadataFromRecord(input.record);
-  const metadata = proposeRefreshedSourceMetadata({
+  const proposed = proposeRefreshedSourceUpdate({
     record: input.record,
     candidate: input.candidate,
   });
+  const metadata = proposed.metadata;
   const changedFields = changedEditableMetadataFields(currentMetadata, metadata);
   if (changedFields.length === 0) {
     return {
@@ -318,9 +427,18 @@ export async function applyRefreshedSourceMetadata(input: {
     sourceId: input.record.sourceId,
     expectedRevision: input.record.revision,
     metadata,
+    fieldProvenance: mergeRefreshedFieldProvenance({
+      current: input.record.fieldProvenance,
+      candidate: input.candidate.fieldProvenance,
+      takenFields: proposed.takenFields,
+    }),
     // A refresh may make a weak title/creator/year resemblance more obvious,
     // but only an exact work identifier is strong enough to block this write.
     allowPossibleMetadataMatch: true,
+    // Imported records can contain incomplete metadata, such as an unknown
+    // custom source type. Refresh may improve other fields without first
+    // requiring the user to repair pre-existing validation issues.
+    allowExistingValidationIssues: true,
   });
   if (result.outcome === "updated") {
     return {
@@ -534,6 +652,9 @@ export async function advanceSourceImport(input: {
         root,
         operationId: input.operationId,
         candidate,
+        actor: operation.actor,
+        intake: operation.intake,
+        review: operation.actor === "agent" ? "pending" : "none",
         ...(pdfPath ? { pdfPath } : {}),
         ...(expectedPdf ? { expectedPdf } : {}),
         allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
@@ -560,9 +681,6 @@ export async function advanceSourceImport(input: {
         state: "failed",
         message,
       });
-      if (operation.adapter === "local-files") {
-        await discardLocalPdfImportMaterial(root, pending.itemKey).catch(() => undefined);
-      }
       return updated;
     }
   });
@@ -580,10 +698,19 @@ export async function cancelSourceImport(input: {
     if (operation.adapter === "local-files") {
       await Promise.all(
         operation.items
-          .filter((item) => item.state === "pending")
+          .filter((item) => item.state === "pending" || item.state === "failed")
           .map((item) => discardLocalPdfImportMaterial(root, item.itemKey).catch(() => undefined)),
       );
     }
     return cancelled;
   });
+}
+
+export async function retrySourceImport(input: {
+  readonly root: string;
+  readonly operationId: string;
+  readonly itemKeys: ReadonlyArray<string>;
+}) {
+  const root = await canonicalizeScientSourceRoot(input.root);
+  return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
 }

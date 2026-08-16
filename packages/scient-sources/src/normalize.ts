@@ -73,6 +73,17 @@ export function sourceMetadataDiagnostics(
       message: "Persistent identifier wasn’t found.",
     });
   }
+  if (
+    source.fieldProvenance.some(
+      (entry) => entry.origin === "local-pdf" && entry.sourceField === "pdf-parser",
+    )
+  ) {
+    diagnostics.push({
+      field: "metadata",
+      severity: "warning",
+      message: "PDF metadata couldn’t be extracted. Review the source details and add it manually.",
+    });
+  }
   return diagnostics;
 }
 

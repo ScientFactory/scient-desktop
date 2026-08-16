@@ -3545,7 +3545,11 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().openScient(activeThreadRef, scientSourcesSurface());
   }, [activeProject, activeThreadRef, activeWorkspaceRoot]);
   const openScientSourcePdf = useCallback(
-    (input: { readonly attachmentId: string; readonly fileName: string }) => {
+    (input: {
+      readonly sourceId: string;
+      readonly attachmentId: string;
+      readonly fileName: string;
+    }) => {
       if (!activeThreadRef) return;
       useRightPanelStore.getState().openScient(activeThreadRef, scientSourcePdfSurface(input));
     },
@@ -6494,6 +6498,7 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           fileName={activeRightPanelSurface.fileName}
           root={activeWorkspaceRoot}
+          sourceId={activeRightPanelSurface.sourceId}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "scient" &&

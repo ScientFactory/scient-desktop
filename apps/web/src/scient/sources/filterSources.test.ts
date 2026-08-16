@@ -1,7 +1,11 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterScientSourceSearchIndex, indexScientSourceSummaries } from "./filterSources";
+import {
+  filterScientSourceSearchIndex,
+  indexScientSourceSummaries,
+  sortScientSourceRecords,
+} from "./filterSources";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
@@ -61,6 +65,11 @@ describe("Scient source search index", () => {
     expect(
       filterScientSourceSearchIndex(index, "10.1000/example").map((item) => item.sourceId),
     ).toEqual(["one"]);
+    expect(
+      filterScientSourceSearchIndex(index, "https://doi.org/10.1000/example").map(
+        (item) => item.sourceId,
+      ),
+    ).toEqual(["one"]);
   });
 
   it("returns every indexed source for an empty query", () => {
@@ -78,4 +87,38 @@ describe("Scient source search index", () => {
       ["two"],
     );
   });
+  it("sorts by newest publication year and keeps undated sources last", () => {
+    const sorted = sortScientSourceRecords(
+      [
+        source({ sourceId: "undated", issuedYear: null }),
+        source({ sourceId: "older", issuedYear: 2021 }),
+        source({ sourceId: "newer", issuedYear: 2025 }),
+      ],
+      "publication-year",
+    );
+    expect(sorted.map((item) => item.sourceId)).toEqual(["newer", "older", "undated"]);
+  });
+});
+
+it("sorts by title and uses source ID as a deterministic tie-breaker", () => {
+  const sorted = sortScientSourceRecords(
+    [
+      source({ sourceId: "z", title: "Same title" }),
+      source({ sourceId: "a", title: "Same title" }),
+      source({ sourceId: "first", title: "Alpha" }),
+    ],
+    "title",
+  );
+  expect(sorted.map((item) => item.sourceId)).toEqual(["first", "a", "z"]);
+});
+
+it("sorts recently added sources newest first", () => {
+  const sorted = sortScientSourceRecords(
+    [
+      source({ sourceId: "old", importedAt: "2026-08-01T00:00:00.000Z" }),
+      source({ sourceId: "new", importedAt: "2026-08-15T00:00:00.000Z" }),
+    ],
+    "last-added",
+  );
+  expect(sorted.map((item) => item.sourceId)).toEqual(["new", "old"]);
 });

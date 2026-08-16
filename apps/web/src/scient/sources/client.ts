@@ -4,6 +4,7 @@ import {
   beginEnvironmentZoteroImport,
   beginEnvironmentZoteroScopedImport,
   cancelEnvironmentScientSourcesImport,
+  retryEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
   getEnvironmentScientSourceAttachmentPreview,
   getEnvironmentScientSourceDetail,
@@ -17,6 +18,7 @@ import {
   removeEnvironmentScientSource,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
+  updateEnvironmentScientSourceReview,
   uploadEnvironmentLocalSourcePdf,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -91,7 +93,7 @@ export function removeScientSource(
 
 export async function readScientSourceAttachmentPreview(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly sourceId?: string; readonly attachmentId: string },
+  input: { readonly root: string; readonly sourceId: string; readonly attachmentId: string },
 ) {
   const connection = prepared(environmentId);
   const result = await runtime.runPromise(
@@ -225,5 +227,27 @@ export function cancelSourcesImport(
 ) {
   return runtime.runPromise(
     cancelEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function retrySourcesImport(
+  environmentId: EnvironmentId,
+  input: {
+    readonly root: string;
+    readonly operationId: string;
+    readonly itemKeys: ReadonlyArray<string>;
+  },
+) {
+  return runtime.runPromise(
+    retryEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function approveScientSource(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly sourceId: string; readonly expectedRevision: number },
+) {
+  return runtime.runPromise(
+    updateEnvironmentScientSourceReview({ prepared: prepared(environmentId), ...input }),
   );
 }

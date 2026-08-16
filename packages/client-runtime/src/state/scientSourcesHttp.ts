@@ -4,6 +4,7 @@ import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
+  ScientSourceReviewUpdateRequest,
   ScientSourceRemovalRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -82,6 +83,7 @@ export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly root: string;
+  readonly sourceId: string;
   readonly attachmentId: string;
 }) {
   const context = yield* requestContext({
@@ -97,6 +99,7 @@ export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
         headers: context.headers,
         payload: {
           root: input.root,
+          sourceId: input.sourceId,
           attachmentId: input.attachmentId,
         },
       }),
@@ -246,6 +249,36 @@ export const removeEnvironmentScientSource = Effect.fn(
           root: input.root,
           sourceId: input.sourceId,
           expectedRevision: input.expectedRevision,
+        },
+      }),
+    ),
+  );
+});
+
+export const updateEnvironmentScientSourceReview = Effect.fn(
+  "clientRuntime.state.updateEnvironmentScientSourceReview",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientSourceReviewUpdateRequest["root"];
+  readonly sourceId: ScientSourceReviewUpdateRequest["sourceId"];
+  readonly expectedRevision: ScientSourceReviewUpdateRequest["expectedRevision"];
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/review/update",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.updateReview({
+        headers: context.headers,
+        payload: {
+          root: input.root,
+          sourceId: input.sourceId,
+          expectedRevision: input.expectedRevision,
+          review: "none",
         },
       }),
     ),
@@ -524,6 +557,35 @@ export const cancelEnvironmentScientSourcesImport = Effect.fn(
       context.client.scientSources.cancelImport({
         headers: context.headers,
         payload: { root: input.root, operationId: input.operationId },
+      }),
+    ),
+  );
+});
+
+export const retryEnvironmentScientSourcesImport = Effect.fn(
+  "clientRuntime.state.retryEnvironmentScientSourcesImport",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly operationId: string;
+  readonly itemKeys: ReadonlyArray<string>;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/sources/import/retry",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientSources.retryImport({
+        headers: context.headers,
+        payload: {
+          root: input.root,
+          operationId: input.operationId,
+          itemKeys: input.itemKeys,
+        },
       }),
     ),
   );

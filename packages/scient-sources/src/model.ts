@@ -61,9 +61,18 @@ export const ScientSourceExternalReference = Schema.Struct({
 });
 export type ScientSourceExternalReference = typeof ScientSourceExternalReference.Type;
 
+export const ScientSourceOrigin = Schema.Struct({
+  actor: Schema.Literals(["user", "agent"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  operationId: NonEmptyString,
+  review: Schema.Literals(["none", "pending"]),
+});
+export type ScientSourceOrigin = typeof ScientSourceOrigin.Type;
+
 export const ScientSourceFieldProvenance = Schema.Struct({
   field: NonEmptyString,
   origin: Schema.Literals([
+    "agent",
     "zotero",
     "local-pdf",
     "doi",
@@ -125,6 +134,7 @@ export const ScientSourceRecord = Schema.Struct({
   externalReferences: Schema.Array(ScientSourceExternalReference),
   attachments: Schema.Array(ScientSourceAttachment),
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
+  origin: Schema.optionalKey(ScientSourceOrigin),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
 });
@@ -148,6 +158,7 @@ export const ScientSourceSummary = Schema.Struct({
   attachments: Schema.Array(ScientSourceAttachmentSummary),
   importedAt: ScientSourceRecord.fields.importedAt,
   updatedAt: ScientSourceRecord.fields.updatedAt,
+  origin: Schema.optional(ScientSourceOrigin),
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
@@ -171,6 +182,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     })),
     importedAt: record.importedAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
+    ...(record.origin ? { origin: record.origin } : {}),
   };
 }
 
@@ -278,6 +290,12 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
 });
 export type ScientSourceNoteUpdateResult = typeof ScientSourceNoteUpdateResult.Type;
 
+export const ScientSourceReviewUpdateResult = Schema.Struct({
+  outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+  record: ScientSourceRecord,
+});
+export type ScientSourceReviewUpdateResult = typeof ScientSourceReviewUpdateResult.Type;
+
 export const ScientSourceRemovalResult = Schema.Struct({
   outcome: Schema.Literals(["removed", "not-found", "stale"]),
   sourceId: NonEmptyString,
@@ -320,7 +338,9 @@ export const ScientSourceImportOperation = Schema.Struct({
   formatVersion: Schema.Literal(1),
   operationId: NonEmptyString,
   projectId: NonEmptyString,
-  adapter: Schema.Literals(["zotero", "local-files"]),
+  adapter: Schema.Literals(["zotero", "local-files", "agent"]),
+  actor: Schema.Literals(["user", "agent"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
   state: Schema.Literals(["running", "cancelled", "completed"]),
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,

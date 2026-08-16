@@ -5,6 +5,7 @@ import type { ScientSourceImportOperation, ScientSourcesPreflightResult } from "
 import {
   completedImportCounts,
   importedSourceIdToReveal,
+  importedSourceIds,
   preflightImportCounts,
   reviewedImportCounts,
   type ScientSourcesImportOutcome,
@@ -16,6 +17,8 @@ function operation(items: ScientSourceImportOperation["items"]): ScientSourceImp
     operationId: "operation-1",
     projectId: "project-1",
     adapter: "local-files",
+    actor: "user",
+    intake: "local-pdf",
     state: "completed",
     createdAt: "2026-08-13T00:00:00.000Z",
     updatedAt: "2026-08-13T00:00:01.000Z",
@@ -137,5 +140,32 @@ describe("Scient Sources import outcomes", () => {
 
     expect(importedSourceIdToReveal(duplicate)).toBeNull();
     expect(importedSourceIdToReveal(imported)).toBe("new-source");
+  });
+
+  it("returns every newly imported source from a bulk outcome", () => {
+    const outcome: ScientSourcesImportOutcome = {
+      kind: "imported",
+      operation: operation([
+        {
+          itemKey: "one",
+          state: "imported",
+          duplicateKind: "new",
+          sourceId: "source-one",
+          message: null,
+        },
+        {
+          itemKey: "two",
+          state: "imported",
+          duplicateKind: "new",
+          sourceId: "source-two",
+          message: null,
+        },
+      ]),
+      sourceId: null,
+      existingSourceId: null,
+      counts: { imported: 2, alreadyPresent: 0, reviewRequired: 0, failed: 0 },
+    };
+
+    expect(importedSourceIds(outcome)).toEqual(["source-one", "source-two"]);
   });
 });

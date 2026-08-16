@@ -5,6 +5,7 @@ import {
   ScientSourceMetadataUpdateResult,
   ScientSourceNote,
   ScientSourceNoteUpdateResult,
+  ScientSourceReviewUpdateResult,
   ScientSourceRecord,
   ScientSourceRemovalResult,
   ScientSourceSummary,
@@ -40,14 +41,12 @@ export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
 
 export const ScientSourceAttachmentPreviewRequest = Schema.Struct({
   root: NonEmptyString,
+  sourceId: NonEmptyString,
   attachmentId: NonEmptyString,
 });
 export type ScientSourceAttachmentPreviewRequest = typeof ScientSourceAttachmentPreviewRequest.Type;
 
-export const ScientSourceAttachmentPreviewResult = Schema.Struct({
-  ...AssetCreateUrlResult.fields,
-  absolutePath: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
-});
+export const ScientSourceAttachmentPreviewResult = AssetCreateUrlResult;
 export type ScientSourceAttachmentPreviewResult = typeof ScientSourceAttachmentPreviewResult.Type;
 
 export const ScientSourceJournalIconRequest = Schema.Struct({
@@ -83,6 +82,15 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export { ScientSourceNoteUpdateResult };
+
+export const ScientSourceReviewUpdateRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  review: Schema.Literal("none"),
+});
+export type ScientSourceReviewUpdateRequest = typeof ScientSourceReviewUpdateRequest.Type;
+export { ScientSourceReviewUpdateResult };
 
 export const ScientSourceMetadataRefreshRequest = Schema.Struct({
   root: NonEmptyString,
@@ -186,6 +194,15 @@ export type ScientSourcesAdvanceImportRequest = typeof ScientSourcesAdvanceImpor
 
 export const ScientSourcesCancelImportRequest = ScientSourcesAdvanceImportRequest;
 export type ScientSourcesCancelImportRequest = typeof ScientSourcesCancelImportRequest.Type;
+
+export const ScientSourcesRetryImportRequest = Schema.Struct({
+  root: NonEmptyString,
+  operationId: NonEmptyString,
+  itemKeys: Schema.Array(NonEmptyString).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  ),
+});
+export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportRequest.Type;
 
 export {
   ScientSourceImportOperation,

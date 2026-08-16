@@ -31,8 +31,10 @@ import {
   preflightZoteroImport,
   refreshScientSourceMetadata,
   removeSource,
+  retrySourceImport,
   updateScientSource,
   updateSourceNote,
+  updateSourceReview,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
 
@@ -89,7 +91,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            return { ...asset, absolutePath: material.absolutePath };
+            return asset;
           }),
         )
         .handle("journalIcon", (args) =>
@@ -131,6 +133,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("updateNote", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             updateSourceNote(args.payload),
+          ),
+        )
+        .handle("updateReview", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            updateSourceReview(args.payload),
           ),
         )
         .handle("refreshMetadata", (args) =>
@@ -196,6 +203,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("cancelImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             cancelSourceImport(args.payload),
+          ),
+        )
+        .handle("retryImport", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            retrySourceImport(args.payload),
           ),
         ),
     );

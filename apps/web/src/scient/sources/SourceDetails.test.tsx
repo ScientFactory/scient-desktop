@@ -207,6 +207,34 @@ describe("SourceDetails", () => {
     expect(markup).toContain('aria-label="More source actions"');
     expect(markup).not.toContain("Remove this source?");
   });
+
+  it("offers approve and reject actions for a pending agent source", () => {
+    const markup = renderToStaticMarkup(
+      <SourceDetails
+        record={{
+          ...record,
+          origin: {
+            actor: "agent",
+            intake: "identifier",
+            operationId: "agent-operation",
+            review: "pending",
+          },
+        }}
+        diagnostics={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onApproveReview={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Approve review");
+    expect(markup).toContain(">Reject</button>");
+    expect(markup).toContain("Pending review");
+  });
 });
 
 describe("safeSourceExternalUrl", () => {

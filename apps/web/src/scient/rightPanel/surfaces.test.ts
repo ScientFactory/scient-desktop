@@ -32,10 +32,17 @@ describe("Scient right-panel surfaces", () => {
       kind: "scient",
       module: "sources",
     });
-    expect(scientSourcePdfSurface({ attachmentId: "pdf 1", fileName: "Paper.pdf" })).toEqual({
-      id: "scient:source-pdf:pdf%201",
+    expect(
+      scientSourcePdfSurface({
+        sourceId: "source 1",
+        attachmentId: "pdf 1",
+        fileName: "Paper.pdf",
+      }),
+    ).toEqual({
+      id: "scient:source-pdf:source%201:pdf%201",
       kind: "scient",
       module: "source-pdf",
+      sourceId: "source 1",
       attachmentId: "pdf 1",
       fileName: "Paper.pdf",
     });
@@ -47,10 +54,17 @@ describe("Scient right-panel surfaces", () => {
         id: "scient:source-pdf:legacy",
         kind: "scient",
         module: "source-pdf",
+        sourceId: "source 1",
         attachmentId: "pdf 1",
         fileName: "Paper.pdf",
       }),
-    ).toEqual(scientSourcePdfSurface({ attachmentId: "pdf 1", fileName: "Paper.pdf" }));
+    ).toEqual(
+      scientSourcePdfSurface({
+        sourceId: "source 1",
+        attachmentId: "pdf 1",
+        fileName: "Paper.pdf",
+      }),
+    );
     expect(
       normalizeScientRightPanelSurface({
         id: "scient:unknown",
@@ -97,7 +111,11 @@ describe("Scient right-panel surfaces", () => {
     expect(scientRightPanelSurfaceTitle(scientSourcesSurface())).toBe("Sources");
     expect(
       scientRightPanelSurfaceTitle(
-        scientSourcePdfSurface({ attachmentId: "pdf_1", fileName: "Paper.pdf" }),
+        scientSourcePdfSurface({
+          sourceId: "source_1",
+          attachmentId: "pdf_1",
+          fileName: "Paper.pdf",
+        }),
       ),
     ).toBe("Paper.pdf");
     expect(scientRightPanelSurfaceTitle(scientArtifactSurface(artifact))).toBe("Figure 1");

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { randomUUID } from "../../lib/utils";
 import {
   advanceSourcesImport,
+  approveScientSource,
   beginLocalSourcesImport,
   beginZoteroItemsImport,
   beginZoteroScopeImport,
@@ -24,6 +25,7 @@ import {
   readScientSource,
   refreshScientSourceMetadata,
   removeScientSource,
+  retrySourcesImport,
   updateScientSourceNote,
   readZoteroLibrary,
   readZoteroCollections,
@@ -109,6 +111,8 @@ export function useScientSources(input: {
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
   const generation = useRef(0);
+  const overviewGeneration = useRef(0);
+  const zoteroSearchGeneration = useRef(0);
   const stagedLocalKeys = useRef<ReadonlyArray<string>>([]);
   const contextKey = `${input.environmentId}\0${input.root}`;
   const contextKeyRef = useRef(contextKey);
@@ -123,6 +127,7 @@ export function useScientSources(input: {
     return () => {
       mounted.current = false;
       generation.current += 1;
+      overviewGeneration.current += 1;
     };
   }, []);
 
@@ -138,8 +143,9 @@ export function useScientSources(input: {
   }, [input.environmentId, input.root]);
 
   const refreshOverview = useCallback(async () => {
+    const request = ++overviewGeneration.current;
     const next = await readScientSources(input.environmentId, input.root);
-    if (isCurrentContext()) {
+    if (isCurrentContext() && overviewGeneration.current === request) {
       setOverview(next);
       setSourceDetails((current) =>
         Object.fromEntries(
@@ -289,6 +295,31 @@ export function useScientSources(input: {
     [acceptSourceRecord, input.environmentId, input.root, isCurrentContext],
   );
 
+  const approveSource = useCallback(
+    async (sourceId: string, expectedRevision: number) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const result = await approveScientSource(input.environmentId, {
+          root: input.root,
+          sourceId,
+          expectedRevision,
+        });
+        if (isCurrentContext()) {
+          acceptSourceRecord(result.record);
+          await refreshOverview();
+        }
+        return result;
+      } catch (cause) {
+        if (isCurrentContext()) setError(message(cause));
+        throw cause;
+      } finally {
+        if (isCurrentContext()) setBusy(false);
+      }
+    },
+    [acceptSourceRecord, input.environmentId, input.root, isCurrentContext, refreshOverview],
+  );
+
   useEffect(() => {
     setOverview(null);
     setSourceDetails({});
@@ -350,6 +381,7 @@ export function useScientSources(input: {
 
   const searchZotero = useCallback(
     async (query: string, start = 0, scope: ZoteroImportScope = zoteroScope) => {
+      const request = ++zoteroSearchGeneration.current;
       setBusy(true);
       setError(null);
       try {
@@ -359,7 +391,7 @@ export function useScientSources(input: {
           start,
           limit: 50,
         });
-        if (isCurrentContext()) {
+        if (isCurrentContext() && zoteroSearchGeneration.current === request) {
           setLibrary((current) => {
             if (start === 0 || !current) return page;
             const items = [...current.items];
@@ -371,9 +403,11 @@ export function useScientSources(input: {
           });
         }
       } catch (cause) {
-        if (isCurrentContext()) setError(message(cause));
+        if (isCurrentContext() && zoteroSearchGeneration.current === request) {
+          setError(message(cause));
+        }
       } finally {
-        if (isCurrentContext()) setBusy(false);
+        if (isCurrentContext() && zoteroSearchGeneration.current === request) setBusy(false);
       }
     },
     [input.environmentId, isCurrentContext, zoteroScope],
@@ -631,27 +665,55 @@ export function useScientSources(input: {
   const uploadLocalFiles = useCallback(
     async (files: ReadonlyArray<File>): Promise<ScientSourcesImportOutcome | null> => {
       if (files.length === 0) return null;
+      const validFiles = files.filter(
+        (file) =>
+          !file.type || file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
+      );
+      const invalidFiles = files.filter((file) => !validFiles.includes(file));
+      if (validFiles.length === 0) {
+        setError(
+          invalidFiles.length === 1
+            ? `${invalidFiles.at(0)?.name ?? "The selected file"} is not a PDF.`
+            : "Choose at least one PDF file.",
+        );
+        return null;
+      }
+      const invalidFilesMessage =
+        invalidFiles.length > 0
+          ? `Skipped ${invalidFiles.length} non-PDF file${invalidFiles.length === 1 ? "" : "s"}.`
+          : null;
       setOperation(null);
-      setImportPreparation({ kind: "local-files", names: files.map((file) => file.name) });
+      setImportPreparation({ kind: "local-files", names: validFiles.map((file) => file.name) });
       setBusy(true);
-      setError(null);
+      setError(invalidFilesMessage);
       const request = ++generation.current;
       const items: ScientSourcesPreflightResult["items"][number][] = [];
+      const failedFiles: Array<{ readonly name: string; readonly reason: string }> = [];
       let operationStarted = false;
       try {
-        for (const file of files) {
-          if (
-            file.type &&
-            file.type !== "application/pdf" &&
-            !file.name.toLowerCase().endsWith(".pdf")
-          ) {
-            throw new Error(`${file.name} is not a PDF.`);
+        for (const file of validFiles) {
+          try {
+            const result = await uploadLocalSourcePdf(input.environmentId, {
+              root: input.root,
+              file,
+            });
+            items.push(result.item);
+          } catch (cause) {
+            failedFiles.push({ name: file.name, reason: message(cause) });
           }
-          const result = await uploadLocalSourcePdf(input.environmentId, {
-            root: input.root,
-            file,
-          });
-          items.push(result.item);
+        }
+        if (failedFiles.length > 0 && isCurrentContext() && generation.current === request) {
+          setError(
+            [
+              invalidFilesMessage,
+              `Skipped ${failedFiles.length} PDF${failedFiles.length === 1 ? "" : "s"} that could not be read: ${failedFiles.map((file) => `${file.name} (${file.reason})`).join(", ")}.`,
+            ]
+              .filter((value): value is string => value !== null)
+              .join(" "),
+          );
+        }
+        if (items.length === 0) {
+          return null;
         }
         const uploadedItems = [
           ...new Map(items.map((item) => [item.candidate.sourceKey, item])).values(),
@@ -720,7 +782,13 @@ export function useScientSources(input: {
   );
 
   const resumeImport = useCallback(async () => {
-    if (!operation || operation.state !== "running" || busy) return;
+    if (
+      !operation ||
+      operation.state !== "running" ||
+      !operation.items.some((item) => item.state === "pending") ||
+      busy
+    )
+      return;
     setBusy(true);
     setCancelling(false);
     setError(null);
@@ -748,7 +816,14 @@ export function useScientSources(input: {
   }, [busy, input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
 
   useEffect(() => {
-    if (!operation || operation.state !== "running" || busy || cancelling) return;
+    if (
+      !operation ||
+      operation.state !== "running" ||
+      !operation.items.some((item) => item.state === "pending") ||
+      busy ||
+      cancelling
+    )
+      return;
     void resumeImport();
   }, [busy, cancelling, operation, resumeImport]);
 
@@ -783,6 +858,34 @@ export function useScientSources(input: {
     }
   }, [cancelling, input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
 
+  const retryFailedImport = useCallback(async () => {
+    if (
+      !operation ||
+      (operation.state !== "running" && operation.state !== "completed") ||
+      busy ||
+      cancelling
+    )
+      return;
+    const itemKeys = operation.items
+      .filter((item) => item.state === "failed")
+      .map((item) => item.itemKey);
+    if (itemKeys.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const retried = await retrySourcesImport(input.environmentId, {
+        root: input.root,
+        operationId: operation.operationId,
+        itemKeys,
+      });
+      if (isCurrentContext()) setOperation(retried);
+    } catch (cause) {
+      if (isCurrentContext()) setError(message(cause));
+    } finally {
+      if (isCurrentContext()) setBusy(false);
+    }
+  }, [busy, cancelling, input.environmentId, input.root, isCurrentContext, operation]);
+
   return {
     busy,
     checkingZotero,
@@ -807,6 +910,7 @@ export function useScientSources(input: {
     previewImport,
     runImport,
     cancelImport,
+    retryFailedImport,
     resumeImport,
     refreshOverview,
     reloadOverview,
@@ -814,7 +918,9 @@ export function useScientSources(input: {
     loadSource,
     refreshSourceMetadata,
     saveSourceNote,
+    approveSource,
     removeSource,
+    clearError: () => setError(null),
     closeZoteroStatus: () => setZoteroStatus(null),
     closeLibrary: () => setLibrary(null),
     clearOperationSummary: () => setOperation(null),

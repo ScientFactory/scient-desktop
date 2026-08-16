@@ -35,9 +35,11 @@ import {
   PopoverTitle,
 } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
+import { scientSourcesErrorMessage } from "./errorMessage";
 import { SourceReference } from "./SourceReference";
 import { useSourceNoteControls } from "./SourceNote";
 import {
@@ -130,7 +132,14 @@ function importedLabel(record: SourceRecord): string {
   const formattedDate = Number.isNaN(date.getTime())
     ? null
     : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
-  return `${fromZotero ? "Imported from Zotero" : "Added to Scient"}${formattedDate ? ` · ${formattedDate}` : ""}`;
+  const sourceLabel =
+    record.origin?.actor === "agent"
+      ? "Added by agent"
+      : fromZotero
+        ? "Imported from Zotero"
+        : "Added to Scient";
+  const reviewLabel = record.origin?.review === "pending" ? " · Pending review" : "";
+  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${reviewLabel}`;
 }
 
 function openExternal(url: string): void {
@@ -601,13 +610,19 @@ export function SourceDetails(props: {
     expectedRevision: number,
   ) => Promise<ScientSourceNoteUpdateResult>;
   readonly onRefreshMetadata: () => Promise<void>;
+  readonly onApproveReview?: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
-  readonly onOpenPdf: (input: { readonly attachmentId: string; readonly fileName: string }) => void;
+  readonly onOpenPdf: (input: {
+    readonly sourceId: string;
+    readonly attachmentId: string;
+    readonly fileName: string;
+  }) => void;
 }) {
   const [removeAnchorPoint, setRemoveAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(null);
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(
     null,
   );
+  const [approvingReview, setApprovingReview] = useState(false);
   const record = props.record;
   const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
   const publication = publicationLocation(record);
@@ -636,6 +651,44 @@ export function SourceDetails(props: {
         </Button>
         <div className="min-w-0 flex-1" />
         {sourceNote.button}
+        {record.origin?.review === "pending" && props.onApproveReview ? (
+          <>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={approvingReview}
+              onClick={() => {
+                setApprovingReview(true);
+                void props
+                  .onApproveReview?.()
+                  .catch((cause: unknown) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Review could not be approved",
+                      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                    });
+                  })
+                  .finally(() => setApprovingReview(false));
+              }}
+            >
+              {approvingReview ? <LoaderCircle className="animate-spin" /> : null}
+              {approvingReview ? "Approving…" : "Approve review"}
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={(event) => {
+                const target = event.currentTarget.getBoundingClientRect();
+                setRemoveAnchorPoint({
+                  x: event.clientX || target.right,
+                  y: event.clientY || target.top + target.height / 2,
+                });
+              }}
+            >
+              Reject
+            </Button>
+          </>
+        ) : null}
         <Button size="xs" variant="ghost" onClick={props.onEdit}>
           <Pencil />
           Edit
@@ -646,6 +699,7 @@ export function SourceDetails(props: {
             variant="ghost"
             onClick={() =>
               props.onOpenPdf({
+                sourceId: record.sourceId,
                 attachmentId: pdf.attachmentId,
                 fileName: pdf.fileName,
               })
@@ -692,7 +746,7 @@ export function SourceDetails(props: {
                 });
               }}
             >
-              Remove from Sources
+              {record.origin?.review === "pending" ? "Reject agent source" : "Remove from Sources"}
             </MenuItem>
           </MenuPopup>
         </Menu>

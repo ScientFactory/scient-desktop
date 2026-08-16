@@ -29,6 +29,7 @@ import {
   removeSource,
   uploadLocalPdfSource,
   updateScientSource,
+  updateSourceNote,
 } from "./ScientSourcesCoordinator.ts";
 
 const fixtures: string[] = [];
@@ -283,6 +284,7 @@ describe("ScientSourcesCoordinator", () => {
       title: "A local study",
       externalReferences: [],
       attachments: [{ kind: "pdf", fileName: "A_local-study.pdf" }],
+      origin: { actor: "user", intake: "local-pdf", review: "none" },
     });
     await expect(
       readScientSourceStagedMaterial(root, uploaded.item.candidate.sourceKey),
@@ -361,7 +363,7 @@ describe("ScientSourcesCoordinator", () => {
     await expect(listScientSourceRecords(root)).resolves.toEqual([]);
     await expect(
       readScientSourceStagedMaterial(root, uploaded.item.candidate.sourceKey),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ sourceKey: uploaded.item.candidate.sourceKey });
   });
 
   it("resolves an imported attachment without requiring a persisted chat thread", async () => {
@@ -382,6 +384,7 @@ describe("ScientSourcesCoordinator", () => {
 
     const material = await getScientSourceAttachmentPreviewMaterial({
       root,
+      sourceId: record.sourceId,
       attachmentId: attachment.attachmentId,
     });
 
@@ -404,7 +407,11 @@ describe("ScientSourcesCoordinator", () => {
     );
     await NodeFSP.rm(NodePath.join(root, SCIENT_SOURCE_RECORDS_DIRECTORY, "unrelated.json"));
     await expect(
-      getScientSourceAttachmentPreviewMaterial({ root, attachmentId: "pdf_missing" }),
+      getScientSourceAttachmentPreviewMaterial({
+        root,
+        sourceId: record.sourceId,
+        attachmentId: "pdf_missing",
+      }),
     ).rejects.toThrow("The source attachment was not found in this project.");
   });
 
@@ -489,14 +496,25 @@ describe("ScientSourcesCoordinator", () => {
         ...candidate,
         title: "PEDS_20174087 1..3",
         abstract: "Keep this abstract.",
+        fieldProvenance: [
+          { field: "title", origin: "local-pdf", sourceField: "filename" },
+          { field: "abstract", origin: "crossref", sourceField: "abstract" },
+        ],
       },
     });
     const record = imported.record;
     if (!record) throw new Error("Expected an imported record.");
+    const noted = await updateSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      note: "Keep this note.",
+    });
+    const notedRecord = noted.record;
 
     const result = await applyRefreshedSourceMetadata({
       root,
-      record,
+      record: notedRecord,
       candidate: {
         ...candidate,
         title: "Timing and Location of Emergency Department Revisits",
@@ -512,6 +530,67 @@ describe("ScientSourcesCoordinator", () => {
         fieldProvenance: [
           { field: "title", origin: "local-pdf", sourceField: "document-info/title" },
           { field: "creators", origin: "doi", sourceField: "author" },
+          { field: "abstract", origin: "doi", sourceField: "abstract" },
+        ],
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "refreshed",
+      record: {
+        revision: 3,
+        title: "Timing and Location of Emergency Department Revisits",
+        creators: [{ familyName: "Goldman" }],
+        abstract: "Keep this abstract.",
+        note: "Keep this note.",
+      },
+    });
+    expect(result.record.fieldProvenance).toEqual([
+      { field: "abstract", origin: "crossref", sourceField: "abstract" },
+      { field: "title", origin: "local-pdf", sourceField: "document-info/title" },
+      { field: "creators", origin: "doi", sourceField: "author" },
+    ]);
+    expect((await listScientSourceRecords(root))[0]).toMatchObject({
+      revision: 3,
+      title: "Timing and Location of Emergency Department Revisits",
+      abstract: "Keep this abstract.",
+      note: "Keep this note.",
+    });
+  });
+
+  it("keeps existing creators when a refresh candidate has none", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        creators: [
+          {
+            creatorType: "author",
+            givenName: "Ada",
+            familyName: "Lovelace",
+            literalName: null,
+          },
+        ],
+        fieldProvenance: [{ field: "creators", origin: "user", sourceField: null }],
+      },
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const result = await applyRefreshedSourceMetadata({
+      root,
+      record,
+      candidate: {
+        ...candidate,
+        title: "Still refresh the title",
+        creators: [],
+        fieldProvenance: [
+          { field: "title", origin: "doi", sourceField: "title" },
+          { field: "creators", origin: "doi", sourceField: "author" },
         ],
       },
     });
@@ -520,15 +599,128 @@ describe("ScientSourcesCoordinator", () => {
       outcome: "refreshed",
       record: {
         revision: 2,
-        title: "Timing and Location of Emergency Department Revisits",
-        creators: [{ familyName: "Goldman" }],
-        abstract: "Keep this abstract.",
+        title: "Still refresh the title",
+        creators: [{ familyName: "Lovelace" }],
       },
     });
-    expect((await listScientSourceRecords(root))[0]).toMatchObject({
-      revision: 2,
-      title: "Timing and Location of Emergency Department Revisits",
-      abstract: "Keep this abstract.",
+    expect(result.record.fieldProvenance).toEqual([
+      { field: "creators", origin: "user", sourceField: null },
+      { field: "title", origin: "doi", sourceField: "title" },
+    ]);
+  });
+
+  it("replaces an abstract when the refresh candidate has a sourced non-empty value", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        abstract: "Old abstract to replace.",
+        fieldProvenance: [{ field: "abstract", origin: "local-pdf", sourceField: "subject" }],
+      },
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const result = await applyRefreshedSourceMetadata({
+      root,
+      record,
+      candidate: {
+        ...candidate,
+        abstract: "Timing and location of emergency department revisits after an asthma admission.",
+        fieldProvenance: [{ field: "abstract", origin: "doi", sourceField: "abstract" }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "refreshed",
+      record: {
+        revision: 2,
+        abstract: "Timing and location of emergency department revisits after an asthma admission.",
+      },
+    });
+    expect(result.record.fieldProvenance).toEqual([
+      { field: "abstract", origin: "doi", sourceField: "abstract" },
+    ]);
+  });
+
+  it("does not apply a filled refresh field that has no provenance", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        title: "Keep the sourced title",
+        fieldProvenance: [{ field: "title", origin: "user", sourceField: null }],
+      },
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const result = await applyRefreshedSourceMetadata({
+      root,
+      record,
+      candidate: {
+        ...candidate,
+        title: "Unsourced overwrite",
+        fieldProvenance: [],
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "unchanged",
+      record: { revision: 1, title: "Keep the sourced title" },
+    });
+  });
+
+  it("refreshes valid fields on an imported source with an existing validation issue", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        type: "other",
+        customType: null,
+        issuedRaw: "2005",
+        issuedYear: 2005,
+      },
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const result = await applyRefreshedSourceMetadata({
+      root,
+      record,
+      candidate: {
+        ...candidate,
+        type: "other",
+        customType: null,
+        issuedRaw: "2005-08-23",
+        issuedYear: 2005,
+        fieldProvenance: [
+          { field: "issuedRaw", origin: "doi", sourceField: "issued" },
+          { field: "issuedYear", origin: "doi", sourceField: "issued" },
+        ],
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "refreshed",
+      record: {
+        revision: 2,
+        type: "other",
+        customType: null,
+        issuedRaw: "2005-08-23",
+      },
     });
   });
 

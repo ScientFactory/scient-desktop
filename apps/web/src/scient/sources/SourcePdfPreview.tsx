@@ -4,7 +4,7 @@ import { FileText, LoaderCircle } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AssetUrlState } from "../../assets/assetUrls";
-import { workspacePdfRelativePath, workspacePdfSource } from "../pdf/pdfSource";
+import { workspacePdfSource } from "../pdf/pdfSource";
 import { readScientSourceAttachmentPreview } from "./client";
 
 import "../pdf/scientPdfReader.css";
@@ -15,7 +15,6 @@ const ScientPdfReader = lazy(() =>
 
 type SourcePreviewAssetState = AssetUrlState & {
   readonly requestKey: string;
-  readonly absolutePath?: string;
 };
 
 export function SourcePdfPreview(props: {
@@ -23,8 +22,9 @@ export function SourcePdfPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly fileName: string;
   readonly root: string;
+  readonly sourceId: string;
 }) {
-  const requestKey = `${props.environmentId}\0${props.root}\0${props.attachmentId}`;
+  const requestKey = `${props.environmentId}\0${props.root}\0${props.sourceId}\0${props.attachmentId}`;
   const [request, setRequest] = useState(0);
   const refresh = useCallback(() => setRequest((current) => current + 1), []);
   const [asset, setAsset] = useState<SourcePreviewAssetState>({
@@ -38,6 +38,7 @@ export function SourcePdfPreview(props: {
     setAsset({ _tag: "Loading", requestKey, refresh });
     void readScientSourceAttachmentPreview(props.environmentId, {
       root: props.root,
+      sourceId: props.sourceId,
       attachmentId: props.attachmentId,
     }).then(
       (result) => {
@@ -46,7 +47,7 @@ export function SourcePdfPreview(props: {
             _tag: "Success",
             url: result.url,
             expiresAt: result.expiresAt,
-            absolutePath: result.absolutePath,
+            ...(result.sourcePath ? { sourcePath: result.sourcePath } : {}),
             requestKey,
             refresh,
           });
@@ -59,17 +60,20 @@ export function SourcePdfPreview(props: {
     return () => {
       current = false;
     };
-  }, [props.attachmentId, props.environmentId, props.root, refresh, request, requestKey]);
+  }, [
+    props.attachmentId,
+    props.environmentId,
+    props.root,
+    props.sourceId,
+    refresh,
+    request,
+    requestKey,
+  ]);
 
   const currentAsset: SourcePreviewAssetState =
     asset.requestKey === requestKey ? asset : { _tag: "Loading", requestKey, refresh };
   const sourceRelativePath =
-    currentAsset._tag === "Success"
-      ? (currentAsset.sourcePath ??
-        (currentAsset.absolutePath
-          ? workspacePdfRelativePath(props.root, currentAsset.absolutePath)
-          : null))
-      : null;
+    currentAsset._tag === "Success" ? (currentAsset.sourcePath ?? null) : null;
 
   const source = useMemo(
     () =>

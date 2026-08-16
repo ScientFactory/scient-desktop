@@ -67,12 +67,15 @@ import {
   ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateRequest,
+  ScientSourceReviewUpdateRequest,
   ScientSourceNoteUpdateResult,
+  ScientSourceReviewUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
+  ScientSourcesRetryImportRequest,
   ScientSourcesDiscardStagedRequest,
   ScientSourcesDiscardStagedResult,
   ScientSourcesLocalPdfUploadRequest,
@@ -751,6 +754,14 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("updateReview", "/api/scient/sources/review/update", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourceReviewUpdateRequest,
+      success: ScientSourceReviewUpdateResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("remove", "/api/scient/sources/remove", {
       headers: OptionalBearerHeaders,
       payload: ScientSourceRemovalRequest,
@@ -842,6 +853,14 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
     HttpApiEndpoint.post("cancelImport", "/api/scient/sources/import/cancel", {
       headers: OptionalBearerHeaders,
       payload: ScientSourcesCancelImportRequest,
+      success: ScientSourceImportOperation,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("retryImport", "/api/scient/sources/import/retry", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcesRetryImportRequest,
       success: ScientSourceImportOperation,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),
