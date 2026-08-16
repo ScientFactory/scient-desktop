@@ -9,6 +9,7 @@ export type ScientRightPanelSurface =
       readonly id: `scient:source-pdf:${string}`;
       readonly kind: "scient";
       readonly module: "source-pdf";
+      readonly sourceId: string;
       readonly attachmentId: string;
       readonly fileName: string;
     }
@@ -31,11 +32,13 @@ export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { modul
 }
 
 export function scientSourcePdfSurface(input: {
+  readonly sourceId: string;
   readonly attachmentId: string;
   readonly fileName: string;
 }): Extract<ScientRightPanelSurface, { module: "source-pdf" }> {
   return {
-    id: `scient:source-pdf:${encodeURIComponent(input.attachmentId)}`,
+    id: `scient:source-pdf:${encodeURIComponent(input.sourceId)}:${encodeURIComponent(input.attachmentId)}`,
+    sourceId: input.sourceId,
     kind: "scient",
     module: "source-pdf",
     attachmentId: input.attachmentId,
@@ -85,12 +88,15 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   }
   if (
     surface.module === "source-pdf" &&
+    typeof surface.sourceId === "string" &&
+    surface.sourceId.length > 0 &&
     typeof surface.attachmentId === "string" &&
     surface.attachmentId.length > 0 &&
     typeof surface.fileName === "string" &&
     surface.fileName.length > 0
   ) {
     return scientSourcePdfSurface({
+      sourceId: surface.sourceId,
       attachmentId: surface.attachmentId,
       fileName: surface.fileName,
     });

@@ -7,12 +7,15 @@ import * as NodePath from "node:path";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
+import { editableMetadataFromRecord } from "./editable.ts";
 import { SCIENT_SOURCE_IMPORT_ITEM_LIMIT, type ScientSourceCandidate } from "./model.ts";
 import {
   cancelSourceImportOperation,
+  attachScientSourcePdf,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
   decodePersistedScientSourceRecord,
+  detachScientSourcePdf,
   importScientSource,
   importScientSourceOperationItem,
   inspectScientSourcePdf,
@@ -20,13 +23,16 @@ import {
   listScientSourceRecords,
   readSourceImportOperation,
   readScientSourceRecord,
+  resolveScientSourceInputPdf,
   removeScientSource,
+  retryFailedSourceImportOperationItems,
   SCIENT_SOURCES_DIRECTORY,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
   SCIENT_SOURCE_OPERATIONS_DIRECTORY,
   SCIENT_SOURCE_RECEIPTS_DIRECTORY,
   SCIENT_SOURCE_HISTORY_DIRECTORY,
   sourceAttachmentAbsolutePath,
+  stageScientSourcePdfUpload,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
   updateScientSourceNote,
@@ -408,6 +414,17 @@ describe("Scient source store", () => {
     );
   });
 
+  it("rejects renamed non-PDF content during upload staging", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const sourcePath = NodePath.join(root, "renamed.pdf");
+    await NodeFSP.writeFile(sourcePath, "This is not a PDF.", "utf8");
+
+    await expect(
+      stageScientSourcePdfUpload({ root, sourcePath, fileName: "renamed.pdf" }),
+    ).rejects.toThrow("not a valid PDF");
+  });
+
   it("canonicalizes project aliases before source coordination", async () => {
     const container = await fixture();
     const root = NodePath.join(container, "project");
@@ -600,6 +617,55 @@ describe("Scient source store", () => {
       ),
     ) as { revision: number; title: string };
     expect(history).toMatchObject({ revision: 1, title: candidate.title });
+  });
+
+  it("updates valid fields without accepting new issues on an incomplete imported record", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        sourceKey: "INCOMPLETE1",
+        type: "other",
+        customType: null,
+        issuedRaw: "2005",
+        issuedYear: 2005,
+        identifiers: [],
+      },
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const updated = await updateScientSourceMetadata({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      metadata: {
+        ...editableMetadataFromRecord(record),
+        issuedRaw: "2005-08-23",
+      },
+      allowExistingValidationIssues: true,
+    });
+
+    expect(updated).toMatchObject({
+      outcome: "updated",
+      record: { revision: 2, type: "other", customType: null, issuedRaw: "2005-08-23" },
+      validationIssues: [{ field: "customType", message: "Enter the source type." }],
+    });
+    await expect(
+      updateScientSourceMetadata({
+        root,
+        sourceId: updated.record.sourceId,
+        expectedRevision: updated.record.revision,
+        metadata: {
+          ...editableMetadataFromRecord(updated.record),
+          url: "not a URL",
+        },
+        allowExistingValidationIssues: true,
+      }),
+    ).rejects.toThrow("Enter a valid source URL.");
   });
 
   it("autosaves source notes with revision safety and an idempotent retry", async () => {
@@ -1187,6 +1253,39 @@ describe("Scient source store", () => {
     });
   });
 
+  it("finalizes failed items and allows an explicit retry", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const operationId = NodeCrypto.randomUUID();
+    await createSourceImportOperation({
+      root,
+      operationId,
+      adapter: "zotero",
+      itemKeys: ["ABC123"],
+    });
+
+    const completed = await updateSourceImportOperationItem({
+      root,
+      operationId,
+      itemKey: "ABC123",
+      state: "failed",
+      message: "Provider unavailable.",
+    });
+
+    expect(completed).toMatchObject({
+      state: "completed",
+      items: [{ itemKey: "ABC123", state: "failed" }],
+    });
+    expect((await inspectScientSources(root)).activeOperation).toBeNull();
+
+    await expect(
+      retryFailedSourceImportOperationItems(root, operationId, ["ABC123"]),
+    ).resolves.toMatchObject({
+      state: "running",
+      items: [{ itemKey: "ABC123", state: "pending", message: null }],
+    });
+  });
+
   it("keeps recovered finalization and cancellation consistent under concurrency", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
@@ -1249,5 +1348,119 @@ describe("Scient source store", () => {
         importedAt: record.importedAt,
       }),
     ).toThrow("not portable");
+  });
+
+  it("attaches the same canonical PDF to user sources and detaches by revision", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const pdfPath = NodePath.join(root, "paper.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nshared\n", "utf8");
+    const first = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+      pdfPath,
+      actor: "user",
+      intake: "local-pdf",
+    });
+    const second = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        sourceKey: "SECOND",
+        title: "Second source",
+        identifiers: [{ scheme: "doi", value: "10.1000/second" }],
+        externalReferences: [
+          {
+            system: "zotero",
+            libraryId: "0",
+            itemKey: "SECOND",
+            itemVersion: 1,
+            rawItemType: "journalArticle",
+          },
+        ],
+      },
+      actor: "user",
+      intake: "identifier",
+      allowPossibleMetadataMatch: true,
+    });
+    if (!first.record || !second.record) throw new Error("Expected imported sources.");
+    const firstAttachment = first.record.attachments[0];
+    if (!firstAttachment) throw new Error("Expected first PDF attachment.");
+
+    const attached = await attachScientSourcePdf({
+      root,
+      sourceId: second.record.sourceId,
+      expectedRevision: second.record.revision,
+      pdfPath,
+      fileName: "shared-copy.pdf",
+    });
+    expect(attached).toMatchObject({
+      outcome: "attached",
+      record: {
+        revision: 2,
+        attachments: [{ sha256: firstAttachment.sha256, fileName: "shared-copy.pdf" }],
+      },
+    });
+    const secondAttachment = attached.record.attachments[0];
+    if (!secondAttachment) throw new Error("Expected second PDF attachment.");
+    expect(secondAttachment.relativePath).toBe(firstAttachment.relativePath);
+    expect(secondAttachment.attachmentId).not.toBe(firstAttachment.attachmentId);
+
+    const detachedSecond = await detachScientSourcePdf({
+      root,
+      sourceId: second.record.sourceId,
+      attachmentId: secondAttachment.attachmentId,
+      expectedRevision: attached.record.revision,
+    });
+    expect(detachedSecond).toMatchObject({
+      outcome: "removed",
+      record: { revision: 3, attachments: [] },
+      removedAttachmentCount: 0,
+      retainedAttachmentCount: 1,
+    });
+    await expect(
+      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, firstAttachment), "utf8"),
+    ).resolves.toBe("%PDF-1.7\nshared\n");
+
+    const detachedFirst = await detachScientSourcePdf({
+      root,
+      sourceId: first.record.sourceId,
+      attachmentId: firstAttachment.attachmentId,
+      expectedRevision: first.record.revision,
+    });
+    expect(detachedFirst).toMatchObject({
+      outcome: "removed",
+      record: { revision: 2, attachments: [] },
+      removedAttachmentCount: 1,
+    });
+    await expect(
+      NodeFSP.stat(sourceAttachmentAbsolutePath(root, firstAttachment)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("resolves only regular project-relative PDFs and rejects traversal or symlink escapes", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const pdfPath = NodePath.join(root, "reference_ledger", "article.pdf");
+    await NodeFSP.mkdir(NodePath.dirname(pdfPath), { recursive: true });
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nsafe\n", "utf8");
+
+    await expect(
+      resolveScientSourceInputPdf(root, "reference_ledger/article.pdf"),
+    ).resolves.toEqual({
+      absolutePath: await NodeFSP.realpath(pdfPath),
+      fileName: "article.pdf",
+    });
+    await expect(resolveScientSourceInputPdf(root, "../outside.pdf")).rejects.toThrow();
+    await expect(resolveScientSourceInputPdf(root, "/tmp/outside.pdf")).rejects.toThrow();
+
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-outside-"));
+    fixtures.push(outside);
+    const outsidePdf = NodePath.join(outside, "outside.pdf");
+    await NodeFSP.writeFile(outsidePdf, "%PDF-1.7\noutside\n", "utf8");
+    await NodeFSP.symlink(outsidePdf, NodePath.join(root, "linked.pdf"));
+    await expect(resolveScientSourceInputPdf(root, "linked.pdf")).rejects.toThrow();
   });
 });

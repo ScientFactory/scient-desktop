@@ -20,10 +20,35 @@ describe("local PDF source adapter", () => {
         "DOI: https:// doi. org/ 10. 1542/ peds. 2017- 4087 Accepted for publication",
       ),
     ).toBe("10.1542/peds.2017-4087");
+    expect(
+      localPdfSourceInternals.uniqueDoi("DOI: 10.1001/jamanetworkopen.2024.8895 (reprinted) May"),
+    ).toBe("10.1001/jamanetworkopen.2024.8895");
+    expect(
+      localPdfSourceInternals.doiCandidates("10.1001/jamanetworkopen.2024.8895(reprinted)may"),
+    ).toEqual([
+      "10.1001/jamanetworkopen.2024.8895(reprinted)may",
+      "10.1001/jamanetworkopen.2024.8895",
+    ]);
+    expect(localPdfSourceInternals.doiCandidates("10.1136/bmj.i6)cite")).toEqual([
+      "10.1136/bmj.i6)cite",
+      "10.1136/bmj.i6",
+    ]);
     expect(localPdfSourceInternals.uniqueDoi("Unlabelled 10. 1542/ peds. 2017- 4087")).toBeNull();
     expect(
       localPdfSourceInternals.uniqueDoi("DOI: 10. 1000/ first and DOI: 10. 1000/ second"),
     ).toBeNull();
+  });
+
+  it("prefers an article DOI over its table and figure child identifiers", () => {
+    expect(
+      localPdfSourceInternals.uniqueDoi(
+        [
+          "DOI: 10.1371/journal.pmed.0020124",
+          "DOI: 10.1371/journal.pmed.0020124.t001",
+          "DOI: 10.1371/journal.pmed.0020124.g001",
+        ].join("\n"),
+      ),
+    ).toBe("10.1371/journal.pmed.0020124");
   });
 
   it("uses a human document-info title over a file-like XMP label", () => {
@@ -45,9 +70,17 @@ describe("local PDF source adapter", () => {
 
   it("normalizes standard PDF dates without changing ordinary publication dates", () => {
     expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:20180330142756+05'30'")).toBe(
-      "2018",
+      "2018-03-30",
     );
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:20240426150234Z00'00'")).toBe(
+      "2024-04-26",
+    );
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:202404")).toBe("2024-04");
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:2024")).toBe("2024");
     expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("2024-07-18")).toBe("2024-07-18");
+    expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:20241301150234Z")).toBe(
+      "D:20241301150234Z",
+    );
     expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:not-a-date")).toBe("D:not-a-date");
   });
 
@@ -98,7 +131,7 @@ describe("local PDF source adapter", () => {
       creators: [],
       issuedRaw: null,
       issuedYear: null,
-      identifiers: [{ scheme: "doi", value: "10.1000/example" }],
+      identifiers: [{ scheme: "doi", value: "10.1001/jamanetworkopen.2024.8895(reprinted)may" }],
       abstract: null,
       containerTitle: null,
       publisher: null,
@@ -134,6 +167,7 @@ describe("local PDF source adapter", () => {
       sourceKey: fallback.sourceKey,
       type: "article",
       title: "Resolved article",
+      issuedRaw: "2026-08-12",
       issuedYear: 2026,
       pdfFileName: "paper.pdf",
       externalReferences: [],
@@ -147,6 +181,10 @@ describe("local PDF source adapter", () => {
         { scheme: "issn", value: "1234-5678" },
       ]),
     );
+    expect(candidate.identifiers).not.toContainEqual({
+      scheme: "doi",
+      value: "10.1001/jamanetworkopen.2024.8895(reprinted)may",
+    });
     expect(candidate.fieldProvenance).toEqual(
       expect.arrayContaining([
         { field: "identifiers", origin: "local-pdf", sourceField: "first-pages" },

@@ -233,7 +233,7 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("keeps recognized Scient source surfaces during migration", () => {
+  it("drops legacy source-PDF surfaces without a source identity during migration", () => {
     expect(
       migratePersistedRightPanelState({
         byThreadKey: {
@@ -259,16 +259,7 @@ describe("rightPanelStore", () => {
         "env-1:thread-A": {
           isOpen: true,
           activeSurfaceId: "scient:sources",
-          surfaces: [
-            { id: "scient:sources", kind: "scient", module: "sources" },
-            {
-              id: "scient:source-pdf:pdf%201",
-              kind: "scient",
-              module: "source-pdf",
-              attachmentId: "pdf 1",
-              fileName: "Paper.pdf",
-            },
-          ],
+          surfaces: [{ id: "scient:sources", kind: "scient", module: "sources" }],
         },
       },
     });
@@ -393,19 +384,25 @@ describe("rightPanelStore", () => {
 
   it("opens a source PDF beside the Sources library", () => {
     useRightPanelStore.getState().openScient(refA, scientSourcesSurface());
-    useRightPanelStore
-      .getState()
-      .openScient(refA, scientSourcePdfSurface({ attachmentId: "pdf_123", fileName: "Paper.pdf" }));
+    useRightPanelStore.getState().openScient(
+      refA,
+      scientSourcePdfSurface({
+        sourceId: "source_123",
+        attachmentId: "pdf_123",
+        fileName: "Paper.pdf",
+      }),
+    );
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "scient:source-pdf:pdf_123",
+      activeSurfaceId: "scient:source-pdf:source_123:pdf_123",
       surfaces: [
         { id: "scient:sources", kind: "scient", module: "sources" },
         {
-          id: "scient:source-pdf:pdf_123",
+          id: "scient:source-pdf:source_123:pdf_123",
           kind: "scient",
           module: "source-pdf",
+          sourceId: "source_123",
           attachmentId: "pdf_123",
           fileName: "Paper.pdf",
         },

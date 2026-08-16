@@ -1,9 +1,13 @@
 import {
   ScientSourceCreator,
   ScientSourceExternalReference,
+  ScientSourceEditableMetadata,
   ScientSourceFieldProvenance,
   ScientSourceIdentifier,
+  ScientSourceAbstractSection,
+  ScientSourceMetadataValidationIssue,
   ScientSourceNote,
+  ScientSourceOrigin,
   ScientSourceType,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
@@ -53,6 +57,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   containerTitle: NullableText,
   doi: NullableText,
   hasPdf: Schema.Boolean,
+  review: Schema.Literals(["none", "pending"]),
+  addedBy: Schema.Literals(["user", "agent"]),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -87,6 +93,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   externalReferences: Schema.Array(ScientSourceExternalReference),
   attachments: Schema.Array(ScientSourceAgentAttachment),
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
+  origin: Schema.optionalKey(ScientSourceOrigin),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
 });
@@ -148,8 +155,211 @@ export const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update"
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+export const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
+  description:
+    "Update canonical metadata or tags for one project Source after the user explicitly asks. " +
+    "Read the source first and pass its current revision. This never changes provenance, review state, or attachments.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    metadata: ScientSourceEditableMetadata,
+    allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["updated", "unchanged", "stale", "duplicate"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    duplicate: Schema.Struct({
+      kind: Schema.Literals([
+        "same-origin",
+        "same-identifier",
+        "same-pdf",
+        "possible-metadata-match",
+        "new",
+      ]),
+      matchingSourceIds: Schema.Array(NonEmptyString),
+      reason: NonEmptyString,
+    }),
+    validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update source metadata")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
+  description:
+    "Remove one canonical Source from this project's library. Use only after the user explicitly asks for removal. Read the source first and pass its current revision.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["removed", "not-found", "stale"]),
+    sourceId: NonEmptyString,
+    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Remove a project source")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const ScientSourceReviewTool = Tool.make("scient_sources_review", {
+  description:
+    "Approve or reject an agent-added Source after the user explicitly asks. Approval clears pending review; rejection removes the source.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    action: Schema.Literals(["approve", "reject"]),
+  }),
+  success: Schema.Struct({
+    action: Schema.Literals(["approve", "reject"]),
+    outcome: Schema.Literals(["updated", "unchanged", "stale", "removed", "not-found"]),
+    sourceId: NonEmptyString,
+    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Review a project source")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const ScientSourceAddInput = Schema.Struct({
+  type: Schema.optionalKey(ScientSourceType),
+  customType: Schema.optionalKey(NullableText),
+  title: Schema.optionalKey(NullableText),
+  creators: Schema.optionalKey(
+    Schema.Array(ScientSourceCreator).pipe(Schema.check(Schema.isMaxLength(256))),
+  ),
+  issuedRaw: Schema.optionalKey(NullableText),
+  issuedYear: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  identifiers: Schema.optionalKey(
+    Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
+  ),
+  abstract: Schema.optionalKey(NullableText),
+  abstractSections: Schema.optionalKey(
+    Schema.Array(ScientSourceAbstractSection).pipe(Schema.check(Schema.isMaxLength(256))),
+  ),
+  containerTitle: Schema.optionalKey(NullableText),
+  publisher: Schema.optionalKey(NullableText),
+  volume: Schema.optionalKey(NullableText),
+  issue: Schema.optionalKey(NullableText),
+  pages: Schema.optionalKey(NullableText),
+  language: Schema.optionalKey(NullableText),
+  url: Schema.optionalKey(NullableText),
+  tags: Schema.optionalKey(
+    Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(1_000))),
+  ),
+  pdfRelativePath: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096)))),
+  enrich: Schema.optionalKey(Schema.Boolean),
+  allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
+});
+export type ScientSourceAddInput = typeof ScientSourceAddInput.Type;
+
+export const ScientSourceAddResult = Schema.Struct({
+  outcome: Schema.Literals(["imported", "duplicate", "invalid"]),
+  sourceId: Schema.NullOr(NonEmptyString),
+  revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  duplicate: Schema.Struct({
+    kind: Schema.Literals([
+      "same-origin",
+      "same-identifier",
+      "same-pdf",
+      "possible-metadata-match",
+      "new",
+    ]),
+    matchingSourceIds: Schema.Array(NonEmptyString),
+    reason: NonEmptyString,
+  }),
+  validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
+  review: Schema.Literals(["none", "pending"]),
+});
+
+export const ScientSourceAddTool = Tool.make("scient_sources_add", {
+  description:
+    "Add one source to this thread's Scient project after the user explicitly asks. Read existing " +
+    "Sources first. To add a PDF, find it in the project and pass its relative .pdf path; Scient " +
+    "derives available metadata from the PDF, so citation fields are optional. New agent-added " +
+    "sources are marked pending review. Repeating the same request is idempotent.",
+  parameters: ScientSourceAddInput,
+  success: ScientSourceAddResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Add a project source")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+export const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
+  description:
+    "Attach a project-relative PDF to any Source after the user explicitly asks. Read the source first " +
+    "and pass its current revision. The PDF is copied or reused in canonical Sources storage.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    pdfRelativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["attached", "unchanged", "stale"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Attach a source PDF")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
+  description:
+    "Remove one PDF attachment from a Source while keeping its metadata. Use only after the user explicitly asks. " +
+    "Read the source first and pass its current revision.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    attachmentId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["removed", "unchanged", "stale", "not-found"]),
+    sourceId: NonEmptyString,
+    attachmentId: NonEmptyString,
+    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    removedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    retainedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Detach a source PDF")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
   ScientSourceNoteUpdateTool,
+  ScientSourceMetadataUpdateTool,
+  ScientSourceRemoveTool,
+  ScientSourceReviewTool,
+  ScientSourceAddTool,
+  ScientSourceAttachPdfTool,
+  ScientSourceDetachPdfTool,
 );

@@ -1,7 +1,11 @@
+import * as NodeCrypto from "node:crypto";
+
+import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
   discardLocalPdfImportMaterial,
   getLocalPdfImportMaterial,
   prepareLocalPdfSource,
+  prepareProjectPdfSource,
   refreshExistingSourceCandidate,
 } from "./LocalPdfSourceAdapter.ts";
 import {
@@ -15,7 +19,6 @@ import {
   scientSourceSummaryFromRecord,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
-  type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
   type ScientSourceRecord,
   type ZoteroImportScope,
@@ -24,16 +27,21 @@ import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
+  importScientSource,
   importScientSourceOperationItem,
+  attachScientSourcePdf,
+  detachScientSourcePdf,
   inspectScientSourcePdf,
   inspectScientSources,
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
+  retryFailedSourceImportOperationItems,
   removeScientSource,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  updateScientSourceReview,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 
@@ -120,14 +128,14 @@ export async function getScientSourceDetail(input: {
 
 export async function getScientSourceAttachmentPreviewMaterial(input: {
   readonly root: string;
+  readonly sourceId: string;
   readonly attachmentId: string;
 }) {
-  const records = await listScientSourceRecords(input.root);
-  for (const record of records) {
-    const attachment = record.attachments.find(
-      (candidate) => candidate.attachmentId === input.attachmentId,
-    );
-    if (!attachment) continue;
+  const record = await readScientSourceRecord(input.root, input.sourceId);
+  const attachment = record?.attachments.find(
+    (candidate) => candidate.attachmentId === input.attachmentId,
+  );
+  if (attachment) {
     return {
       absolutePath: sourceAttachmentAbsolutePath(input.root, attachment),
       attachment,
@@ -153,143 +161,76 @@ export async function updateSourceNote(input: Parameters<typeof updateScientSour
   return updateScientSourceNote(input);
 }
 
-function candidateEvidenceFields(candidate: ScientSourceCandidate): ReadonlySet<string> {
-  return new Set(
-    candidate.fieldProvenance.map((entry) =>
-      entry.field.startsWith("identifiers.") ? "identifiers" : entry.field,
-    ),
-  );
+export async function updateSourceReview(input: Parameters<typeof updateScientSourceReview>[0]) {
+  return updateScientSourceReview(input);
 }
 
-function proposedMetadataValue<A>(input: {
-  readonly field: ScientSourceEditableField;
-  readonly evidence: ReadonlySet<string>;
-  readonly current: A;
-  readonly candidate: A;
-  readonly present: boolean;
-}): A {
-  return input.evidence.has(input.field) && input.present ? input.candidate : input.current;
+export async function addAgentSource(input: {
+  readonly root: string;
+  readonly candidate: ScientSourceCandidate;
+  readonly allowPossibleMetadataMatch?: boolean;
+  readonly enrich?: boolean;
+  readonly pdfPath?: string;
+  readonly pdfFileName?: string;
+  readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
+}) {
+  const candidate = input.enrich
+    ? await enrichScientSourceCandidate(input.candidate)
+    : input.candidate;
+  const candidateWithPdfName =
+    input.pdfPath && input.pdfFileName
+      ? { ...candidate, pdfFileName: input.pdfFileName }
+      : candidate;
+  return importScientSource({
+    root: input.root,
+    operationId: `agent_${NodeCrypto.randomUUID()}`,
+    candidate: candidateWithPdfName,
+    actor: "agent",
+    intake: input.pdfPath ? "local-pdf" : "identifier",
+    review: "pending",
+    allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+    ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
+    ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
+  });
+}
+
+export async function prepareAgentProjectPdf(input: {
+  readonly sourceKey: string;
+  readonly sourcePath: string;
+  readonly fileName: string;
+}) {
+  return prepareProjectPdfSource(input);
+}
+
+export async function attachSourcePdf(input: Parameters<typeof attachScientSourcePdf>[0]) {
+  return attachScientSourcePdf(input);
+}
+
+export async function detachSourcePdf(input: Parameters<typeof detachScientSourcePdf>[0]) {
+  return detachScientSourcePdf(input);
 }
 
 export function proposeRefreshedSourceMetadata(input: {
-  readonly record: ScientSourceRecord;
   readonly candidate: ScientSourceCandidate;
 }): ScientSourceEditableMetadata {
-  const current = editableMetadataFromRecord(input.record);
   const candidate = input.candidate;
-  const evidence = candidateEvidenceFields(candidate);
-  const customTypeEvidence = evidence.has("type") ? new Set(["customType"]) : evidence;
-  const hasIssuedEvidence = evidence.has("issuedRaw") || evidence.has("issuedYear");
   return normalizeScientSourceEditableMetadata({
-    type: proposedMetadataValue({
-      field: "type",
-      evidence,
-      current: current.type,
-      candidate: candidate.type,
-      present: true,
-    }),
-    customType: proposedMetadataValue({
-      field: "customType",
-      evidence: customTypeEvidence,
-      current: current.customType ?? null,
-      candidate: candidate.customType ?? null,
-      present: candidate.type === "other" && Boolean(candidate.customType?.trim()),
-    }),
-    title: proposedMetadataValue({
-      field: "title",
-      evidence,
-      current: current.title,
-      candidate: candidate.title,
-      present: Boolean(candidate.title?.trim()),
-    }),
-    creators: proposedMetadataValue({
-      field: "creators",
-      evidence,
-      current: current.creators,
-      candidate: candidate.creators,
-      present: candidate.creators.length > 0,
-    }),
-    issuedRaw: proposedMetadataValue({
-      field: "issuedRaw",
-      evidence,
-      current: current.issuedRaw,
-      candidate: candidate.issuedRaw,
-      present: Boolean(candidate.issuedRaw?.trim()),
-    }),
-    issuedYear:
-      hasIssuedEvidence && candidate.issuedYear !== null
-        ? candidate.issuedYear
-        : current.issuedYear,
-    identifiers: proposedMetadataValue({
-      field: "identifiers",
-      evidence,
-      current: current.identifiers,
-      candidate: candidate.identifiers,
-      present: candidate.identifiers.length > 0,
-    }),
-    abstract: proposedMetadataValue({
-      field: "abstract",
-      evidence,
-      current: current.abstract,
-      candidate: candidate.abstract,
-      present: Boolean(candidate.abstract?.trim()),
-    }),
-    containerTitle: proposedMetadataValue({
-      field: "containerTitle",
-      evidence,
-      current: current.containerTitle,
-      candidate: candidate.containerTitle,
-      present: Boolean(candidate.containerTitle?.trim()),
-    }),
-    publisher: proposedMetadataValue({
-      field: "publisher",
-      evidence,
-      current: current.publisher,
-      candidate: candidate.publisher,
-      present: Boolean(candidate.publisher?.trim()),
-    }),
-    volume: proposedMetadataValue({
-      field: "volume",
-      evidence,
-      current: current.volume,
-      candidate: candidate.volume,
-      present: Boolean(candidate.volume?.trim()),
-    }),
-    issue: proposedMetadataValue({
-      field: "issue",
-      evidence,
-      current: current.issue,
-      candidate: candidate.issue,
-      present: Boolean(candidate.issue?.trim()),
-    }),
-    pages: proposedMetadataValue({
-      field: "pages",
-      evidence,
-      current: current.pages,
-      candidate: candidate.pages,
-      present: Boolean(candidate.pages?.trim()),
-    }),
-    language: proposedMetadataValue({
-      field: "language",
-      evidence,
-      current: current.language,
-      candidate: candidate.language,
-      present: Boolean(candidate.language?.trim()),
-    }),
-    url: proposedMetadataValue({
-      field: "url",
-      evidence,
-      current: current.url,
-      candidate: candidate.url,
-      present: Boolean(candidate.url?.trim()),
-    }),
-    tags: proposedMetadataValue({
-      field: "tags",
-      evidence,
-      current: current.tags,
-      candidate: candidate.tags,
-      present: candidate.tags.length > 0,
-    }),
+    type: candidate.type,
+    customType: candidate.customType ?? null,
+    title: candidate.title,
+    creators: candidate.creators,
+    issuedRaw: candidate.issuedRaw,
+    issuedYear: candidate.issuedYear,
+    identifiers: candidate.identifiers,
+    abstract: candidate.abstract,
+    containerTitle: candidate.containerTitle,
+    publisher: candidate.publisher,
+    volume: candidate.volume,
+    issue: candidate.issue,
+    pages: candidate.pages,
+    language: candidate.language,
+    url: candidate.url,
+    tags: candidate.tags,
   });
 }
 
@@ -300,7 +241,6 @@ export async function applyRefreshedSourceMetadata(input: {
 }) {
   const currentMetadata = editableMetadataFromRecord(input.record);
   const metadata = proposeRefreshedSourceMetadata({
-    record: input.record,
     candidate: input.candidate,
   });
   const changedFields = changedEditableMetadataFields(currentMetadata, metadata);
@@ -318,9 +258,14 @@ export async function applyRefreshedSourceMetadata(input: {
     sourceId: input.record.sourceId,
     expectedRevision: input.record.revision,
     metadata,
+    fieldProvenance: input.candidate.fieldProvenance,
     // A refresh may make a weak title/creator/year resemblance more obvious,
     // but only an exact work identifier is strong enough to block this write.
     allowPossibleMetadataMatch: true,
+    // Imported records can contain incomplete metadata, such as an unknown
+    // custom source type. Refresh may improve other fields without first
+    // requiring the user to repair pre-existing validation issues.
+    allowExistingValidationIssues: true,
   });
   if (result.outcome === "updated") {
     return {
@@ -534,6 +479,9 @@ export async function advanceSourceImport(input: {
         root,
         operationId: input.operationId,
         candidate,
+        actor: operation.actor,
+        intake: operation.intake,
+        review: operation.actor === "agent" ? "pending" : "none",
         ...(pdfPath ? { pdfPath } : {}),
         ...(expectedPdf ? { expectedPdf } : {}),
         allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
@@ -560,9 +508,6 @@ export async function advanceSourceImport(input: {
         state: "failed",
         message,
       });
-      if (operation.adapter === "local-files") {
-        await discardLocalPdfImportMaterial(root, pending.itemKey).catch(() => undefined);
-      }
       return updated;
     }
   });
@@ -580,10 +525,19 @@ export async function cancelSourceImport(input: {
     if (operation.adapter === "local-files") {
       await Promise.all(
         operation.items
-          .filter((item) => item.state === "pending")
+          .filter((item) => item.state === "pending" || item.state === "failed")
           .map((item) => discardLocalPdfImportMaterial(root, item.itemKey).catch(() => undefined)),
       );
     }
     return cancelled;
   });
+}
+
+export async function retrySourceImport(input: {
+  readonly root: string;
+  readonly operationId: string;
+  readonly itemKeys: ReadonlyArray<string>;
+}) {
+  const root = await canonicalizeScientSourceRoot(input.root);
+  return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
 }

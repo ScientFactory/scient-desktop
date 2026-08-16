@@ -31,8 +31,10 @@ import {
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
+  type ScientSourceFieldProvenance,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceNoteUpdateResult,
+  type ScientSourceReviewUpdateResult,
   type ScientSourceStagedMaterial as ScientSourceStagedMaterialType,
   type ScientSourceRemovalResult,
   type ScientSourcesOverview,
@@ -67,6 +69,8 @@ const PersistedScientSourceImportOperation = Schema.Struct({
   ...ScientSourceImportOperation.fields,
   // Operations written before local-file imports existed did not record an adapter.
   adapter: Schema.optionalKey(ScientSourceImportOperation.fields.adapter),
+  actor: Schema.optionalKey(ScientSourceImportOperation.fields.actor),
+  intake: Schema.optionalKey(ScientSourceImportOperation.fields.intake),
 });
 
 export interface ImportedSourceResult {
@@ -358,26 +362,53 @@ async function latestSourceHistoryRevision(
   return latestRevision;
 }
 
+async function persistSourceRevision(
+  paths: SourceStorePaths,
+  current: ScientSourceRecord,
+  next: ScientSourceRecord,
+): Promise<void> {
+  const historyPath = sourceHistoryPath(paths, current.sourceId, current.revision);
+  const preserved = await atomicCreateJson(historyPath, current, MAX_RECORD_BYTES);
+  if (!preserved) {
+    const history = await readBoundedSourceRecord(historyPath);
+    if (JSON.stringify(history) !== JSON.stringify(current)) {
+      throw new Error("The source revision history conflicts with the current record.");
+    }
+  }
+  await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
+}
+
 export async function updateScientSourceMetadata(input: {
   readonly root: string;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly metadata: ScientSourceEditableMetadata;
+  readonly fieldProvenance?: ReadonlyArray<ScientSourceFieldProvenance>;
   readonly allowPossibleMetadataMatch?: boolean;
+  readonly allowExistingValidationIssues?: boolean;
 }): Promise<ScientSourceMetadataUpdateResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
   const normalized = normalizeScientSourceEditableMetadata(input.metadata);
   const validationIssues = validateScientSourceEditableMetadata(normalized);
-  if (validationIssues.length > 0) {
-    throw new Error(validationIssues.map((issue) => issue.message).join(" "));
-  }
 
   return withOperationLock(`${paths.root}:source-write`, async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     const currentMetadata = normalizeScientSourceEditableMetadata(
       editableMetadataFromRecord(current),
     );
+    const existingValidationIssues = input.allowExistingValidationIssues
+      ? validateScientSourceEditableMetadata(currentMetadata)
+      : [];
+    const introducedValidationIssues = validationIssues.filter(
+      (issue) =>
+        !existingValidationIssues.some(
+          (existing) => existing.field === issue.field && existing.message === issue.message,
+        ),
+    );
+    if (introducedValidationIssues.length > 0) {
+      throw new Error(introducedValidationIssues.map((issue) => issue.message).join(" "));
+    }
     const existing = (await listScientSourceRecords(paths.root)).filter(
       (record) => record.sourceId !== current.sourceId,
     );
@@ -397,25 +428,15 @@ export async function updateScientSourceMetadata(input: {
       return { outcome: "duplicate", record: current, duplicate, validationIssues };
     }
 
-    const next = applyEditableMetadata({
+    const updated = applyEditableMetadata({
       record: current,
       metadata: normalized,
       updatedAt: new Date().toISOString(),
     });
-    const preserved = await atomicCreateJson(
-      sourceHistoryPath(paths, current.sourceId, current.revision),
-      current,
-      MAX_RECORD_BYTES,
-    );
-    if (!preserved) {
-      const history = await readBoundedSourceRecord(
-        sourceHistoryPath(paths, current.sourceId, current.revision),
-      );
-      if (JSON.stringify(history) !== JSON.stringify(current)) {
-        throw new Error("The source revision history conflicts with the current record.");
-      }
-    }
-    await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
+    const next = input.fieldProvenance
+      ? { ...updated, fieldProvenance: [...input.fieldProvenance] }
+      : updated;
+    await persistSourceRevision(paths, current, next);
     return { outcome: "updated", record: next, duplicate, validationIssues };
   });
 }
@@ -451,20 +472,34 @@ export async function updateScientSourceNote(input: {
       revision: current.revision + 1,
       updatedAt: new Date().toISOString(),
     };
-    const preserved = await atomicCreateJson(
-      sourceHistoryPath(paths, current.sourceId, current.revision),
-      current,
-      MAX_RECORD_BYTES,
-    );
-    if (!preserved) {
-      const history = await readBoundedSourceRecord(
-        sourceHistoryPath(paths, current.sourceId, current.revision),
-      );
-      if (JSON.stringify(history) !== JSON.stringify(current)) {
-        throw new Error("The source revision history conflicts with the current record.");
-      }
+    await persistSourceRevision(paths, current, next);
+    return { outcome: "updated", record: next };
+  });
+}
+
+export async function updateScientSourceReview(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly review: "none" | "pending";
+}): Promise<ScientSourceReviewUpdateResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    const currentReview = current.origin?.review ?? "none";
+    if (currentReview === input.review) return { outcome: "unchanged", record: current };
+    if (current.revision !== input.expectedRevision) {
+      return { outcome: "stale", record: current };
     }
-    await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
+    const next: ScientSourceRecord = {
+      ...current,
+      ...(current.origin ? { origin: { ...current.origin, review: input.review } } : {}),
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    await persistSourceRevision(paths, current, next);
     return { outcome: "updated", record: next };
   });
 }
@@ -642,6 +677,8 @@ async function readSourceImportOperationFromPaths(
   const operation: ScientSourceImportOperation = {
     ...persisted,
     adapter: persisted.adapter ?? "zotero",
+    actor: persisted.actor ?? "user",
+    intake: persisted.intake ?? (persisted.adapter === "local-files" ? "local-pdf" : "zotero"),
   };
   if (operation.projectId !== paths.identity.projectId) {
     throw new Error("The source import operation belongs to another Scient project.");
@@ -717,6 +754,8 @@ export async function createSourceImportOperation(input: {
   readonly root: string;
   readonly operationId: string;
   readonly adapter: "zotero" | "local-files";
+  readonly actor?: "user" | "agent";
+  readonly intake?: "zotero" | "local-pdf" | "identifier";
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
 }): Promise<ScientSourceImportOperation> {
@@ -748,7 +787,10 @@ export async function createSourceImportOperation(input: {
       if (
         existingKeys.join("\0") !== uniqueItemKeys.join("\0") ||
         existingOverrides.join("\0") !== normalizedOverrides.join("\0") ||
-        existing.adapter !== input.adapter
+        existing.adapter !== input.adapter ||
+        existing.actor !== (input.actor ?? "user") ||
+        existing.intake !==
+          (input.intake ?? (input.adapter === "local-files" ? "local-pdf" : "zotero"))
       ) {
         throw new Error("This operation ID was already used for another import selection.");
       }
@@ -767,6 +809,8 @@ export async function createSourceImportOperation(input: {
       operationId: input.operationId,
       projectId: paths.identity.projectId,
       adapter: input.adapter,
+      actor: input.actor ?? "user",
+      intake: input.intake ?? (input.adapter === "local-files" ? "local-pdf" : "zotero"),
       state: "running",
       createdAt: now,
       updatedAt: now,
@@ -872,6 +916,50 @@ export async function updateSourceImportOperationItem(input: {
   });
 }
 
+export async function retryFailedSourceImportOperationItems(
+  root: string,
+  operationId: string,
+  itemKeys: ReadonlyArray<string>,
+): Promise<ScientSourceImportOperation> {
+  const paths = await sourceStorePaths(root);
+  const keys = [...new Set(itemKeys)];
+  if (keys.length === 0) throw new Error("Choose at least one failed source item to retry.");
+  for (const key of keys) assertSafeIdentifier(key, "Source item key");
+  return withOperationLock(`${paths.root}:${operationId}`, async () => {
+    const operation = await readSourceImportOperationFromPaths(paths, operationId);
+    if (!operation) throw new Error("The source import operation was not found.");
+    if (operation.state === "cancelled") {
+      throw new Error("A cancelled source import cannot retry failed items.");
+    }
+    const selected = new Set(keys);
+    const operationKeys = new Set(operation.items.map((item) => item.itemKey));
+    for (const key of keys) {
+      if (!operationKeys.has(key))
+        throw new Error("The source item was not found in this operation.");
+    }
+    for (const item of operation.items) {
+      if (selected.has(item.itemKey) && item.state !== "failed") {
+        throw new Error("Only failed source items can be retried.");
+      }
+    }
+    const updated: ScientSourceImportOperation = {
+      ...operation,
+      state: "running",
+      updatedAt: new Date().toISOString(),
+      items: operation.items.map((item) =>
+        selected.has(item.itemKey) ? { ...item, state: "pending", message: null } : item,
+      ),
+    };
+    await atomicWriteJson(
+      operationPath(paths.operations, operationId),
+      updated,
+      MAX_OPERATION_BYTES,
+    );
+    activeOperationIds.set(paths.root, operationId);
+    return updated;
+  });
+}
+
 export async function cancelSourceImportOperation(
   root: string,
   operationId: string,
@@ -928,6 +1016,51 @@ function makeSourceId(projectId: string, candidate: ScientSourceCandidate): stri
 export interface ScientSourcePdfInspection {
   readonly sha256: string;
   readonly byteLength: number;
+}
+
+export async function resolveScientSourceInputPdf(
+  root: string,
+  relativePath: string,
+): Promise<{ readonly absolutePath: string; readonly fileName: string }> {
+  const requested = relativePath.trim();
+  if (
+    requested.length === 0 ||
+    requested.includes("\0") ||
+    requested.includes("\\") ||
+    NodePath.posix.isAbsolute(requested) ||
+    !requested.toLowerCase().endsWith(".pdf")
+  ) {
+    throw new Error("The PDF path must be a relative project path ending in .pdf.");
+  }
+  const canonicalRoot = await NodeFSP.realpath(root);
+  const lexicalPath = NodePath.resolve(canonicalRoot, ...requested.split("/"));
+  const lexicalRelative = NodePath.relative(canonicalRoot, lexicalPath);
+  if (
+    lexicalRelative === "" ||
+    lexicalRelative === ".." ||
+    lexicalRelative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(lexicalRelative)
+  ) {
+    throw new Error("The PDF path must remain inside the project.");
+  }
+  const absolutePath = await NodeFSP.realpath(lexicalPath);
+  const realRelative = NodePath.relative(canonicalRoot, absolutePath);
+  if (
+    realRelative === "" ||
+    realRelative === ".." ||
+    realRelative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(realRelative)
+  ) {
+    throw new Error("The PDF path must remain inside the project.");
+  }
+  const stats = await NodeFSP.lstat(absolutePath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error("The selected PDF is not a safe regular file.");
+  }
+  return {
+    absolutePath,
+    fileName: safeUploadedFileName(NodePath.basename(requested)),
+  };
 }
 
 async function readValidatedPdf(
@@ -1017,6 +1150,9 @@ export async function stageScientSourcePdfUpload(input: {
 }> {
   const paths = await sourceStorePaths(input.root);
   return withOperationLock(`${paths.root}:source-upload`, async () => {
+    if (!input.fileName.toLowerCase().endsWith(".pdf")) {
+      throw new Error("The selected file is not a PDF.");
+    }
     const localDirectory = NodePath.join(paths.staging, "local-files");
     await ensureDirectory(localDirectory);
     const temporaryPath = NodePath.join(localDirectory, `upload-${NodeCrypto.randomUUID()}.tmp`);
@@ -1048,7 +1184,7 @@ export async function stageScientSourcePdfUpload(input: {
           }
         }
       }
-      const existing = await inspectScientSourcePdf(materialPaths.pdf);
+      const existing = await readValidatedPdf(materialPaths.pdf);
       if (existing.sha256 !== inspected.sha256 || existing.byteLength !== inspected.byteLength) {
         throw new Error("The staged source PDF does not match the uploaded file.");
       }
@@ -1085,7 +1221,7 @@ export async function writeScientSourceStagedMaterial(
   if (decoded.pdfRelativePath !== expectedRelativePath) {
     throw new Error("The staged source path is inconsistent.");
   }
-  const inspected = await inspectScientSourcePdf(materialPaths.pdf);
+  const inspected = await readValidatedPdf(materialPaths.pdf);
   if (inspected.sha256 !== decoded.pdfSha256 || inspected.byteLength !== decoded.byteLength) {
     throw new Error("The staged source PDF changed before metadata was saved.");
   }
@@ -1215,7 +1351,10 @@ async function stagePdf(input: {
       }
     }
     return {
-      attachmentId: `pdf_${sha256.slice(0, 24)}`,
+      // A hash identifies immutable PDF bytes. An attachment ID identifies a
+      // source-scoped reference to those bytes, so shared blobs need distinct
+      // attachment IDs.
+      attachmentId: `pdf_${NodeCrypto.randomUUID()}`,
       kind: "pdf",
       fileName: safeUploadedFileName(input.fileName ?? NodePath.basename(input.sourcePath)),
       mediaType: "application/pdf",
@@ -1233,6 +1372,147 @@ async function stagePdf(input: {
   }
 }
 
+export interface ScientSourcePdfAttachmentResult {
+  readonly outcome: "attached" | "unchanged" | "stale";
+  readonly record: ScientSourceRecord;
+  readonly duplicate: ScientSourceDuplicateAssessment;
+}
+
+export async function attachScientSourcePdf(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly pdfPath: string;
+  readonly fileName?: string;
+}): Promise<ScientSourcePdfAttachmentResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    const emptyDuplicate: ScientSourceDuplicateAssessment = {
+      kind: "new",
+      matchingSourceIds: [],
+      reason: "No duplicate source was found.",
+    };
+    if (current.revision !== input.expectedRevision) {
+      return { outcome: "stale", record: current, duplicate: emptyDuplicate };
+    }
+    const attachment = await stagePdf({
+      paths,
+      operationId: `attach_${NodeCrypto.randomUUID()}`,
+      sourcePath: input.pdfPath,
+      ...(input.fileName ? { fileName: input.fileName } : {}),
+      importedAt: new Date().toISOString(),
+    });
+    const currentAttachment = current.attachments.some(
+      (existingAttachment) => existingAttachment.sha256 === attachment.sha256,
+    );
+    if (currentAttachment) {
+      return { outcome: "unchanged", record: current, duplicate: emptyDuplicate };
+    }
+    const next: ScientSourceRecord = {
+      ...current,
+      revision: current.revision + 1,
+      attachments: [...current.attachments, attachment],
+      updatedAt: new Date().toISOString(),
+    };
+    await persistSourceRevision(paths, current, next);
+    return { outcome: "attached", record: next, duplicate: emptyDuplicate };
+  });
+}
+
+export interface ScientSourcePdfDetachmentResult {
+  readonly outcome: "removed" | "unchanged" | "stale" | "not-found";
+  readonly record: ScientSourceRecord | null;
+  readonly attachmentId: string;
+  readonly removedAttachmentCount: number;
+  readonly retainedAttachmentCount: number;
+}
+
+export async function detachScientSourcePdf(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly attachmentId: string;
+  readonly expectedRevision: number;
+}): Promise<ScientSourcePdfDetachmentResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  assertSafeIdentifier(input.attachmentId, "Attachment ID");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const recordPath = sourceRecordPath(paths, input.sourceId);
+    if ((await snapshot(recordPath)) === "missing") {
+      return {
+        outcome: "not-found",
+        record: null,
+        attachmentId: input.attachmentId,
+        removedAttachmentCount: 0,
+        retainedAttachmentCount: 0,
+      };
+    }
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    if (current.revision !== input.expectedRevision) {
+      return {
+        outcome: "stale",
+        record: current,
+        attachmentId: input.attachmentId,
+        removedAttachmentCount: 0,
+        retainedAttachmentCount: current.attachments.length,
+      };
+    }
+    if (!current.attachments.some((attachment) => attachment.attachmentId === input.attachmentId)) {
+      return {
+        outcome: "unchanged",
+        record: current,
+        attachmentId: input.attachmentId,
+        removedAttachmentCount: 0,
+        retainedAttachmentCount: current.attachments.length,
+      };
+    }
+
+    const next: ScientSourceRecord = {
+      ...current,
+      revision: current.revision + 1,
+      attachments: current.attachments.filter(
+        (attachment) => attachment.attachmentId !== input.attachmentId,
+      ),
+      updatedAt: new Date().toISOString(),
+    };
+    await persistSourceRevision(paths, current, next);
+
+    const removed = current.attachments.find(
+      (attachment) => attachment.attachmentId === input.attachmentId,
+    );
+    if (!removed) throw new Error("The source attachment disappeared during removal.");
+    const remaining = await listScientSourceRecordsFromPaths(paths);
+    const stillReferenced = remaining.some((record) =>
+      record.attachments.some((attachment) => attachment.relativePath === removed.relativePath),
+    );
+    let removedAttachmentCount = 0;
+    let retainedAttachmentCount = 0;
+    if (stillReferenced) {
+      retainedAttachmentCount = 1;
+    } else {
+      const attachmentPath = sourceAttachmentAbsolutePath(paths.root, removed);
+      try {
+        await NodeFSP.unlink(attachmentPath);
+        removedAttachmentCount = 1;
+        await NodeFSP.rmdir(NodePath.dirname(attachmentPath)).catch((error: unknown) => {
+          if (!isNodeError(error, "ENOENT") && !isNodeError(error, "ENOTEMPTY")) throw error;
+        });
+      } catch {
+        retainedAttachmentCount = 1;
+      }
+    }
+    return {
+      outcome: "removed",
+      record: next,
+      attachmentId: input.attachmentId,
+      removedAttachmentCount,
+      retainedAttachmentCount,
+    };
+  });
+}
+
 interface ImportScientSourceInput {
   readonly root: string;
   readonly operationId: string;
@@ -1240,6 +1520,9 @@ interface ImportScientSourceInput {
   readonly pdfPath?: string;
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly allowPossibleMetadataMatch?: boolean;
+  readonly actor?: "user" | "agent";
+  readonly intake?: "zotero" | "local-pdf" | "identifier";
+  readonly review?: "none" | "pending";
 }
 
 async function importScientSourceWithRecordLookup(
@@ -1311,6 +1594,16 @@ async function importScientSourceWithRecordLookup(
       externalReferences: input.candidate.externalReferences,
       attachments: attachment ? [attachment] : [],
       fieldProvenance: input.candidate.fieldProvenance,
+      ...(input.actor
+        ? {
+            origin: {
+              actor: input.actor,
+              intake: input.intake ?? "local-pdf",
+              operationId: input.operationId,
+              review: input.review ?? (input.actor === "agent" ? "pending" : "none"),
+            },
+          }
+        : {}),
       importedAt,
     };
     const recordPath = sourceRecordPath(paths, sourceId);

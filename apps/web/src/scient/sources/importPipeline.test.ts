@@ -15,6 +15,8 @@ function operation(
     operationId,
     projectId: "project",
     adapter: "local-files",
+    actor: "user",
+    intake: "local-pdf",
     state: completed ? "completed" : "running",
     createdAt: "2026-08-13T00:00:00.000Z",
     updatedAt: "2026-08-13T00:00:00.000Z",
