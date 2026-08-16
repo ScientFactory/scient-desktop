@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 
+import { ContentDirectionScope } from "../../scient/bidi/ContentDirectionScope";
+
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
 
@@ -692,6 +694,70 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("onclick=");
     expect(markup).not.toContain("onerror=");
     expect(markup).not.toContain("javascript:");
+    expect(markup).not.toContain("globalThis.__t3Xss");
+  });
+
+  it("applies Scient BiDi to user messages while keeping HTML literal", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <ContentDirectionScope direction="rtl">
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            buildUserTimelineEntry(
+              [
+                "הפסקה הראשונה",
+                "",
+                "- פריט אחד",
+                "- English item",
+                "",
+                "שלב ראשון → שלב שני",
+                "",
+                "```",
+                "שלום → עולם",
+                "```",
+                "",
+                '<script>globalThis.__t3Xss = 1</script><img src="x" onerror="globalThis.__t3Xss = 2">',
+              ].join("\n"),
+            ),
+          ]}
+        />
+      </ContentDirectionScope>,
+    );
+
+    expect(markup).toContain('dir="rtl"');
+    expect(markup).toContain("<ul");
+    expect(markup).toContain("שלב ראשון ← שלב שני");
+    expect(markup).toContain("שלום → עולם");
+    expect(markup).toContain("&lt;script&gt;globalThis.__t3Xss = 1&lt;/script&gt;");
+    expect(markup).toContain("onerror=");
+    expect(markup).not.toMatch(/<script(?:\s|>)/i);
+    expect(markup).not.toMatch(/<img(?:\s|>)/i);
+  });
+
+  it("applies Scient BiDi to sanitized assistant HTML", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <ContentDirectionScope direction="rtl">
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            buildAssistantTimelineEntry({
+              text: [
+                "התשובה כאן",
+                "",
+                '<script>globalThis.__t3Xss = 1</script><img src="x" onerror="globalThis.__t3Xss = 2">',
+              ].join("\n"),
+            }),
+          ]}
+        />
+      </ContentDirectionScope>,
+    );
+
+    expect(markup).toContain('dir="rtl"');
+    expect(markup).toContain("התשובה כאן");
+    expect(markup).not.toMatch(/<script(?:\s|>)/i);
+    expect(markup).not.toContain("onerror=");
     expect(markup).not.toContain("globalThis.__t3Xss");
   });
 

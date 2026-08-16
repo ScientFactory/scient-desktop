@@ -1991,20 +1991,18 @@ function ChatMarkdown({
     >
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={
-          parseRawHtml
-            ? [
-                ...CHAT_MARKDOWN_REHYPE_PLUGINS,
-                [
-                  rehypeScientBidi,
-                  {
-                    direction: resolvedContentDirection,
-                    requestedDirection: effectiveContentDirection,
-                  },
-                ],
-              ]
-            : undefined
-        }
+        rehypePlugins={[
+          // T3 owns HTML security: raw parsing and sanitization follow parseRawHtml.
+          // Scient BiDi is independent and always runs after that optional stack.
+          ...(parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : []),
+          [
+            rehypeScientBidi,
+            {
+              direction: resolvedContentDirection,
+              requestedDirection: effectiveContentDirection,
+            },
+          ],
+        ]}
         skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}

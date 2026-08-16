@@ -21,7 +21,10 @@ import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
-import { validateQuickChatCreation } from "../scient-quick-chat/quickChatCreationValidation";
+import {
+  resolveScientThreadStartTurnWorkspace,
+  validateQuickChatCreation,
+} from "../scient-quick-chat/quickChatCreationValidation";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -63,6 +66,12 @@ export function useCreateProjectThread() {
         return AsyncResult.failure(Cause.fail(validationError));
       }
 
+      const workspace = resolveScientThreadStartTurnWorkspace({
+        hasProject: input.project !== null,
+        envMode: input.envMode,
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+      });
       const result = await startTurn({
         environmentId: input.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -77,9 +86,9 @@ export function useCreateProjectThread() {
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
-          workspaceMode: input.project ? input.envMode : "local",
-          branch: input.project ? input.branch : null,
-          worktreePath: input.project ? input.worktreePath : null,
+          workspaceMode: workspace.workspaceMode,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),

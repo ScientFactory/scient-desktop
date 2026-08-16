@@ -173,7 +173,10 @@ provider and SQLite reliability, and resilient SSH startup. Twenty-seven
 textual conflicts retained Scient identity/state/release safeguards, Quick Chat
 and durable-fork routing, generated-image and static-analysis artifacts, and
 disabled mobile publication while preserving the corresponding generic T3
-behavior. The exact merge record documents each protected boundary.
+behavior. A follow-up after that merge keeps Scient BiDi independent of T3's
+`parseRawHtml` flag, restores Scient-owned contributor destinations, and tests
+the Quick Chat projectless workspace sanitizer. The exact merge record
+documents each protected boundary.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
