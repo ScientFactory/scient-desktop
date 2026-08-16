@@ -229,7 +229,7 @@ export function ScientForkWorkspaceModeDialog({
                 unstyled
                 disabled={disabled || !titleOverrideSupported}
                 aria-invalid={!submission.ok}
-                className="relative inline-flex h-11 w-full min-w-0 items-center rounded-lg bg-muted/20 text-base text-foreground shadow-none transition-shadow focus-within:ring-1 focus-within:ring-foreground/50 focus-within:ring-offset-0"
+                className="relative inline-flex h-10 w-full min-w-0 items-center rounded-lg bg-muted/20 text-base text-foreground shadow-none ring-1 ring-foreground/50 transition-shadow [&>input]:px-2.5"
                 onChange={(event) => {
                   setTitleDraft(event.target.value);
                   setTitleEdited(true);
