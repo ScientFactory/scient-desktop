@@ -71,6 +71,21 @@ describe("parseLatexRecorderManifest", () => {
     expect(manifest.dependencies).toEqual(["paper/main.tex"]);
   });
 
+  it("keeps POSIX containment case-sensitive", () => {
+    const manifest = parseLatexRecorderManifest({
+      ...POSIX,
+      workspaceRoot: "/home/u/Workspace",
+      compileDirectory: "/home/u/Workspace/paper",
+      contents: [
+        "INPUT /home/u/Workspace/paper/main.tex",
+        "INPUT /home/u/workspace/other.tex",
+        "",
+      ].join("\n"),
+    });
+
+    expect(manifest.dependencies).toEqual(["paper/main.tex"]);
+  });
+
   it("reads Windows paths, separators, and drive-letter case the way the recorder writes them", () => {
     const manifest = parseLatexRecorderManifest({
       ...WINDOWS,
@@ -87,6 +102,17 @@ describe("parseLatexRecorderManifest", () => {
     // One filesystem, two spellings of the same drive: the containment test is
     // case-insensitive, and the path that comes back keeps the case on disk.
     expect(manifest.dependencies).toEqual(["paper/main.tex", "paper/sections/intro.tex"]);
+  });
+
+  it("compares Windows UNC roots case-insensitively", () => {
+    const manifest = parseLatexRecorderManifest({
+      workspaceRoot: String.raw`\\server\share\Workspace`,
+      compileDirectory: String.raw`\\server\share\Workspace\paper`,
+      workDirectory: String.raw`\\server\share\.scient\builds\abc123`,
+      contents: String.raw`INPUT \\SERVER\SHARE\workspace\paper\main.tex`,
+    });
+
+    expect(manifest.dependencies).toEqual(["paper/main.tex"]);
   });
 
   it("falls back to a relative reading when the run declared no working directory", () => {

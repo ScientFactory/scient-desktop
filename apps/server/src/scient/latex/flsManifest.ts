@@ -89,14 +89,18 @@ function resolveAgainst(base: string, target: string): string {
 
 /**
  * `target` expressed relative to `root`, or `null` when it does not live under
- * it. The prefix comparison is case-insensitive because a Windows recorder
- * prints whatever case the lookup used and `C:/Work` and `c:/work` are the same
- * directory; the returned path keeps the case the recorder printed, which is
- * the case on disk.
+ * it. Windows drive paths compare case-insensitively because a recorder may
+ * print a different spelling of the drive and directory names. POSIX paths do
+ * not: `/Workspace` and `/workspace` can be different directories, and folding
+ * their case would admit a sibling tree as if it were inside the workspace.
  */
 function relativeInside(root: string, target: string): string | null {
   const base = root.endsWith("/") ? root : `${root}/`;
-  return target.toLowerCase().startsWith(base.toLowerCase()) ? target.slice(base.length) : null;
+  const caseInsensitive = WINDOWS_ABSOLUTE_PATTERN.test(root) || root.startsWith("//");
+  const contained = caseInsensitive
+    ? target.toLowerCase().startsWith(base.toLowerCase())
+    : target.startsWith(base);
+  return contained ? target.slice(base.length) : null;
 }
 
 export function parseLatexRecorderManifest(input: {

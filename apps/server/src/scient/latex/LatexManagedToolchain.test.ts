@@ -126,10 +126,10 @@ const manifestFor = (input: {
   };
 };
 
-const processOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+const processOutput = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
   stdout,
   stderr: "",
-  code: ChildProcessSpawner.ExitCode(0),
+  code: ChildProcessSpawner.ExitCode(code),
   timedOut: false,
   stdoutTruncated: false,
   stderrTruncated: false,
@@ -138,27 +138,32 @@ const processOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
 });
 
 /** A fake engine that only answers for a binary that exists on disk. */
-const runnerLayer = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return Layer.succeed(
-    ProcessRunner.ProcessRunner,
-    ProcessRunner.ProcessRunner.of({
-      run: (input) =>
-        Effect.gen(function* () {
-          const present = yield* fileSystem
-            .exists(input.command)
-            .pipe(Effect.orElseSucceed(() => false));
-          return present
-            ? processOutput(LATEXMK_BANNER)
-            : yield* new ProcessRunner.ProcessSpawnError({
-                command: input.command,
-                argumentCount: input.args.length,
-                cause: new Error("spawn ENOENT"),
-              });
-        }),
-    }),
-  );
-});
+const runnerLayer = (input: {
+  readonly seen: Ref.Ref<ReadonlyArray<ProcessRunner.ProcessRunInput>>;
+  readonly engineValidationCode?: number;
+}) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return Layer.succeed(
+      ProcessRunner.ProcessRunner,
+      ProcessRunner.ProcessRunner.of({
+        run: (request) =>
+          Effect.gen(function* () {
+            yield* Ref.update(input.seen, (previous) => [...previous, request]);
+            const present = yield* fileSystem
+              .exists(request.command)
+              .pipe(Effect.orElseSucceed(() => false));
+            return present
+              ? processOutput(LATEXMK_BANNER, input.engineValidationCode)
+              : yield* new ProcessRunner.ProcessSpawnError({
+                  command: request.command,
+                  argumentCount: request.args.length,
+                  cause: new Error("spawn ENOENT"),
+                });
+          }),
+      }),
+    );
+  });
 
 const unpackerLayer = (input: {
   readonly unsupported?: boolean;
@@ -191,6 +196,15 @@ const unpackerLayer = (input: {
               .makeDirectory(path.dirname(target), { recursive: true })
               .pipe(Effect.orDie);
             yield* fileSystem.writeFileString(target, "engine").pipe(Effect.orDie);
+            // TinyTeX-1 emits indexes but its minimal archive does not ship
+            // the navigation CLI; the real install's eager package round adds
+            // it. Both names keep this cross-platform harness honest.
+            yield* fileSystem
+              .writeFileString(path.join(path.dirname(target), "synctex.exe"), "synctex")
+              .pipe(Effect.orDie);
+            yield* fileSystem
+              .writeFileString(path.join(path.dirname(target), "synctex"), "synctex")
+              .pipe(Effect.orDie);
           }),
       });
     }),
@@ -201,6 +215,7 @@ const makeHarness = (input: {
   readonly platform?: NodeJS.Platform;
   readonly arch?: NodeJS.Architecture;
   readonly unsupportedArchive?: boolean;
+  readonly engineValidationCode?: number;
   /** The eager collections fetch; everything asked for lands unless a test says otherwise. */
   readonly installPackages?: (
     request: LatexPackageInstallInput,
@@ -215,8 +230,16 @@ const makeHarness = (input: {
     const seen = yield* Ref.make<ReadonlyArray<LatexArchiveUnpackInput>>([]);
     const unpackedBytes = yield* Ref.make<string | null>(null);
     const packageRequests = yield* Ref.make<ReadonlyArray<LatexPackageInstallInput>>([]);
+    const processRequests = yield* Ref.make<ReadonlyArray<ProcessRunner.ProcessRunInput>>([]);
+    const processRunnerLayer = yield* runnerLayer({
+      seen: processRequests,
+      ...(input.engineValidationCode === undefined
+        ? {}
+        : { engineValidationCode: input.engineValidationCode }),
+    });
 
     const serviceLayer = Layer.effect(LatexManagedToolchain, makeManagedToolchain).pipe(
+      Layer.provide(processRunnerLayer),
       Layer.provide(
         Layer.succeed(
           LatexPackageInstaller,
@@ -244,7 +267,7 @@ const makeHarness = (input: {
         }),
       ),
       Layer.provideMerge(
-        Layer.effect(LatexToolchain, makeToolchain).pipe(Layer.provide(yield* runnerLayer)),
+        Layer.effect(LatexToolchain, makeToolchain).pipe(Layer.provide(processRunnerLayer)),
       ),
       Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -253,7 +276,15 @@ const makeHarness = (input: {
       Layer.provide(Layer.succeed(TinyTexManifestRef, input.manifest)),
     );
 
-    return { serviceLayer, paths, seen, unpackedBytes, latexDir, packageRequests };
+    return {
+      serviceLayer,
+      paths,
+      seen,
+      unpackedBytes,
+      latexDir,
+      packageRequests,
+      processRequests,
+    };
   });
 
 const awaitInstall = (managed: LatexManagedToolchain["Service"]) =>
@@ -379,7 +410,7 @@ describe("LatexManagedToolchain", () => {
         const installRoot = yield* currentInstallRoot(harness.paths.statePath);
         expect(yield* Ref.get(harness.packageRequests)).toEqual([
           {
-            packages: ["collection-latexrecommended", "collection-fontsrecommended"],
+            packages: ["synctex", "collection-latexrecommended", "collection-fontsrecommended"],
             binDirectory: path.dirname(path.join(installRoot, EXECUTABLE_RELATIVE_PATH)),
             timeout: "15 minutes",
           },
@@ -389,6 +420,57 @@ describe("LatexManagedToolchain", () => {
         const finished = yield* awaitInstall(managed);
         expect(finished.state).toBe("ready");
         expect(finished.packagesWarning).toBeUndefined();
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("uses the same one-click install path on pinned macOS and Linux targets", () =>
+    Effect.gen(function* () {
+      const server = yield* startArtifactServer();
+      for (const [platform, platformArch] of [
+        ["darwin", "darwin-x64"],
+        ["linux", "linux-x64"],
+      ] as const) {
+        const harness = yield* makeHarness({
+          manifest: manifestFor({ url: server.handle.url, platformArch }),
+          platform,
+        });
+        yield* Effect.gen(function* () {
+          const managed = yield* LatexManagedToolchain;
+          expect(managed.canInstall).toBe(true);
+          yield* managed.install;
+          expect((yield* awaitInstall(managed)).state).toBe("ready");
+
+          const validation = (yield* Ref.get(harness.processRequests)).find(
+            (request) => request.args.length === 1 && request.args[0] === "-v",
+          );
+          expect(validation?.command.replaceAll("\\", "/")).toContain(
+            "/payload/TinyTeX/bin/windows/latexmk.exe",
+          );
+          expect(validation?.env?.PATH).toContain("payload");
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("refuses to promote an engine that cannot be started", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const server = yield* startArtifactServer();
+      const harness = yield* makeHarness({
+        manifest: manifestFor({ url: server.handle.url }),
+        engineValidationCode: 1,
+      });
+
+      yield* Effect.gen(function* () {
+        const managed = yield* LatexManagedToolchain;
+        yield* managed.install;
+        const finished = yield* awaitInstall(managed);
+
+        expect(finished.state).toBe("failed");
+        expect(finished.failureReason).toBe("unpack-failed");
+        expect(yield* fileSystem.exists(harness.paths.statePath)).toBe(false);
+        expect(yield* stagingEntries(harness.paths.stagingRoot)).toEqual([]);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -412,7 +494,7 @@ describe("LatexManagedToolchain", () => {
         expect(finished.state).toBe("ready");
         expect(finished.failureReason).toBeNull();
         expect(finished.packagesWarning).toBe(
-          "Common packages could not be preinstalled; missing ones will install on first use.",
+          "Some recommended LaTeX tools or packages could not be preinstalled; document packages may still install on first use.",
         );
         expect((yield* toolchain.probe(false)).source).toBe("scient-managed");
       }).pipe(Effect.provide(harness.serviceLayer));
@@ -464,8 +546,8 @@ describe("LatexManagedToolchain", () => {
         expect(second).not.toBe(first);
         expect(yield* fileSystem.exists(path.join(second, EXECUTABLE_RELATIVE_PATH))).toBe(true);
         expect(yield* stagingEntries(harness.paths.stagingRoot)).toEqual([]);
-        // What happens to the old tree afterward is the deferred cleanup's job
-        // (exercised on its own below): by the time the second install reports
+        // What happens to the old tree afterward is the post-commit cleanup's
+        // job (exercised on its own below): by the time the second install reports
         // itself ready, cleanup has already run and nothing in this fake
         // filesystem was holding the old tree open, so it is gone.
         expect(yield* fileSystem.exists(path.join(first, EXECUTABLE_RELATIVE_PATH))).toBe(false);

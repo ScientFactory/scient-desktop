@@ -9,13 +9,16 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
+import { ASSET_TOKEN_TTL_MS } from "./AssetLifetime.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {
@@ -404,6 +407,51 @@ describe("GeneratedDocumentStore retention", () => {
       ),
       Effect.scoped,
     ),
+  );
+
+  it.effect("persists reader leases across a restart until the signed URL expires", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-document-store-reader-lease-",
+      });
+      const storeLayer = makeStoreLayer(
+        ServerConfig.ServerConfig.layerTest(process.cwd(), baseDir),
+        { maxRevisionCount: 2 },
+      );
+
+      const { first, second } = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* GeneratedDocumentStore;
+          const first = yield* publishRevision(store, 1, "revision-a");
+          const second = yield* publishRevision(store, 2, "revision-b");
+          const retained = yield* store.resolveRevisionForAsset(first);
+          expect(retained.document.artifact.revisionId).toBe(first.revisionId);
+          expect(retained.expiresAtEpochMs).toBeGreaterThan(0);
+          return { first, second };
+        }).pipe(Effect.provide(storeLayer)),
+      );
+
+      // A new process reconstructs protection from the durable index. Publishing
+      // a third revision must evict the other superseded revision, never bytes
+      // an already-issued reader URL is still allowed to request.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* GeneratedDocumentStore;
+          const third = yield* publishRevision(store, 3, "revision-c");
+          expect((yield* store.resolveRevision(first)).artifact.revisionId).toBe(first.revisionId);
+          yield* expectEvicted(store, second);
+          expect((yield* store.resolveRevision(third)).artifact.revisionId).toBe(third.revisionId);
+
+          yield* TestClock.adjust(Duration.millis(ASSET_TOKEN_TTL_MS + 1));
+          const fourth = yield* publishRevision(store, 4, "revision-d");
+          yield* expectEvicted(store, first);
+          expect((yield* store.resolveRevision(fourth)).artifact.revisionId).toBe(
+            fourth.revisionId,
+          );
+        }).pipe(Effect.provide(storeLayer)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("tolerates revision directories a crashed eviction already removed", () =>

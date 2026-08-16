@@ -96,7 +96,7 @@ interface FilePreviewPanelProps {
   revealLine: number | null;
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
-  onOpenFileSource: (relativePath: string) => void;
+  onOpenFileSource: (relativePath: string, line?: number) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
@@ -1243,6 +1243,7 @@ export default function FilePreviewPanel({
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
                 onPendingChange={handlePendingChange}
+                onOpenFileSource={onOpenFileSource}
                 onSaveFailure={handleSaveFailure}
                 onSaveConfirmed={handleSaveConfirmed}
                 onSaveResolutionApplied={handleSaveResolutionApplied}

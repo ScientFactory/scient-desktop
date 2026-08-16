@@ -138,6 +138,7 @@ import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
 import * as LatexManagedToolchain from "./scient/latex/LatexManagedToolchain.ts";
 import * as LatexPackageInstaller from "./scient/latex/LatexPackageInstaller.ts";
 import * as LatexToolchain from "./scient/latex/LatexToolchain.ts";
+import * as LatexSyncTex from "./scient/latex/LatexSyncTex.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
@@ -500,6 +501,7 @@ const AnalysisServiceLive = AnalysisService.layer.pipe(
 // `tlmgr` serializes against a single distribution tree.
 const ScientLatexServicesLive = LatexBuildService.layer.pipe(
   Layer.provide(LocalExecutionProcess.layer),
+  Layer.provideMerge(LatexSyncTex.layer),
   Layer.provideMerge(LatexManagedToolchain.layer.pipe(Layer.provideMerge(LatexToolchain.layer))),
   Layer.provideMerge(LatexPackageInstaller.layer),
 );

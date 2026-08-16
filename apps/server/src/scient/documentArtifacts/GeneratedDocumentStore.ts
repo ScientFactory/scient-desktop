@@ -42,6 +42,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { ASSET_TOKEN_TTL_MS } from "./AssetLifetime.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 
@@ -70,6 +71,8 @@ const RetainedRevisionRecord = Schema.Struct({
   logicalDocumentKey: LogicalDocumentKey,
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   createdAtEpochMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** Durable protection for a signed reader URL that may outlive this process. */
+  assetLeaseExpiresAtEpochMs: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 type RetainedRevisionRecord = typeof RetainedRevisionRecord.Type;
 
@@ -79,7 +82,7 @@ const RetentionIndex = Schema.Struct({
   revisions: Schema.Array(RetainedRevisionRecord),
 });
 
-/** Access time is diagnostic ordering state only, so it is never persisted. */
+/** Access time is diagnostic ordering state only; capability leases are durable. */
 interface RetainedRevision extends RetainedRevisionRecord {
   readonly lastAccessEpochMs: number;
 }
@@ -191,6 +194,11 @@ export interface ResolvedGeneratedDocumentRevision {
   readonly revision: { readonly size: number; readonly mtimeMs: number | null };
 }
 
+export interface ResolvedGeneratedDocumentAsset {
+  readonly document: ResolvedGeneratedDocumentRevision;
+  readonly expiresAtEpochMs: number;
+}
+
 export class GeneratedDocumentStore extends Context.Service<
   GeneratedDocumentStore,
   {
@@ -225,6 +233,24 @@ export class GeneratedDocumentStore extends Context.Service<
       readonly artifactId: ArtifactId;
       readonly revisionId: ArtifactRevisionId;
     }) => Effect.Effect<ResolvedGeneratedDocumentRevision, GeneratedDocumentStoreError>;
+    /**
+     * Cheap existence check for revision-scoped auxiliary data. Unlike
+     * `resolveRevision`, this does not read or hash the PDF bytes.
+     */
+    readonly revisionExists: (input: {
+      readonly authority: ArtifactAuthority;
+      readonly artifactId: ArtifactId;
+      readonly revisionId: ArtifactRevisionId;
+    }) => Effect.Effect<boolean, GeneratedDocumentStoreError>;
+    /**
+     * Resolves immutable bytes and durably protects them for exactly as long as
+     * the signed asset capability returned to the reader will remain valid.
+     */
+    readonly resolveRevisionForAsset: (input: {
+      readonly authority: ArtifactAuthority;
+      readonly artifactId: ArtifactId;
+      readonly revisionId: ArtifactRevisionId;
+    }) => Effect.Effect<ResolvedGeneratedDocumentAsset, GeneratedDocumentStoreError>;
     /**
      * Protects a revision from retention eviction for the lifetime of the
      * acquiring scope, for work that still references a revision the bindings no
@@ -502,7 +528,9 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   const retainRevision = (revision: ArtifactRevisionRef) => {
     const key = revisionKey(revision.artifactId, revision.revisionId);
     return Effect.acquireRelease(
-      Ref.update(pinnedRevisions, (current) => adjustPinCount(current, key, 1)),
+      // Acquire under the same lock as eviction: a pin added after a sweep chose
+      // its candidates would be too late to protect the directory being removed.
+      lock.withPermit(Ref.update(pinnedRevisions, (current) => adjustPinCount(current, key, 1))),
       () => Ref.update(pinnedRevisions, (current) => adjustPinCount(current, key, -1)),
     ).pipe(Effect.asVoid);
   };
@@ -510,11 +538,31 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   const protectedRevisionKeys = Effect.gen(function* () {
     const bindings = yield* Ref.get(bindingRevisions);
     const pinned = yield* Ref.get(pinnedRevisions);
+    const retained = yield* Ref.get(retainedRevisions);
+    const nowEpochMs = yield* Clock.currentTimeMillis;
     const keys = new Set<string>();
     for (const revisions of bindings.values()) for (const key of revisions) keys.add(key);
     for (const key of pinned.keys()) keys.add(key);
+    for (const revision of retained) {
+      if ((revision.assetLeaseExpiresAtEpochMs ?? 0) > nowEpochMs) {
+        keys.add(revisionKey(revision.artifactId, revision.revisionId));
+      }
+    }
     return keys;
   });
+
+  const writeRetentionIndex = (entries: ReadonlyArray<RetainedRevision>) =>
+    writeFileStringAtomically({
+      filePath: retentionIndexPath,
+      contents: `${encodeRetentionIndex({
+        schemaVersion: 1,
+        authority,
+        revisions: entries.map(({ lastAccessEpochMs: _lastAccessEpochMs, ...entry }) => entry),
+      })}\n`,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
   /**
    * Retention accounting is diagnostic state: a store that cannot write it still
@@ -522,24 +570,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
    * and the revision directories.
    */
   const persistRetentionIndex = (entries: ReadonlyArray<RetainedRevision>) =>
-    writeFileStringAtomically({
-      filePath: retentionIndexPath,
-      contents: `${encodeRetentionIndex({
-        schemaVersion: 1,
-        authority,
-        revisions: entries.map(
-          ({ artifactId, revisionId, logicalDocumentKey, byteLength, createdAtEpochMs }) => ({
-            artifactId,
-            revisionId,
-            logicalDocumentKey,
-            byteLength,
-            createdAtEpochMs,
-          }),
-        ),
-      })}\n`,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
+    writeRetentionIndex(entries).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Unable to persist the document retention index.", { cause }),
       ),
@@ -929,7 +960,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
       }),
     );
 
-  const resolveRevision = (input: {
+  const resolveRevisionUnlocked = (input: {
     readonly authority: ArtifactAuthority;
     readonly artifactId: ArtifactId;
     readonly revisionId: ArtifactRevisionId;
@@ -997,6 +1028,98 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         },
       };
     });
+
+  const resolveRevision = (input: {
+    readonly authority: ArtifactAuthority;
+    readonly artifactId: ArtifactId;
+    readonly revisionId: ArtifactRevisionId;
+  }) => resolveRevisionUnlocked(input);
+
+  const revisionExists = (input: {
+    readonly authority: ArtifactAuthority;
+    readonly artifactId: ArtifactId;
+    readonly revisionId: ArtifactRevisionId;
+  }) =>
+    Effect.gen(function* () {
+      if (input.authority !== authority) return false;
+      const [metadataExists, pdfExists] = yield* Effect.all([
+        fileSystem.exists(revisionMetadataPath(input.artifactId, input.revisionId)),
+        fileSystem.exists(revisionPdfPath(input.artifactId, input.revisionId)),
+      ]).pipe(
+        Effect.mapError((cause) =>
+          makeStoreError(
+            "resolve",
+            "filesystem",
+            "Unable to inspect generated PDF revision evidence.",
+            cause,
+          ),
+        ),
+      );
+      return metadataExists && pdfExists;
+    });
+
+  const resolveRevisionForAsset = (input: {
+    readonly authority: ArtifactAuthority;
+    readonly artifactId: ArtifactId;
+    readonly revisionId: ArtifactRevisionId;
+  }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // The short scope closes the gap between verification and the durable
+        // lease write without holding the global store lock while hashing a PDF.
+        yield* retainRevision(input);
+        const document = yield* resolveRevisionUnlocked(input);
+        return yield* lock.withPermit(
+          Effect.gen(function* () {
+            const nowEpochMs = yield* Clock.currentTimeMillis;
+            const expiresAtEpochMs = nowEpochMs + ASSET_TOKEN_TTL_MS;
+            const key = revisionKey(input.artifactId, input.revisionId);
+            const entries = yield* Ref.updateAndGet(retainedRevisions, (current) => {
+              let found = false;
+              const updated = current.map((entry) => {
+                if (revisionKey(entry.artifactId, entry.revisionId) !== key) return entry;
+                found = true;
+                return {
+                  ...entry,
+                  lastAccessEpochMs: nowEpochMs,
+                  assetLeaseExpiresAtEpochMs: Math.max(
+                    entry.assetLeaseExpiresAtEpochMs ?? 0,
+                    expiresAtEpochMs,
+                  ),
+                };
+              });
+              if (found) return updated;
+              return [
+                ...updated,
+                {
+                  artifactId: document.artifact.artifactId,
+                  revisionId: document.artifact.revisionId,
+                  logicalDocumentKey: document.artifact.logicalDocumentKey,
+                  byteLength: document.artifact.byteLength,
+                  createdAtEpochMs: document.artifact.createdAtEpochMs,
+                  lastAccessEpochMs: nowEpochMs,
+                  assetLeaseExpiresAtEpochMs: expiresAtEpochMs,
+                },
+              ];
+            });
+            // Unlike ordinary retention bookkeeping, this write is part of
+            // issuing the capability: without it a restart could forget the
+            // lease while the already-signed URL remained valid.
+            yield* writeRetentionIndex(entries).pipe(
+              Effect.mapError((cause) =>
+                makeStoreError(
+                  "resolve",
+                  "filesystem",
+                  "Unable to retain generated PDF bytes for reader access.",
+                  cause,
+                ),
+              ),
+            );
+            return { document, expiresAtEpochMs };
+          }),
+        );
+      }),
+    );
 
   const listDirectory = (directory: string) =>
     optionalOnNotFound(fileSystem.readDirectory(directory)).pipe(
@@ -1262,6 +1385,8 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     abandonProduction,
     getDescriptor,
     resolveRevision,
+    revisionExists,
+    resolveRevisionForAsset,
     retainRevision,
     changes: Stream.fromPubSub(changesPubSub),
   });

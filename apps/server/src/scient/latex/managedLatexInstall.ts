@@ -71,7 +71,7 @@ export function managedLatexPaths(input: {
  * over — or remove — the tree a running engine is executing from, and on
  * Windows it could not if it tried, because the loaded `latexmk.exe` is locked
  * for as long as it runs. The previous tree is simply left behind for the
- * deferred GC, and `managed-state.json` is what decides which one is current.
+ * post-commit cleanup, and `managed-state.json` is what decides which one is current.
  */
 export function managedLatexInstallRoot(input: {
   readonly managedRoot: string;

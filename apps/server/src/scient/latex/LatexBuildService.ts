@@ -62,6 +62,7 @@ import {
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { parseLatexRecorderManifest } from "./flsManifest.ts";
 import {
   EMPTY_EVIDENCE_MARKS,
@@ -70,6 +71,7 @@ import {
   encodeLatexBuildEvidence,
   latexEvidenceMatches,
   probeLatexEvidence,
+  UNVERIFIED_FILE_DIGEST,
   type LatexBuildEvidence,
   type LatexEvidenceMarks,
 } from "./latexBuildEvidence.ts";
@@ -268,6 +270,8 @@ interface LatexBuildEntry {
 interface LatexEvidenceCacheEntry {
   readonly evidence: LatexBuildEvidence | null;
   readonly marks: LatexEvidenceMarks;
+  /** Paths whose readable-after-unverified transition already caused one rebuild. */
+  readonly reverifiedUnverifiedPaths: ReadonlySet<string>;
 }
 
 interface ResolvedLatexTarget {
@@ -276,6 +280,11 @@ interface ResolvedLatexTarget {
   readonly rootRelativePath: string;
   /** Non-null when the requested source could not be read; no build is possible. */
   readonly failureSummary: string | null;
+}
+
+interface LatexPreambleHeads {
+  readonly rootText: string;
+  readonly includedTexts: ReadonlyArray<string>;
 }
 
 /**
@@ -400,6 +409,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const store = yield* GeneratedDocumentStore;
   const toolchainProbe = yield* LatexToolchain;
+  const syncTex = yield* LatexSyncTex;
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -636,6 +646,11 @@ export const make = Effect.gen(function* () {
     readonly generation: number;
     readonly production: GeneratedDocumentProductionHandle;
     readonly pdfPath: string;
+    readonly syncTexPath: string;
+    readonly workspaceRoot: string;
+    readonly rootRelativePath: string;
+    readonly compileDirectory: string;
+    readonly managedToolchain: boolean;
     readonly title: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
   }) =>
@@ -654,14 +669,40 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.flatMap((descriptor) =>
-            finishBuild(input.key, input.generation, (entry) => ({
-              ...entry,
-              state: "succeeded",
-              descriptor,
-              // Warnings survive a successful build; they are the point of the log.
-              diagnostics: input.diagnostics,
-              failureSummary: null,
-            })),
+            Effect.gen(function* () {
+              if (descriptor._tag !== "generated-pdf") {
+                return yield* Effect.die("LaTeX publication returned a non-generated PDF");
+              }
+              // The index is auxiliary: persist it before the terminal build
+              // state becomes visible, but never discredit an otherwise valid
+              // PDF if navigation data was absent or could not be retained.
+              yield* syncTex
+                .publishIndex({
+                  artifactId: descriptor.artifactId,
+                  revisionId: descriptor.revisionId,
+                  workspaceRoot: input.workspaceRoot,
+                  rootRelativePath: input.rootRelativePath,
+                  compileDirectory: input.compileDirectory,
+                  syncTexPath: input.syncTexPath,
+                  managed: input.managedToolchain,
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("latex synctex index could not be persisted", {
+                      logicalDocumentKey: input.key,
+                      cause,
+                    }),
+                  ),
+                );
+              yield* finishBuild(input.key, input.generation, (entry) => ({
+                ...entry,
+                state: "succeeded",
+                descriptor,
+                // Warnings survive a successful build; they are the point of the log.
+                diagnostics: input.diagnostics,
+                failureSummary: null,
+              }));
+            }),
           ),
           Effect.catch((error) => {
             if (error.reason === "superseded") {
@@ -745,23 +786,33 @@ export const make = Effect.gen(function* () {
    * few probes and no fetch. The reactive loop still runs afterwards, for the
    * packages a package pulls in.
    */
+  const readPreambleHeads = (rootAbsolutePath: string) =>
+    Effect.gen(function* () {
+      const rootText = yield* readSourceHead(rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (rootText === null) return null;
+      const includedTexts: string[] = [];
+      const rootDirectory = path.dirname(rootAbsolutePath);
+      for (const include of latexPreambleIncludes(rootText)) {
+        const includedText = yield* readSourceHead(
+          path.resolve(rootDirectory, include),
+          INCLUDED_PREAMBLE_SCAN_HEAD_BYTES,
+        ).pipe(Effect.orElseSucceed(() => null));
+        if (includedText !== null) includedTexts.push(includedText);
+      }
+      return { rootText, includedTexts } satisfies LatexPreambleHeads;
+    });
+
   const preamblePackagesToFetch = (input: {
-    readonly rootAbsolutePath: string;
+    readonly preamble: LatexPreambleHeads;
     readonly binDirectory: string;
   }) =>
     Effect.gen(function* () {
-      const head = yield* readSourceHead(input.rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
-        Effect.orElseSucceed(() => ""),
-      );
-      const names = [...latexPreamblePackages(head)];
-      const rootDirectory = path.dirname(input.rootAbsolutePath);
-      for (const include of latexPreambleIncludes(head)) {
-        const includedHead = yield* readSourceHead(
-          path.resolve(rootDirectory, include),
-          INCLUDED_PREAMBLE_SCAN_HEAD_BYTES,
-        ).pipe(Effect.orElseSucceed(() => ""));
-        names.push(...latexPreamblePackages(includedHead));
-      }
+      const names = [
+        ...latexPreamblePackages(input.preamble.rootText),
+        ...input.preamble.includedTexts.flatMap((text) => latexPreamblePackages(text)),
+      ];
       // Nine files' worth of preambles is more names than any real document
       // has; the cap is what stops a generated one becoming a giant argv.
       const requested = [...new Set(names)].slice(0, MAX_PREAMBLE_PACKAGES_PER_BUILD);
@@ -800,6 +851,7 @@ export const make = Effect.gen(function* () {
       const entry: LatexEvidenceCacheEntry = {
         evidence: source === null ? null : decodeLatexBuildEvidence(source),
         marks: EMPTY_EVIDENCE_MARKS,
+        reverifiedUnverifiedPaths: new Set(),
       };
       yield* Ref.update(evidenceRef, (all) => new Map(all).set(key, entry));
       return entry;
@@ -888,9 +940,22 @@ export const make = Effect.gen(function* () {
           nowEpochMs,
         }),
       );
-      yield* Ref.update(evidenceRef, (all) =>
-        new Map(all).set(input.key, { evidence: collected.evidence, marks: collected.marks }),
-      );
+      yield* Ref.update(evidenceRef, (all) => {
+        const previous = all.get(input.key)?.reverifiedUnverifiedPaths ?? new Set<string>();
+        const stillUnverified = new Set(
+          collected.evidence.dependencies
+            .filter(
+              (dependency) =>
+                dependency.sha256 === UNVERIFIED_FILE_DIGEST && previous.has(dependency.path),
+            )
+            .map((dependency) => dependency.path),
+        );
+        return new Map(all).set(input.key, {
+          evidence: collected.evidence,
+          marks: collected.marks,
+          reverifiedUnverifiedPaths: stillUnverified,
+        });
+      });
       return collected.evidence;
     });
 
@@ -950,12 +1015,14 @@ export const make = Effect.gen(function* () {
           workspaceRoot: target.workspaceRoot,
           evidence: cached.evidence,
           marks: cached.marks,
+          reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
         }),
       );
       yield* Ref.update(evidenceRef, (all) =>
         new Map(all).set(target.logicalDocumentKey, {
           evidence: cached.evidence,
           marks: probe.marks,
+          reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
         }),
       );
       if (!probe.changed) return true;
@@ -988,9 +1055,26 @@ export const make = Effect.gen(function* () {
           new Map(all).set(target.logicalDocumentKey, {
             evidence: cached.evidence,
             marks: recollected.marks,
+            reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
           }),
         );
         return true;
+      }
+      const changedPath = probe.changedPath;
+      if (
+        changedPath !== null &&
+        cached.evidence.dependencies.some(
+          (dependency) =>
+            dependency.path === changedPath && dependency.sha256 === UNVERIFIED_FILE_DIGEST,
+        )
+      ) {
+        yield* Ref.update(evidenceRef, (all) =>
+          new Map(all).set(target.logicalDocumentKey, {
+            evidence: cached.evidence,
+            marks: probe.marks,
+            reverifiedUnverifiedPaths: new Set(cached.reverifiedUnverifiedPaths).add(changedPath),
+          }),
+        );
       }
       yield* Effect.logDebug("latex build inputs changed since the published PDF", {
         logicalDocumentKey: target.logicalDocumentKey,
@@ -999,8 +1083,9 @@ export const make = Effect.gen(function* () {
       return false;
     });
 
-  const compileAndPublish = (key: string, generation: number) =>
-    Effect.gen(function* () {
+  const compileAndPublish = (key: string, generation: number) => {
+    let candidatePdfPath: string | null = null;
+    return Effect.gen(function* () {
       const entry = yield* getEntry(key);
       if (entry === null || entry.generation !== generation || entry.cancelRequested) return;
       yield* updateOwnEntry(key, generation, (current) => ({ ...current, state: "running" }));
@@ -1018,6 +1103,8 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (yield* isSuperseded(key, generation)) return;
+      // Keep the narrowing across the cleanup finalizer below.
+      const toolchainExecutable = toolchain.executable;
 
       const workDirectory = path.join(config.latexDir, "builds", workDirectoryName(key));
       yield* fileSystem.makeDirectory(workDirectory, { recursive: true });
@@ -1040,19 +1127,17 @@ export const make = Effect.gen(function* () {
       }
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
+      const preamble =
+        toolchain.kind === "latexmk" ? yield* readPreambleHeads(rootAbsolutePath) : null;
 
       // A document that names another engine is refused before anything runs.
       // `latexmk -pdf` drives pdfLaTeX, and handing it a fontspec or
       // `% !TEX program = xelatex` document yields pages of confusing macro
       // errors instead of one honest sentence. Tectonic's engine is XeTeX-based,
       // so only the latexmk path is gated.
-      if (toolchain.kind === "latexmk") {
-        const rootHead = yield* readSourceHead(rootAbsolutePath, PREAMBLE_SCAN_HEAD_BYTES).pipe(
-          // An unreadable root is the compile's own failure to report.
-          Effect.orElseSucceed(() => null),
-        );
-        const verdict = rootHead === null ? null : evaluateLatexEngineGate({ rootText: rootHead });
-        if (verdict !== null && !verdict.supported) {
+      if (toolchain.kind === "latexmk" && preamble !== null) {
+        const verdict = evaluateLatexEngineGate(preamble);
+        if (!verdict.supported) {
           yield* recordFailure({
             key,
             generation,
@@ -1076,10 +1161,10 @@ export const make = Effect.gen(function* () {
       const invocation = buildLatexInvocation({
         toolchain: {
           kind: toolchain.kind,
-          executable: toolchain.executable,
+          executable: toolchainExecutable,
           version: toolchain.version ?? "unknown",
         },
-        rootAbsolutePath,
+        rootFileName: path.basename(rootAbsolutePath),
         workDirectory,
         // The work directory outlives a build and `latexmk` keeps its own
         // decision state in it, which is state about a run whose inputs this
@@ -1088,6 +1173,7 @@ export const make = Effect.gen(function* () {
         // no run this would wrongly force.
         forceReprocess: true,
       });
+      candidatePdfPath = invocation.pdfPath;
 
       // TeX resolves `\input{sections/intro}` against the working directory,
       // not against the root document, so a root under `paper/` only builds
@@ -1096,7 +1182,7 @@ export const make = Effect.gen(function* () {
       // Non-null only for the distribution Scient installed, which is the only
       // one it may extend: `tlmgr` lives beside the engine in that tree.
       const managedBinDirectory =
-        toolchain.source === "scient-managed" ? path.dirname(toolchain.executable) : null;
+        toolchain.source === "scient-managed" ? path.dirname(toolchainExecutable) : null;
       const environment = latexEngineEnvironment({
         base: TEX_OUTPUT_ENVIRONMENT,
         hostEnvironment,
@@ -1109,9 +1195,9 @@ export const make = Effect.gen(function* () {
 
       // One fetch for everything the document already says it wants, so the
       // reactive loop below only has to cover what a package pulls in.
-      if (managedBinDirectory !== null) {
+      if (managedBinDirectory !== null && preamble !== null) {
         const upfront = yield* preamblePackagesToFetch({
-          rootAbsolutePath,
+          preamble,
           binDirectory: managedBinDirectory,
         });
         if (upfront.length > 0) {
@@ -1276,13 +1362,30 @@ export const make = Effect.gen(function* () {
           generation,
           production,
           pdfPath: invocation.pdfPath,
+          syncTexPath: invocation.syncTexPath,
+          workspaceRoot: entry.workspaceRoot,
+          rootRelativePath: entry.rootRelativePath,
+          compileDirectory,
+          managedToolchain: managedBinDirectory !== null,
           title: documentTitle(entry.rootRelativePath),
           diagnostics,
         });
         yield* persistBuildEvidence({ key, generation, evidence });
         return;
       }
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          candidatePdfPath === null
+            ? Effect.void
+            : // The artifact store owns the immutable published bytes. Keeping
+              // the engine output too would leave an unbounded duplicate PDF
+              // per work directory; aux files remain for latexmk's own reuse.
+              fileSystem.remove(candidatePdfPath, { force: true }).pipe(Effect.ignoreCause()),
+        ),
+      ),
+    );
+  };
 
   /**
    * One pass of the build loop. The permit is taken around the compile itself,

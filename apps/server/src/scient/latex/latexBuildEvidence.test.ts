@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 
 import {
   EMPTY_EVIDENCE_MARKS,
@@ -94,6 +95,13 @@ const fakeFileSystemLayer = (files: Readonly<Record<string, FakeEntry>>) => {
     }
     return null;
   };
+  const readFile = (path: string): Effect.Effect<Uint8Array, PlatformError.PlatformError> => {
+    const entry = lookup(path);
+    if (entry === null) return Effect.fail(systemErrorOf("NotFound", "readFile", path));
+    if (entry.kind === "locked")
+      return Effect.fail(systemErrorOf("PermissionDenied", "readFile", path));
+    return Effect.succeed(new TextEncoder().encode(entry.contents));
+  };
   return Layer.merge(
     FileSystem.layerNoop({
       stat: (path: string): Effect.Effect<FileSystem.File.Info, PlatformError.PlatformError> => {
@@ -103,13 +111,8 @@ const fakeFileSystemLayer = (files: Readonly<Record<string, FakeEntry>>) => {
           return Effect.fail(systemErrorOf("PermissionDenied", "stat", path));
         return Effect.succeed(fakeInfoOf(entry.contents));
       },
-      readFile: (path: string): Effect.Effect<Uint8Array, PlatformError.PlatformError> => {
-        const entry = lookup(path);
-        if (entry === null) return Effect.fail(systemErrorOf("NotFound", "readFile", path));
-        if (entry.kind === "locked")
-          return Effect.fail(systemErrorOf("PermissionDenied", "readFile", path));
-        return Effect.succeed(new TextEncoder().encode(entry.contents));
-      },
+      readFile,
+      stream: (path: string) => Stream.fromEffect(readFile(path)),
     }),
     Path.layer,
   );
@@ -127,6 +130,13 @@ const readOnlyFailingFileSystemLayer = (
   const suffixMatch = (absolutePath: string, relativePath: string) =>
     absolutePath.replaceAll("\\", "/").endsWith(`/${relativePath}`);
   const entries = Object.entries(files);
+  const readFile = (path: string): Effect.Effect<Uint8Array, PlatformError.PlatformError> => {
+    const found = entries.find(([relativePath]) => suffixMatch(path, relativePath));
+    if (found === undefined) return Effect.fail(systemErrorOf("NotFound", "readFile", path));
+    if ([...unreadable].some((relativePath) => suffixMatch(path, relativePath)))
+      return Effect.fail(systemErrorOf("PermissionDenied", "readFile", path));
+    return Effect.succeed(new TextEncoder().encode(found[1]));
+  };
   return Layer.merge(
     FileSystem.layerNoop({
       stat: (path: string): Effect.Effect<FileSystem.File.Info, PlatformError.PlatformError> => {
@@ -134,13 +144,8 @@ const readOnlyFailingFileSystemLayer = (
         if (found === undefined) return Effect.fail(systemErrorOf("NotFound", "stat", path));
         return Effect.succeed(fakeInfoOf(found[1]));
       },
-      readFile: (path: string): Effect.Effect<Uint8Array, PlatformError.PlatformError> => {
-        const found = entries.find(([relativePath]) => suffixMatch(path, relativePath));
-        if (found === undefined) return Effect.fail(systemErrorOf("NotFound", "readFile", path));
-        if ([...unreadable].some((relativePath) => suffixMatch(path, relativePath)))
-          return Effect.fail(systemErrorOf("PermissionDenied", "readFile", path));
-        return Effect.succeed(new TextEncoder().encode(found[1]));
-      },
+      readFile,
+      stream: (path: string) => Stream.fromEffect(readFile(path)),
     }),
     Path.layer,
   );
@@ -415,11 +420,10 @@ describe("latexBuildEvidence", () => {
       ),
     );
 
-    it.effect("never rebuilds on an unverified dependency, however the file later reads", () =>
-      // The loop this closes: the lock is recorded, the lock lifts, and the
-      // next poll finds a perfectly readable file where the evidence says
-      // nothing was established. Under the old code that read as a change, and
-      // the rebuild hit the same lock, and so on every 1.5 seconds forever.
+    it.effect("refreshes unverified evidence once the dependency becomes readable", () =>
+      // The lock itself remains inconclusive. Once it lifts, one rebuild is
+      // required to replace "unverified" with the content identity the prior
+      // evidence could never establish.
       Effect.gen(function* () {
         const locked = yield* collectFake(["sections/intro.tex"]).pipe(
           Effect.provide(
@@ -441,6 +445,38 @@ describe("latexBuildEvidence", () => {
             fakeFileSystemLayer({
               "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
               "sections/intro.tex": { kind: "file", contents: "something else entirely\n" },
+            }),
+          ),
+        );
+
+        expect(probe.changed).toBe(true);
+        expect(probe.changedPath).toBe("sections/intro.tex");
+      }),
+    );
+
+    it.effect("does not loop when a readable unverified dependency already earned a rebuild", () =>
+      Effect.gen(function* () {
+        const locked = yield* collectFake(["sections/intro.tex"]).pipe(
+          Effect.provide(
+            fakeFileSystemLayer({
+              "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
+              "sections/intro.tex": { kind: "locked" },
+            }),
+          ),
+        );
+        const probe = yield* probeLatexEvidence({
+          workspaceRoot: FAKE_WORKSPACE_ROOT,
+          evidence: locked.evidence,
+          marks: locked.marks,
+          // The prior readable transition already caused the one rebuild that
+          // was allowed to replace this unverified record. Evidence collection
+          // hit the transient lock again, so another poll must stop here.
+          reverifiedUnverifiedPaths: new Set(["sections/intro.tex"]),
+        }).pipe(
+          Effect.provide(
+            fakeFileSystemLayer({
+              "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
+              "sections/intro.tex": { kind: "file", contents: "readable again\n" },
             }),
           ),
         );
@@ -543,6 +579,43 @@ describe("latexBuildEvidence", () => {
       }),
     );
   });
+
+  it.effect("detects a same-length rewrite of a dependency larger than the former hash limit", () =>
+    Effect.gen(function* () {
+      const byteLength = 16 * 1_024 * 1_024 + 1;
+      const before = "a".repeat(byteLength);
+      const after = "b".repeat(byteLength);
+      const collected = yield* collectFake(["data/large.bin"]).pipe(
+        Effect.provide(
+          fakeFileSystemLayer({
+            "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
+            "data/large.bin": { kind: "file", contents: before },
+          }),
+        ),
+      );
+      const large = collected.evidence.dependencies.find(
+        (dependency) => dependency.path === "data/large.bin",
+      );
+      expect(large?.sha256).toMatch(/^[0-9a-f]{64}$/u);
+
+      const probe = yield* probeLatexEvidence({
+        workspaceRoot: FAKE_WORKSPACE_ROOT,
+        evidence: collected.evidence,
+        // No stat shortcut: this represents the first probe after a restart.
+        marks: EMPTY_EVIDENCE_MARKS,
+      }).pipe(
+        Effect.provide(
+          fakeFileSystemLayer({
+            "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
+            "data/large.bin": { kind: "file", contents: after },
+          }),
+        ),
+      );
+
+      expect(probe.changed).toBe(true);
+      expect(probe.changedPath).toBe("data/large.bin");
+    }),
+  );
 
   describe("latexEvidenceMatches", () => {
     const base = {

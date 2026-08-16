@@ -110,7 +110,33 @@ export const TINYTEX_MANIFEST: TinyTexManifest = {
       archive: "seven-zip-sfx",
       executableRelativePath: "TinyTeX/bin/windows/latexmk.exe",
     },
-    // TODO(scient-latex): CI must pin each of these digests, from the
+    "darwin-x64": {
+      fileName: `TinyTeX-1-darwin-v${VERSION}.tar.xz`,
+      url: `${RELEASE_BASE}/TinyTeX-1-darwin-v${VERSION}.tar.xz`,
+      sha256: "dd22ffdf1063eff79cadcff45de1f24e8546edf508ab402dc9f87ec2f3367344",
+      sizeBytes: 67_051_368,
+      archive: "tar-xz",
+      executableRelativePath: "TinyTeX/bin/universal-darwin/latexmk",
+    },
+    // Upstream's Darwin bundle is universal and contains one universal-darwin
+    // engine tree, so both Apple architectures intentionally share this pin.
+    "darwin-arm64": {
+      fileName: `TinyTeX-1-darwin-v${VERSION}.tar.xz`,
+      url: `${RELEASE_BASE}/TinyTeX-1-darwin-v${VERSION}.tar.xz`,
+      sha256: "dd22ffdf1063eff79cadcff45de1f24e8546edf508ab402dc9f87ec2f3367344",
+      sizeBytes: 67_051_368,
+      archive: "tar-xz",
+      executableRelativePath: "TinyTeX/bin/universal-darwin/latexmk",
+    },
+    "linux-x64": {
+      fileName: `TinyTeX-1-linux-x86_64-v${VERSION}.tar.xz`,
+      url: `${RELEASE_BASE}/TinyTeX-1-linux-x86_64-v${VERSION}.tar.xz`,
+      sha256: "6bcde65cbbc147d6e492fa105a7210a06792d609358ef74a14a95228e3e36656",
+      sizeBytes: 53_980_584,
+      archive: "tar-xz",
+      executableRelativePath: ".TinyTeX/bin/x86_64-linux/latexmk",
+    },
+    // TODO(scient-latex): CI must pin each remaining digest, from the
     // official release at https://github.com/rstudio/tinytex-releases,
     // before its platform offers a managed install. Do not pin a hash here
     // that has not been downloaded and hashed by hand — a placeholder digest
@@ -122,9 +148,6 @@ export const TINYTEX_MANIFEST: TinyTexManifest = {
     // pair is pinned, `resolveTinyTexAsset` reports it as unsupported by
     // name and `install` refuses accordingly.
     "win32-arm64": null,
-    "darwin-x64": null,
-    "darwin-arm64": null,
-    "linux-x64": null,
     "linux-arm64": null,
   },
 };

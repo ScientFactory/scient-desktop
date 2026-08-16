@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import type {
   ScientLatexBuildRequest,
   ScientLatexCancelRequest,
+  ScientLatexForwardSyncRequest,
+  ScientLatexInverseSyncRequest,
   ScientLatexStatusRequest,
   ScientLatexToolchainRequest,
 } from "@t3tools/contracts";
@@ -117,6 +119,52 @@ export const getEnvironmentLatexCancel = Effect.fn("clientRuntime.state.getEnvir
     );
   },
 );
+
+export const getEnvironmentLatexForwardSync = Effect.fn(
+  "clientRuntime.state.getEnvironmentLatexForwardSync",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientLatexForwardSyncRequest;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/latex/synctex/forward",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientLatex.forwardSync({
+        headers: context.headers,
+        payload: input.request,
+      }),
+    ),
+  );
+});
+
+export const getEnvironmentLatexInverseSync = Effect.fn(
+  "clientRuntime.state.getEnvironmentLatexInverseSync",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientLatexInverseSyncRequest;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/latex/synctex/inverse",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientLatex.inverseSync({
+        headers: context.headers,
+        payload: input.request,
+      }),
+    ),
+  );
+});
 
 export const getEnvironmentLatexInstallToolchain = Effect.fn(
   "clientRuntime.state.getEnvironmentLatexInstallToolchain",

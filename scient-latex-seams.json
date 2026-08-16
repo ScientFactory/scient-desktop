@@ -4,6 +4,7 @@
   "ownedRoots": [
     "apps/server/src/scient/latex",
     "apps/web/src/scient/latex",
+    "apps/web/src/scient/pdf",
     "apps/server/src/scient/documentArtifacts",
     "packages/scient-document-artifacts",
     "packages/scient-pdf-validation"
@@ -24,6 +25,16 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/assets/AssetAccess.ts",
+      "anchor": "generatedDocumentExpiresAtEpochMs",
+      "purpose": "Issue generated-document asset capabilities for exactly the durable lease lifetime returned by the Scient-owned document store."
+    },
+    {
+      "path": "apps/server/src/auth/RpcAuthorization.ts",
+      "anchor": "subscribeDocumentBindingChanges",
+      "purpose": "Authorize the producer-neutral document-binding subscription as a read operation."
+    },
+    {
       "path": "apps/server/src/config.ts",
       "anchor": "latexDir",
       "purpose": "Derive the server-owned LaTeX build state from the configured state root."
@@ -32,6 +43,16 @@
       "path": "apps/server/src/server.ts",
       "anchor": "LatexBuildService",
       "purpose": "Provide the build coordinator and toolchain probe to the shared server layer."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "subscribeDocumentBindingChanges",
+      "purpose": "Expose the shared document store's binding-change stream over the existing RPC transport."
+    },
+    {
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "openFile(activeThreadRef, relativePath, line)",
+      "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
     },
     {
       "path": "apps/web/src/components/files/filePreviewMode.ts",
@@ -44,6 +65,11 @@
       "purpose": "Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination."
     },
     {
+      "path": "packages/client-runtime/src/rpc/client.ts",
+      "anchor": "subscribeDocumentBindingChanges",
+      "purpose": "Classify the document-binding RPC method as a subscription in the inherited transport client."
+    },
+    {
       "path": "packages/contracts/src/environmentHttp.ts",
       "anchor": "scientLatex",
       "purpose": "Register the LaTeX endpoint group in the shared environment HTTP API."
@@ -52,6 +78,11 @@
       "path": "packages/contracts/src/index.ts",
       "anchor": "./scientLatex.ts",
       "purpose": "Export the additive Scient LaTeX contract from the inherited contract package."
+    },
+    {
+      "path": "packages/contracts/src/rpc.ts",
+      "anchor": "subscribeDocumentBindingChanges",
+      "purpose": "Register the producer-neutral document-binding subscription in the shared RPC contract."
     },
     {
       "path": "packages/client-runtime/package.json",

@@ -1,11 +1,17 @@
 import {
   getEnvironmentLatexBuild,
   getEnvironmentLatexCancel,
+  getEnvironmentLatexForwardSync,
   getEnvironmentLatexInstallToolchain,
+  getEnvironmentLatexInverseSync,
   getEnvironmentLatexStatus,
   getEnvironmentLatexToolchain,
 } from "@t3tools/client-runtime/state/scient-latex";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type {
+  ScientLatexForwardSyncRequest,
+  ScientLatexInverseSyncRequest,
+} from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
@@ -37,6 +43,24 @@ export function readLatexBuildStatus(environmentId: EnvironmentId, input: Scient
 export function requestLatexCancel(environmentId: EnvironmentId, input: ScientLatexDocumentRef) {
   return runtime.runPromise(
     getEnvironmentLatexCancel({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function requestLatexForwardSync(
+  environmentId: EnvironmentId,
+  request: ScientLatexForwardSyncRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentLatexForwardSync({ prepared: prepared(environmentId), request }),
+  );
+}
+
+export function requestLatexInverseSync(
+  environmentId: EnvironmentId,
+  request: ScientLatexInverseSyncRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentLatexInverseSync({ prepared: prepared(environmentId), request }),
   );
 }
 

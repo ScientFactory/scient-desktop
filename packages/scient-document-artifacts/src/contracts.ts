@@ -133,6 +133,17 @@ export const DocumentBindingChange = Schema.Struct({
 });
 export type DocumentBindingChange = typeof DocumentBindingChange.Type;
 
+/**
+ * Producer-neutral selector for one binding's live change stream. Consumers
+ * still re-read their producer-specific status after a hint arrives; the
+ * persisted binding remains authoritative and stream delivery may coalesce.
+ */
+export const DocumentBindingSubscriptionInput = Schema.Struct({
+  authority: ArtifactAuthority,
+  logicalDocumentKey: LogicalDocumentKey,
+});
+export type DocumentBindingSubscriptionInput = typeof DocumentBindingSubscriptionInput.Type;
+
 export const PdfSourceCapabilities = Schema.Struct({
   canSaveCopy: Schema.Boolean,
   canRevealSource: Schema.Boolean,

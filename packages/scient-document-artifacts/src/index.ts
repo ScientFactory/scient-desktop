@@ -10,6 +10,7 @@ export {
   DocumentArtifactBinding,
   DocumentBindingChange,
   DocumentBindingChangeKind,
+  DocumentBindingSubscriptionInput,
   DocumentProductionAttempt,
   GeneratedDocumentArtifact,
   LogicalDocumentKey,

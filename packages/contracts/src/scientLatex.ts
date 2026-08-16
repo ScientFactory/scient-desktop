@@ -1,4 +1,8 @@
-import { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import {
+  ArtifactId,
+  ArtifactRevisionId,
+  PdfSourceDescriptor,
+} from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
@@ -153,6 +157,71 @@ export const ScientLatexCancelRequest = Schema.Struct({
   relativePath: PathString,
 });
 export type ScientLatexCancelRequest = typeof ScientLatexCancelRequest.Type;
+
+const PositiveLine = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const NonNegativeColumn = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const SyncCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
+const ScientLatexSyncRevision = {
+  workspaceRoot: PathString,
+  rootRelativePath: PathString,
+  artifactId: ArtifactId,
+  revisionId: ArtifactRevisionId,
+} as const;
+
+export const ScientLatexForwardSyncRequest = Schema.Struct({
+  ...ScientLatexSyncRevision,
+  sourceRelativePath: PathString,
+  line: PositiveLine,
+  column: Schema.optional(NonNegativeColumn),
+  pageHint: Schema.optional(PositiveLine),
+});
+export type ScientLatexForwardSyncRequest = typeof ScientLatexForwardSyncRequest.Type;
+
+export const ScientLatexInverseSyncRequest = Schema.Struct({
+  ...ScientLatexSyncRevision,
+  page: PositiveLine,
+  x: SyncCoordinate,
+  y: SyncCoordinate,
+});
+export type ScientLatexInverseSyncRequest = typeof ScientLatexInverseSyncRequest.Type;
+
+export const ScientLatexSyncUnavailableReason = Schema.Literals([
+  "revision-unavailable",
+  "index-unavailable",
+  "command-unavailable",
+  "not-found",
+  "invalid-source",
+]);
+export type ScientLatexSyncUnavailableReason = typeof ScientLatexSyncUnavailableReason.Type;
+
+export const ScientLatexSyncUnavailable = Schema.TaggedStruct("unavailable", {
+  reason: ScientLatexSyncUnavailableReason,
+  message: Schema.String,
+});
+export type ScientLatexSyncUnavailable = typeof ScientLatexSyncUnavailable.Type;
+
+export const ScientLatexForwardSyncResult = Schema.Union([
+  Schema.TaggedStruct("found", {
+    page: PositiveLine,
+    x: SyncCoordinate,
+    y: SyncCoordinate,
+    width: SyncCoordinate,
+    height: SyncCoordinate,
+  }),
+  ScientLatexSyncUnavailable,
+]);
+export type ScientLatexForwardSyncResult = typeof ScientLatexForwardSyncResult.Type;
+
+export const ScientLatexInverseSyncResult = Schema.Union([
+  Schema.TaggedStruct("found", {
+    relativePath: PathString,
+    line: PositiveLine,
+    column: Schema.NullOr(NonNegativeColumn),
+  }),
+  ScientLatexSyncUnavailable,
+]);
+export type ScientLatexInverseSyncResult = typeof ScientLatexInverseSyncResult.Type;
 
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,

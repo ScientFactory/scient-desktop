@@ -1954,6 +1954,18 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.subscribeDocumentBindingChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDocumentBindingChanges,
+            generatedDocuments.changes.pipe(
+              Stream.filter(
+                (change) =>
+                  change.authority === input.authority &&
+                  change.logicalDocumentKey === input.logicalDocumentKey,
+              ),
+            ),
+            { "rpc.aggregate": "document-artifacts" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
@@ -2065,8 +2077,8 @@ const makeWsRpcLayer = (
                 return yield* issueAssetUrl({ resource: input.resource, analysisArtifact });
               }
               if (input.resource._tag === "generated-document") {
-                const generatedDocument = yield* generatedDocuments
-                  .resolveRevision(input.resource)
+                const retained = yield* generatedDocuments
+                  .resolveRevisionForAsset(input.resource)
                   .pipe(
                     Effect.mapError((cause) => {
                       if (cause.reason === "authority-mismatch") {
@@ -2085,7 +2097,11 @@ const makeWsRpcLayer = (
                       });
                     }),
                   );
-                return yield* issueAssetUrl({ resource: input.resource, generatedDocument });
+                return yield* issueAssetUrl({
+                  resource: input.resource,
+                  generatedDocument: retained.document,
+                  generatedDocumentExpiresAtEpochMs: retained.expiresAtEpochMs,
+                });
               }
               if (input.resource._tag === "attachment") {
                 return yield* issueAssetUrl({ resource: input.resource });

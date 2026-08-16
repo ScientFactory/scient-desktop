@@ -57,6 +57,8 @@ export interface LatexInvocation {
   readonly args: ReadonlyArray<string>;
   /** Where the engine leaves the PDF for this invocation. */
   readonly pdfPath: string;
+  /** Revision navigation index emitted beside the PDF when the engine supports it. */
+  readonly syncTexPath: string;
   /**
    * Where the engine leaves its recorder output — the `INPUT`/`OUTPUT` list of
    * every file the run touched, which is what tells the caller whether a
@@ -75,7 +77,13 @@ function pdfBaseName(rootRelativePath: string): string {
 
 export function buildLatexInvocation(input: {
   readonly toolchain: DiscoveredLatexToolchain;
-  readonly rootAbsolutePath: string;
+  /**
+   * Basename of the validated root document. The caller runs the process from
+   * that document's directory, so keeping this argument relative avoids
+   * TinyTeX's Windows launcher rewriting a long profile path to an 8.3 path
+   * containing `~`, which `latexmk` rejects as an unsafe TeX filename.
+   */
+  readonly rootFileName: string;
   readonly workDirectory: string;
   /**
    * Run the engine even where the driver believes nothing has changed. Set for
@@ -90,15 +98,17 @@ export function buildLatexInvocation(input: {
    */
   readonly forceReprocess?: boolean | undefined;
 }): LatexInvocation {
-  const jobName = pdfBaseName(input.rootAbsolutePath.replaceAll("\\", "/"));
+  const jobName = pdfBaseName(input.rootFileName.replaceAll("\\", "/"));
   const pdfPath = `${input.workDirectory}/${jobName}.pdf`;
+  const syncTexPath = `${input.workDirectory}/${jobName}.synctex.gz`;
 
   if (input.toolchain.kind === "tectonic") {
     // tectonic keeps no cross-run decision state of its own; every run is a run.
     return {
       command: input.toolchain.executable,
-      args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootAbsolutePath],
+      args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootFileName],
       pdfPath,
+      syncTexPath,
       recorderManifestPath: null,
     };
   }
@@ -113,9 +123,10 @@ export function buildLatexInvocation(input: {
       "-synctex=1",
       ...(input.forceReprocess === true ? ["-g"] : []),
       `-outdir=${input.workDirectory}`,
-      input.rootAbsolutePath,
+      input.rootFileName,
     ],
     pdfPath,
+    syncTexPath,
     recorderManifestPath: `${input.workDirectory}/${jobName}.fls`,
   };
 }
