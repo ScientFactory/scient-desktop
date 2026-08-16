@@ -227,6 +227,7 @@ export function ScientForkWorkspaceModeDialog({
                 value={titleDraft}
                 disabled={disabled || !titleOverrideSupported}
                 aria-invalid={!submission.ok}
+                className="h-11 border-border/60 bg-muted/20 shadow-none focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-foreground/10 focus-visible:ring-offset-0"
                 onChange={(event) => {
                   setTitleDraft(event.target.value);
                   setTitleEdited(true);
