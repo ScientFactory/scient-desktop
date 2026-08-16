@@ -83,6 +83,22 @@ proved they were not introduced by this merge:
 
 No visual or manual GUI acceptance was performed.
 
+## Follow-up corrections
+
+After review of PR #115, three alignment fixes follow without changing the
+integrated T3 range:
+
+- **BiDi composition.** `parseRawHtml` again selects only T3's HTML plugins.
+  `rehypeScientBidi` is always appended afterward, so user messages keep literal
+  HTML and still receive Scient direction. The BiDi algorithm is unchanged.
+- **Contributor destinations.** T3's Ideas-discussion URLs were reverted. Scient
+  Discussions is not enabled, so the previous issue templates and "open an
+  issue first" policy are restored. Discord and vouch remain inherited T3
+  infrastructure.
+- **Quick Chat workspace.** Production composer call sites still use T3's branch
+  resolver. The creation hook now applies a named Scient sanitizer, tested so
+  projectless start-turn fields stay `local` / `null` / `null`.
+
 ## Publication boundary
 
 This merge does not publish artifacts or enable T3 relay, cloud, hosted web,
