@@ -225,9 +225,11 @@ export function ScientForkWorkspaceModeDialog({
                 id={`${formId}-title`}
                 ref={titleInputRef}
                 value={titleDraft}
+                size="lg"
+                unstyled
                 disabled={disabled || !titleOverrideSupported}
                 aria-invalid={!submission.ok}
-                className="h-11 border-border/60 bg-muted/20 shadow-none focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-foreground/10 focus-visible:ring-offset-0"
+                className="relative inline-flex h-11 w-full min-w-0 items-center rounded-lg border border-border/60 bg-muted/20 text-base text-foreground shadow-none transition-shadow focus-within:border-foreground/40 focus-within:ring-2 focus-within:ring-foreground/10 focus-within:ring-offset-0"
                 onChange={(event) => {
                   setTitleDraft(event.target.value);
                   setTitleEdited(true);
