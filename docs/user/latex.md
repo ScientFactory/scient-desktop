@@ -7,7 +7,13 @@ split view to resize either side.
 
 Builds happen automatically — save the file and Scient compiles it. Errors and
 warnings from the build appear in a list above the document; each one shows
-the file and line it came from when the compiler reported one.
+the file and line it came from when the compiler reported one. Click a message
+that names a project file to open that file at the reported line.
+
+Hold Ctrl (Command on a Mac) and double-click a line of source to jump to the
+matching place in the current successful PDF; the same gesture on the PDF opens
+the corresponding source line. This needs a successful current build. If the
+PDF has no navigation index, it still opens and reads normally.
 
 The PDF keeps your place across rebuilds: your page, zoom, and scroll position
 stay put while a new version comes in, instead of snapping back to the top. If
@@ -39,8 +45,8 @@ minutes while those packages arrive — Scient says so, and names them, while it
 waits. Later builds of the same document are as fast as any other compile.
 Installing a package needs a network connection: when
 you're offline, or when no package by that name can be found, the build stops
-and the error says which one it was. This one-click install is currently
-available on Windows (x64) only; on macOS, Linux, and other Windows
+and the error says which one it was. This one-click install is available on
+Windows (x64), macOS (Intel and Apple Silicon), and Linux (x64). On other
 architectures, install TeX Live, MiKTeX, or Tectonic yourself, and Scient will
 use it — an existing installation always keeps precedence over Scient's own,
 on every platform. If you install one while a document is already open, select
