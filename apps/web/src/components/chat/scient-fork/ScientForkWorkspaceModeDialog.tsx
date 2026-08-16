@@ -270,7 +270,7 @@ export function ScientForkWorkspaceModeDialog({
           >
             Cancel
           </Button>
-          <Button form={formId} type="submit" disabled={disabled || !submission.ok}>
+          <Button form={formId} type="submit" size="sm" disabled={disabled || !submission.ok}>
             {disabled ? "Forking…" : "Fork"}
           </Button>
         </DialogFooter>
