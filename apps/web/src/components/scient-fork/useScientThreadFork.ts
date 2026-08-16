@@ -16,7 +16,11 @@ import { newThreadId } from "~/lib/utils";
 import type { ChatAttachment } from "~/types";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { readFileAsDataUrl, waitForStartedServerThread } from "../ChatView.logic";
+import {
+  type ForkAcceptanceOutcome,
+  readFileAsDataUrl,
+  waitForStartedServerThread,
+} from "../ChatView.logic";
 import { stageForkViewContinuity } from "./forkViewContinuity";
 
 type ForkOrigin = {
@@ -161,8 +165,8 @@ export function useScientThreadFork({
         readonly titleOverride?: string;
       },
       originWorkspaceRoot: string | undefined,
-    ) => {
-      if (!origin || inFlightRef.current) return;
+    ): Promise<ForkAcceptanceOutcome> => {
+      if (!origin || inFlightRef.current) return "not-accepted";
       const forkThreadId = newThreadId();
       const destinationRef = scopeThreadRef(origin.environmentId, forkThreadId);
       let stagedDraft = false;
@@ -201,7 +205,7 @@ export function useScientThreadFork({
               message: userFacingForkError(error),
             });
           }
-          return;
+          return "not-accepted";
         }
         forkAccepted = true;
         stageForkViewContinuity({
@@ -216,17 +220,19 @@ export function useScientThreadFork({
             message:
               "The fork was created, but it is not available in the app yet. Open it from the sidebar or try again.",
           });
-          return;
+          return "accepted";
         }
         await navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId: origin.environmentId, threadId: forkThreadId },
         });
+        return "accepted";
       } catch (cause) {
         setErrorUpdate({
           threadId: origin.id,
           message: userFacingForkError(cause),
         });
+        return forkAccepted ? "accepted" : "not-accepted";
       } finally {
         if (stagedDraft && !forkAccepted) {
           clearStagedUserForkDraft(destinationRef);

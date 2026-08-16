@@ -340,6 +340,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveForkTargetAfterAttempt,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveThreadWorkspaceRoot,
@@ -7138,7 +7139,6 @@ function ChatViewContent(props: ChatViewProps) {
         onConfirm={(confirmation) => {
           const target = forkCommandTarget;
           if (!target || target.threadId !== activeThreadId) return;
-          setForkCommandTarget(null);
           void forkFromMessage(
             target.kind === "assistant-response"
               ? { kind: target.kind, messageId: target.messageId }
@@ -7150,7 +7150,11 @@ function ChatViewContent(props: ChatViewProps) {
                 },
             confirmation,
             activeWorkspaceRoot,
-          );
+          ).then((outcome) => {
+            setForkCommandTarget((current) =>
+              resolveForkTargetAfterAttempt(current, target, outcome),
+            );
+          });
         }}
       />
     </div>
