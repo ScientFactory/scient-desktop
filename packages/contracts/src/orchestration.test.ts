@@ -596,6 +596,51 @@ it.effect("accepts exactly one assistant or user fork source", () =>
   }),
 );
 
+it.effect("decodes an optional trimmed title override for a fork", () =>
+  Effect.gen(function* () {
+    const automatic = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-automatic-title",
+      originThreadId: "origin-thread",
+      newThreadId: "automatic-title-fork",
+      sourceAssistantMessageId: "assistant-3",
+      workspaceMode: "local",
+    });
+    const explicit = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-explicit-title",
+      originThreadId: "origin-thread",
+      newThreadId: "explicit-title-fork",
+      sourceUserMessageId: "user-3",
+      workspaceMode: "new-worktree",
+      titleOverride: "  Deliberate fork title  ",
+    });
+
+    assert.strictEqual(automatic.type, "thread.fork");
+    assert.strictEqual(explicit.type, "thread.fork");
+    if (automatic.type !== "thread.fork" || explicit.type !== "thread.fork") return;
+    assert.strictEqual(automatic.titleOverride, undefined);
+    assert.strictEqual(explicit.titleOverride, "Deliberate fork title");
+  }),
+);
+
+it.effect("rejects a blank fork title override", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.fork",
+        commandId: "cmd-fork-blank-title",
+        originThreadId: "origin-thread",
+        newThreadId: "blank-title-fork",
+        sourceAssistantMessageId: "assistant-3",
+        workspaceMode: "local",
+        titleOverride: "   ",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it.effect("decodes thread settled and unsettled events", () =>
   Effect.gen(function* () {
     const settled = yield* decodeOrchestrationEvent({

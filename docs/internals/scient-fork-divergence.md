@@ -19,13 +19,14 @@ completed assistant response.
   The server never sends the clicked message. The origin answer and all later
   history are excluded.
 
-Every path asks the user to choose one of two workspace behaviors:
-
-- **Create independent worktree** creates a dedicated Git worktree at the
-  selected historical checkpoint. It is available only when that checkpoint can
-  be resolved safely.
-- **Use same workspace** keeps the conversation branch independent while using
-  the origin project's current workspace. It does not rewind local files.
+Every path opens one confirmation form. It proposes the server's next automatic
+fork title, which the user may replace. Leaving the proposal untouched keeps
+title allocation on the server, so concurrent forks still receive a
+collision-safe number. **New worktree** is off by default. Turning it on creates
+a dedicated Git worktree at the selected historical checkpoint, and is
+available only when that checkpoint can be resolved safely. Leaving it off
+keeps the conversation branch independent while using the origin project's
+current workspace; it does not rewind local files.
 
 The new conversation shows the retained transcript prefix. Its first provider
 turn starts a fresh provider session and receives that retained transcript once
@@ -175,12 +176,13 @@ migration normalization and active repository/bootstrap code paths.
 Stack phase A moves fork boundary authority from client-shaped thread snapshots to a
 Scient-owned server resolver. The public fork command carries
 `originThreadId`, `newThreadId`, `workspaceMode`, and exactly one of
-`sourceAssistantMessageId` or `sourceUserMessageId`. The server independently
+`sourceAssistantMessageId` or `sourceUserMessageId`, plus an optional
+user-authored `titleOverride`. The server independently
 queries SQL-backed `projection_turns`, `projection_thread_messages`, and
 `scient_thread_lineage` to validate message role/order and resolve the exact
 completed boundary, its turn ID, conversation count, and checkpoint
 eligibility. The client never supplies boundary arrays, turn counts, checkpoint
-relationships, or caller titles.
+relationships, or automatic title-allocation authority.
 
 ### Boundary ownership
 
@@ -212,6 +214,21 @@ lexical ID ordering. Legacy rows without that association use a conservative
 strictly-earlier turn timestamp fallback; an equal timestamp is excluded. This
 may omit an uncertain prior boundary, but it cannot retain the response to the
 user message being forked and then send that message again.
+
+### Fork title ownership
+
+Automatic title numbering is shared pure logic in
+`packages/shared/src/scientForkTitle.ts`, but the server remains authoritative.
+The client uses the same function only to preview the likely title. If the user
+leaves that proposal untouched, the command omits `titleOverride` and the server
+recomputes against its current project threads when the fork commits. If the
+user edits the field, the trimmed non-empty value travels atomically with
+`thread.fork`; it does not grant any authority over boundary resolution,
+retained history, checkpoints, or provisioning.
+
+`threadForkTitleOverride` is an optional environment capability. Clients
+connected to an older server show its automatic proposal read-only and never
+send the new field.
 
 ### Projection state narrowing
 
@@ -429,18 +446,19 @@ counts remain explicit inside the injected context payload.
 All production seams are additive and marked with `SCIENT-FORK:START` and
 `SCIENT-FORK:END` where practical.
 
-| Surface                                                                                                                                                                       | Deliberate change                                                                                                                        | Retirement condition                                                      |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `packages/contracts/src/orchestration.ts`                                                                                                                                     | Add fork command, lifecycle events, lineage, and explicit workspace/provider status contracts.                                           | Map to a compatible T3 contract or retain a thin translation.             |
-| `apps/server/src/orchestration/decider.ts`                                                                                                                                    | Delegate `thread.fork` and record the internal completion event.                                                                         | T3 owns an equivalent exact-boundary decider.                             |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                                                                                                 | Route the new aggregate and rehydrate origin detail for this command only.                                                               | T3 command routing natively supports fork.                                |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert. | Generic projection extension and derived-field hooks replace these seams. |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient migration runner.                                                                                             | A generic product-schema hook replaces the seam.                          |
-| `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                                                                                   | Start/provide the Scient worker and provider-context service.                                                                            | Generic reactor and provider-context extension points exist.              |
-| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Reserve, prepare, and reconcile the first fork provider turn around the existing provider send.                                          | T3 exposes a provider request-decoration hook.                            |
-| `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                       | T3 supports typed asynchronous command receipts.                          |
-| `packages/client-runtime/src/operations/commands.ts`, `packages/client-runtime/src/state/threadCommands.ts`                                                                   | Dispatch and serialize the fork command.                                                                                                 | T3 client runtime has an equivalent operation.                            |
-| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, `apps/web/src/rightPanelStore.ts`                                                | Send the selected message ID, mount Scient-owned fork controls, and expose one narrow sanitized panel-state restore action.              | T3 exposes row-action and thread-view continuity extension slots.         |
+| Surface                                                                                                                                                                       | Deliberate change                                                                                                                                            | Retirement condition                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `packages/contracts/src/orchestration.ts`, `packages/contracts/src/environment.ts`                                                                                            | Add fork command, optional user title, capability negotiation, lifecycle events, lineage, and explicit workspace/provider status contracts.                  | Map to a compatible T3 contract or retain a thin translation.             |
+| `packages/shared/src/scientForkTitle.ts`                                                                                                                                      | Share automatic numbering between the server authority and client preview.                                                                                   | T3 owns equivalent fork-title allocation.                                 |
+| `apps/server/src/orchestration/decider.ts`                                                                                                                                    | Delegate `thread.fork` and record the internal completion event.                                                                                             | T3 owns an equivalent exact-boundary decider.                             |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`                                                                                                                 | Route the new aggregate and rehydrate origin detail for this command only.                                                                                   | T3 command routing natively supports fork.                                |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`, `apps/server/src/orchestration/projector.ts` | Register Scient lineage, expose conversation boundaries, and preserve/advance the immutable baseline through live projection and revert.                     | Generic projection extension and derived-field hooks replace these seams. |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                                                                                                                                | Run the independent Scient migration runner.                                                                                                                 | A generic product-schema hook replaces the seam.                          |
+| `apps/server/src/orchestration/Layers/OrchestrationReactor.ts`, `apps/server/src/server.ts`                                                                                   | Start/provide the Scient worker and provider-context service.                                                                                                | Generic reactor and provider-context extension points exist.              |
+| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`                                                                                                              | Reserve, prepare, and reconcile the first fork provider turn around the existing provider send.                                                              | T3 exposes a provider request-decoration hook.                            |
+| `apps/server/src/ws.ts`                                                                                                                                                       | Wait for durable fork completion before acknowledging the command.                                                                                           | T3 supports typed asynchronous command receipts.                          |
+| `packages/client-runtime/src/operations/commands.ts`, `packages/client-runtime/src/state/threadCommands.ts`                                                                   | Dispatch and serialize the fork command.                                                                                                                     | T3 client runtime has an equivalent operation.                            |
+| `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, `apps/web/src/rightPanelStore.ts`                                                | Send the selected message ID, preview the destination title, mount the single-form fork control, and expose one narrow sanitized panel-state restore action. | T3 exposes row-action and thread-view continuity extension slots.         |
 
 Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
@@ -453,6 +471,8 @@ forking and would have increased every future upstream merge.
   A newer streaming turn is excluded from the retained prefix rather than
   blocking an older fork point.
 - A new worktree fails closed if the historical Git checkpoint is unavailable.
+- An untouched proposed title is recomputed by the server at commit time. Only
+  an explicit non-empty user edit bypasses automatic numbering.
 - Same-workspace mode is honest about sharing current files; only its
   conversation and checkpoint lineage are independent.
 - A Quick Chat may be forked in the same environment without inventing a
@@ -518,7 +538,8 @@ building a parallel generic platform.
   normalization, T3/Scient ledger isolation, and stacked phase A+B validation.
 - Provider bootstrap normal, truncation, attachment, restart, send-failure, and
   completion-marker cases.
-- Web assistant- and user-message actions, turn-zero user fork, persisted
+- Web assistant- and user-message actions, automatic and explicit titles,
+  single-form workspace selection, turn-zero user fork, persisted
   unsent text/image draft, failed-command cleanup, streaming exclusion,
   slash-command selection, same-tick duplicate prevention, safe
   right-panel filtering, PDF session remapping, and RPC

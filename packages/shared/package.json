@@ -223,6 +223,10 @@
       "types": "./src/scientNextIdentity.ts",
       "import": "./src/scientNextIdentity.ts"
     },
+    "./scientForkTitle": {
+      "types": "./src/scientForkTitle.ts",
+      "import": "./src/scientForkTitle.ts"
+    },
     "./scientRelease": {
       "types": "./src/scientRelease.ts",
       "import": "./src/scientRelease.ts"

@@ -13,6 +13,7 @@ import type {
   OrchestrationProposedPlan,
   OrchestrationSession,
   OrchestrationThreadActivity,
+  OrchestrationThreadShell,
   ScopedProjectRef,
   ScopedThreadRef,
   ServerConfig,
@@ -28,6 +29,7 @@ import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_REFS: ReadonlyArray<ScopedProjectRef> = Object.freeze([]);
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
+const EMPTY_THREAD_SHELLS: ReadonlyArray<OrchestrationThreadShell> = Object.freeze([]);
 const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
 const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
 const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
@@ -40,6 +42,9 @@ const EMPTY_PROJECT_REFS_ATOM = Atom.make(EMPTY_PROJECT_REFS).pipe(
 );
 const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
   Atom.withLabel("web-thread-refs:empty"),
+);
+const EMPTY_THREAD_SHELLS_ATOM = Atom.make(EMPTY_THREAD_SHELLS).pipe(
+  Atom.withLabel("web-thread-shells:empty"),
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
@@ -105,6 +110,16 @@ export function useEnvironmentThreadRefs(
     environmentId === null
       ? EMPTY_THREAD_REFS_ATOM
       : environmentThreadShells.environmentThreadRefsAtom(environmentId),
+  );
+}
+
+export function useEnvironmentThreadShells(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<OrchestrationThreadShell> {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_THREAD_SHELLS_ATOM
+      : environmentThreadShells.environmentThreadsAtom(environmentId),
   );
 }
 

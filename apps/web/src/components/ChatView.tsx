@@ -97,7 +97,7 @@ import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
 import {
-  ScientForkWorkspaceModeDialog,
+  ScientForkDialog,
   type ForkWorktreeAvailability,
   type ScientForkSource,
 } from "./chat/scient-fork/ScientForkWorkspaceModeDialog";
@@ -340,6 +340,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveForkTargetAfterAttempt,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveThreadWorkspaceRoot,
@@ -1620,6 +1621,16 @@ function ChatViewContent(props: ChatViewProps) {
       }
     | null
   >(null);
+  const forkDialogOpen =
+    forkCommandTarget !== null &&
+    activeThread !== null &&
+    activeThread !== undefined &&
+    forkCommandTarget.threadId === activeThread.id;
+  const forkTitleOverrideSupported =
+    activeThread !== null &&
+    activeThread !== undefined &&
+    serverConfigs.get(activeThread.environmentId)?.environment.capabilities
+      .threadForkTitleOverride === true;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -7113,20 +7124,21 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
-      <ScientForkWorkspaceModeDialog
-        open={forkCommandTarget?.threadId === activeThreadId}
+      <ScientForkDialog
+        open={forkDialogOpen}
+        origin={activeThread ?? null}
         disabled={isForkingThread}
         source={forkCommandTarget?.source ?? "latest-response"}
+        titleOverrideSupported={forkTitleOverrideSupported}
         worktreeAvailability={forkWorktreeAvailability}
         onOpenChange={(open) => {
           if (!open && !isForkingThread) {
             setForkCommandTarget(null);
           }
         }}
-        onSelect={(workspaceMode) => {
+        onConfirm={(confirmation) => {
           const target = forkCommandTarget;
           if (!target || target.threadId !== activeThreadId) return;
-          setForkCommandTarget(null);
           void forkFromMessage(
             target.kind === "assistant-response"
               ? { kind: target.kind, messageId: target.messageId }
@@ -7136,9 +7148,13 @@ function ChatViewContent(props: ChatViewProps) {
                   prompt: target.message.text,
                   attachments: target.message.attachments ?? [],
                 },
-            workspaceMode,
+            confirmation,
             activeWorkspaceRoot,
-          );
+          ).then((outcome) => {
+            setForkCommandTarget((current) =>
+              resolveForkTargetAfterAttempt(current, target, outcome),
+            );
+          });
         }}
       />
     </div>

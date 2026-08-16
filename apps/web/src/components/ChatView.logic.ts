@@ -29,6 +29,16 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export type ForkAcceptanceOutcome = "accepted" | "not-accepted";
+
+export function resolveForkTargetAfterAttempt<T>(
+  currentTarget: T | null,
+  attemptedTarget: T,
+  outcome: ForkAcceptanceOutcome,
+): T | null {
+  return outcome === "accepted" && currentTarget === attemptedTarget ? null : currentTarget;
+}
+
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
   return () => globalThis.clearTimeout(timeoutId);

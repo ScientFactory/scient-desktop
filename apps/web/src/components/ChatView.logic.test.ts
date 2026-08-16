@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveForkTargetAfterAttempt,
   resolveThreadWorkspaceRoot,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -39,6 +40,27 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("resolveForkTargetAfterAttempt", () => {
+  const attemptedTarget = { messageId: "message-1" };
+
+  it("preserves the attempted target when the fork fails before acceptance", () => {
+    expect(resolveForkTargetAfterAttempt(attemptedTarget, attemptedTarget, "not-accepted")).toBe(
+      attemptedTarget,
+    );
+  });
+
+  it("clears the attempted target once the fork is accepted", () => {
+    expect(resolveForkTargetAfterAttempt(attemptedTarget, attemptedTarget, "accepted")).toBeNull();
+  });
+
+  it("does not clear a newer target when an older attempt completes", () => {
+    const newerTarget = { messageId: "message-2" };
+    expect(resolveForkTargetAfterAttempt(newerTarget, attemptedTarget, "accepted")).toBe(
+      newerTarget,
+    );
+  });
+});
 
 describe("resolveThreadWorkspaceRoot", () => {
   it("prefers worktrees and project roots for project-backed threads", () => {
