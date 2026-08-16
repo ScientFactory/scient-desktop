@@ -209,7 +209,10 @@ export function ScientForkWorkspaceModeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup className="max-w-[23rem]" backdropClassName="!backdrop-blur-[0.5px]">
+      <DialogPopup
+        className="max-w-[23rem] -translate-y-1"
+        backdropClassName="!backdrop-blur-[0.5px]"
+      >
         <DialogHeader className="gap-1.5 p-5 pe-12 max-sm:p-4">
           <DialogTitle className="flex items-center gap-2">
             <SplitIcon className="size-4 rotate-90" />
