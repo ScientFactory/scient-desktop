@@ -19,7 +19,9 @@ import {
   scientSourceSummaryFromRecord,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
+  type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
+  type ScientSourceFieldProvenance,
   type ScientSourceRecord,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
@@ -210,28 +212,193 @@ export async function detachSourcePdf(input: Parameters<typeof detachScientSourc
   return detachScientSourcePdf(input);
 }
 
+function candidateEvidenceFields(candidate: ScientSourceCandidate): ReadonlySet<string> {
+  return new Set(
+    candidate.fieldProvenance.map((entry) =>
+      entry.field.startsWith("identifiers.") ? "identifiers" : entry.field,
+    ),
+  );
+}
+
+function proposedMetadataValue<A>(input: {
+  readonly field: ScientSourceEditableField;
+  readonly evidence: ReadonlySet<string>;
+  readonly current: A;
+  readonly candidate: A;
+  readonly present: boolean;
+  readonly takenFields: Set<ScientSourceEditableField>;
+}): A {
+  if (input.evidence.has(input.field) && input.present) {
+    input.takenFields.add(input.field);
+    return input.candidate;
+  }
+  return input.current;
+}
+
+function provenanceEditableField(field: string): string {
+  return field.startsWith("identifiers.") ? "identifiers" : field;
+}
+
+function mergeRefreshedFieldProvenance(input: {
+  readonly current: ReadonlyArray<ScientSourceFieldProvenance>;
+  readonly candidate: ReadonlyArray<ScientSourceFieldProvenance>;
+  readonly takenFields: ReadonlySet<ScientSourceEditableField>;
+}): ReadonlyArray<ScientSourceFieldProvenance> {
+  const taken = (field: string) =>
+    input.takenFields.has(provenanceEditableField(field) as ScientSourceEditableField);
+  return [
+    ...input.current.filter((entry) => !taken(entry.field)),
+    ...input.candidate.filter((entry) => taken(entry.field)),
+  ];
+}
+
+function proposeRefreshedSourceUpdate(input: {
+  readonly record: ScientSourceRecord;
+  readonly candidate: ScientSourceCandidate;
+}): {
+  readonly metadata: ScientSourceEditableMetadata;
+  readonly takenFields: ReadonlySet<ScientSourceEditableField>;
+} {
+  const current = editableMetadataFromRecord(input.record);
+  const candidate = input.candidate;
+  const evidence = candidateEvidenceFields(candidate);
+  const takenFields = new Set<ScientSourceEditableField>();
+  const customTypeEvidence = evidence.has("type") ? new Set(["customType"]) : evidence;
+  const hasIssuedEvidence = evidence.has("issuedRaw") || evidence.has("issuedYear");
+  const issuedYear =
+    hasIssuedEvidence && candidate.issuedYear !== null ? candidate.issuedYear : current.issuedYear;
+  if (hasIssuedEvidence && candidate.issuedYear !== null) takenFields.add("issuedYear");
+  const metadata = normalizeScientSourceEditableMetadata({
+    type: proposedMetadataValue({
+      field: "type",
+      evidence,
+      current: current.type,
+      candidate: candidate.type,
+      present: true,
+      takenFields,
+    }),
+    customType: proposedMetadataValue({
+      field: "customType",
+      evidence: customTypeEvidence,
+      current: current.customType ?? null,
+      candidate: candidate.customType ?? null,
+      present: candidate.type === "other" && Boolean(candidate.customType?.trim()),
+      takenFields,
+    }),
+    title: proposedMetadataValue({
+      field: "title",
+      evidence,
+      current: current.title,
+      candidate: candidate.title,
+      present: Boolean(candidate.title?.trim()),
+      takenFields,
+    }),
+    creators: proposedMetadataValue({
+      field: "creators",
+      evidence,
+      current: current.creators,
+      candidate: candidate.creators,
+      present: candidate.creators.length > 0,
+      takenFields,
+    }),
+    issuedRaw: proposedMetadataValue({
+      field: "issuedRaw",
+      evidence,
+      current: current.issuedRaw,
+      candidate: candidate.issuedRaw,
+      present: Boolean(candidate.issuedRaw?.trim()),
+      takenFields,
+    }),
+    issuedYear,
+    identifiers: proposedMetadataValue({
+      field: "identifiers",
+      evidence,
+      current: current.identifiers,
+      candidate: candidate.identifiers,
+      present: candidate.identifiers.length > 0,
+      takenFields,
+    }),
+    abstract: proposedMetadataValue({
+      field: "abstract",
+      evidence,
+      current: current.abstract,
+      candidate: candidate.abstract,
+      present: Boolean(candidate.abstract?.trim()),
+      takenFields,
+    }),
+    containerTitle: proposedMetadataValue({
+      field: "containerTitle",
+      evidence,
+      current: current.containerTitle,
+      candidate: candidate.containerTitle,
+      present: Boolean(candidate.containerTitle?.trim()),
+      takenFields,
+    }),
+    publisher: proposedMetadataValue({
+      field: "publisher",
+      evidence,
+      current: current.publisher,
+      candidate: candidate.publisher,
+      present: Boolean(candidate.publisher?.trim()),
+      takenFields,
+    }),
+    volume: proposedMetadataValue({
+      field: "volume",
+      evidence,
+      current: current.volume,
+      candidate: candidate.volume,
+      present: Boolean(candidate.volume?.trim()),
+      takenFields,
+    }),
+    issue: proposedMetadataValue({
+      field: "issue",
+      evidence,
+      current: current.issue,
+      candidate: candidate.issue,
+      present: Boolean(candidate.issue?.trim()),
+      takenFields,
+    }),
+    pages: proposedMetadataValue({
+      field: "pages",
+      evidence,
+      current: current.pages,
+      candidate: candidate.pages,
+      present: Boolean(candidate.pages?.trim()),
+      takenFields,
+    }),
+    language: proposedMetadataValue({
+      field: "language",
+      evidence,
+      current: current.language,
+      candidate: candidate.language,
+      present: Boolean(candidate.language?.trim()),
+      takenFields,
+    }),
+    url: proposedMetadataValue({
+      field: "url",
+      evidence,
+      current: current.url,
+      candidate: candidate.url,
+      present: Boolean(candidate.url?.trim()),
+      takenFields,
+    }),
+    tags: proposedMetadataValue({
+      field: "tags",
+      evidence,
+      current: current.tags,
+      candidate: candidate.tags,
+      present: candidate.tags.length > 0,
+      takenFields,
+    }),
+  });
+  return { metadata, takenFields };
+}
+
 export function proposeRefreshedSourceMetadata(input: {
+  readonly record: ScientSourceRecord;
   readonly candidate: ScientSourceCandidate;
 }): ScientSourceEditableMetadata {
-  const candidate = input.candidate;
-  return normalizeScientSourceEditableMetadata({
-    type: candidate.type,
-    customType: candidate.customType ?? null,
-    title: candidate.title,
-    creators: candidate.creators,
-    issuedRaw: candidate.issuedRaw,
-    issuedYear: candidate.issuedYear,
-    identifiers: candidate.identifiers,
-    abstract: candidate.abstract,
-    containerTitle: candidate.containerTitle,
-    publisher: candidate.publisher,
-    volume: candidate.volume,
-    issue: candidate.issue,
-    pages: candidate.pages,
-    language: candidate.language,
-    url: candidate.url,
-    tags: candidate.tags,
-  });
+  return proposeRefreshedSourceUpdate(input).metadata;
 }
 
 export async function applyRefreshedSourceMetadata(input: {
@@ -240,9 +407,11 @@ export async function applyRefreshedSourceMetadata(input: {
   readonly candidate: ScientSourceCandidate;
 }) {
   const currentMetadata = editableMetadataFromRecord(input.record);
-  const metadata = proposeRefreshedSourceMetadata({
+  const proposed = proposeRefreshedSourceUpdate({
+    record: input.record,
     candidate: input.candidate,
   });
+  const metadata = proposed.metadata;
   const changedFields = changedEditableMetadataFields(currentMetadata, metadata);
   if (changedFields.length === 0) {
     return {
@@ -258,7 +427,11 @@ export async function applyRefreshedSourceMetadata(input: {
     sourceId: input.record.sourceId,
     expectedRevision: input.record.revision,
     metadata,
-    fieldProvenance: input.candidate.fieldProvenance,
+    fieldProvenance: mergeRefreshedFieldProvenance({
+      current: input.record.fieldProvenance,
+      candidate: input.candidate.fieldProvenance,
+      takenFields: proposed.takenFields,
+    }),
     // A refresh may make a weak title/creator/year resemblance more obvious,
     // but only an exact work identifier is strong enough to block this write.
     allowPossibleMetadataMatch: true,
