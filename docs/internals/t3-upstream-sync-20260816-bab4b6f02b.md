@@ -12,6 +12,8 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
   `bab4b6f02b8bdaf15fd32636a97f69ff657cec50`
 - Latest official tag observed: `v0.0.34-nightly.20260816.1110`
 - Exact donor range: `6ae9662d8e..bab4b6f02b`, 98 commits
+- History-preserving merge:
+  `b79aaa89747616a36d3ccc0e89bf44b7029794df`
 - Integration branch: `agent/t3-sync-bab4b6f02b-20260816`
 - Isolated worktree:
   `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-desktop-next-t3-sync-bab4b6f02b-20260816`
