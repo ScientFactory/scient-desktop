@@ -322,6 +322,12 @@ export const probeLatexEvidence = (input: {
   readonly workspaceRoot: string;
   readonly evidence: LatexBuildEvidence;
   readonly marks: LatexEvidenceMarks;
+  /**
+   * Unverified dependencies that already earned their one rebuild in this
+   * process. If evidence collection after that build hit the same transient
+   * lock, a later readable poll must not start a 15-second rebuild loop.
+   */
+  readonly reverifiedUnverifiedPaths?: ReadonlySet<string>;
 }): Effect.Effect<LatexEvidenceProbe, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -340,6 +346,7 @@ export const probeLatexEvidence = (input: {
         // observable again, however, rebuild exactly once so the next evidence
         // record contains the identity the successful compile actually used.
         if (info._tag === "unreadable") continue;
+        if (input.reverifiedUnverifiedPaths?.has(dependency.path) === true) continue;
         marks.delete(dependency.path);
         return verdict(dependency.path);
       }

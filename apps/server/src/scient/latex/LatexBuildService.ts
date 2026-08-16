@@ -71,6 +71,7 @@ import {
   encodeLatexBuildEvidence,
   latexEvidenceMatches,
   probeLatexEvidence,
+  UNVERIFIED_FILE_DIGEST,
   type LatexBuildEvidence,
   type LatexEvidenceMarks,
 } from "./latexBuildEvidence.ts";
@@ -269,6 +270,8 @@ interface LatexBuildEntry {
 interface LatexEvidenceCacheEntry {
   readonly evidence: LatexBuildEvidence | null;
   readonly marks: LatexEvidenceMarks;
+  /** Paths whose readable-after-unverified transition already caused one rebuild. */
+  readonly reverifiedUnverifiedPaths: ReadonlySet<string>;
 }
 
 interface ResolvedLatexTarget {
@@ -647,7 +650,6 @@ export const make = Effect.gen(function* () {
     readonly workspaceRoot: string;
     readonly rootRelativePath: string;
     readonly compileDirectory: string;
-    readonly toolchainExecutable: string;
     readonly managedToolchain: boolean;
     readonly title: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
@@ -682,7 +684,6 @@ export const make = Effect.gen(function* () {
                   rootRelativePath: input.rootRelativePath,
                   compileDirectory: input.compileDirectory,
                   syncTexPath: input.syncTexPath,
-                  toolchainExecutable: input.toolchainExecutable,
                   managed: input.managedToolchain,
                 })
                 .pipe(
@@ -850,6 +851,7 @@ export const make = Effect.gen(function* () {
       const entry: LatexEvidenceCacheEntry = {
         evidence: source === null ? null : decodeLatexBuildEvidence(source),
         marks: EMPTY_EVIDENCE_MARKS,
+        reverifiedUnverifiedPaths: new Set(),
       };
       yield* Ref.update(evidenceRef, (all) => new Map(all).set(key, entry));
       return entry;
@@ -938,9 +940,22 @@ export const make = Effect.gen(function* () {
           nowEpochMs,
         }),
       );
-      yield* Ref.update(evidenceRef, (all) =>
-        new Map(all).set(input.key, { evidence: collected.evidence, marks: collected.marks }),
-      );
+      yield* Ref.update(evidenceRef, (all) => {
+        const previous = all.get(input.key)?.reverifiedUnverifiedPaths ?? new Set<string>();
+        const stillUnverified = new Set(
+          collected.evidence.dependencies
+            .filter(
+              (dependency) =>
+                dependency.sha256 === UNVERIFIED_FILE_DIGEST && previous.has(dependency.path),
+            )
+            .map((dependency) => dependency.path),
+        );
+        return new Map(all).set(input.key, {
+          evidence: collected.evidence,
+          marks: collected.marks,
+          reverifiedUnverifiedPaths: stillUnverified,
+        });
+      });
       return collected.evidence;
     });
 
@@ -1000,12 +1015,14 @@ export const make = Effect.gen(function* () {
           workspaceRoot: target.workspaceRoot,
           evidence: cached.evidence,
           marks: cached.marks,
+          reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
         }),
       );
       yield* Ref.update(evidenceRef, (all) =>
         new Map(all).set(target.logicalDocumentKey, {
           evidence: cached.evidence,
           marks: probe.marks,
+          reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
         }),
       );
       if (!probe.changed) return true;
@@ -1038,9 +1055,26 @@ export const make = Effect.gen(function* () {
           new Map(all).set(target.logicalDocumentKey, {
             evidence: cached.evidence,
             marks: recollected.marks,
+            reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
           }),
         );
         return true;
+      }
+      const changedPath = probe.changedPath;
+      if (
+        changedPath !== null &&
+        cached.evidence.dependencies.some(
+          (dependency) =>
+            dependency.path === changedPath && dependency.sha256 === UNVERIFIED_FILE_DIGEST,
+        )
+      ) {
+        yield* Ref.update(evidenceRef, (all) =>
+          new Map(all).set(target.logicalDocumentKey, {
+            evidence: cached.evidence,
+            marks: probe.marks,
+            reverifiedUnverifiedPaths: new Set(cached.reverifiedUnverifiedPaths).add(changedPath),
+          }),
+        );
       }
       yield* Effect.logDebug("latex build inputs changed since the published PDF", {
         logicalDocumentKey: target.logicalDocumentKey,
@@ -1332,7 +1366,6 @@ export const make = Effect.gen(function* () {
           workspaceRoot: entry.workspaceRoot,
           rootRelativePath: entry.rootRelativePath,
           compileDirectory,
-          toolchainExecutable,
           managedToolchain: managedBinDirectory !== null,
           title: documentTitle(entry.rootRelativePath),
           diagnostics,

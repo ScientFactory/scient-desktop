@@ -245,7 +245,10 @@ its own, and the content hash is read only where size and mtime together leave
 the question open. `LatexEvidenceMark` is the memory that makes it stable — the
 size and mtime last _verified_ to match the recorded digest — so a formatter or
 a checkout that rewrites a file with identical bytes costs one hash and then
-stops costing anything. An mtime alone never forces a rebuild. On a mismatch the
+stops costing anything. The first probe after a server restart has no marks, so
+it streams and hashes every recorded dependency once before the cheap stat path
+is restored; that is a deliberate correctness cost, not uniform poll behavior.
+An mtime alone never forces a rebuild. On a mismatch the
 service triggers the rebuild itself, through the same `startBuild` path a client
 request uses, so it takes the same three-permit admission and the same
 `pendingRerun` coalescing and adds no concurrency; the snapshot then reports an
@@ -257,7 +260,11 @@ Evidence collection records `unverified` rather than `missing` when a present
 dependency is temporarily unreadable. A probe leaves that marker alone while
 the lock or permission failure remains, avoiding a rebuild loop; once the file
 becomes observable, it requests one rebuild so the replacement record contains
-the content identity the prior evidence never established.
+the content identity the prior evidence never established. A per-path in-memory
+marker records that this re-verification rebuild was spent. If post-build
+evidence collection hits the transient lock again, another readable poll does
+not start the same rebuild every 15 seconds; a later evidence record with a real
+digest clears the marker.
 
 Scient saves request rebuilds directly. For writes with no browser event — an
 agent, another editor, or a checkout — an open successful reader asks status at
@@ -606,17 +613,22 @@ Every invocation asks the engine for a SyncTeX index (`-synctex=1` for
 build work directory like any other aux file. A successful publish copies that
 index into an exact-revision navigation directory after the immutable PDF is
 published and before the build reports success. Navigation metadata records the
-workspace/root identity, compile directory, synthetic output name, and the
-matching `synctex` command; managed installs resolve the command beside their
-own `latexmk`, while system installations use `synctex` from their normal PATH.
+workspace/root identity, compile directory, synthetic output name, and whether
+the producing toolchain was managed. It never persists an executable path.
+Managed navigation resolves `synctex` from the current containment-checked
+install on every request, so replacing and cleaning an older TinyTeX tree does
+not strand existing revisions; system installations resolve `synctex` from
+their normal PATH. Schema-version-1 metadata remains readable, but its persisted
+command and bin directory are discarded as untrusted migration input.
 Failure to retain this auxiliary index never invalidates an otherwise valid
 PDF.
 
-Forward search starts on a source-editor double click and asks `synctex view`
+Forward search starts on a Ctrl/Command-double-click in the source editor and
+asks `synctex view`
 for the current successful descriptor's exact artifact/revision. The PDF reader
 converts SyncTeX's top-left big-point coordinates into PDF.js's bottom-left
 coordinate system before scrolling. Inverse search starts on a PDF double
-click, converts the page position back to top-left big points, asks `synctex
+Ctrl/Command-double-click, converts the page position back to top-left big points, asks `synctex
 edit`, confines the returned input to the workspace, and opens it at the
 reported line. Diagnostics with a valid workspace-relative file are buttons
 through the same line-aware open seam. Any revision change invalidates the
@@ -637,8 +649,9 @@ refusal before promotion when that execution fails, and that a second install
 lands beside the first rather than over it), `syncTexOutput.test.ts` (multi-block
 command output, Windows-path colons, forward coordinates, legacy fields, and
 inverse locations), `LatexSyncTex.test.ts` (exact-revision publishing, command
-arguments, source confinement, unavailable stale revisions, and retained-index
-sweeping), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
+arguments, forward and inverse source confinement, current managed-install
+resolution, refusal to execute legacy persisted commands, unavailable stale
+revisions, and retained-index sweeping), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
 shapes, the file/package pairing, and the deliberate `null` for the author's own
 files), `latexPreamble.test.ts` (comment stripping, package and include
 extraction, the bounds, and the paths deliberately not followed),
@@ -724,8 +737,9 @@ release-asset lane. On relevant pull-request changes it runs
 macOS runners; each job downloads the manifest pin, checks byte count and
 SHA-256, expands it with the host path the app relies on, applies POSIX execute
 permissions, starts the real `latexmk`, installs the SyncTeX CLI through the
-distribution's own `tlmgr`, compiles a minimal PDF/index, and exercises both
-forward and inverse navigation against the retained-index layout.
+distribution's own `tlmgr`, compiles a multi-file PDF/index, forward-searches
+into the included child source, and exercises inverse navigation against the
+retained-index layout.
 
 `scient-latex-seams.json` plus `scripts/verify-scient-latex-seams.mjs`
 (`pnpm latex:seams:check`) is the lane seam verifier described under
@@ -751,6 +765,12 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   written per document and never removed, so a workspace whose documents are
   renamed or deleted leaves small orphan files behind. This belongs with the
   build-directory collector above rather than in a second sweep of its own.
+- **SyncTeX artifact garbage collection.** Revision directories are swept when
+  the same artifact publishes again or when a stale revision is requested, but
+  retention can evict an entire artifact that is never opened or rebuilt again.
+  Its `<latexDir>/synctex/<artifact-id>` tree then remains orphaned. Reclaim it
+  with the build/evidence collector above rather than adding another hot-path
+  global scan to each successful publish.
 - **Selectable LaTeX providers.** Discovery currently prefers an existing
   system `latexmk`, falls back to Tectonic, and offers the pinned TinyTeX
   install only when neither is available. A user-facing provider registry and

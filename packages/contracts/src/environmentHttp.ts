@@ -158,6 +158,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_project_initialization_failed",
   "scient_sources_operation_failed",
   "scient_latex_build_failed",
+  "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
   "scient_latex_install_failed",
   "scient_analytics_consent_update_failed",

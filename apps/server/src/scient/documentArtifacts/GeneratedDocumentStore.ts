@@ -42,7 +42,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
-import { ASSET_TOKEN_TTL_MS } from "../../assets/AssetLifetime.ts";
+import { ASSET_TOKEN_TTL_MS } from "./AssetLifetime.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 

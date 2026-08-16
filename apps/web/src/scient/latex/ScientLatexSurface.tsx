@@ -706,7 +706,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             </span>
           )}
           {syncError === null ? null : (
-            <span className="scient-latex-chip scient-latex-chip-error" title={syncError}>
+            <span
+              className="scient-latex-chip scient-latex-chip-error"
+              role="status"
+              aria-live="polite"
+              aria-label={`Navigation unavailable: ${syncError}`}
+              title={syncError}
+            >
               Navigation unavailable
             </span>
           )}
@@ -775,8 +781,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           <div
             ref={editorPaneRef}
             className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
-            title="Double-click a source line to find it in the PDF"
+            title="Ctrl/Command-double-click a source line to find it in the PDF"
             onDoubleClickCapture={(event) => {
+              if (!event.ctrlKey && !event.metaKey) return;
               const line = sourceLineFromPointerEvent(event);
               if (line !== null) handleForwardSync(line);
             }}

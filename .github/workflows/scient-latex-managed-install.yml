@@ -5,7 +5,14 @@ on:
   pull_request:
     paths:
       - ".github/workflows/scient-latex-managed-install.yml"
-      - "apps/server/src/scient/latex/**"
+      - "apps/server/src/scient/latex/TinyTexAssetSmoke.test.ts"
+      - "apps/server/src/scient/latex/tinytexManifest.ts"
+      - "apps/server/src/scient/latex/LatexArchiveUnpacker.ts"
+      - "apps/server/src/scient/latex/LatexManagedToolchain.ts"
+      - "apps/server/src/scient/latex/LatexPackageInstaller.ts"
+      - "apps/server/src/scient/latex/LatexSyncTex.ts"
+      - "apps/server/src/scient/latex/latexCommand.ts"
+      - "apps/server/src/scient/latex/managedLatexInstall.ts"
       - "apps/server/src/processRunner.ts"
       - "packages/shared/src/hostProcess.ts"
 

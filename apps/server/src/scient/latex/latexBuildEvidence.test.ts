@@ -454,6 +454,38 @@ describe("latexBuildEvidence", () => {
       }),
     );
 
+    it.effect("does not loop when a readable unverified dependency already earned a rebuild", () =>
+      Effect.gen(function* () {
+        const locked = yield* collectFake(["sections/intro.tex"]).pipe(
+          Effect.provide(
+            fakeFileSystemLayer({
+              "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
+              "sections/intro.tex": { kind: "locked" },
+            }),
+          ),
+        );
+        const probe = yield* probeLatexEvidence({
+          workspaceRoot: FAKE_WORKSPACE_ROOT,
+          evidence: locked.evidence,
+          marks: locked.marks,
+          // The prior readable transition already caused the one rebuild that
+          // was allowed to replace this unverified record. Evidence collection
+          // hit the transient lock again, so another poll must stop here.
+          reverifiedUnverifiedPaths: new Set(["sections/intro.tex"]),
+        }).pipe(
+          Effect.provide(
+            fakeFileSystemLayer({
+              "main.tex": { kind: "file", contents: "\\documentclass{a}\n" },
+              "sections/intro.tex": { kind: "file", contents: "readable again\n" },
+            }),
+          ),
+        );
+
+        expect(probe.changed).toBe(false);
+        expect(probe.changedPath).toBeNull();
+      }),
+    );
+
     it.effect("does not call a locked dependency changed on a probe", () =>
       Effect.gen(function* () {
         const collected = yield* collectFake(["sections/intro.tex"]).pipe(

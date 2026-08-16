@@ -520,10 +520,10 @@ function LoadedScientPdfReader(props: {
             title={
               props.syncNavigation === undefined
                 ? undefined
-                : "Double-click the PDF to open the matching source line"
+                : "Ctrl/Command-double-click the PDF to open the matching source line"
             }
             onDoubleClick={(event) => {
-              if (props.syncNavigation === undefined) return;
+              if (props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)) return;
               const pageElement = (event.target as Element).closest<HTMLElement>(
                 ".page[data-page-number]",
               );

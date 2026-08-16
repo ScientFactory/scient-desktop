@@ -18,7 +18,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { ASSET_TOKEN_TTL_MS } from "../../assets/AssetLifetime.ts";
+import { ASSET_TOKEN_TTL_MS } from "./AssetLifetime.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {

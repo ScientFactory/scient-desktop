@@ -85,7 +85,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
         handle(
           args.endpoint.name,
           AuthOrchestrationReadScope,
-          "scient_latex_build_failed",
+          "scient_latex_navigation_failed",
           syncTex.forward(args.payload),
         ),
       )
@@ -93,7 +93,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
         handle(
           args.endpoint.name,
           AuthOrchestrationReadScope,
-          "scient_latex_build_failed",
+          "scient_latex_navigation_failed",
           syncTex.inverse(args.payload),
         ),
       )

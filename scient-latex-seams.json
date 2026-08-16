@@ -25,6 +25,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/assets/AssetAccess.ts",
+      "anchor": "generatedDocumentExpiresAtEpochMs",
+      "purpose": "Issue generated-document asset capabilities for exactly the durable lease lifetime returned by the Scient-owned document store."
+    },
+    {
       "path": "apps/server/src/auth/RpcAuthorization.ts",
       "anchor": "subscribeDocumentBindingChanges",
       "purpose": "Authorize the producer-neutral document-binding subscription as a read operation."

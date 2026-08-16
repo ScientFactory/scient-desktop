@@ -2,12 +2,14 @@
 import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -20,6 +22,21 @@ import {
   type ResolvedGeneratedDocumentRevision,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { LatexSyncTex, make as makeSyncTex } from "./LatexSyncTex.ts";
+import { encodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
+import { resolveTinyTexAsset, TinyTexManifestRef } from "./tinytexManifest.ts";
+
+const LegacyNavigationMetadataJson = Schema.fromJsonString(
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    workspaceRoot: Schema.String,
+    rootRelativePath: Schema.String,
+    compileDirectory: Schema.String,
+    outputFileName: Schema.String,
+    command: Schema.String,
+    binDirectory: Schema.NullOr(Schema.String),
+  }),
+);
+const encodeLegacyNavigationMetadata = Schema.encodeSync(LegacyNavigationMetadataJson);
 
 const environmentId = EnvironmentId.make("environment-latex-synctex-test");
 const artifactId = ArtifactId.make("artifact-latex-synctex-test");
@@ -48,15 +65,17 @@ const makeHarness = Effect.gen(function* () {
   const baseDir = yield* fileSystem.makeTempDirectoryScoped({
     prefix: "scient-latex-synctex-state-",
   });
-  const compileDirectory = path.join(baseDir, "compile");
+  const compileDirectory = workspaceRoot;
+  const buildDirectory = path.join(baseDir, "compile");
   yield* fileSystem.makeDirectory(path.join(workspaceRoot, "chapters"), { recursive: true });
-  yield* fileSystem.makeDirectory(compileDirectory, { recursive: true });
+  yield* fileSystem.makeDirectory(buildDirectory, { recursive: true });
   const bodyPath = path.join(workspaceRoot, "chapters", "body.tex");
   yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), "\\input{chapters/body}");
   yield* fileSystem.writeFileString(bodyPath, "Body");
 
   const liveRevisions = yield* Ref.make(new Set<string>([revisionKey(firstRevisionId)]));
   const invocations = yield* Ref.make<ReadonlyArray<ProcessRunner.ProcessRunInput>>([]);
+  const inverseInputPath = yield* Ref.make(bodyPath);
   const resolvedRevision = {
     artifact: {},
     path: path.join(baseDir, "unused.pdf"),
@@ -92,23 +111,22 @@ const makeHarness = Effect.gen(function* () {
   });
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
-      Ref.update(invocations, (previous) => [...previous, input]).pipe(
-        Effect.as(
-          input.args[0] === "view"
-            ? processOutput(`SyncTeX result begin
+      Effect.gen(function* () {
+        yield* Ref.update(invocations, (previous) => [...previous, input]);
+        return input.args[0] === "view"
+          ? processOutput(`SyncTeX result begin
 Page:2
 h:18
 v:72
 W:9
 H:12
 SyncTeX result end`)
-            : processOutput(`SyncTeX result begin
-Input:${bodyPath}
+          : processOutput(`SyncTeX result begin
+Input:${yield* Ref.get(inverseInputPath)}
 Line:17
 Column:4
-SyncTeX result end`),
-        ),
-      ),
+SyncTeX result end`);
+      }),
   });
   const serverEnvironment = ServerEnvironment.ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
@@ -122,9 +140,9 @@ SyncTeX result end`),
     Layer.provideMerge(NodeServices.layer),
   );
 
-  const publish = (revisionId: ArtifactRevisionId) =>
+  const publish = (revisionId: ArtifactRevisionId, managed = false) =>
     Effect.gen(function* () {
-      const syncTexPath = path.join(compileDirectory, `main-${revisionId}.synctex.gz`);
+      const syncTexPath = path.join(buildDirectory, `main-${revisionId}.synctex.gz`);
       yield* fileSystem.writeFileString(syncTexPath, `index for ${revisionId}`);
       const service = yield* LatexSyncTex;
       yield* service.publishIndex({
@@ -134,10 +152,42 @@ SyncTeX result end`),
         rootRelativePath: "main.tex",
         compileDirectory,
         syncTexPath,
-        toolchainExecutable: "latexmk",
-        managed: false,
+        managed,
       });
     }).pipe(Effect.provide(serviceLayer));
+
+  const navigationDirectory = (revisionId: ArtifactRevisionId) =>
+    path.join(baseDir, "userdata", "latex", "synctex", artifactId, revisionId);
+
+  const setManagedInstall = (name: string) =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const architecture = yield* HostProcessArchitecture;
+      const manifest = yield* TinyTexManifestRef;
+      const lookup = resolveTinyTexAsset(platform, architecture, manifest);
+      expect(lookup.supported).toBe(true);
+      if (!lookup.supported) return null;
+      const latexDir = path.join(baseDir, "userdata", "latex");
+      const paths = managedLatexPaths({ latexDir, join: (...segments) => path.join(...segments) });
+      const root = path.join(paths.managedRoot, name);
+      const executable = path.join(root, lookup.asset.executableRelativePath);
+      const binDirectory = path.dirname(executable);
+      const syncTexExecutable = path.join(
+        binDirectory,
+        platform === "win32" ? "synctex.exe" : "synctex",
+      );
+      yield* fileSystem.makeDirectory(binDirectory, { recursive: true });
+      yield* fileSystem.writeFile(executable, new Uint8Array());
+      yield* fileSystem.writeFile(syncTexExecutable, new Uint8Array());
+      const state = yield* encodeManagedLatexInstallRecord({
+        schemaVersion: 1,
+        version: "test",
+        installedAtEpochMs: 1,
+        root,
+      });
+      yield* fileSystem.writeFileString(paths.statePath, `${state}\n`);
+      return { binDirectory, root, syncTexExecutable };
+    });
 
   return {
     workspaceRoot,
@@ -146,8 +196,11 @@ SyncTeX result end`),
     baseDir,
     liveRevisions,
     invocations,
+    inverseInputPath,
     serviceLayer,
     publish,
+    navigationDirectory,
+    setManagedInstall,
   };
 });
 
@@ -243,6 +296,91 @@ describe("LatexSyncTex", () => {
           path.join(harness.baseDir, "userdata", "latex", "synctex", artifactId, firstRevisionId),
         ),
       ).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("confines forward and inverse source paths to the workspace", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+
+      const forward = yield* service.forward({
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        sourceRelativePath: "../outside.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+        line: 1,
+      });
+      expect(forward).toMatchObject({ _tag: "unavailable", reason: "invalid-source" });
+      expect(yield* Ref.get(harness.invocations)).toHaveLength(0);
+
+      yield* Ref.set(harness.inverseInputPath, path.join(harness.baseDir, "outside.tex"));
+      const inverse = yield* service.inverse({
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+        page: 2,
+        x: 18,
+        y: 72,
+      });
+      expect(inverse).toMatchObject({ _tag: "unavailable", reason: "invalid-source" });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("resolves the current contained managed install and ignores legacy command paths", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness;
+      const superseded = yield* harness.setManagedInstall("tinytex-superseded");
+      expect(superseded).not.toBeNull();
+      yield* harness.publish(firstRevisionId, true);
+      const current = yield* harness.setManagedInstall("tinytex-current");
+      expect(current).not.toBeNull();
+      if (current === null || superseded === null) return;
+      yield* fileSystem.remove(superseded.root, { recursive: true });
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+
+      yield* service.forward({
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        sourceRelativePath: "chapters/body.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+        line: 17,
+      });
+      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe(current.syncTexExecutable);
+
+      // Version 1 persisted an executable and bin directory. Treat both as
+      // untrusted migration input: only their managed/system provenance may
+      // survive, and the current contained install still supplies the command.
+      const navigationDirectory = harness.navigationDirectory(firstRevisionId);
+      const outputFileName = "main-revision-latex-synctex-first.pdf";
+      yield* fileSystem.writeFileString(
+        path.join(navigationDirectory, "navigation.json"),
+        `${encodeLegacyNavigationMetadata({
+          schemaVersion: 1,
+          workspaceRoot: harness.workspaceRoot,
+          rootRelativePath: "main.tex",
+          compileDirectory: harness.compileDirectory,
+          outputFileName,
+          command: path.join(harness.baseDir, "outside", "synctex"),
+          binDirectory: path.join(harness.baseDir, "outside"),
+        })}\n`,
+      );
+      yield* service.forward({
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        sourceRelativePath: "chapters/body.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+        line: 17,
+      });
+      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe(current.syncTexExecutable);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

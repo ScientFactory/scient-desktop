@@ -125,10 +125,14 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         await NodeFSP.mkdir(outputDirectory, { recursive: true });
         await NodeFSP.mkdir(navigationDirectory, { recursive: true });
         const sourcePath = NodePath.join(workspace, "main.tex");
+        const chapterDirectory = NodePath.join(workspace, "chapters");
+        const bodyPath = NodePath.join(chapterDirectory, "body.tex");
+        await NodeFSP.mkdir(chapterDirectory, { recursive: true });
         await NodeFSP.writeFile(
           sourcePath,
-          "\\documentclass{article}\n\\begin{document}\nHello Scient.\n\\end{document}\n",
+          "\\documentclass{article}\n\\begin{document}\n\\input{chapters/body}\n\\end{document}\n",
         );
+        await NodeFSP.writeFile(bodyPath, "First line.\nSecond line.\nHello Scient.\n");
         const compiled = NodeChildProcess.spawnSync(
           executable,
           [
@@ -166,7 +170,7 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         );
         const forward = NodeChildProcess.spawnSync(
           syncTexExecutable,
-          ["view", "-i", `3:0:${sourcePath}`, "-o", outputMarker, "-d", navigationDirectory],
+          ["view", "-i", `3:0:${bodyPath}`, "-o", outputMarker, "-d", navigationDirectory],
           { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000, env: engineEnvironment },
         );
         expect(forward.error).toBeUndefined();
@@ -187,7 +191,8 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         expect(inverse.error).toBeUndefined();
         expect(inverse.status, inverse.stderr || inverse.stdout).toBe(0);
         expect(inverse.stdout).toMatch(/SyncTeX result begin/iu);
-        expect(inverse.stdout).toMatch(/^Line:3$/imu);
+        expect(inverse.stdout).toMatch(/^Input:.*chapters[\\/]body\.tex$/imu);
+        expect(inverse.stdout).toMatch(/^Line:[1-9][0-9]*$/imu);
       } finally {
         await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
       }

@@ -56,7 +56,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import type { ResolvedGeneratedDocumentRevision } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "../scient/analysis/LocalAnalysisStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { ASSET_TOKEN_TTL_MS } from "./AssetLifetime.ts";
+import { ASSET_TOKEN_TTL_MS } from "../scient/documentArtifacts/AssetLifetime.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
