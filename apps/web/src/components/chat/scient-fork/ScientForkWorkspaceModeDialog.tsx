@@ -5,7 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
-import { GitForkIcon } from "lucide-react";
+import { SplitIcon } from "lucide-react";
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useEnvironmentThreadShells } from "../../../state/entities";
@@ -212,7 +212,7 @@ export function ScientForkWorkspaceModeDialog({
       <DialogPopup className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <GitForkIcon className="size-4" />
+            <SplitIcon className="size-4 rotate-90" />
             {copy.title}
           </DialogTitle>
           <DialogDescription>{copy.description}</DialogDescription>
