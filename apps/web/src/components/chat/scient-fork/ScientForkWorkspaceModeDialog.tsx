@@ -209,16 +209,16 @@ export function ScientForkWorkspaceModeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup className="max-w-sm">
-        <DialogHeader>
+      <DialogPopup className="max-w-[22rem]">
+        <DialogHeader className="gap-1.5 p-5 pe-12 max-sm:p-4">
           <DialogTitle className="flex items-center gap-2">
             <SplitIcon className="size-4 rotate-90" />
             {copy.title}
           </DialogTitle>
           <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
-        <DialogPanel>
-          <form id={formId} className="grid gap-4" onSubmit={handleSubmit}>
+        <DialogPanel className="p-5 max-sm:p-4">
+          <form id={formId} className="grid gap-3" onSubmit={handleSubmit}>
             <div className="grid gap-1.5">
               <Label htmlFor={`${formId}-title`}>Thread title</Label>
               <Input
@@ -261,7 +261,7 @@ export function ScientForkWorkspaceModeDialog({
             </label>
           </form>
         </DialogPanel>
-        <DialogFooter variant="bare">
+        <DialogFooter className="px-5 py-3 max-sm:px-4" variant="bare">
           <Button
             type="button"
             variant="ghost"
