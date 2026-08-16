@@ -1031,6 +1031,9 @@ export const ThreadForkCommand = Schema.Struct({
   sourceAssistantMessageId: Schema.optional(MessageId),
   sourceUserMessageId: Schema.optional(MessageId),
   workspaceMode: OrchestrationForkWorkspaceMode,
+  // Explicit destination title chosen by the user. When absent, the server
+  // allocates the automatic collision-safe title at commit time.
+  titleOverride: Schema.optional(TrimmedNonEmptyString),
 }).check(
   Schema.makeFilter(
     (command) =>

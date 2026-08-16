@@ -184,6 +184,7 @@ describe("environment commands", () => {
         newThreadId: ThreadId.make("thread-fork"),
         sourceAssistantMessageId: MessageId.make("assistant-3"),
         workspaceMode: "new-worktree",
+        titleOverride: "Deliberate fork title",
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(dispatched).toEqual([
@@ -194,6 +195,7 @@ describe("environment commands", () => {
           newThreadId: "thread-fork",
           sourceAssistantMessageId: "assistant-3",
           workspaceMode: "new-worktree",
+          titleOverride: "Deliberate fork title",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

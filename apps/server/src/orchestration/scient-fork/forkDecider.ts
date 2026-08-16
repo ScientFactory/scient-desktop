@@ -39,6 +39,7 @@ import {
   type ThreadForkCommand,
   type ThreadForkedPayload,
 } from "@t3tools/contracts";
+import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -174,41 +175,6 @@ function commandForkPoint(command: ThreadForkCommand): ResolvedForkBoundaries["f
     : { kind: "user-message", messageId: command.sourceUserMessageId! };
 }
 
-function deriveForkTitle(
-  origin: OrchestrationThread,
-  readModel: OrchestrationReadModel,
-  resolvedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
-): string {
-  // Title numbering may consult server-resolved boundaries plus the durable
-  // narrow lineage marker. Client-shaped conversationForkBoundaries are never
-  // authority for production naming.
-  const isForkedOrigin =
-    resolvedBoundaries.some(isForkBaselineBoundary) || origin.forkLineage != null;
-  const sameProjectThreads = readModel.threads.filter(
-    (thread) => thread.projectId === origin.projectId,
-  );
-  const siblingTitles = new Set(sameProjectThreads.map((thread) => thread.title));
-  const suffixMatch = origin.title.match(/^(.*)\s+\(\d+\)$/);
-  const candidateBaseTitle = suffixMatch?.[1]?.trim() ?? null;
-  // A numeric suffix is generated fork numbering only when the unsuffixed
-  // title exists as a same-project sibling. This preserves meaningful titles
-  // such as "Conversation (111)" and renamed forks such as "Experiment (2024)".
-  const hasVerifiedForkSuffix =
-    isForkedOrigin &&
-    candidateBaseTitle !== null &&
-    sameProjectThreads.some(
-      (thread) => thread.id !== origin.id && thread.title === candidateBaseTitle,
-    );
-  const baseTitle = (hasVerifiedForkSuffix ? candidateBaseTitle : origin.title).trim() || "Fork";
-  for (let suffix = 2; suffix <= 10_000; suffix += 1) {
-    const candidate = `${baseTitle} (${suffix})`;
-    if (!siblingTitles.has(candidate)) {
-      return candidate;
-    }
-  }
-  return `${baseTitle} (${origin.id.slice(-8)})`;
-}
-
 /**
  * Decide a `thread.fork` command into the events that seed the new thread.
  * Emits, in order: `thread.created` (new aggregate) → re-emitted prefix
@@ -306,7 +272,17 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `User message '${forkPoint.messageId}' is not an available durable request of origin thread '${command.originThreadId}'.`,
     );
   }
-  const forkTitle = deriveForkTitle(origin, readModel, conversationBoundaries);
+  // An explicit title is user authorship, not authority over the fork
+  // boundary. Without one, the server remains the collision authority and
+  // allocates the automatic title from its current read model.
+  const forkTitle =
+    command.titleOverride ??
+    deriveForkTitle({
+      origin,
+      originHasForkLineage:
+        conversationBoundaries.some(isForkBaselineBoundary) || origin.forkLineage != null,
+      projectThreads: readModel.threads.filter((thread) => thread.projectId === origin.projectId),
+    });
 
   const selectedBoundaryIndex = conversationBoundaries.indexOf(selectedBoundary);
   const retainedBoundaries = conversationBoundaries.slice(0, selectedBoundaryIndex + 1);
@@ -379,9 +355,8 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       // project row to recover it from. Preserve that root across a fork so the
       // new conversation remains runnable in the same environment.
       workspaceRoot: origin.projectId === null ? (origin.workspaceRoot ?? null) : null,
-      // Fork titles are server-owned so every entry point gets the same
-      // collision-safe numbering. A caller-provided title would otherwise
-      // silently bypass the fork naming convention.
+      // Resolved above: an explicit user title, or server-allocated automatic
+      // numbering when the command omits an override.
       title: forkTitle,
       modelSelection: origin.modelSelection,
       runtimeMode: origin.runtimeMode,

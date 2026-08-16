@@ -402,6 +402,31 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("uses an explicit title override without changing the resolved boundary", () =>
+    Effect.gen(function* () {
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ titleOverride: "Deliberate fork title" }),
+        readModel: {
+          ...makeReadModel(),
+          threads: [
+            makeOriginThread(),
+            makeOriginThread({
+              id: ThreadId.make("existing-fork"),
+              title: "Deliberate fork title",
+            }),
+          ],
+        },
+      });
+      const created = events[0];
+      expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
+        "Deliberate fork title",
+      );
+      const forked = events.find((event) => event.type === "thread.forked");
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(T2);
+      expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(2);
+    }),
+  );
+
   it.effect("preserves meaningful numeric parentheticals in source titles", () =>
     Effect.gen(function* () {
       const events = yield* forkThreadForTest({
@@ -1186,8 +1211,8 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
   it.effect("ignores extra fields in the command payload (narrow public input)", () =>
     Effect.gen(function* () {
       // The command schema is Schema.Struct (not strict), so extra keys
-      // survive decoding but the decider reads only the four public fields
-      // plus type/commandId. Inject extra boundary data that must NOT
+      // survive decoding but the decider reads only declared public fields.
+      // Inject extra boundary data that must NOT
       // influence the fork point.
       const commandWithExtra = {
         ...forkCommand({ sourceAssistantMessageId: A2 }),
@@ -1220,7 +1245,8 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnId : null).toBe(T2);
       expect(forked?.type === "thread.forked" ? forked.payload.forkAtTurnCount : null).toBe(2);
 
-      // The caller-provided title was ignored in favor of the server-owned title.
+      // An undeclared `title` field is still ignored. Only the contract's
+      // explicit `titleOverride` field can select a destination title.
       const created = events[0];
       expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
         "Origin conversation (2)",

@@ -156,7 +156,10 @@ export function useScientThreadFork({
             readonly prompt: string;
             readonly attachments: ReadonlyArray<ChatAttachment>;
           },
-      workspaceMode: "new-worktree" | "local",
+      options: {
+        readonly workspaceMode: "new-worktree" | "local";
+        readonly titleOverride?: string;
+      },
       originWorkspaceRoot: string | undefined,
     ) => {
       if (!origin || inFlightRef.current) return;
@@ -184,7 +187,10 @@ export function useScientThreadFork({
             ...(source.kind === "assistant-response"
               ? { sourceAssistantMessageId: source.messageId }
               : { sourceUserMessageId: source.messageId }),
-            workspaceMode,
+            workspaceMode: options.workspaceMode,
+            ...(options.titleOverride === undefined
+              ? {}
+              : { titleOverride: options.titleOverride }),
           },
         });
         if (result._tag === "Failure") {
