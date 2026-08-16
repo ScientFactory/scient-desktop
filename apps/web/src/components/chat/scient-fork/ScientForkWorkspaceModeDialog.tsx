@@ -210,7 +210,7 @@ export function ScientForkWorkspaceModeDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup
-        className="max-w-[23rem] -translate-y-1.5"
+        className="max-w-[23rem] -translate-y-2"
         backdropClassName="!backdrop-blur-[0.5px]"
       >
         <DialogHeader className="gap-1.5 p-5 pe-12 max-sm:p-4">
