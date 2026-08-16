@@ -1,5 +1,5 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
-import { isWindowsPlatform } from "../lib/utils";
+import { isWindowsPlatform } from "~/lib/utils";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -97,9 +97,9 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
 
 export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
-  platform = "",
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
+  const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const windowsInstallWarning = isWindowsPlatform(platform)
     ? "\n\nOn Windows, Scient may remain closed for several minutes while the update installs, and no installer window may appear. Scient will reopen automatically when installation finishes."
     : "";

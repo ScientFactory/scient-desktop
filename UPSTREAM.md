@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260815-6ae9662d8e.md`](docs/internals/t3-upstream-sync-20260815-6ae9662d8e.md)
+[`docs/internals/t3-upstream-sync-20260816-bab4b6f02b.md`](docs/internals/t3-upstream-sync-20260816-bab4b6f02b.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `6ae9662d8ed215476e697adc12403ce035500828` into the refresh
+checkpoint `bab4b6f02b8bdaf15fd32636a97f69ff657cec50` into the refresh
 branch, preserving the next clean commit after the previously integrated tip
-`8c628f14993cb159d467e7a0f8c52578dde77005`. Later observed T3
+`6ae9662d8ed215476e697adc12403ce035500828`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -165,6 +165,15 @@ theme-token specificity fix. Selected appearance themes again override the
 generated root dark defaults. The merge was conflict-free; Scient typography,
 stage artwork, and the rest of the inherited stylesheet remain unchanged. No
 Scient-owned package under `apps/web/src/scient` changed.
+
+The 2026-08-16 sync through `bab4b6f02b` receives 98 official commits covering
+workspace-wide file drops, Markdown/file-link handling, command-palette and
+sidebar refinements, preview and desktop interaction fixes, mobile themes,
+provider and SQLite reliability, and resilient SSH startup. Twenty-seven
+textual conflicts retained Scient identity/state/release safeguards, Quick Chat
+and durable-fork routing, generated-image and static-analysis artifacts, and
+disabled mobile publication while preserving the corresponding generic T3
+behavior. The exact merge record documents each protected boundary.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this

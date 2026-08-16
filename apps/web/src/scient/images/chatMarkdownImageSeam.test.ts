@@ -24,7 +24,7 @@ describe("ChatMarkdown workspace-image seam", () => {
     expect(chatMarkdownSource).toContain("resolveInlineWorkspaceImage({ alt, cwd, src })");
     expect(chatMarkdownSource).toContain('reason={isStreaming ? "streaming" : "unavailable"}');
     expect(chatMarkdownSource).toContain(
-      '<img {...props} alt={alt} decoding="async" loading="lazy" src={src} title={title} />',
+      '<img {...props} alt={alt} decoding="async" loading="lazy" src={src} />',
     );
   });
 

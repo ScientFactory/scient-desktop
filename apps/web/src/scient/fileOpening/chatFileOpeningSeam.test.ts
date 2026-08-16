@@ -22,8 +22,9 @@ const htmlPreviewSource = NodeFS.readFileSync(
 
 describe("universal chat-file opening seam", () => {
   it("keeps workspace files on the inherited file surface and sends other files to Scient", () => {
+    expect(chatMarkdownSource).toContain("onOpenInPanel(workspaceRelativePath, line);");
     expect(chatMarkdownSource).toContain(
-      "useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line);",
+      "useRightPanelStore.getState().openFile(threadRef, path, line);",
     );
     expect(chatMarkdownSource).toContain("scientEnvironmentFileSurface({ path: filePath");
     expect(chatMarkdownSource).not.toContain("if (!threadRef || !workspaceRelativePath)");
