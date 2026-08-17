@@ -10,6 +10,7 @@
 import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -20,7 +21,10 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import { layer as storeLayer } from "../documentArtifacts/GeneratedDocumentStore.ts";
+import {
+  GeneratedDocumentStore,
+  layer as storeLayer,
+} from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import {
   LatexBuildService,
@@ -100,24 +104,22 @@ const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildI
     return yield* service.status(input);
   });
 
-/** Every `.pdf` the engine left in this run's work directory. */
-const producedPdfNames = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const config = yield* ServerConfig.ServerConfig;
-  const buildsDirectory = path.join(config.latexDir, "builds");
-  const digests = yield* fileSystem
-    .readDirectory(buildsDirectory)
-    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-  const listings = yield* Effect.all(
-    digests.map((digest) =>
-      fileSystem
-        .readDirectory(path.join(buildsDirectory, digest))
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>)),
-    ),
-  );
-  return listings.flat().filter((name) => name.toLowerCase().endsWith(".pdf"));
-});
+const expectPublishedPdf = (
+  store: GeneratedDocumentStore["Service"],
+  descriptor: PdfSourceDescriptor | null,
+) =>
+  Effect.gen(function* () {
+    if (descriptor?._tag !== "generated-pdf") {
+      return yield* Effect.die("expected a published generated PDF");
+    }
+    const published = yield* store.resolveRevision({
+      authority: descriptor.authority,
+      artifactId: descriptor.artifactId,
+      revisionId: descriptor.revisionId,
+    });
+    expect(published.fileName).toBe("main.pdf");
+    expect(published.revision.size).toBeGreaterThan(0);
+  });
 
 describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine", () => {
   it.live(
@@ -130,6 +132,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
         });
         yield* Effect.gen(function* () {
           const service = yield* LatexBuildService;
+          const store = yield* GeneratedDocumentStore;
           const input: LatexBuildInput = {
             workspaceRoot: harness.workspaceRoot,
             relativePath: "main.tex",
@@ -145,7 +148,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
             bindingStatus: "current",
             fileName: "main.pdf",
           });
-          expect(yield* producedPdfNames).toContain("main.pdf");
+          yield* expectPublishedPdf(store, finished.descriptor);
         }).pipe(Effect.provide(harness.serviceLayer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     COMPILE_TIMEOUT_MS,
@@ -171,6 +174,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
         });
         yield* Effect.gen(function* () {
           const service = yield* LatexBuildService;
+          const store = yield* GeneratedDocumentStore;
           const input: LatexBuildInput = {
             workspaceRoot: harness.workspaceRoot,
             relativePath: "paper/main.tex",
@@ -182,7 +186,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           expect(finished.state).toBe("succeeded");
           expect(finished.diagnostics).toEqual([]);
           expect(finished.rootRelativePath).toBe("paper/main.tex");
-          expect(yield* producedPdfNames).toContain("main.pdf");
+          yield* expectPublishedPdf(store, finished.descriptor);
         }).pipe(Effect.provide(harness.serviceLayer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     COMPILE_TIMEOUT_MS,
