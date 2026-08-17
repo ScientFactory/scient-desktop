@@ -3,6 +3,7 @@ import { BookOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { readScientSourceJournalIcon } from "./client";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type JournalIcon = Awaited<ReturnType<typeof readScientSourceJournalIcon>>;
@@ -76,11 +77,10 @@ export function SourceJournalIcon(props: {
     shouldResolve,
   ]);
 
-  return (
+  const journalIcon = (
     <span
       ref={containerRef}
       className="mt-0.5 flex size-4 shrink-0 items-center justify-center"
-      title={icon && !imageFailed ? icon.journalTitle : undefined}
       aria-hidden
     >
       {icon && !imageFailed ? (
@@ -96,6 +96,12 @@ export function SourceJournalIcon(props: {
         <BookOpen className="size-4" data-testid="source-generic-icon" />
       )}
     </span>
+  );
+
+  return icon && !imageFailed ? (
+    <ScientTooltip content={icon.journalTitle}>{journalIcon}</ScientTooltip>
+  ) : (
+    journalIcon
   );
 }
 

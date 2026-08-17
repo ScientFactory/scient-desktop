@@ -39,6 +39,7 @@ import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { SourceReference } from "./SourceReference";
 import { useSourceNoteControls } from "./SourceNote";
@@ -710,18 +711,15 @@ export function SourceDetails(props: {
           </Button>
         ) : null}
         <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="More source actions"
-                title="More source actions"
-              >
-                <MoreHorizontal />
-              </Button>
-            }
-          />
+          <ScientTooltip content="More source actions">
+            <MenuTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label="More source actions">
+                  <MoreHorizontal />
+                </Button>
+              }
+            />
+          </ScientTooltip>
           <MenuPopup align="end" side="bottom" className="min-w-44">
             <MenuItem
               onClick={(event) => {

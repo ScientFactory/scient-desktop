@@ -1,6 +1,7 @@
 import type { ProviderRuntimeDiagnostics, ServerProvider } from "@t3tools/contracts";
 
 import { Button } from "../../components/ui/button";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 function runtimeSourceTitle(source: ServerProvider["connection"]): string {
   const value = source?.runtime?.source;
@@ -55,19 +56,17 @@ export function CodexRuntimeDiagnosticsDetails(props: {
           <dt className="text-muted-foreground">Server backend</dt>
           <dd className="min-w-0 truncate text-right text-foreground">{diagnostics.backend}</dd>
           <dt className="text-muted-foreground">Server Codex home</dt>
-          <dd
-            className="min-w-0 truncate text-right text-foreground"
-            title={diagnostics.homePath ?? "Default"}
-          >
-            {diagnostics.homePath ?? "Default"}
-          </dd>
+          <ScientTooltip content={diagnostics.homePath ?? "Default"}>
+            <dd className="min-w-0 truncate text-right text-foreground">
+              {diagnostics.homePath ?? "Default"}
+            </dd>
+          </ScientTooltip>
           <dt className="text-muted-foreground">Server executable</dt>
-          <dd
-            className="min-w-0 truncate text-right font-mono text-foreground"
-            title={diagnostics.executable}
-          >
-            {diagnostics.executable}
-          </dd>
+          <ScientTooltip content={diagnostics.executable}>
+            <dd className="min-w-0 truncate text-right font-mono text-foreground">
+              {diagnostics.executable}
+            </dd>
+          </ScientTooltip>
         </dl>
         {props.onUseManaged ? (
           <div className="space-y-1.5">

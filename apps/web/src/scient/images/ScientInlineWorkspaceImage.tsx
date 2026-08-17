@@ -24,6 +24,7 @@ import {
 } from "~/components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -80,13 +81,14 @@ export function ScientPendingWorkspaceImage(props: {
           ? "Image preview will appear when this response finishes."
           : "Image preview is unavailable without an active workspace."}
       </span>
-      <span
-        className="block truncate border-t border-border/50 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] text-muted-foreground"
-        dir="auto"
-        title={props.image.displayPath}
-      >
-        {props.image.displayPath}
-      </span>
+      <ScientTooltip content={props.image.displayPath}>
+        <span
+          className="block truncate border-t border-border/50 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] text-muted-foreground"
+          dir="auto"
+        >
+          {props.image.displayPath}
+        </span>
+      </ScientTooltip>
     </span>
   );
 }
@@ -533,13 +535,14 @@ export function ScientInlineWorkspaceImage(props: {
         ) : null}
       </span>
 
-      <span
-        className="block truncate border-t border-border/50 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] text-muted-foreground"
-        dir="auto"
-        title={props.image.displayPath}
-      >
-        {props.image.displayPath}
-      </span>
+      <ScientTooltip content={props.image.displayPath}>
+        <span
+          className="block truncate border-t border-border/50 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] text-muted-foreground"
+          dir="auto"
+        >
+          {props.image.displayPath}
+        </span>
+      </ScientTooltip>
 
       {url != null ? (
         <InlineImageDialog

@@ -28,6 +28,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface DraftHeroHeadlineProps {
   readonly activeProjectRef: DraftThreadTargetRef | null;
@@ -120,13 +121,23 @@ export function DraftHeroHeadline({
 
   const projectSelector = shouldShowProjectMenu ? (
     <Menu>
-      <MenuTrigger
-        aria-label={hasResolvedProject ? "Change workspace" : "Choose a workspace"}
-        className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-        title={activeProjectDisplayName ?? undefined}
-      >
-        {activeProjectDisplayName ?? "Choose a workspace"}
-      </MenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              aria-label={hasResolvedProject ? "Change workspace" : "Choose a workspace"}
+              className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          }
+        >
+          {activeProjectDisplayName ?? "Choose a workspace"}
+        </TooltipTrigger>
+        {activeProjectDisplayName ? (
+          <TooltipPopup side="top" className="max-w-80">
+            {activeProjectDisplayName}
+          </TooltipPopup>
+        ) : null}
+      </Tooltip>
       <MenuPopup align="center" className="max-h-80 min-w-40! w-max max-w-64 overflow-y-auto">
         <MenuRadioGroup
           value={activeProjectKey}
@@ -147,9 +158,14 @@ export function DraftHeroHeadline({
           {projectPickerEntries.map(({ group }) => {
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
-                <span className="block min-w-0 truncate" title={group.displayName}>
-                  {group.displayName}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
+                    {group.displayName}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top" className="max-w-80">
+                    {group.displayName}
+                  </TooltipPopup>
+                </Tooltip>
               </MenuRadioItem>
             );
           })}

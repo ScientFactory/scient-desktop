@@ -210,6 +210,10 @@ describe("ServerSettings worktree defaults", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
 
+  it("withholds agent browser access for legacy configs", () => {
+    expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(false);
+  });
+
   it("accepts start-from-origin updates", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,

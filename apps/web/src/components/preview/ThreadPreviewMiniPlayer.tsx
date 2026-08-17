@@ -9,6 +9,7 @@ import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useThreadPreviewState } from "~/previewStateStore";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -380,47 +381,65 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
       >
         <div aria-hidden="true" className="mx-auto h-1 w-8 rounded-full bg-foreground/20" />
         <div className="absolute right-1 top-0.5 flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Open preview in right panel"
-            title="Open in right panel"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={openInPanel}
-          >
-            <PanelRightIcon />
-          </Button>
-          {content.kind === "browser" ? (
-            <Button
-              variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
-              size="icon-xs"
-              aria-label={
-                desktopOverlay?.pictureInPicture
-                  ? "Close popped-out preview"
-                  : "Pop preview into separate window"
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Open preview in right panel"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={openInPanel}
+                />
               }
-              title={
-                desktopOverlay?.pictureInPicture
-                  ? "Close separate window"
-                  : "Pop into separate window"
-              }
-              disabled={!desktopOverlay?.hasWebContents}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={toggleNativePictureInPicture}
             >
-              <PictureInPicture2 />
-            </Button>
+              <PanelRightIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Open in right panel</TooltipPopup>
+          </Tooltip>
+          {content.kind === "browser" ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
+                    size="icon-xs"
+                    aria-label={
+                      desktopOverlay?.pictureInPicture
+                        ? "Close popped-out preview"
+                        : "Pop preview into separate window"
+                    }
+                    disabled={!desktopOverlay?.hasWebContents}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={toggleNativePictureInPicture}
+                  />
+                }
+              >
+                <PictureInPicture2 />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {desktopOverlay?.pictureInPicture
+                  ? "Close separate window"
+                  : "Pop into separate window"}
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Close floating preview"
-            title="Close floating preview"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={close}
-          >
-            <XIcon />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Close floating preview"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={close}
+                />
+              }
+            >
+              <XIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Close floating preview</TooltipPopup>
+          </Tooltip>
         </div>
       </div>
 
@@ -458,17 +477,22 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
           </div>
         ) : null}
         {RESIZE_HANDLES.map((handle) => (
-          <button
-            key={handle.direction}
-            type="button"
-            aria-label={`Resize floating preview from ${handle.label}`}
-            title={`Resize from ${handle.label}`}
-            className={`pointer-events-auto absolute z-[35] touch-none ${handle.className}`}
-            onPointerDown={(event) => handleResizePointerDown(event, handle.direction)}
-            onPointerMove={handleResizePointerMove}
-            onPointerUp={endResize}
-            onPointerCancel={endResize}
-          />
+          <Tooltip key={handle.direction}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`Resize floating preview from ${handle.label}`}
+                  className={`pointer-events-auto absolute z-[35] touch-none ${handle.className}`}
+                  onPointerDown={(event) => handleResizePointerDown(event, handle.direction)}
+                  onPointerMove={handleResizePointerMove}
+                  onPointerUp={endResize}
+                  onPointerCancel={endResize}
+                />
+              }
+            />
+            <TooltipPopup side="top">Resize from {handle.label}</TooltipPopup>
+          </Tooltip>
         ))}
       </div>
     </section>,

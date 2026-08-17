@@ -32,6 +32,7 @@ import { Input } from "~/components/ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { analysisEnvironment } from "~/state/analysis";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -167,9 +168,9 @@ function RunOutputView(props: {
       <div className="space-y-2 p-3">
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <span>{statusLabel(props.run, props.runtimeLabel)}</span>
-          <span className="max-w-[50%] truncate font-mono" title={props.run.source.cwd}>
-            {props.run.source.cwd}
-          </span>
+          <ScientTooltip content={props.run.source.cwd}>
+            <span className="max-w-[50%] truncate font-mono">{props.run.source.cwd}</span>
+          </ScientTooltip>
         </div>
         {props.run.diagnostics.map((diagnostic) => (
           <div
@@ -210,25 +211,28 @@ function RunOutputView(props: {
                       {withOccurrenceKeys(diagnostic.frames.slice(0, 20), diagnosticFrameKey).map(
                         ({ key, value: frame }) =>
                           frame.relativePath ? (
-                            <button
+                            <ScientTooltip
                               key={key}
-                              type="button"
-                              className="max-w-full truncate font-mono text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-                              title={`${frame.relativePath}${frame.line ? `:${frame.line}` : ""}`}
-                              onClick={() =>
-                                useRightPanelStore
-                                  .getState()
-                                  .openFile(
-                                    props.threadRef,
-                                    frame.relativePath!,
-                                    frame.line ?? undefined,
-                                  )
-                              }
+                              content={`${frame.relativePath}${frame.line ? `:${frame.line}` : ""}`}
                             >
-                              {frame.functionName ? `${frame.functionName} · ` : ""}
-                              {frame.relativePath}
-                              {frame.line ? `:${frame.line}` : ""}
-                            </button>
+                              <button
+                                type="button"
+                                className="max-w-full truncate font-mono text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                                onClick={() =>
+                                  useRightPanelStore
+                                    .getState()
+                                    .openFile(
+                                      props.threadRef,
+                                      frame.relativePath!,
+                                      frame.line ?? undefined,
+                                    )
+                                }
+                              >
+                                {frame.functionName ? `${frame.functionName} · ` : ""}
+                                {frame.relativePath}
+                                {frame.line ? `:${frame.line}` : ""}
+                              </button>
+                            </ScientTooltip>
                           ) : (
                             <span key={key} className="font-mono text-[11px] text-muted-foreground">
                               {frame.functionName ?? "External MATLAB frame"}
@@ -750,18 +754,17 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
                 : "Run file"}
           </Button>
         )}
-        <span
-          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-          title={runtimeStatusText}
-        >
-          {activeRun
-            ? statusLabel(activeRun, props.runtimeLabel)
-            : operationStatus
-              ? operationStatus
-              : projectNotInitialized
-                ? "Set up this folder as a Scient project to run"
-                : runtimeStatusText}
-        </span>
+        <ScientTooltip content={runtimeStatusText}>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {activeRun
+              ? statusLabel(activeRun, props.runtimeLabel)
+              : operationStatus
+                ? operationStatus
+                : projectNotInitialized
+                  ? "Set up this folder as a Scient project to run"
+                  : runtimeStatusText}
+          </span>
+        </ScientTooltip>
         {runtimeReady ? (
           <Button
             size="xs"
@@ -831,13 +834,17 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
         <div className="space-y-2 border-t border-border px-3 py-2 text-[11px]">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
             <dt className="text-muted-foreground">Working folder</dt>
-            <dd className="truncate font-mono" title={props.cwd}>
-              {props.cwd}
-            </dd>
+            <ScientTooltip content={props.cwd}>
+              <dd className="truncate font-mono">{props.cwd}</dd>
+            </ScientTooltip>
             <dt className="text-muted-foreground">Executable</dt>
-            <dd className="truncate font-mono" title={profile?.executablePath ?? undefined}>
-              {profile?.executablePath}
-            </dd>
+            {profile?.executablePath ? (
+              <ScientTooltip content={profile.executablePath}>
+                <dd className="truncate font-mono">{profile.executablePath}</dd>
+              </ScientTooltip>
+            ) : (
+              <dd className="truncate font-mono">{profile?.executablePath}</dd>
+            )}
             <dt className="text-muted-foreground">Release</dt>
             <dd>{profile?.verification?.release ?? profile?.version ?? "Not reported"}</dd>
             <dt className="text-muted-foreground">Architecture</dt>

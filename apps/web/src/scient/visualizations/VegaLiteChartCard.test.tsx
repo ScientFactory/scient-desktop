@@ -72,7 +72,9 @@ describe("VegaLiteChartCard server fallback", () => {
     );
 
     expect(html).toContain("Network data");
-    expect(html).toContain("loads HTTP(S) resources from the viewing device");
+    expect(html).toContain(
+      'aria-label="Network data. This chart loads HTTP(S) resources from the viewing device"',
+    );
     expect(html).toContain("Chart will render when visible");
   });
 });

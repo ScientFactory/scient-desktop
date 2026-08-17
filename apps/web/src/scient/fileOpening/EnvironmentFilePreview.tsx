@@ -23,6 +23,7 @@ import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -503,12 +504,11 @@ export default function EnvironmentFilePreview(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="surface-subheader gap-1 px-2" data-surface-subheader>
-        <span
-          className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground"
-          title={file?.canonicalPath ?? props.surface.path}
-        >
-          {file?.fileName ?? props.surface.path.replaceAll("\\", "/").split("/").at(-1)}
-        </span>
+        <ScientTooltip content={file?.canonicalPath ?? props.surface.path}>
+          <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground">
+            {file?.fileName ?? props.surface.path.replaceAll("\\", "/").split("/").at(-1)}
+          </span>
+        </ScientTooltip>
         {file && props.environmentId === primaryEnvironmentId ? (
           <OpenInPicker
             environmentId={props.environmentId}

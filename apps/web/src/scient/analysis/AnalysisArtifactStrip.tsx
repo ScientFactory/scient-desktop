@@ -41,6 +41,7 @@ import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup } from "~/components/ui/menu";
 import { PREVIEW_MINI_PLAYER_DEFAULT_SIZE } from "~/components/preview/previewMiniPlayerLayout";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { assetEnvironment } from "~/state/assets";
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -463,62 +464,66 @@ export function AnalysisArtifactStrip(props: {
                 key={card.artifact.artifactId}
                 className="w-36 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/20"
               >
-                <button
-                  type="button"
-                  className="block w-full cursor-pointer text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-                  disabled={(!card.preview && !card.interactive) || pendingAction !== null}
-                  onPointerDown={(event) =>
-                    beginArtifactDrag(event, card.artifact, card.preview, thumbnailUrl)
-                  }
-                  onPointerMove={moveArtifactDrag}
-                  onPointerUp={(event) => endArtifactDrag(event)}
-                  onPointerCancel={(event) => endArtifactDrag(event, true)}
-                  onClick={(event) => {
-                    if (suppressClickRef.current === card.artifact.artifactId) {
-                      suppressClickRef.current = null;
-                      return;
-                    }
-                    setChoiceMenu({
-                      artifactId: card.artifact.artifactId,
-                      anchor: event.currentTarget,
-                    });
-                  }}
-                  aria-label={`Choose how to open ${card.artifact.label}`}
-                  aria-haspopup="menu"
-                  aria-expanded={choiceMenu?.artifactId === card.artifact.artifactId}
-                  title={card.preview ? "Choose view · drag anywhere to float" : "Choose view"}
+                <ScientTooltip
+                  content={card.preview ? "Choose view · drag anywhere to float" : "Choose view"}
                 >
-                  <span className="flex h-20 items-center justify-center overflow-hidden bg-background">
-                    {openPending ? (
-                      <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
-                    ) : thumbnailUrl ? (
-                      <img
-                        src={thumbnailUrl}
-                        alt=""
-                        loading="lazy"
-                        draggable={false}
-                        className="size-full object-contain"
-                      />
-                    ) : (
-                      <Image className="size-5 text-muted-foreground" aria-hidden="true" />
-                    )}
-                  </span>
-                  <span className="block truncate border-t border-border/60 px-2 py-1.5 text-xs font-medium">
-                    {card.artifact.label}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    className="block w-full cursor-pointer text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                    disabled={(!card.preview && !card.interactive) || pendingAction !== null}
+                    onPointerDown={(event) =>
+                      beginArtifactDrag(event, card.artifact, card.preview, thumbnailUrl)
+                    }
+                    onPointerMove={moveArtifactDrag}
+                    onPointerUp={(event) => endArtifactDrag(event)}
+                    onPointerCancel={(event) => endArtifactDrag(event, true)}
+                    onClick={(event) => {
+                      if (suppressClickRef.current === card.artifact.artifactId) {
+                        suppressClickRef.current = null;
+                        return;
+                      }
+                      setChoiceMenu({
+                        artifactId: card.artifact.artifactId,
+                        anchor: event.currentTarget,
+                      });
+                    }}
+                    aria-label={`Choose how to open ${card.artifact.label}`}
+                    aria-haspopup="menu"
+                    aria-expanded={choiceMenu?.artifactId === card.artifact.artifactId}
+                  >
+                    <span className="flex h-20 items-center justify-center overflow-hidden bg-background">
+                      {openPending ? (
+                        <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+                      ) : thumbnailUrl ? (
+                        <img
+                          src={thumbnailUrl}
+                          alt=""
+                          loading="lazy"
+                          draggable={false}
+                          className="size-full object-contain"
+                        />
+                      ) : (
+                        <Image className="size-5 text-muted-foreground" aria-hidden="true" />
+                      )}
+                    </span>
+                    <span className="block truncate border-t border-border/60 px-2 py-1.5 text-xs font-medium">
+                      {card.artifact.label}
+                    </span>
+                  </button>
+                </ScientTooltip>
                 {card.native ? (
                   <div className="flex justify-end border-t border-border/60 px-1 py-0.5">
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={pendingAction !== null}
-                      onClick={() => void downloadNative(card.artifact)}
-                      aria-label={`Download native ${card.artifact.label}`}
-                      title="Download MATLAB figure"
-                    >
-                      {downloadPending ? <LoaderCircle className="animate-spin" /> : <Download />}
-                    </Button>
+                    <ScientTooltip content="Download MATLAB figure">
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={pendingAction !== null}
+                        onClick={() => void downloadNative(card.artifact)}
+                        aria-label={`Download native ${card.artifact.label}`}
+                      >
+                        {downloadPending ? <LoaderCircle className="animate-spin" /> : <Download />}
+                      </Button>
+                    </ScientTooltip>
                   </div>
                 ) : null}
               </article>

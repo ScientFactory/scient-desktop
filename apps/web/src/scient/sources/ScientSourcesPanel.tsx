@@ -52,6 +52,7 @@ import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceJournalIcon } from "./SourceJournalIcon";
@@ -1189,39 +1190,41 @@ export function ScientSourcesPanel(props: {
                     </span>
                     <span className="flex size-7 shrink-0 items-center justify-center">
                       {pdf ? (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Open PDF: ${pdf.fileName}`}
-                          title="Open PDF"
-                          onClick={() => {
-                            props.onOpenPdf({
-                              sourceId: record.sourceId,
-                              attachmentId: pdf.attachmentId,
-                              fileName: pdf.fileName,
-                            });
-                          }}
-                        >
-                          <FileText />
-                        </Button>
+                        <ScientTooltip content="Open PDF">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Open PDF: ${pdf.fileName}`}
+                            onClick={() => {
+                              props.onOpenPdf({
+                                sourceId: record.sourceId,
+                                attachmentId: pdf.attachmentId,
+                                fileName: pdf.fileName,
+                              });
+                            }}
+                          >
+                            <FileText />
+                          </Button>
+                        </ScientTooltip>
                       ) : null}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="More source actions"
-                      title="More source actions"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const bounds = event.currentTarget.getBoundingClientRect();
-                        void showSourceContextMenuAt(record, {
-                          x: bounds.right,
-                          y: bounds.bottom,
-                        });
-                      }}
-                    >
-                      <MoreVertical />
-                    </Button>
+                    <ScientTooltip content="More source actions">
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="More source actions"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const bounds = event.currentTarget.getBoundingClientRect();
+                          void showSourceContextMenuAt(record, {
+                            x: bounds.right,
+                            y: bounds.bottom,
+                          });
+                        }}
+                      >
+                        <MoreVertical />
+                      </Button>
+                    </ScientTooltip>
                   </div>
                 </div>
               );

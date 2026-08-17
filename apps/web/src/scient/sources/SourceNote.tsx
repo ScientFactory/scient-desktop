@@ -38,6 +38,7 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 const NOTE_AUTOSAVE_DELAY_MS = 600;
 const NOTE_MAX_LENGTH = 100_000;
@@ -584,54 +585,51 @@ export function useSourceNoteControls(props: {
           <div className="grid grid-cols-[1fr_auto_1fr] items-center px-1">
             <p className="text-sm font-medium">Quick note</p>
             <div className="flex items-center gap-px">
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className={cn(
-                  "size-[22px]",
-                  activeFormats.bold && "bg-accent text-accent-foreground",
-                )}
-                aria-label="Bold"
-                aria-pressed={activeFormats.bold}
-                title="Bold"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => applyFormat("bold")}
-              >
-                <span className="text-xs font-black leading-none" aria-hidden="true">
-                  B
-                </span>
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className={cn(
-                  "size-[22px]",
-                  activeFormats.italic && "bg-accent text-accent-foreground",
-                )}
-                aria-label="Italic"
-                aria-pressed={activeFormats.italic}
-                title="Italic"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => applyFormat("italic")}
-              >
-                <span className="text-xs font-semibold italic leading-none" aria-hidden="true">
-                  I
-                </span>
-              </Button>
-            </div>
-            <PopoverClose
-              className="justify-self-end"
-              render={
+              <ScientTooltip content="Bold">
                 <Button
                   size="icon-xs"
                   variant="ghost"
-                  aria-label="Close quick note"
-                  title="Close"
-                />
-              }
-            >
-              <X />
-            </PopoverClose>
+                  className={cn(
+                    "size-[22px]",
+                    activeFormats.bold && "bg-accent text-accent-foreground",
+                  )}
+                  aria-label="Bold"
+                  aria-pressed={activeFormats.bold}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyFormat("bold")}
+                >
+                  <span className="text-xs font-black leading-none" aria-hidden="true">
+                    B
+                  </span>
+                </Button>
+              </ScientTooltip>
+              <ScientTooltip content="Italic">
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className={cn(
+                    "size-[22px]",
+                    activeFormats.italic && "bg-accent text-accent-foreground",
+                  )}
+                  aria-label="Italic"
+                  aria-pressed={activeFormats.italic}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyFormat("italic")}
+                >
+                  <span className="text-xs font-semibold italic leading-none" aria-hidden="true">
+                    I
+                  </span>
+                </Button>
+              </ScientTooltip>
+            </div>
+            <ScientTooltip content="Close quick note">
+              <PopoverClose
+                className="justify-self-end"
+                render={<Button size="icon-xs" variant="ghost" aria-label="Close quick note" />}
+              >
+                <X />
+              </PopoverClose>
+            </ScientTooltip>
           </div>
           <SourceNoteEditor
             autoFocus

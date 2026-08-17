@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { useNearViewport } from "../presentation/useNearViewport";
 import { VegaLiteChartDialog } from "./VegaLiteChartDialog";
@@ -51,6 +52,9 @@ type ChartStatus =
   | { readonly kind: "error"; readonly message: string };
 
 type ChartAction = "copy-source" | "copy-png" | "download-png" | "download-svg" | "reset" | null;
+
+const NETWORK_DATA_DESCRIPTION = "This chart loads HTTP(S) resources from the viewing device";
+const NETWORK_DATA_LABEL = `Network data. ${NETWORK_DATA_DESCRIPTION}`;
 
 function parseSource(
   source: string,
@@ -237,12 +241,14 @@ export function VegaLiteChartCard({
           {displayTitle}
         </span>
         {hasNetworkResources ? (
-          <span
-            className="shrink-0 rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-            title="This chart loads HTTP(S) resources from the viewing device"
-          >
-            Network data
-          </span>
+          <ScientTooltip content={NETWORK_DATA_DESCRIPTION}>
+            <span
+              aria-label={NETWORK_DATA_LABEL}
+              className="shrink-0 rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            >
+              Network data
+            </span>
+          </ScientTooltip>
         ) : null}
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Chart actions">
           {ready ? (

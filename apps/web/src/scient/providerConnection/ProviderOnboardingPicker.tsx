@@ -7,6 +7,7 @@ import { ComposerControl, ComposerControlChevron } from "../../components/chat/C
 import { PROVIDER_CLIENT_DEFINITIONS } from "../../components/settings/providerDriverMeta";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "~/lib/utils";
 import { CodexInlineSetup } from "./CodexInlineSetup";
@@ -390,22 +391,23 @@ function RailButton(props: {
 }) {
   const Icon = props.icon;
   return (
-    <button
-      aria-current={props.active ? "page" : undefined}
-      aria-label={props.label}
-      className={cn(
-        "relative flex aspect-square w-full items-center justify-center rounded-md transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        props.active && "bg-background/75",
-      )}
-      onClick={props.onClick}
-      title={props.label}
-      type="button"
-    >
-      <Icon aria-hidden className="size-5" />
-      {props.active ? (
-        <span className="absolute -right-1 top-1/2 h-5 w-0.75 -translate-y-1/2 rounded-l-full bg-primary" />
-      ) : null}
-    </button>
+    <ScientTooltip content={props.label}>
+      <button
+        aria-current={props.active ? "page" : undefined}
+        aria-label={props.label}
+        className={cn(
+          "relative flex aspect-square w-full items-center justify-center rounded-md transition-colors hover:bg-foreground/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          props.active && "bg-background/75",
+        )}
+        onClick={props.onClick}
+        type="button"
+      >
+        <Icon aria-hidden className="size-5" />
+        {props.active ? (
+          <span className="absolute -right-1 top-1/2 h-5 w-0.75 -translate-y-1/2 rounded-l-full bg-primary" />
+        ) : null}
+      </button>
+    </ScientTooltip>
   );
 }
 

@@ -1114,6 +1114,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           "GCM_INTERACTIVE",
           "GIT_ASKPASS",
           "GIT_SSH",
+          "GIT_SSH_COMMAND",
           "GIT_TERMINAL_PROMPT",
           "SSH_ASKPASS",
           "SSH_ASKPASS_REQUIRE",
@@ -1141,6 +1142,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         yield* Effect.gen(function* () {
           process.env.GIT_SSH = sshWrapperPath;
+          process.env.GIT_SSH_COMMAND = sshWrapperPath;
           process.env.GCM_INTERACTIVE = "always";
           process.env.GIT_ASKPASS = "git-askpass";
           process.env.GIT_TERMINAL_PROMPT = "1";

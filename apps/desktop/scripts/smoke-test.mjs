@@ -27,12 +27,24 @@ child.stderr.on("data", (chunk) => {
   output += chunk.toString();
 });
 
-const timeout = setTimeout(() => {
-  child.kill();
+let forceKillTimeout;
+const gracefulTimeout = setTimeout(() => {
+  child.kill("SIGTERM");
+  forceKillTimeout = setTimeout(() => {
+    child.kill("SIGKILL");
+  }, 2_000);
 }, 8_000);
 
+child.on("error", (error) => {
+  clearTimeout(gracefulTimeout);
+  clearTimeout(forceKillTimeout);
+  console.error("\nDesktop smoke test failed to launch:\n" + error);
+  process.exit(1);
+});
+
 child.on("exit", () => {
-  clearTimeout(timeout);
+  clearTimeout(gracefulTimeout);
+  clearTimeout(forceKillTimeout);
 
   const fatalPatterns = [
     "Cannot find module",
