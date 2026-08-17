@@ -110,6 +110,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import { OverleafProjectSettings } from "../../scient/overleaf/OverleafProjectSettings";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -1147,6 +1148,12 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             />
           ) : null}
         </SettingsSection>
+
+        <OverleafProjectSettings
+          environmentId={representative.environmentId}
+          workspaceRoot={representative.workspaceRoot}
+          projectName={group.displayName}
+        />
 
         <SettingsSection title="Danger">
           <SettingsRow

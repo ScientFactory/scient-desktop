@@ -106,6 +106,30 @@ import {
   ScientLatexToolchainRequest,
 } from "./scientLatex.ts";
 import {
+  ScientOverleafAccount,
+  ScientOverleafAccountRequest,
+  ScientOverleafConflictDetail,
+  ScientOverleafConflictRequest,
+  ScientOverleafConflictResolutionRequest,
+  ScientOverleafContinueRequest,
+  ScientOverleafConnection,
+  ScientOverleafConnectionRequest,
+  ScientOverleafConnectionSettingsRequest,
+  ScientOverleafDisconnectRequest,
+  ScientOverleafDisconnectResult,
+  ScientOverleafOperationError,
+  ScientOverleafOperationRequest,
+  ScientOverleafOperationSnapshot,
+  ScientOverleafOverview,
+  ScientOverleafOverviewRequest,
+  ScientOverleafPreflightCompleteRequest,
+  ScientOverleafPreflightStartRequest,
+  ScientOverleafReviewConfirmationRequest,
+  ScientOverleafSaveAccountRequest,
+  ScientOverleafSyncStartRequest,
+  ScientOverleafVoidResult,
+} from "./scientOverleaf.ts";
+import {
   ScientAnalyticsDeletionResult,
   ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
@@ -161,6 +185,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
   "scient_latex_install_failed",
+  "scient_overleaf_operation_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
   "internal_error",
@@ -930,6 +955,157 @@ export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLate
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentScientOverleafErrors = Schema.Union([
+  EnvironmentHttpCommonError,
+  ScientOverleafOperationError,
+]);
+
+export class EnvironmentScientOverleafHttpApi extends HttpApiGroup.make("scientOverleaf")
+  .add(
+    HttpApiEndpoint.post("overview", "/api/scient/overleaf/overview", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafOverviewRequest,
+      success: ScientOverleafOverview,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("saveAccount", "/api/scient/overleaf/accounts/save", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafSaveAccountRequest,
+      success: ScientOverleafAccount,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeAccount", "/api/scient/overleaf/accounts/remove", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafAccountRequest,
+      success: ScientOverleafVoidResult,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preflightStart", "/api/scient/overleaf/connect/preflight/start", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafPreflightStartRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("operationStatus", "/api/scient/overleaf/operations/status", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafOperationRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("preflightComplete", "/api/scient/overleaf/connect/preflight/complete", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafPreflightCompleteRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("operationCancel", "/api/scient/overleaf/operations/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafOperationRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateConnection", "/api/scient/overleaf/connections/settings", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafConnectionSettingsRequest,
+      success: ScientOverleafConnection,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("syncStart", "/api/scient/overleaf/sync/start", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafSyncStartRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("operationRetry", "/api/scient/overleaf/operations/retry", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafOperationRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("confirmReview", "/api/scient/overleaf/review/confirm", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafReviewConfirmationRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("conflicts", "/api/scient/overleaf/conflicts", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafOperationRequest,
+      success: Schema.Array(ScientOverleafConflictDetail),
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("conflictDetail", "/api/scient/overleaf/conflicts/detail", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafConflictRequest,
+      success: ScientOverleafConflictDetail,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("resolveConflict", "/api/scient/overleaf/conflicts/resolve", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafConflictResolutionRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("continueOperation", "/api/scient/overleaf/operations/continue", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafContinueRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("reconcileLocal", "/api/scient/overleaf/reconcile-local", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafConnectionRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("repair", "/api/scient/overleaf/repair", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafConnectionRequest,
+      success: ScientOverleafOperationSnapshot,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("disconnect", "/api/scient/overleaf/disconnect", {
+      headers: OptionalBearerHeaders,
+      payload: ScientOverleafDisconnectRequest,
+      success: ScientOverleafDisconnectResult,
+      error: EnvironmentScientOverleafErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
   .add(
     HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
@@ -971,4 +1147,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientSourcesHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)
+  .add(EnvironmentScientOverleafHttpApi)
   .add(EnvironmentConnectHttpApi) {}

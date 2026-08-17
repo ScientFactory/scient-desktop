@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "owner": "ScientFactory",
+  "mountBudget": 8,
+  "ownedRoots": ["apps/server/src/scient/overleaf", "apps/web/src/scient/overleaf"],
+  "ownedFiles": [
+    "packages/contracts/src/scientOverleaf.ts",
+    "packages/client-runtime/src/state/scientOverleafHttp.ts"
+  ],
+  "diffSignals": [
+    "ScientOverleaf",
+    "scientOverleaf",
+    "scient/overleaf",
+    "scient-overleaf",
+    "/api/scient/overleaf",
+    "OverleafProjectSettings",
+    "OverleafLatexToolbarControl"
+  ],
+  "upstreamDependencies": [
+    {
+      "path": "apps/server/src/auth/http.ts",
+      "anchor": "requireEnvironmentScope",
+      "purpose": "Enforce environment read and operate scopes inside the owned HTTP handlers."
+    },
+    {
+      "path": "apps/server/src/auth/ServerSecretStore.ts",
+      "anchor": "export class ServerSecretStore",
+      "purpose": "Store opaque Overleaf token bytes through the server's existing private-file secret facility."
+    }
+  ],
+  "upstreamMounts": [
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scientOverleaf.ts",
+      "purpose": "Export the additive Overleaf contract."
+    },
+    {
+      "path": "packages/contracts/src/environmentHttp.ts",
+      "anchor": "EnvironmentScientOverleafHttpApi",
+      "purpose": "Register the owned Overleaf HTTP group in the shared environment API."
+    },
+    {
+      "path": "packages/client-runtime/package.json",
+      "anchor": "./state/scient-overleaf",
+      "purpose": "Expose the typed Overleaf environment client."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "scientOverleafHttpApiLayer",
+      "purpose": "Compose the owned Overleaf services and route group into the server."
+    },
+    {
+      "path": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+      "anchor": "<OverleafProjectSettings",
+      "purpose": "Mount the complete Overleaf settings surface once in Project Settings."
+    }
+  ],
+  "crossScientMounts": [
+    {
+      "path": "apps/web/src/scient/latex/ScientLatexSurface.tsx",
+      "anchor": "<OverleafLatexToolbarControl",
+      "purpose": "Expose manual Sync and conflict status in the additive LaTeX toolbar."
+    }
+  ]
+}

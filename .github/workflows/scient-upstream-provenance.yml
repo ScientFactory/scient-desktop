@@ -43,3 +43,7 @@ jobs:
             --base "$VERIFY_BASE" \
             --head "$VERIFY_HEAD" \
             --upstream-ref refs/remotes/upstream-verification/main
+          node scripts/verify-scient-overleaf-seams.mjs \
+            --base "$VERIFY_BASE" \
+            --head "$VERIFY_HEAD" \
+            --upstream-ref refs/remotes/upstream-verification/main
