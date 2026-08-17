@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/t3-upstream-sync-20260816-bab4b6f02b.md`](docs/internals/t3-upstream-sync-20260816-bab4b6f02b.md)
+[`docs/internals/2026-08-17-upstream-sync-cd096b9ad5.md`](docs/internals/2026-08-17-upstream-sync-cd096b9ad5.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `bab4b6f02b8bdaf15fd32636a97f69ff657cec50` into the refresh
-branch, preserving the next clean commit after the previously integrated tip
-`6ae9662d8ed215476e697adc12403ce035500828`. Later observed T3
+checkpoint `c7e6d711d3f2982e54854258987509e8f69b31cd` into the refresh
+branch, preserving the exact range after the previously integrated tip
+`bab4b6f02b8bdaf15fd32636a97f69ff657cec50`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 

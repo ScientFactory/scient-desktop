@@ -30,6 +30,8 @@ describe("analysis preview mini-player seam", () => {
     );
     expect(componentSource.match(/<BrowserSurfaceSlot/gu)).toHaveLength(1);
     expect(componentSource.match(/<StaticAssetImageSurface/gu)).toHaveLength(1);
+    expect(componentSource.match(/aria-label="Open preview in right panel"/gu)).toHaveLength(1);
+    expect(componentSource.match(/<PictureInPicture2/gu)).toHaveLength(1);
     expect(storeSource).toContain('kind: "browser"');
     expect(storeSource).toContain('kind: "static-artifact"');
     expect(componentSource).toContain('content.kind === "static-artifact"');

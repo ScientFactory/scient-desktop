@@ -430,47 +430,6 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  aria-label="Open preview in right panel"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={openInPanel}
-                />
-              }
-            >
-              <PanelRightIcon />
-            </TooltipTrigger>
-            <TooltipPopup side="top">Open in right panel</TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  aria-label={
-                    desktopOverlay?.pictureInPicture
-                      ? "Close popped-out preview"
-                      : "Pop preview into separate window"
-                  }
-                  disabled={!desktopOverlay?.hasWebContents}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={toggleNativePictureInPicture}
-                />
-              }
-            >
-              <PictureInPicture2 />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {desktopOverlay?.pictureInPicture
-                ? "Close separate window"
-                : "Pop into separate window"}
-            </TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
                   aria-label="Close floating preview"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={close}

@@ -205,6 +205,7 @@ describe("SourceDetails", () => {
     );
 
     expect(markup).toContain('aria-label="More source actions"');
+    expect(markup).not.toContain('title="More source actions"');
     expect(markup).not.toContain("Remove this source?");
   });
 

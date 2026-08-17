@@ -513,16 +513,17 @@ export function AnalysisArtifactStrip(props: {
                 </ScientTooltip>
                 {card.native ? (
                   <div className="flex justify-end border-t border-border/60 px-1 py-0.5">
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={pendingAction !== null}
-                      onClick={() => void downloadNative(card.artifact)}
-                      aria-label={`Download native ${card.artifact.label}`}
-                      title="Download MATLAB figure"
-                    >
-                      {downloadPending ? <LoaderCircle className="animate-spin" /> : <Download />}
-                    </Button>
+                    <ScientTooltip content="Download MATLAB figure">
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={pendingAction !== null}
+                        onClick={() => void downloadNative(card.artifact)}
+                        aria-label={`Download native ${card.artifact.label}`}
+                      >
+                        {downloadPending ? <LoaderCircle className="animate-spin" /> : <Download />}
+                      </Button>
+                    </ScientTooltip>
                   </div>
                 ) : null}
               </article>

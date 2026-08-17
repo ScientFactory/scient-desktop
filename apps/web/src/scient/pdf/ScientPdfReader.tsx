@@ -357,13 +357,14 @@ function LoadedScientPdfReader(props: {
           <Search />
         </ReaderButton>
         <DropdownMenu>
-          <DropdownMenuTrigger
-            className="scient-pdf-toolbar-button"
-            aria-label="More PDF actions"
-            title="More PDF actions"
-          >
-            <Ellipsis />
-          </DropdownMenuTrigger>
+          <ScientTooltip content="More PDF actions">
+            <DropdownMenuTrigger
+              className="scient-pdf-toolbar-button"
+              aria-label="More PDF actions"
+            >
+              <Ellipsis />
+            </DropdownMenuTrigger>
+          </ScientTooltip>
           <DropdownMenuContent align="end">
             {props.source.capabilities.canSaveCopy ? (
               <DropdownMenuItem

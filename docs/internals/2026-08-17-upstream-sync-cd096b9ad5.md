@@ -6,7 +6,7 @@ Date: 2026-08-17
 
 - Scient parent: `3db5b6512f9848d396f1b9c7b0d4a1534b7fe991`
 - Final official T3 tip: `c7e6d711d3f2982e54854258987509e8f69b31cd`
-- Previous official cursor: `bab4b6f02bb3ef023e7ce8de8367754cb2041a49`
+- Previous official cursor: `bab4b6f02b8bdaf15fd32636a97f69ff657cec50`
 - Integrated range: `bab4b6f02b..c7e6d711d3`
 - Official commits: 6
 - Official files changed: 103

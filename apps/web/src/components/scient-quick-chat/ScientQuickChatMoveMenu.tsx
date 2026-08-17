@@ -26,21 +26,18 @@ export function ScientQuickChatMoveMenu(props: {
   return (
     <Tooltip>
       <Menu>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              disabled={props.disabledReason !== null || props.isMoving}
-              aria-label="Move chat to project"
-              title={props.disabledReason ?? "Move chat to project"}
-              className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-icon-muted transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-            />
-          }
-        >
-          {props.isMoving ? (
-            <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
-          ) : (
-            <FolderInputIcon aria-hidden className="size-4" />
-          )}
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <MenuTrigger
+            disabled={props.disabledReason !== null || props.isMoving}
+            aria-label={props.disabledReason ?? "Move chat to project"}
+            className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-icon-muted transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+          >
+            {props.isMoving ? (
+              <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
+            ) : (
+              <FolderInputIcon aria-hidden className="size-4" />
+            )}
+          </MenuTrigger>
         </TooltipTrigger>
         <MenuPopup align="end">
           {props.targets.map((project) => (

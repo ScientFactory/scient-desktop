@@ -17,6 +17,7 @@ describe("ScientQuickChatMoveMenu", () => {
     );
 
     expect(markup).toContain('aria-label="Move chat to project"');
+    expect(markup).not.toContain('title="Move chat to project"');
     expect(markup).toContain("lucide-folder-input");
     expect(markup).not.toContain("lucide-loader-circle");
   });
