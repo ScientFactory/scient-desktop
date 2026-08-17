@@ -1,22 +1,25 @@
-# Upstream sync through `cd096b9ad5`
+# Upstream sync through `c7e6d711d3`
 
 Date: 2026-08-17
 
 ## Provenance
 
 - Scient parent: `3db5b6512f9848d396f1b9c7b0d4a1534b7fe991`
-- Official T3 parent: `cd096b9ad5a4156ffeab85de617cbb219057007f`
+- Final official T3 tip: `c7e6d711d3f2982e54854258987509e8f69b31cd`
 - Previous official cursor: `bab4b6f02bb3ef023e7ce8de8367754cb2041a49`
-- Integrated range: `bab4b6f02b..cd096b9ad5`
-- Official commits: 5
-- Official files changed: 102
-- Merge commit: `7fe7233891ce481656f63de9de39cf6c6eea866c`
+- Integrated range: `bab4b6f02b..c7e6d711d3`
+- Official commits: 6
+- Official files changed: 103
+- Initial merge commit: `7fe7233891ce481656f63de9de39cf6c6eea866c`
+- Late-advancement merge commit: `c875a80de2739c5aac4a8a2906892ace88aaa7d6`
 - Worktree:
   `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-desktop-next-t3-sync-cd096b9ad5-20260817`
 - Branch: `agent/t3-sync-cd096b9ad5-20260817`
 
-The merge commit has the owned Scient commit as its first parent and the exact
-official T3 commit as its second parent. No official commit was replayed or
+The initial merge has the owned Scient commit as its first parent and
+`cd096b9ad5` as its exact official second parent. A final pre-publication fetch
+found one new official commit, which entered through a second literal merge
+with `c7e6d711d3` as its second parent. No official commit was replayed or
 cherry-picked.
 
 ## Official range received
@@ -29,6 +32,8 @@ cherry-picked.
 4. `13458e6510` aligns the context meter.
 5. `cd096b9ad5` withholds server agent-browser tools unless settings allow
    access.
+6. `c7e6d711d3` makes pull-request review verdicts legible in detail, summary,
+   and timeline views.
 
 ## Conflict composition
 
@@ -67,9 +72,9 @@ Integrations setting.
 The real-engine LaTeX test now validates the immutable published PDF revision
 instead of a build directory that is cleaned after publication. The Git
 non-interactive-fetch test controls both `GIT_SSH` and the higher-precedence
-`GIT_SSH_COMMAND`, then waits for the local wrapper result. The desktop smoke
-harness gives Electron a graceful shutdown window and then force-terminates its
-own child if Electron ignores `SIGTERM`.
+`GIT_SSH_COMMAND`, so the awaited local fetch uses the test wrapper in either
+host environment. The desktop smoke harness gives Electron a graceful shutdown
+window and then force-terminates its own child if Electron ignores `SIGTERM`.
 
 ## Validation
 

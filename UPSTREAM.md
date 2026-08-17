@@ -178,15 +178,16 @@ behavior. A follow-up after that merge keeps Scient BiDi independent of T3's
 the Quick Chat projectless workspace sanitizer. The exact merge record
 documents each protected boundary.
 
-The 2026-08-17 sync through `cd096b9ad5` receives five official commits
+The 2026-08-17 sync through `c7e6d711d3` receives six official commits
 covering the styled-tooltip lint migration, pull-request provider API budgets,
 browser-access defaults and Integrations settings, context-meter alignment,
-and server-side agent-browser tool withholding. Four textual conflicts retained
-Scient's rich-chat instructions, projectless Quick Chat, static scientific
-artifact preview, and multi-edge preview resizing while composing the matching
-T3 behavior. Scient adopts T3's tooltip primitive through one direction-aware
-portal seam and defaults agent browser access to opt-in. The exact merge record
-also documents the post-merge accessibility and deterministic-gate hardening.
+server-side agent-browser tool withholding, and legible pull-request review
+verdicts. Four textual conflicts retained Scient's rich-chat instructions,
+projectless Quick Chat, static scientific artifact preview, and multi-edge
+preview resizing while composing the matching T3 behavior. Scient adopts T3's
+tooltip primitive through one direction-aware portal seam and defaults agent
+browser access to opt-in. The exact merge record also documents the post-merge
+accessibility and deterministic-gate hardening.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
