@@ -1,6 +1,7 @@
 import { ExternalLink } from "lucide-react";
 
 import type { PDFOutline, PDFOutlineItem } from "./pdfRuntime";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 function OutlineItem(props: {
   readonly depth: number;
@@ -19,26 +20,28 @@ function OutlineItem(props: {
   return (
     <li>
       {props.item.url ? (
-        <button
-          type="button"
-          className="scient-pdf-outline-link"
-          title={label}
-          onClick={() => props.onExternalUrl(props.item.url!)}
-        >
-          {content}
-        </button>
+        <ScientTooltip content={label}>
+          <button
+            type="button"
+            className="scient-pdf-outline-link"
+            onClick={() => props.onExternalUrl(props.item.url!)}
+          >
+            {content}
+          </button>
+        </ScientTooltip>
       ) : (
-        <button
-          type="button"
-          className="scient-pdf-outline-link"
-          disabled={props.item.dest === null}
-          title={label}
-          onClick={() => {
-            if (props.item.dest !== null) props.onDestination(props.item.dest);
-          }}
-        >
-          {content}
-        </button>
+        <ScientTooltip content={label}>
+          <button
+            type="button"
+            className="scient-pdf-outline-link"
+            disabled={props.item.dest === null}
+            onClick={() => {
+              if (props.item.dest !== null) props.onDestination(props.item.dest);
+            }}
+          >
+            {content}
+          </button>
+        </ScientTooltip>
       )}
       {props.item.items.length > 0 ? (
         <ul>

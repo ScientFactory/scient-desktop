@@ -36,6 +36,7 @@ import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorag
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import type {
   PdfForwardSyncTarget,
@@ -668,22 +669,33 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               aria-hidden="true"
             />
           ) : null}
-          <span
-            className={cn(
-              "scient-latex-status-label",
-              status.toolchainMissing || status.state === "failed" ? "text-destructive" : undefined,
-            )}
-            title={status.toolchainMissing ? LATEX_TOOLCHAIN_MISSING_HINT : undefined}
-          >
-            {status.label}
-          </span>
-          {compiledFrom === null ? null : (
+          {status.toolchainMissing ? (
+            <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
+              <span
+                className={cn(
+                  "scient-latex-status-label",
+                  status.state === "failed" ? "text-destructive" : undefined,
+                )}
+              >
+                {status.label}
+              </span>
+            </ScientTooltip>
+          ) : (
             <span
-              className="scient-latex-chip"
-              title={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
+              className={cn(
+                "scient-latex-status-label",
+                status.state === "failed" ? "text-destructive" : undefined,
+              )}
             >
-              Compiled from {compiledFrom}
+              {status.label}
             </span>
+          )}
+          {compiledFrom === null ? null : (
+            <ScientTooltip
+              content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
+            >
+              <span className="scient-latex-chip">Compiled from {compiledFrom}</span>
+            </ScientTooltip>
           )}
           {status.errorCount > 0 ? (
             <span className="scient-latex-chip scient-latex-chip-error">
@@ -696,25 +708,30 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             </span>
           ) : null}
           {status.stale ? (
-            <span className="scient-latex-chip" title={status.staleReason ?? undefined}>
-              Stale
-            </span>
+            status.staleReason ? (
+              <ScientTooltip content={status.staleReason}>
+                <span className="scient-latex-chip">Stale</span>
+              </ScientTooltip>
+            ) : (
+              <span className="scient-latex-chip">Stale</span>
+            )
           ) : null}
           {saveError === null ? null : (
-            <span className="scient-latex-chip scient-latex-chip-error" title={saveError}>
-              Save failed
-            </span>
+            <ScientTooltip content={saveError}>
+              <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
+            </ScientTooltip>
           )}
           {syncError === null ? null : (
-            <span
-              className="scient-latex-chip scient-latex-chip-error"
-              role="status"
-              aria-live="polite"
-              aria-label={`Navigation unavailable: ${syncError}`}
-              title={syncError}
-            >
-              Navigation unavailable
-            </span>
+            <ScientTooltip content={syncError}>
+              <span
+                className="scient-latex-chip scient-latex-chip-error"
+                role="status"
+                aria-live="polite"
+                aria-label={`Navigation unavailable: ${syncError}`}
+              >
+                Navigation unavailable
+              </span>
+            </ScientTooltip>
           )}
         </div>
         <div className="scient-latex-actions">
@@ -778,45 +795,49 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
 
       <div className="scient-latex-content" ref={splitRef}>
         {showEditor ? (
-          <div
-            ref={editorPaneRef}
-            className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
-            title="Ctrl/Command-double-click a source line to find it in the PDF"
-            onDoubleClickCapture={(event) => {
-              if (!event.ctrlKey && !event.metaKey) return;
-              const line = sourceLineFromPointerEvent(event);
-              if (line !== null) handleForwardSync(line);
-            }}
-          >
-            {props.truncated ? (
-              <LatexReadOnlyHalf
-                cwd={props.cwd}
-                relativePath={props.relativePath}
-                contents={props.contents}
-                resolvedTheme={props.resolvedTheme}
-                wordWrap={props.wordWrap}
-                onPostRender={props.onPostRender}
-              />
-            ) : (
-              <EditableFileSurface
-                environmentId={props.environmentId}
-                cwd={props.cwd}
-                relativePath={props.relativePath}
-                composerDraftTarget={props.composerDraftTarget}
-                contents={props.contents}
-                revision={props.revision}
-                resolvedTheme={props.resolvedTheme}
-                revealRequestId={props.revealRequestId}
-                wordWrap={props.wordWrap}
-                onPostRender={props.onPostRender}
-                onPendingChange={props.onPendingChange}
-                onSaveFailure={handleSaveFailure}
-                onSaveConfirmed={handleSaveConfirmed}
-                onSaveResolutionApplied={props.onSaveResolutionApplied}
-                saveResolution={props.saveResolution}
-              />
-            )}
-          </div>
+          <ScientTooltip content="Ctrl/Command-double-click a source line to find it in the PDF">
+            <div
+              ref={editorPaneRef}
+              className={cn(
+                "scient-latex-pane",
+                mode === "split" ? "scient-latex-pane-sized" : null,
+              )}
+              onDoubleClickCapture={(event) => {
+                if (!event.ctrlKey && !event.metaKey) return;
+                const line = sourceLineFromPointerEvent(event);
+                if (line !== null) handleForwardSync(line);
+              }}
+            >
+              {props.truncated ? (
+                <LatexReadOnlyHalf
+                  cwd={props.cwd}
+                  relativePath={props.relativePath}
+                  contents={props.contents}
+                  resolvedTheme={props.resolvedTheme}
+                  wordWrap={props.wordWrap}
+                  onPostRender={props.onPostRender}
+                />
+              ) : (
+                <EditableFileSurface
+                  environmentId={props.environmentId}
+                  cwd={props.cwd}
+                  relativePath={props.relativePath}
+                  composerDraftTarget={props.composerDraftTarget}
+                  contents={props.contents}
+                  revision={props.revision}
+                  resolvedTheme={props.resolvedTheme}
+                  revealRequestId={props.revealRequestId}
+                  wordWrap={props.wordWrap}
+                  onPostRender={props.onPostRender}
+                  onPendingChange={props.onPendingChange}
+                  onSaveFailure={handleSaveFailure}
+                  onSaveConfirmed={handleSaveConfirmed}
+                  onSaveResolutionApplied={props.onSaveResolutionApplied}
+                  saveResolution={props.saveResolution}
+                />
+              )}
+            </div>
+          </ScientTooltip>
         ) : null}
 
         {showEditor && showViewer ? (

@@ -33,6 +33,7 @@ import {
 } from "~/components/ui/menu";
 import { ensureLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
 import { PdfThumbnail } from "./PdfThumbnail";
@@ -69,17 +70,18 @@ export interface PdfSyncNavigation {
 }
 
 function ReaderButton(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
-  const { label, className, children, ...buttonProps } = props;
+  const { label, className, children, title: _title, ...buttonProps } = props;
   return (
-    <button
-      {...buttonProps}
-      type="button"
-      className={cn("scient-pdf-toolbar-button", className)}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
+    <ScientTooltip content={label}>
+      <button
+        {...buttonProps}
+        type="button"
+        className={cn("scient-pdf-toolbar-button", className)}
+        aria-label={label}
+      >
+        {children}
+      </button>
+    </ScientTooltip>
   );
 }
 
@@ -315,15 +317,16 @@ function LoadedScientPdfReader(props: {
         >
           <Minus />
         </ReaderButton>
-        <button
-          type="button"
-          className="scient-pdf-zoom-label"
-          disabled={state.phase !== "ready"}
-          onClick={() => reader.setZoomMode("page-actual")}
-          title="Actual size"
-        >
-          {formatPdfZoom(state.scale)}
-        </button>
+        <ScientTooltip content="Actual size">
+          <button
+            type="button"
+            className="scient-pdf-zoom-label"
+            disabled={state.phase !== "ready"}
+            onClick={() => reader.setZoomMode("page-actual")}
+          >
+            {formatPdfZoom(state.scale)}
+          </button>
+        </ScientTooltip>
         <ReaderButton
           label="Zoom in"
           disabled={state.phase !== "ready"}
@@ -513,31 +516,39 @@ function LoadedScientPdfReader(props: {
           </aside>
         ) : null}
         <div className="scient-pdf-content">
-          <div
-            ref={setContainer}
-            className="scient-pdf-viewer-container"
-            tabIndex={0}
-            title={
-              props.syncNavigation === undefined
-                ? undefined
-                : "Ctrl/Command-double-click the PDF to open the matching source line"
-            }
-            onDoubleClick={(event) => {
-              if (props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)) return;
-              const pageElement = (event.target as Element).closest<HTMLElement>(
-                ".page[data-page-number]",
-              );
-              if (pageElement === null) return;
-              const point = reader.syncPointFromClient({
-                pageElement,
-                clientX: event.clientX,
-                clientY: event.clientY,
-              });
-              if (point !== null) props.syncNavigation.onInverseSearch(point);
-            }}
-          >
-            <div ref={setViewerElement} className="pdfViewer" />
-          </div>
+          {(() => {
+            const viewer = (
+              <div
+                ref={setContainer}
+                className="scient-pdf-viewer-container"
+                tabIndex={0}
+                onDoubleClick={(event) => {
+                  if (props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)) {
+                    return;
+                  }
+                  const pageElement = (event.target as Element).closest<HTMLElement>(
+                    ".page[data-page-number]",
+                  );
+                  if (pageElement === null) return;
+                  const point = reader.syncPointFromClient({
+                    pageElement,
+                    clientX: event.clientX,
+                    clientY: event.clientY,
+                  });
+                  if (point !== null) props.syncNavigation.onInverseSearch(point);
+                }}
+              >
+                <div ref={setViewerElement} className="pdfViewer" />
+              </div>
+            );
+            return props.syncNavigation === undefined ? (
+              viewer
+            ) : (
+              <ScientTooltip content="Ctrl/Command-double-click the PDF to open the matching source line">
+                {viewer}
+              </ScientTooltip>
+            );
+          })()}
           {state.phase === "loading" ? (
             <div className="scient-pdf-state-overlay">
               <div className="scient-pdf-state-card">
