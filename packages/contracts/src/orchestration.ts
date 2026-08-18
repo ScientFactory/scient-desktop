@@ -199,7 +199,11 @@ export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
 export const ChatAttachment = Schema.Union([ChatImageAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+// SCIENT-FORK:START — the Scient thread queue stores upload-shaped
+// attachments so a queued item dispatches through thread.turn.start
+// unchanged. Export the wire schema instead of duplicating it.
+export const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+// SCIENT-FORK:END
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([

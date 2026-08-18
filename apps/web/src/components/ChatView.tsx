@@ -186,6 +186,14 @@ import {
 import { cn, randomHex } from "~/lib/utils";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import { scientSourcePdfSurface, scientSourcesSurface } from "~/scient/rightPanel/surfaces";
+// SCIENT-FORK:START — thread queue seam. To retire, delete this block, the
+// marked blocks below, and `~/scient/threadQueue`.
+import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
+import { resolveComposerSendDisposition } from "~/scient/threadQueue/disposition";
+import { restoreQueuedImages } from "~/scient/threadQueue/queueImageRestore";
+import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
+import type { ScientThreadQueueItem, ScientThreadQueueItemId } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -2406,6 +2414,15 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  // SCIENT-FORK:START — Scient thread queue: pending composer payloads for
+  // this thread. Server-thread-scoped only; local draft threads have no
+  // queue surface.
+  const threadQueue = useThreadQueue({
+    environmentId: isServerThread ? environmentId : null,
+    threadId: isServerThread && activeThread ? activeThread.id : null,
+    threadBusy: phase === "running",
+  });
+  // SCIENT-FORK:END
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
@@ -5192,6 +5209,10 @@ function ChatViewContent(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    // SCIENT-FORK:START — steer submissions (Cmd/Ctrl+Enter) bypass the
+    // Scient thread queue disposition below.
+    options?: { steer?: boolean },
+    // SCIENT-FORK:END
   ) => {
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
@@ -5444,6 +5465,41 @@ function ChatViewContent(props: ChatViewProps) {
         dataUrl: await readFileAsDataUrl(image.file),
       })),
     );
+    // SCIENT-FORK:START — while a turn is running, Enter enqueues the
+    // message instead of dispatching a new turn. Cmd/Ctrl+Enter
+    // (options.steer) and queued-item dispatch bypass this branch.
+    if (
+      isServerThread &&
+      resolveComposerSendDisposition({
+        threadBusy: phase === "running",
+        steerRequested: options?.steer ?? false,
+      }) === "queue"
+    ) {
+      const queueAttachmentsResult = await settlePromise(() => turnAttachmentsPromise);
+      if (queueAttachmentsResult._tag === "Success") {
+        try {
+          await threadQueue.enqueue({
+            text: outgoingMessageText,
+            attachments: queueAttachmentsResult.value,
+          });
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+        } catch (cause) {
+          setThreadError(threadIdForSend, chatActionErrorMessage(cause));
+        }
+      } else {
+        const error = squashAtomCommandFailure(queueAttachmentsResult);
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Failed to read the pasted image.",
+        );
+      }
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      return;
+    }
+    // SCIENT-FORK:END
     const optimisticAttachments = composerImagesSnapshot.map((image) => ({
       type: "image" as const,
       id: image.id,
@@ -5687,6 +5743,124 @@ function ChatViewContent(props: ChatViewProps) {
       );
     }
   };
+
+  // SCIENT-FORK:START — queued-item actions. Dispatch goes through the
+  // ordinary `thread.turn.start` command with the thread's current modes;
+  // nothing auto-sends.
+  const [dispatchingQueueItemId, setDispatchingQueueItemId] =
+    useState<ScientThreadQueueItemId | null>(null);
+
+  const dispatchQueuedItem = useCallback(
+    async (item: ScientThreadQueueItem) => {
+      const thread = activeThread;
+      if (!isServerThread || !thread) return;
+      setDispatchingQueueItemId(item.queueItemId);
+      try {
+        const result = await startThreadTurn({
+          environmentId,
+          input: {
+            threadId: thread.id,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: item.text,
+              attachments: item.attachments,
+            },
+            runtimeMode: thread.runtimeMode,
+            interactionMode: thread.interactionMode,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag !== "Success") {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            thread.id,
+            error instanceof Error ? error.message : "Failed to send the queued message.",
+          );
+          return;
+        }
+        try {
+          await threadQueue.remove(item.queueItemId);
+        } catch {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "Message sent, but the queued copy could not be cleared.",
+              description: "Delete it from the queue to avoid resending it.",
+            }),
+          );
+        }
+      } finally {
+        setDispatchingQueueItemId(null);
+      }
+    },
+    [activeThread, environmentId, isServerThread, setThreadError, startThreadTurn, threadQueue],
+  );
+
+  const editQueuedItem = useCallback(
+    (item: ScientThreadQueueItem) => {
+      if (!isServerThread) return;
+      if (promptRef.current.trim().length > 0 || composerImagesRef.current.length > 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "The composer already has a draft.",
+            description: "Send or clear it before editing a queued message.",
+          }),
+        );
+        return;
+      }
+      promptRef.current = item.text;
+      setComposerDraftPrompt(composerDraftTarget, item.text);
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(item.text, item.text.length),
+        prompt: item.text,
+        detectTrigger: true,
+      });
+      const imageAttachments = item.attachments.filter(
+        (attachment): attachment is Extract<typeof attachment, { type: "image" }> =>
+          attachment.type === "image",
+      );
+      if (imageAttachments.length > 0) {
+        void restoreQueuedImages(imageAttachments).then((restored) => {
+          if (restored.length === 0) return;
+          // Write only to the draft store for this thread's target; the
+          // composer's image refs sync from the store, so a thread switch
+          // during the decode cannot corrupt the visible composer.
+          addComposerDraftImages(composerDraftTarget, restored);
+        });
+      }
+      focusComposer();
+      void threadQueue.remove(item.queueItemId).catch(() => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Queued copy could not be cleared.",
+            description: "Delete it manually to avoid resending it.",
+          }),
+        );
+      });
+    },
+    [
+      addComposerDraftImages,
+      composerDraftTarget,
+      focusComposer,
+      isServerThread,
+      setComposerDraftPrompt,
+      threadQueue,
+    ],
+  );
+
+  const deleteQueuedItem = useCallback(
+    (item: ScientThreadQueueItem) => {
+      if (!isServerThread || !activeThreadId) return;
+      void threadQueue.remove(item.queueItemId).catch((cause) => {
+        setThreadError(activeThreadId, chatActionErrorMessage(cause));
+      });
+    },
+    [activeThreadId, isServerThread, setThreadError, threadQueue],
+  );
+  // SCIENT-FORK:END
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -6830,6 +7004,18 @@ function ChatViewContent(props: ChatViewProps) {
                     >
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                          {/* SCIENT-FORK:START — queued messages strip */}
+                          <ThreadQueueStrip
+                            items={threadQueue.items}
+                            error={threadQueue.error}
+                            threadBusy={phase === "running"}
+                            dispatchingItemId={dispatchingQueueItemId}
+                            onSend={(item) => void dispatchQueuedItem(item)}
+                            onEdit={editQueuedItem}
+                            onDelete={deleteQueuedItem}
+                            onReorder={threadQueue.reorder}
+                          />
+                          {/* SCIENT-FORK:END */}
                           <ChatComposer
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}

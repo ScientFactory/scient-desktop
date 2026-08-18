@@ -144,6 +144,7 @@ import * as LatexSyncTex from "./scient/latex/LatexSyncTex.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
+import { scientThreadQueueHttpApiLayer } from "./scient/threadQueue/http.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
@@ -520,6 +521,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientSourcesHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
       Layer.provide(scientLatexHttpApiLayer),
+      Layer.provide(scientThreadQueueHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),

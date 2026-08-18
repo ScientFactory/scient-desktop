@@ -53,6 +53,9 @@ import {
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+// SCIENT-FORK:START — steer shortcut for the Scient thread queue.
+import { isSteerShortcut } from "../../scient/threadQueue/disposition";
+// SCIENT-FORK:END
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -586,7 +589,17 @@ export interface ChatComposerProps {
   composerRef: React.RefObject<ChatComposerHandle | null>;
 
   // Callbacks
-  onSend: (e?: { preventDefault: () => void }) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    directAnnotation?: {
+      annotation: PreviewAnnotationPayload;
+      image: ComposerImageAttachment | null;
+    },
+    // SCIENT-FORK:START — steer submissions bypass the Scient thread queue;
+    // ChatView owns the queue-vs-send disposition.
+    options?: { steer?: boolean },
+    // SCIENT-FORK:END
+  ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onForkConversation: () => void;
@@ -1908,7 +1921,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const submitComposer = useCallback(
-    (event?: { preventDefault: () => void }) => {
+    (event?: { preventDefault: () => void }, options?: { steer?: boolean }) => {
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -1926,6 +1939,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
+<<<<<<< HEAD
       const submission = submitComposerDraft({
         prompt: promptRef.current,
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
@@ -1934,7 +1948,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // ChatView reports its final composed-input preflight through the
           // composer handle before its first asynchronous send step.
           providerInputRejectedRef.current = false;
-          onSend(sendEvent);
+          onSend(sendEvent, undefined, options);
           return !providerInputRejectedRef.current;
         },
       });
@@ -2012,6 +2026,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       key === "Enter" &&
       shouldSubmitComposerOnEnter({ isMobileViewport, shiftKey: event.shiftKey })
     ) {
+      // SCIENT-FORK:START — Cmd/Ctrl+Enter steers: the message dispatches
+      // immediately even while a turn is running. Plain Enter queues when
+      // busy; ChatView owns that decision.
+      if (isSteerShortcut(event)) {
+        submitComposer(undefined, { steer: true });
+        return true;
+      }
+      // SCIENT-FORK:END
       submitComposer();
       return true;
     }

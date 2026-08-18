@@ -112,6 +112,15 @@ import {
   ScientAnalyticsStatus,
   ScientAnalyticsUiEvent,
 } from "./scientAnalytics.ts";
+// SCIENT-FORK:START — Scient thread queue contracts.
+import {
+  ScientThreadQueueEnqueueRequest,
+  ScientThreadQueueListRequest,
+  ScientThreadQueueRemoveRequest,
+  ScientThreadQueueReorderRequest,
+  ScientThreadQueueSnapshot,
+} from "./scientThreadQueue.ts";
+// SCIENT-FORK:END
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -163,6 +172,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_latex_install_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
+  // SCIENT-FORK:START
+  "scient_thread_queue_operation_failed",
+  // SCIENT-FORK:END
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -962,6 +974,44 @@ export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scient
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+// SCIENT-FORK:START — Scient thread queue group. Appended after inherited
+// groups like the other Scient groups so upstream additions never collide
+// with this class or the composition seam below.
+export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scientThreadQueue")
+  .add(
+    HttpApiEndpoint.post("list", "/api/scient/thread-queue/list", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueListRequest,
+      success: ScientThreadQueueSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/enqueue", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueEnqueueRequest,
+      success: ScientThreadQueueSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("remove", "/api/scient/thread-queue/remove", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueRemoveRequest,
+      success: ScientThreadQueueSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/reorder", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueReorderRequest,
+      success: ScientThreadQueueSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+// SCIENT-FORK:END
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -971,4 +1021,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientSourcesHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)
+  // SCIENT-FORK:START
+  .add(EnvironmentScientThreadQueueHttpApi)
+  // SCIENT-FORK:END
   .add(EnvironmentConnectHttpApi) {}

@@ -135,6 +135,10 @@
       "types": "./src/state/scientAnalyticsHttp.ts",
       "default": "./src/state/scientAnalyticsHttp.ts"
     },
+    "./state/scient-thread-queue": {
+      "types": "./src/state/scientThreadQueueHttp.ts",
+      "default": "./src/state/scientThreadQueueHttp.ts"
+    },
     "./state/shell": {
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
