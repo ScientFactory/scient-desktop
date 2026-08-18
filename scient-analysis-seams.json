@@ -10,6 +10,7 @@
     "apps/web/src/scient/artifacts",
     "apps/web/src/scient/fileSurfaces",
     "packages/scient-analysis",
+    "packages/scient-compute",
     "packages/scient-execution"
   ],
   "ownedFiles": [
@@ -29,8 +30,10 @@
     "packages/contracts/src/scientAnalysis.ts"
   ],
   "analysisDiffSignals": [
-    "@scientfactory/(analysis|execution)",
-    "(/|~)scient/(analysis|artifacts|execution|fileSurfaces)",
+    "@scientfactory/(analysis|compute|execution)",
+    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces)",
+    "Compute(Session|Execution|Transport|Output)",
+    "DuplexProcess",
     "analysis-artifact",
     "AnalysisArtifact",
     "ScientArtifact",
