@@ -12,6 +12,7 @@ import {
   removeScientThreadQueueItem,
   reorderScientThreadQueue,
   scientThreadQueueStoreInternals,
+  updateScientThreadQueueItem,
 } from "./Store.ts";
 
 const threadId = ThreadId.make("thread-queue-test");
@@ -62,11 +63,44 @@ describe("scient thread queue store", () => {
     expect(other.items).toEqual([]);
   });
 
-  it("rejects unsafe thread IDs instead of escaping the queue directory", async () => {
+  it("hashes thread IDs so arbitrary IDs cannot escape the queue directory", async () => {
     const stateDir = await makeStateDir();
+    const unsafeLookingId = ThreadId.make("../escape");
+    await enqueueScientThreadQueueItem({
+      stateDir,
+      threadId: unsafeLookingId,
+      text: "still isolated",
+      attachments: [],
+    });
+    const filePath = scientThreadQueueStoreInternals.queueFilePath(stateDir, unsafeLookingId);
+    expect(NodePath.dirname(filePath)).toBe(NodePath.join(stateDir, "scient", "thread-queue"));
+    expect(NodePath.basename(filePath)).toMatch(/^[a-f0-9]{64}\.json$/u);
+  });
+
+  it("migrates a queue written by the previous safe-filename format", async () => {
+    const stateDir = await makeStateDir();
+    const queueDir = NodePath.join(stateDir, "scient", "thread-queue");
+    const legacyPath = NodePath.join(queueDir, `${threadId}.json`);
+    const item = {
+      queueItemId: "qitem_legacy",
+      text: "legacy item",
+      attachments: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    await NodeFSP.mkdir(queueDir, { recursive: true });
+    await NodeFSP.writeFile(
+      legacyPath,
+      JSON.stringify({ formatVersion: 1, threadId, items: [item] }),
+      "utf8",
+    );
+
+    const migrated = await listScientThreadQueue({ stateDir, threadId });
+    expect(migrated.items[0]?.text).toBe("legacy item");
+    await expect(NodeFSP.access(legacyPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(
-      listScientThreadQueue({ stateDir, threadId: ThreadId.make("../escape") }),
-    ).rejects.toThrow("not safe");
+      NodeFSP.access(scientThreadQueueStoreInternals.queueFilePath(stateDir, threadId)),
+    ).resolves.toBeUndefined();
   });
 
   it("enforces the per-thread item cap", async () => {
@@ -113,6 +147,39 @@ describe("scient thread queue store", () => {
       queueItemId: enqueued.items[0]!.queueItemId,
     });
     expect(unchanged).toEqual(enqueuedAgain);
+  });
+
+  it("updates an item in place without changing its position or identity", async () => {
+    const stateDir = await makeStateDir();
+    await enqueueScientThreadQueueItem({ stateDir, threadId, text: "first", attachments: [] });
+    const second = await enqueueScientThreadQueueItem({
+      stateDir,
+      threadId,
+      text: "second",
+      attachments: [],
+    });
+    const item = second.items[1]!;
+    const updated = await updateScientThreadQueueItem({
+      stateDir,
+      threadId,
+      queueItemId: item.queueItemId,
+      text: "edited second",
+      attachments: [],
+    });
+
+    expect(updated.items.map((entry) => entry.text)).toEqual(["first", "edited second"]);
+    expect(updated.items[1]?.queueItemId).toBe(item.queueItemId);
+    expect(updated.items[1]?.createdAt).toBe(item.createdAt);
+    expect(updated.items[1]?.updatedAt).not.toBe(item.updatedAt);
+    await expect(
+      updateScientThreadQueueItem({
+        stateDir,
+        threadId,
+        queueItemId: "qitem_missing",
+        text: "missing",
+        attachments: [],
+      }),
+    ).rejects.toThrow("no longer exists");
   });
 
   it("reorders items by full permutation and rejects stale orders", async () => {

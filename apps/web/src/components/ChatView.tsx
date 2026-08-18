@@ -2422,6 +2422,25 @@ function ChatViewContent(props: ChatViewProps) {
     threadId: isServerThread && activeThread ? activeThread.id : null,
     threadBusy: phase === "running",
   });
+  const queueContextKeyRef = useRef(activeThreadKey);
+  queueContextKeyRef.current = activeThreadKey;
+  const [editingQueueItemId, setEditingQueueItemId] = useState<ScientThreadQueueItemId | null>(
+    null,
+  );
+  const [dispatchingQueueItemId, setDispatchingQueueItemId] =
+    useState<ScientThreadQueueItemId | null>(null);
+  useEffect(() => {
+    setEditingQueueItemId(null);
+    setDispatchingQueueItemId(null);
+  }, [environmentId, activeThreadId]);
+  useEffect(() => {
+    if (
+      editingQueueItemId !== null &&
+      !threadQueue.items.some((item) => item.queueItemId === editingQueueItemId)
+    ) {
+      setEditingQueueItemId(null);
+    }
+  }, [editingQueueItemId, threadQueue.items]);
   // SCIENT-FORK:END
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
@@ -5470,21 +5489,35 @@ function ChatViewContent(props: ChatViewProps) {
     // (options.steer) and queued-item dispatch bypass this branch.
     if (
       isServerThread &&
+      !directAnnotation &&
       resolveComposerSendDisposition({
         threadBusy: phase === "running",
         steerRequested: options?.steer ?? false,
       }) === "queue"
     ) {
+      const submissionContextKey = activeThreadKey;
       const queueAttachmentsResult = await settlePromise(() => turnAttachmentsPromise);
       if (queueAttachmentsResult._tag === "Success") {
         try {
-          await threadQueue.enqueue({
-            text: outgoingMessageText,
-            attachments: queueAttachmentsResult.value,
-          });
-          promptRef.current = "";
-          clearComposerDraftContent(composerDraftTarget);
-          composerRef.current?.resetCursorState();
+          const queueItemId = editingQueueItemId;
+          if (queueItemId === null) {
+            await threadQueue.enqueue({
+              text: outgoingMessageText,
+              attachments: queueAttachmentsResult.value,
+            });
+          } else {
+            await threadQueue.update({
+              queueItemId,
+              text: outgoingMessageText,
+              attachments: queueAttachmentsResult.value,
+            });
+          }
+          if (queueContextKeyRef.current === submissionContextKey) {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+            setEditingQueueItemId(null);
+          }
         } catch (cause) {
           setThreadError(threadIdForSend, chatActionErrorMessage(cause));
         }
@@ -5720,6 +5753,33 @@ function ChatViewContent(props: ChatViewProps) {
         );
       }
     }
+    if (turnStartSucceeded && editingQueueItemId !== null) {
+      const completedEditId = editingQueueItemId;
+      const submissionContextKey = activeThreadKey;
+      if (queueContextKeyRef.current === submissionContextKey) {
+        setEditingQueueItemId(null);
+        setDispatchingQueueItemId(completedEditId);
+      }
+      void threadQueue
+        .remove(completedEditId)
+        .then(
+          () => undefined,
+          () => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Message sent, but the queued copy remains.",
+                description: "Delete the queued copy so it is not sent again.",
+              }),
+            );
+          },
+        )
+        .finally(() => {
+          if (queueContextKeyRef.current === submissionContextKey) {
+            setDispatchingQueueItemId((current) => (current === completedEditId ? null : current));
+          }
+        });
+    }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
@@ -5747,14 +5807,13 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — queued-item actions. Dispatch goes through the
   // ordinary `thread.turn.start` command with the thread's current modes;
   // nothing auto-sends.
-  const [dispatchingQueueItemId, setDispatchingQueueItemId] =
-    useState<ScientThreadQueueItemId | null>(null);
-
   const dispatchQueuedItem = useCallback(
     async (item: ScientThreadQueueItem) => {
       const thread = activeThread;
-      if (!isServerThread || !thread) return;
+      if (!isServerThread || !thread || sendInFlightRef.current) return;
+      sendInFlightRef.current = true;
       setDispatchingQueueItemId(item.queueItemId);
+      beginLocalDispatch({ preparingWorktree: false });
       try {
         const result = await startThreadTurn({
           environmentId,
@@ -5766,6 +5825,8 @@ function ChatViewContent(props: ChatViewProps) {
               text: item.text,
               attachments: item.attachments,
             },
+            modelSelection: thread.modelSelection,
+            titleSeed: thread.title,
             runtimeMode: thread.runtimeMode,
             interactionMode: thread.interactionMode,
             createdAt: new Date().toISOString(),
@@ -5779,6 +5840,7 @@ function ChatViewContent(props: ChatViewProps) {
           );
           return;
         }
+        acknowledgeActiveThreadWoke();
         try {
           await threadQueue.remove(item.queueItemId);
         } catch {
@@ -5791,16 +5853,51 @@ function ChatViewContent(props: ChatViewProps) {
           );
         }
       } finally {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
         setDispatchingQueueItemId(null);
       }
     },
-    [activeThread, environmentId, isServerThread, setThreadError, startThreadTurn, threadQueue],
+    [
+      acknowledgeActiveThreadWoke,
+      activeThread,
+      beginLocalDispatch,
+      environmentId,
+      isServerThread,
+      resetLocalDispatch,
+      setThreadError,
+      startThreadTurn,
+      threadQueue,
+    ],
   );
 
   const editQueuedItem = useCallback(
     (item: ScientThreadQueueItem) => {
       if (!isServerThread) return;
-      if (promptRef.current.trim().length > 0 || composerImagesRef.current.length > 0) {
+      if (editingQueueItemId === item.queueItemId) {
+        focusComposer();
+        return;
+      }
+      if (editingQueueItemId !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Finish the current queue edit first.",
+            description: "Save or cancel the message already loaded in the composer.",
+          }),
+        );
+        return;
+      }
+      const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        promptRef.current.trim().length > 0 ||
+        composerImagesRef.current.length > 0 ||
+        (composerDraft?.images.length ?? 0) > 0 ||
+        composerTerminalContextsRef.current.length > 0 ||
+        composerElementContextsRef.current.length > 0 ||
+        (composerDraft?.previewAnnotations.length ?? 0) > 0 ||
+        (composerDraft?.reviewComments.length ?? 0) > 0
+      ) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
@@ -5810,6 +5907,22 @@ function ChatViewContent(props: ChatViewProps) {
         );
         return;
       }
+      const imageAttachments = item.attachments.filter(
+        (attachment): attachment is Extract<typeof attachment, { type: "image" }> =>
+          attachment.type === "image",
+      );
+      const restoredImages = restoreQueuedImages(imageAttachments);
+      if (restoredImages.length !== imageAttachments.length) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "This queued message has an unreadable image.",
+            description: "Send it as-is or delete it; editing would drop the image.",
+          }),
+        );
+        return;
+      }
+      setEditingQueueItemId(item.queueItemId);
       promptRef.current = item.text;
       setComposerDraftPrompt(composerDraftTarget, item.text);
       composerRef.current?.resetCursorState({
@@ -5817,48 +5930,51 @@ function ChatViewContent(props: ChatViewProps) {
         prompt: item.text,
         detectTrigger: true,
       });
-      const imageAttachments = item.attachments.filter(
-        (attachment): attachment is Extract<typeof attachment, { type: "image" }> =>
-          attachment.type === "image",
-      );
-      if (imageAttachments.length > 0) {
-        void restoreQueuedImages(imageAttachments).then((restored) => {
-          if (restored.length === 0) return;
-          // Write only to the draft store for this thread's target; the
-          // composer's image refs sync from the store, so a thread switch
-          // during the decode cannot corrupt the visible composer.
-          addComposerDraftImages(composerDraftTarget, restored);
-        });
+      if (restoredImages.length > 0) {
+        addComposerDraftImages(composerDraftTarget, restoredImages);
       }
       focusComposer();
-      void threadQueue.remove(item.queueItemId).catch(() => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Queued copy could not be cleared.",
-            description: "Delete it manually to avoid resending it.",
-          }),
-        );
-      });
     },
     [
       addComposerDraftImages,
       composerDraftTarget,
+      editingQueueItemId,
       focusComposer,
       isServerThread,
       setComposerDraftPrompt,
-      threadQueue,
     ],
   );
+
+  const cancelEditQueuedItem = useCallback(() => {
+    if (editingQueueItemId === null) return;
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    composerRef.current?.resetCursorState();
+    setEditingQueueItemId(null);
+  }, [composerDraftTarget, editingQueueItemId]);
 
   const deleteQueuedItem = useCallback(
     (item: ScientThreadQueueItem) => {
       if (!isServerThread || !activeThreadId) return;
-      void threadQueue.remove(item.queueItemId).catch((cause) => {
-        setThreadError(activeThreadId, chatActionErrorMessage(cause));
-      });
+      void threadQueue
+        .remove(item.queueItemId)
+        .then(() => {
+          if (editingQueueItemId === item.queueItemId) {
+            cancelEditQueuedItem();
+          }
+        })
+        .catch((cause) => {
+          setThreadError(activeThreadId, chatActionErrorMessage(cause));
+        });
     },
-    [activeThreadId, isServerThread, setThreadError, threadQueue],
+    [
+      activeThreadId,
+      cancelEditQueuedItem,
+      editingQueueItemId,
+      isServerThread,
+      setThreadError,
+      threadQueue,
+    ],
   );
   // SCIENT-FORK:END
 
@@ -7010,8 +7126,10 @@ function ChatViewContent(props: ChatViewProps) {
                             error={threadQueue.error}
                             threadBusy={phase === "running"}
                             dispatchingItemId={dispatchingQueueItemId}
+                            editingItemId={editingQueueItemId}
                             onSend={(item) => void dispatchQueuedItem(item)}
                             onEdit={editQueuedItem}
+                            onCancelEdit={cancelEditQueuedItem}
                             onDelete={deleteQueuedItem}
                             onReorder={threadQueue.reorder}
                           />

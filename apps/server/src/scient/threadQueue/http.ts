@@ -17,6 +17,7 @@ import {
   listScientThreadQueue,
   removeScientThreadQueueItem,
   reorderScientThreadQueue,
+  updateScientThreadQueueItem,
 } from "./Store.ts";
 
 /**
@@ -56,6 +57,11 @@ export const scientThreadQueueHttpApiLayer = HttpApiBuilder.group(
         .handle("enqueue", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, (stateDir) =>
             enqueueScientThreadQueueItem({ stateDir, ...args.payload }),
+          ),
+        )
+        .handle("update", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, (stateDir) =>
+            updateScientThreadQueueItem({ stateDir, ...args.payload }),
           ),
         )
         .handle("remove", (args) =>

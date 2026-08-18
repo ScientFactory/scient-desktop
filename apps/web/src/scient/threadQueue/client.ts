@@ -3,6 +3,7 @@ import {
   listEnvironmentScientThreadQueue,
   removeEnvironmentScientThreadQueueItem,
   reorderEnvironmentScientThreadQueue,
+  updateEnvironmentScientThreadQueueItem,
 } from "@t3tools/client-runtime/state/scient-thread-queue";
 import type {
   EnvironmentId,
@@ -45,6 +46,20 @@ export function removeThreadQueueItem(
 ) {
   return runtime.runPromise(
     removeEnvironmentScientThreadQueueItem({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function updateThreadQueueItem(
+  environmentId: EnvironmentId,
+  input: {
+    readonly threadId: ThreadId;
+    readonly queueItemId: ScientThreadQueueItemId;
+    readonly text: string;
+    readonly attachments: ReadonlyArray<UploadChatAttachment>;
+  },
+) {
+  return runtime.runPromise(
+    updateEnvironmentScientThreadQueueItem({ prepared: prepared(environmentId), ...input }),
   );
 }
 

@@ -119,6 +119,7 @@ import {
   ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
   ScientThreadQueueSnapshot,
+  ScientThreadQueueUpdateRequest,
 } from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
 
@@ -990,6 +991,14 @@ export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scie
     HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/enqueue", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueEnqueueRequest,
+      success: ScientThreadQueueSnapshot,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("update", "/api/scient/thread-queue/update", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueUpdateRequest,
       success: ScientThreadQueueSnapshot,
       error: EnvironmentHttpCommonError,
     }).middleware(EnvironmentAuthenticatedAuth),

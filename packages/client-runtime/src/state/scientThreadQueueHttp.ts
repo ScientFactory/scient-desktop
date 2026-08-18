@@ -5,6 +5,7 @@ import type {
   ScientThreadQueueEnqueueRequest,
   ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
+  ScientThreadQueueUpdateRequest,
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
@@ -104,6 +105,37 @@ export const removeEnvironmentScientThreadQueueItem = Effect.fn(
       context.client.scientThreadQueue.remove({
         headers: context.headers,
         payload: { threadId: input.threadId, queueItemId: input.queueItemId },
+      }),
+    ),
+  );
+});
+
+export const updateEnvironmentScientThreadQueueItem = Effect.fn(
+  "clientRuntime.state.updateEnvironmentScientThreadQueueItem",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly queueItemId: ScientThreadQueueUpdateRequest["queueItemId"];
+  readonly text: ScientThreadQueueUpdateRequest["text"];
+  readonly attachments: ScientThreadQueueUpdateRequest["attachments"];
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/thread-queue/update",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientThreadQueue.update({
+        headers: context.headers,
+        payload: {
+          threadId: input.threadId,
+          queueItemId: input.queueItemId,
+          text: input.text,
+          attachments: input.attachments,
+        },
       }),
     ),
   );

@@ -22,6 +22,9 @@ import {
  */
 
 export const SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD = 20;
+// Queue files contain base64 data URLs, so an item-count cap alone could
+// still let a busy thread consume gigabytes of local disk.
+export const SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD = 64 * 1024 * 1024;
 
 export const ScientThreadQueueItemId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(80),
@@ -42,7 +45,9 @@ export type ScientThreadQueueItem = typeof ScientThreadQueueItem.Type;
 
 export const ScientThreadQueueSnapshot = Schema.Struct({
   threadId: ThreadId,
-  items: Schema.Array(ScientThreadQueueItem),
+  items: Schema.Array(ScientThreadQueueItem).check(
+    Schema.isMaxLength(SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD),
+  ),
 });
 export type ScientThreadQueueSnapshot = typeof ScientThreadQueueSnapshot.Type;
 
@@ -57,6 +62,14 @@ export const ScientThreadQueueEnqueueRequest = Schema.Struct({
   attachments: ScientThreadQueueItem.fields.attachments,
 });
 export type ScientThreadQueueEnqueueRequest = typeof ScientThreadQueueEnqueueRequest.Type;
+
+export const ScientThreadQueueUpdateRequest = Schema.Struct({
+  threadId: ThreadId,
+  queueItemId: ScientThreadQueueItemId,
+  text: ScientThreadQueueItem.fields.text,
+  attachments: ScientThreadQueueItem.fields.attachments,
+});
+export type ScientThreadQueueUpdateRequest = typeof ScientThreadQueueUpdateRequest.Type;
 
 export const ScientThreadQueueRemoveRequest = Schema.Struct({
   threadId: ThreadId,

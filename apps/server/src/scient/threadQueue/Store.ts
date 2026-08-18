@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import {
   SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD,
+  SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD,
   ScientThreadQueueItem,
   type ScientThreadQueueItemId,
   type ScientThreadQueueSnapshot,
@@ -17,7 +18,7 @@ import * as Schema from "effect/Schema";
 /**
  * Scient thread queue store.
  *
- * One JSON document per thread under `<stateDir>/scient/thread-queue/`. The
+ * One hashed JSON document per thread under `<stateDir>/scient/thread-queue/`. The
  * queue is a holding area, not an orchestration concept: items become real
  * messages only when the client dispatches them through `thread.turn.start`.
  * Writes are atomic (temp file + rename) and serialized per thread so a
@@ -30,17 +31,36 @@ import * as Schema from "effect/Schema";
 const PersistedThreadQueue = Schema.Struct({
   formatVersion: Schema.Literal(1),
   threadId: Schema.String,
-  items: Schema.Array(ScientThreadQueueItem),
+  items: Schema.Array(ScientThreadQueueItem).check(
+    Schema.isMaxLength(SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD),
+  ),
 });
 const decodePersistedThreadQueue = Schema.decodeUnknownSync(PersistedThreadQueue);
 
-const THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+function queueSnapshotByteLength(snapshot: ScientThreadQueueSnapshot): number {
+  return Buffer.byteLength(JSON.stringify({ formatVersion: 1, ...snapshot }), "utf8");
+}
+
+function assertQueueFitsDiskBudget(snapshot: ScientThreadQueueSnapshot): void {
+  const bytes = queueSnapshotByteLength(snapshot);
+  if (bytes > SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD) {
+    throw new Error(
+      `The queue would use ${bytes} bytes, over its ${SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD}-byte limit. Remove an image or send a queued message first.`,
+    );
+  }
+}
 
 function queueFilePath(stateDir: string, threadId: ThreadId): string {
-  if (!THREAD_ID_PATTERN.test(threadId)) {
-    throw new Error("The thread ID is not safe to address a thread queue.");
-  }
-  return NodePath.join(stateDir, "scient", "thread-queue", `${threadId}.json`);
+  const fileKey = NodeCrypto.createHash("sha256").update(threadId).digest("hex");
+  return NodePath.join(stateDir, "scient", "thread-queue", `${fileKey}.json`);
+}
+
+const LEGACY_THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+
+function legacyQueueFilePath(stateDir: string, threadId: ThreadId): string | null {
+  return LEGACY_THREAD_ID_PATTERN.test(threadId)
+    ? NodePath.join(stateDir, "scient", "thread-queue", `${threadId}.json`)
+    : null;
 }
 
 async function writeQueueAtomic(filePath: string, snapshot: ScientThreadQueueSnapshot) {
@@ -53,16 +73,16 @@ async function writeQueueAtomic(filePath: string, snapshot: ScientThreadQueueSna
   await NodeFSP.rename(temporaryPath, filePath);
 }
 
-async function readQueueFromPath(
+async function readQueueDocument(
   filePath: string,
   threadId: ThreadId,
-): Promise<ScientThreadQueueSnapshot> {
+): Promise<ScientThreadQueueSnapshot | null> {
   let raw: string;
   try {
     raw = await NodeFSP.readFile(filePath, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return { threadId, items: [] };
+      return null;
     }
     throw error;
   }
@@ -71,6 +91,7 @@ async function readQueueFromPath(
     if (decoded.threadId !== threadId) {
       throw new Error("The stored queue belongs to another thread.");
     }
+    assertQueueFitsDiskBudget({ threadId, items: decoded.items });
     return { threadId, items: decoded.items };
   } catch (error) {
     // Never trap the user behind an undecodable file: move it aside once and
@@ -80,6 +101,30 @@ async function readQueueFromPath(
     throw error instanceof Error
       ? new Error(`The stored thread queue is unreadable and was moved aside: ${error.message}`)
       : error;
+  }
+}
+
+async function readQueueForThread(
+  filePath: string,
+  stateDir: string,
+  threadId: ThreadId,
+): Promise<ScientThreadQueueSnapshot> {
+  const current = await readQueueDocument(filePath, threadId);
+  if (current !== null) return current;
+
+  const legacyPath = legacyQueueFilePath(stateDir, threadId);
+  if (legacyPath === null || legacyPath === filePath) return { threadId, items: [] };
+  try {
+    const legacy = await readQueueDocument(legacyPath, threadId);
+    if (legacy === null) return { threadId, items: [] };
+    await writeQueueAtomic(filePath, legacy);
+    await NodeFSP.rm(legacyPath, { force: true });
+    return legacy;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { threadId, items: [] };
+    }
+    throw error;
   }
 }
 
@@ -119,7 +164,7 @@ export async function listScientThreadQueue(input: {
   readonly threadId: ThreadId;
 }): Promise<ScientThreadQueueSnapshot> {
   return withLane(input.stateDir, input.threadId, (filePath) =>
-    readQueueFromPath(filePath, input.threadId),
+    readQueueForThread(filePath, input.stateDir, input.threadId),
   );
 }
 
@@ -130,7 +175,7 @@ export async function enqueueScientThreadQueueItem(input: {
   readonly attachments: ReadonlyArray<UploadChatAttachment>;
 }): Promise<ScientThreadQueueSnapshot> {
   return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueFromPath(filePath, input.threadId);
+    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
     if (current.items.length >= SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD) {
       throw new Error(
         `The queue already holds ${SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD} messages. Send or delete one before queueing more.`,
@@ -150,6 +195,41 @@ export async function enqueueScientThreadQueueItem(input: {
         },
       ],
     };
+    assertQueueFitsDiskBudget(next);
+    await writeQueueAtomic(filePath, next);
+    return next;
+  });
+}
+
+export async function updateScientThreadQueueItem(input: {
+  readonly stateDir: string;
+  readonly threadId: ThreadId;
+  readonly queueItemId: ScientThreadQueueItemId;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<UploadChatAttachment>;
+}): Promise<ScientThreadQueueSnapshot> {
+  return withLane(input.stateDir, input.threadId, async (filePath) => {
+    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
+    const itemIndex = current.items.findIndex((item) => item.queueItemId === input.queueItemId);
+    if (itemIndex === -1) {
+      throw new Error("The queued message no longer exists. Refresh the queue and try again.");
+    }
+    const existing = current.items[itemIndex]!;
+    const now = Date.now();
+    const previousUpdatedAt = Date.parse(existing.updatedAt);
+    const updatedAt = new Date(
+      Number.isFinite(previousUpdatedAt) && previousUpdatedAt >= now ? previousUpdatedAt + 1 : now,
+    ).toISOString();
+    const next: ScientThreadQueueSnapshot = {
+      threadId: input.threadId,
+      items: current.items.with(itemIndex, {
+        ...existing,
+        text: input.text,
+        attachments: [...input.attachments],
+        updatedAt,
+      }),
+    };
+    assertQueueFitsDiskBudget(next);
     await writeQueueAtomic(filePath, next);
     return next;
   });
@@ -161,7 +241,7 @@ export async function removeScientThreadQueueItem(input: {
   readonly queueItemId: ScientThreadQueueItemId;
 }): Promise<ScientThreadQueueSnapshot> {
   return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueFromPath(filePath, input.threadId);
+    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
     const next: ScientThreadQueueSnapshot = {
       threadId: input.threadId,
       items: current.items.filter((item) => item.queueItemId !== input.queueItemId),
@@ -184,7 +264,7 @@ export async function reorderScientThreadQueue(input: {
   readonly queueItemIds: ReadonlyArray<ScientThreadQueueItemId>;
 }): Promise<ScientThreadQueueSnapshot> {
   return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueFromPath(filePath, input.threadId);
+    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
     const rank = new Map(input.queueItemIds.map((id, index) => [id, index] as const));
     if (
       rank.size !== input.queueItemIds.length ||
@@ -199,6 +279,12 @@ export async function reorderScientThreadQueue(input: {
         (left, right) => rank.get(left.queueItemId)! - rank.get(right.queueItemId)!,
       ),
     };
+    if (
+      next.items.length === current.items.length &&
+      next.items.every((item, index) => item.queueItemId === current.items[index]?.queueItemId)
+    ) {
+      return current;
+    }
     await writeQueueAtomic(filePath, next);
     return next;
   });

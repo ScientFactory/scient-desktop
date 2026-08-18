@@ -12,6 +12,7 @@ import {
   listThreadQueue,
   removeThreadQueueItem,
   reorderThreadQueue,
+  updateThreadQueueItem,
 } from "./client";
 
 /**
@@ -45,11 +46,12 @@ export function useThreadQueue(input: {
   );
 
   const refresh = useCallback(async () => {
+    const request = ++generation.current;
     if (!environmentId || !threadId) {
       setItems([]);
+      setError(null);
       return;
     }
-    const request = ++generation.current;
     try {
       const snapshot = await listThreadQueue(environmentId, threadId);
       if (generation.current === request) {
@@ -106,6 +108,25 @@ export function useThreadQueue(input: {
     [environmentId, threadId, isCurrentContext],
   );
 
+  const update = useCallback(
+    async (updateInput: {
+      readonly queueItemId: ScientThreadQueueItemId;
+      readonly text: string;
+      readonly attachments: ReadonlyArray<UploadChatAttachment>;
+    }) => {
+      if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
+      const snapshot = await updateThreadQueueItem(environmentId, {
+        threadId,
+        queueItemId: updateInput.queueItemId,
+        text: updateInput.text,
+        attachments: updateInput.attachments,
+      });
+      if (isCurrentContext()) setItems(snapshot.items);
+      return snapshot;
+    },
+    [environmentId, threadId, isCurrentContext],
+  );
+
   const reorder = useCallback(
     async (queueItemIds: ReadonlyArray<ScientThreadQueueItemId>) => {
       if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
@@ -129,5 +150,5 @@ export function useThreadQueue(input: {
     [environmentId, threadId, isCurrentContext, refresh],
   );
 
-  return { items, error, enqueue, remove, reorder, refresh };
+  return { items, error, enqueue, update, remove, reorder, refresh };
 }

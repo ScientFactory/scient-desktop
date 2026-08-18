@@ -15,14 +15,15 @@ feature when upstream T3 ships a native queue.
   steer is an ordinary `thread.turn.start` issued while `phase === "running"`.
 - **Nothing auto-sends.** When a turn completes, queued items stay queued.
   Sending one queued item never dispatches the next.
-- **Each queued item is individually actionable:** send (steer icon while
-  busy, send icon while idle), edit (click the text or the pencil: the item
-  leaves the queue and is restored into the composer, including images), and
-  delete (trash).
+- **Each queued item is individually actionable:** send (Steer while busy,
+  Send while idle), edit (the item stays safely in the queue while its text
+  and images are loaded into the composer), cancel an edit, and delete. Saving
+  an edit updates the same queue item in place, so it keeps its position and
+  cannot disappear if the user abandons the draft.
 - **Drag to reorder.** Reorder is optimistic in the UI and validated
   server-side as an exact permutation.
 - Queues are per thread, persist across app restarts, and are capped at 20
-  items per thread.
+  items and 64 MiB per thread.
 
 ## Architecture: the queue is not an orchestration concept
 
@@ -49,14 +50,15 @@ New files only; none of these touch T3 internals:
   send-size bounds.
 - `apps/server/src/scient/threadQueue/Store.ts` (+ `Store.test.ts`) — the
   file store. Atomic temp-file + rename writes (mode `0600`), per-file
-  promise lanes serialize mutations, thread IDs are path-safety-checked, the
-  enqueue cap is enforced here (the real authority), removing the last item
-  deletes the file, and a corrupt file is quarantined to `.corrupt-<uuid>`
-  before the read fails closed to an empty queue.
+  promise lanes serialize mutations, thread IDs are SHA-256 hashed into safe
+  filenames, the item and disk caps are enforced here (the real authority),
+  removing the last item deletes the file, and a corrupt or oversized file is
+  quarantined to `.corrupt-<uuid>` before the read fails closed to an empty
+  queue. The old safe-filename format is migrated on first access.
 - `apps/server/src/scient/threadQueue/http.ts` — thin auth (read/operate
   scopes) and error-mapping layer over the store.
 - `packages/client-runtime/src/state/scientThreadQueueHttp.ts` — HTTP client
-  functions (list/enqueue/remove/reorder).
+  functions (list/enqueue/update/remove/reorder).
 - `apps/web/src/scient/threadQueue/` — all web logic:
   - `disposition.ts` (+ tests) — `resolveComposerSendDisposition`
     (steer-requested or idle → send; busy → queue) and `isSteerShortcut`
@@ -67,8 +69,9 @@ New files only; none of these touch T3 internals:
   - `useThreadQueue.ts` — authoritative snapshot state with generation and
     thread-context guards, refetch on mount/thread change/running→idle
     transition, optimistic reorder with rollback-refetch.
-  - `ThreadQueueStrip.tsx` — the UI strip (dnd-kit sortable rows, send/steer,
-    edit, delete). Renders only when items exist.
+  - `ThreadQueueStrip.tsx` — the UI panel (dnd-kit sortable rows, explicit
+    Send/Steer/Edit/Cancel/Delete actions, attachment counts, and a bounded
+    scroll area). Renders only when items exist or the server reports an error.
 
 ## Narrow T3-owned seams
 
@@ -89,11 +92,10 @@ is small enough to revert by deleting the marked block.
 
 - The server is the authority for the 20-item cap and item validation; the UI
   never decides validity.
-- Queued dispatch omits `modelSelection`, so the server's thread fallback
-  applies. Runtime/interaction modes are taken from the thread, not the
-  composer's possibly-changed state.
-- Editing a queued item refuses to clobber a non-empty composer; the user is
-  told to send or clear the draft first.
+- Queued dispatch uses the thread's current model, runtime, and interaction
+  settings; it does not silently inherit a different composer selection.
+- Editing a queued item refuses to clobber a non-empty composer; the item
+  remains persisted until the user saves or cancels the edit.
 - A message is removed from the queue only after `thread.turn.start`
   succeeds. If the remove call fails after a successful send, the user gets a
   warning toast rather than a silent stale copy.
@@ -115,10 +117,11 @@ When T3 ships a native thread queue:
    `UploadChatAttachment` may stay exported if something else uses it;
    otherwise restore module privacy.
 4. Migrate data: queued items are JSON at
-   `<stateDir>/scient/thread-queue/<threadId>.json` with
+   `<stateDir>/scient/thread-queue/<sha256(threadId)>.json` with
    `{ formatVersion: 1, threadId, items: [{ queueItemId, text, attachments,
-createdAt, updatedAt }] }`. Either enqueue them into T3's store on first
-   run or leave the files (they are inert once nothing reads them).
+createdAt, updatedAt }] }`. The previous `<threadId>.json` safe-filename
+   format is migrated on first access. Either enqueue them into T3's store on
+   first run or leave the files (they are inert once nothing reads them).
 5. Delete this document last.
 
 ## Verification checklist

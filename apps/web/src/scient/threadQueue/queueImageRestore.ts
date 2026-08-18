@@ -8,9 +8,9 @@ import type { ComposerImageAttachment } from "../../composerDraftStore";
  * store data URLs (the thread.turn.start upload wire shape); the composer
  * works with File objects.
  */
-export async function restoreQueuedImages(
+export function restoreQueuedImages(
   attachments: ReadonlyArray<UploadChatAttachment>,
-): Promise<ComposerImageAttachment[]> {
+): ComposerImageAttachment[] {
   const restored: ComposerImageAttachment[] = [];
   for (const attachment of attachments) {
     if (attachment.type !== "image") continue;
