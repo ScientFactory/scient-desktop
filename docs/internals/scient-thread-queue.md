@@ -13,15 +13,19 @@ feature when upstream T3 ships a native queue.
   turn is running. Steering is provider-native today: the Claude adapter
   injects into the live SDK turn loop and Grok tracks in-flight prompts, so a
   steer is an ordinary `thread.turn.start` issued while `phase === "running"`.
-- **Nothing auto-sends.** When a turn completes, queued items stay queued.
-  Sending one queued item never dispatches the next.
-- **Each queued item is individually actionable:** send (Steer while busy,
-  Send while idle), edit (the item stays safely in the queue while its text
-  and images are loaded into the composer), cancel an edit, and delete. Saving
-  an edit updates the same queue item in place, so it keeps its position and
-  cannot disappear if the user abandons the draft.
-- **Drag to reorder.** Reorder is optimistic in the UI and validated
-  server-side as an exact permutation.
+- **Queued messages auto-send in order.** When the active turn moves from
+  running to ready, the client dispatches the first queued item through the
+  ordinary `thread.turn.start` command. It waits for that next turn to settle
+  before advancing again.
+- **A failed queued dispatch remains queued.** The pump blocks after a failed
+  start rather than skipping or retrying silently; the error stays adjacent to
+  the message with an explicit retry action.
+- **The composer extension stays compact.** Each row can be edited with its
+  pencil button, deleted, or steered into a running turn. Editing pulls the
+  message out of the queue and back into the composer (it is a "bring it back"
+  action, not an in-place edit); pressing Enter then re-queues the reworked
+  message, or sends it if the turn has already finished. Multiple rows can be
+  reordered with their drag handles.
 - Queues are per thread, persist across app restarts, and are capped at 20
   items and 64 MiB per thread.
 
@@ -70,8 +74,8 @@ New files only; none of these touch T3 internals:
     thread-context guards, refetch on mount/thread change/running→idle
     transition, optimistic reorder with rollback-refetch.
   - `ThreadQueueStrip.tsx` — the UI panel (dnd-kit sortable rows, explicit
-    Send/Steer/Edit/Cancel/Delete actions, attachment counts, and a bounded
-    scroll area). Renders only when items exist or the server reports an error.
+    Steer/Edit/Delete actions, attachment counts, and a bounded scroll area).
+    Renders only when items exist or the server reports an error.
 
 ## Narrow T3-owned seams
 
@@ -134,6 +138,7 @@ createdAt, updatedAt }] }`. The previous `<threadId>.json` safe-filename
 - Typechecks for `packages/contracts`, `packages/client-runtime`,
   `apps/server`, and `apps/web`; targeted lint; `pnpm exec vp fmt --check`;
   `git diff --check`.
-- Manual smoke when touching seams: Enter while running queues; Cmd/Ctrl+Enter
+- Manual smoke when touching seams: Enter while running queues; the first
+  queued message automatically sends when the answer finishes; Cmd/Ctrl+Enter
   steers; drag reorder persists across reload; edit restores text and images;
-  delete removes; nothing auto-sends after a turn completes.
+  delete removes; a failed queued send remains visible.

@@ -1,6 +1,7 @@
 import type { UploadChatAttachment } from "@t3tools/contracts";
 
 import type { ComposerImageAttachment } from "../../composerDraftStore";
+import { randomUUID } from "../../lib/utils";
 
 /**
  * Rebuilds composer image attachments from a queued item's upload-shaped
@@ -30,7 +31,7 @@ export function restoreQueuedImages(
     const file = new File([bytes], attachment.name, { type: attachment.mimeType });
     restored.push({
       type: "image",
-      id: `queued_${crypto.randomUUID()}`,
+      id: `queued_${randomUUID()}`,
       name: attachment.name,
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,

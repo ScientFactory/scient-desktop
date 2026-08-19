@@ -4,7 +4,8 @@
  * `docs/internals/scient-thread-queue.md`.
  *
  * - "queue": the thread is busy and the user pressed Enter without the steer
- *   modifier. The message waits in the thread queue; it is never auto-sent.
+ *   modifier. The message waits in the thread queue until the active turn
+ *   settles, then the queue pump sends it in order.
  * - "send": dispatch now through the ordinary `thread.turn.start` path. When
  *   the thread is idle this is the unchanged upstream behavior; when busy it
  *   is a steer, which the provider adapters already support.
@@ -25,4 +26,13 @@ export function isSteerShortcut(event: {
   readonly shiftKey: boolean;
 }): boolean {
   return (event.metaKey || event.ctrlKey) && !event.shiftKey;
+}
+
+/** A queue pump may only advance after the previous turn has fully settled. */
+export function shouldDispatchNextQueuedMessage(input: {
+  readonly threadReady: boolean;
+  readonly hasQueuedItem: boolean;
+  readonly dispatchBlocked: boolean;
+}): boolean {
+  return input.threadReady && input.hasQueuedItem && !input.dispatchBlocked;
 }
