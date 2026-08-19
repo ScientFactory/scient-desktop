@@ -41,6 +41,7 @@ import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
 import { overleafClient } from "./client";
 import { OverleafTextDiff } from "./OverleafTextDiff";
+import { overleafAuthorEmailError, overleafOperationFailureMessage } from "./validation";
 
 interface Props {
   readonly environmentId: EnvironmentId;
@@ -61,6 +62,7 @@ const TERMINAL_PHASES = new Set<ScientOverleafOperationSnapshot["phase"]>([
   "succeeded",
   "failed",
   "cancelled",
+  "interrupted",
 ]);
 
 const ADVISORY_WARNING_KINDS = new Set([
@@ -136,6 +138,7 @@ function AccountEditor(props: {
   const [authorEmail, setAuthorEmail] = useState("");
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
 
   useEffect(() => {
     if (!props.open) return;
@@ -145,9 +148,14 @@ function AccountEditor(props: {
     setAuthorName(props.account?.authorName ?? "");
     setAuthorEmail(props.account?.authorEmail ?? "");
     setToken("");
+    setEmailTouched(false);
   }, [props.account, props.open]);
 
+  const authorEmailError = overleafAuthorEmailError(authorEmail);
+
   const save = async () => {
+    setEmailTouched(true);
+    if (authorEmailError !== null) return;
     setSaving(true);
     try {
       await overleafClient.saveAccount(props.environmentId, {
@@ -222,8 +230,20 @@ function AccountEditor(props: {
               <Input
                 type="email"
                 value={authorEmail}
+                aria-invalid={emailTouched && authorEmailError !== null ? true : undefined}
+                aria-describedby="overleaf-author-email-error"
+                onBlur={() => setEmailTouched(true)}
                 onChange={(event) => setAuthorEmail(event.target.value)}
               />
+              {emailTouched && authorEmailError !== null ? (
+                <span
+                  id="overleaf-author-email-error"
+                  className="text-xs text-destructive"
+                  role="alert"
+                >
+                  {authorEmailError}
+                </span>
+              ) : null}
             </label>
           </div>
           <label className="grid gap-1.5">
@@ -250,7 +270,7 @@ function AccountEditor(props: {
               !label.trim() ||
               !host.trim() ||
               !authorName.trim() ||
-              !authorEmail.trim() ||
+              authorEmailError !== null ||
               (props.account === null && !token.trim())
             }
             onClick={() => void save()}
@@ -384,6 +404,11 @@ function ConnectionWizard(props: {
     props.operation?.kind === "connect" &&
     props.operation.connectStage === "preflight" &&
     ACTIVE_PHASES.has(props.operation.phase);
+  const preflightFailure = overleafOperationFailureMessage(
+    props.operation?.kind === "connect" && props.operation.connectStage === "preflight"
+      ? props.operation
+      : null,
+  );
   const warnings = props.operation?.review?.warnings ?? [];
   const selectedAccount = props.accounts.find((account) => account.accountId === accountId) ?? null;
   const newProjectUrl =
@@ -453,6 +478,15 @@ function ConnectionWizard(props: {
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="max-h-[65dvh] space-y-4 overflow-y-auto">
+          {preflightFailure !== null ? (
+            <div
+              className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+              role="alert"
+            >
+              <div className="font-medium">Could not check this Overleaf project</div>
+              <div className="mt-1 text-xs">{preflightFailure}</div>
+            </div>
+          ) : null}
           {preflightRunning ? (
             <div className="flex items-center gap-3 rounded-lg border p-4 text-sm">
               <LoaderCircleIcon className="size-4 animate-spin" />
@@ -1243,6 +1277,18 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
                 title: "Overleaf synchronized",
                 description: next.message,
               });
+            } else {
+              const failureMessage = overleafOperationFailureMessage(next);
+              if (failureMessage !== null) {
+                toastManager.add({
+                  type: "error",
+                  title:
+                    next.kind === "connect" && next.connectStage === "preflight"
+                      ? "Could not check Overleaf project"
+                      : "Overleaf operation failed",
+                  description: failureMessage,
+                });
+              }
             }
           }
         })
