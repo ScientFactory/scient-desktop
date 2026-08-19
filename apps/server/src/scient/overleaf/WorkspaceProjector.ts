@@ -226,7 +226,7 @@ export const make = Effect.fn("WorkspaceProjector.make")(() =>
             await NodeFSP.rm(backupRoot, { recursive: true, force: true });
           await NodeFSP.mkdir(backupRoot, { recursive: true });
           const journal = await NodeFSP.open(journalPath, "a");
-          const applied: JournalEntry[] = [];
+          let failure: unknown = null;
           try {
             for (const relative of paths) {
               const target = NodePath.join(input.targetRoot, ...relative.split("/"));
@@ -276,31 +276,53 @@ export const make = Effect.fn("WorkspaceProjector.make")(() =>
                   await NodeFSP.rm(temp, { force: true });
                 }
                 const written = await hashExisting(target);
-                if (written !== desiredFile.hash)
+                if (written !== desiredFile.hash) {
+                  const sourceHash = await hashExisting(source);
+                  if (sourceHash === desiredFile.hash)
+                    throw projectionError(
+                      "workspace_changed",
+                      "The project changed while an Overleaf file was being applied. The later edit was preserved.",
+                    );
+                  await appendJournal(journal, {
+                    ...pending,
+                    desiredHash: written,
+                    applied: true,
+                  });
                   throw projectionError(
                     "filesystem_failed",
                     "A projected Overleaf file failed verification.",
                   );
+                }
               }
               const complete = { ...pending, applied: true };
-              applied.push(complete);
               await appendJournal(journal, complete);
             }
-          } catch (cause) {
-            for (const entry of applied.toReversed()) {
-              const target = NodePath.join(input.targetRoot, ...entry.path.split("/"));
-              const current = await hashExisting(target).catch(() => "unreadable");
-              if (current !== entry.desiredHash) continue;
-              if (entry.backupPath === null) {
-                await NodeFSP.rm(target, { force: true }).catch(() => undefined);
-              } else {
-                await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-                await NodeFSP.copyFile(entry.backupPath, target);
-              }
+            for (const relative of paths) {
+              const desiredFile = desired.get(relative) ?? null;
+              const current = await hashExisting(
+                NodePath.join(input.targetRoot, ...relative.split("/")),
+              );
+              if (current !== (desiredFile?.hash ?? null))
+                throw projectionError(
+                  "workspace_changed",
+                  "The project changed while the Overleaf result was being applied. Later edits were preserved.",
+                );
             }
-            throw cause;
+          } catch (cause) {
+            failure = cause;
           } finally {
             await journal.close();
+          }
+          if (failure !== null) {
+            try {
+              await recoverJournal(input.operationDirectory, input.targetRoot);
+            } catch {
+              throw projectionError(
+                "filesystem_failed",
+                "Projection failed and its crash-safe rollback could not finish. Use Retry before editing managed files.",
+              );
+            }
+            throw failure;
           }
           await NodeFSP.rm(journalPath, { force: true });
           if (input.backupDirectory === undefined) {

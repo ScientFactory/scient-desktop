@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -45,7 +46,9 @@ function operationError(
     | "push_race"
     | "push_outcome_unknown"
     | "unsafe_tree"
-    | "unsupported_tree",
+    | "unsupported_tree"
+    | "corrupt_state"
+    | "workspace_changed",
   message: string,
   retryable: boolean,
 ) {
@@ -100,18 +103,34 @@ function mapGitError(message: string, retryable = true) {
 }
 
 export function parseNameStatus(output: string): ReadonlyArray<ScientOverleafChange> {
-  const fields = output.split("\0").filter(Boolean);
+  const fields = output.split("\0");
+  if (fields.at(-1) === "") fields.pop();
   const changes: ScientOverleafChange[] = [];
   for (let index = 0; index < fields.length; ) {
     const status = fields[index++]!;
     const code = status[0];
     if (code === "R") {
-      const oldPath = normalizeManagedPath(fields[index++]!);
-      const path = normalizeManagedPath(fields[index++]!);
-      changes.push({ kind: "renamed", oldPath, path, similarity: Number(status.slice(1)) });
+      const match = status.match(/^R(\d{1,3})$/u);
+      const oldField = fields[index++];
+      const pathField = fields[index++];
+      const similarity = match ? Number(match[1]) : Number.NaN;
+      if (
+        !match ||
+        similarity < 0 ||
+        similarity > 100 ||
+        oldField === undefined ||
+        pathField === undefined
+      )
+        throw operationError("corrupt_state", "Git returned an unreadable change record.", false);
+      const oldPath = normalizeManagedPath(oldField);
+      const path = normalizeManagedPath(pathField);
+      changes.push({ kind: "renamed", oldPath, path, similarity });
       continue;
     }
-    const path = normalizeManagedPath(fields[index++]!);
+    const pathField = fields[index++];
+    if (!/^[ADM]$/u.test(code ?? "") || pathField === undefined)
+      throw operationError("corrupt_state", "Git returned an unreadable change record.", false);
+    const path = normalizeManagedPath(pathField);
     changes.push({
       kind: code === "A" ? "added" : code === "D" ? "deleted" : "modified",
       path,
@@ -166,6 +185,21 @@ function textPreview(bytes: Uint8Array | null): string | null {
   }
 }
 
+async function hashPath(filePath: string): Promise<string> {
+  const handle = await NodeFSP.open(filePath, "r");
+  try {
+    const hash = NodeCrypto.createHash("sha256");
+    const buffer = Buffer.allocUnsafe(256 * 1024);
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) return hash.digest("hex");
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 async function replaceMirrorTree(input: {
   readonly sourceRoot: string;
   readonly mirrorRoot: string;
@@ -180,8 +214,24 @@ async function replaceMirrorTree(input: {
   for (const file of input.desired.files) {
     const source = NodePath.join(input.sourceRoot, ...file.path.split("/"));
     const target = NodePath.join(input.mirrorRoot, ...file.path.split("/"));
+    const sourceInfo = await NodeFSP.lstat(source);
+    if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink())
+      throw operationError(
+        "workspace_changed",
+        "A managed workspace file became unsafe after Sync began.",
+        true,
+      );
     await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
     await NodeFSP.copyFile(source, target);
+    const copiedHash = await hashPath(target);
+    if (copiedHash !== file.hash) {
+      await NodeFSP.rm(target, { force: true });
+      throw operationError(
+        "workspace_changed",
+        "A managed workspace file changed while its snapshot was being copied.",
+        true,
+      );
+    }
   }
 }
 
@@ -346,6 +396,16 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
         yield* run(input, ["remote", "add", "origin", input.gitUrl]).pipe(
           Effect.mapError(mapGitError("Unable to configure the private Overleaf mirror.")),
         );
+      } else {
+        const configured = yield* run(input, ["remote", "get-url", "origin"], {
+          allowNonZeroExit: true,
+        }).pipe(Effect.mapError(mapGitError("Unable to inspect the private Overleaf mirror.")));
+        if (configured.exitCode !== 0 || configured.stdout.trim() !== input.gitUrl)
+          return yield* operationError(
+            "corrupt_state",
+            "The private Overleaf mirror does not match this connection. Use Repair.",
+            false,
+          );
       }
     });
 
@@ -456,12 +516,14 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
             desired: input.desired,
             previous: input.previous,
           }),
-        catch: () =>
-          operationError(
-            "filesystem_failed",
-            "Unable to copy the workspace snapshot into the private mirror.",
-            true,
-          ),
+        catch: (cause) =>
+          isOverleafOperationError(cause)
+            ? cause
+            : operationError(
+                "filesystem_failed",
+                "Unable to copy the workspace snapshot into the private mirror.",
+                true,
+              ),
       });
       yield* run(input, ["add", "-A"]).pipe(
         Effect.mapError(mapGitError("Unable to stage the workspace snapshot.")),
@@ -765,8 +827,11 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
           break;
         }
       }
-      const modified = changes.filter((change) => change.kind === "modified");
+      const modified = changes.filter(
+        (change) => change.kind === "modified" || change.kind === "renamed",
+      );
       for (const change of modified) {
+        const historyPath = change.kind === "renamed" ? change.oldPath! : change.path;
         const candidateBlob = (yield* run(
           input,
           ["rev-parse", `${input.candidateCommit}:${change.path}`],
@@ -774,7 +839,7 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
         )).stdout.trim();
         const headBlob = (yield* run(
           input,
-          ["rev-parse", `refs/remotes/origin/master:${change.path}`],
+          ["rev-parse", `refs/remotes/origin/master:${historyPath}`],
           { allowNonZeroExit: true },
         )).stdout.trim();
         if (!candidateBlob || candidateBlob === headBlob) continue;
@@ -787,13 +852,13 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
           "--first-parent",
           "refs/remotes/origin/master",
           "--",
-          change.path,
+          historyPath,
         ])).stdout
           .split("\n")
           .filter((commit) => Boolean(commit) && commit !== remoteHead);
         let reverted = false;
         for (const ancestor of history) {
-          const blob = (yield* run(input, ["rev-parse", `${ancestor}:${change.path}`], {
+          const blob = (yield* run(input, ["rev-parse", `${ancestor}:${historyPath}`], {
             allowNonZeroExit: true,
           })).stdout.trim();
           if (blob === candidateBlob) {
@@ -826,28 +891,27 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
         ["push", "--porcelain", "origin", "HEAD:master"],
         { allowNonZeroExit: true, timeoutMs: 180_000, credentialed: true, unknownOnTimeout: true },
       ).pipe(
-        Effect.catch((error) =>
-          error.code === "push_outcome_unknown"
-            ? Effect.succeed({
-                exitCode: -1,
-                stdout: "",
-                stdoutBytes: new Uint8Array(0),
-                stderr: "",
-              })
-            : Effect.fail(error),
+        Effect.catch(() =>
+          Effect.succeed({
+            exitCode: -1,
+            stdout: "",
+            stdoutBytes: new Uint8Array(0),
+            stderr: "",
+          }),
         ),
       );
       if (result.exitCode === -1) return "unknown";
       if (result.exitCode === 0) return "confirmed";
-      if (/non-fast-forward|fetch first|rejected/iu.test(result.stderr)) return "race";
-      if (/authentication|access denied|forbidden|403|401/iu.test(result.stderr))
-        return yield* classifyRemoteFailure(result.stderr);
+      const failureOutput = `${result.stdout}\n${result.stderr}`;
+      if (/non-fast-forward|fetch first|rejected/iu.test(failureOutput)) return "race";
+      if (/authentication|access denied|forbidden|403|401/iu.test(failureOutput))
+        return yield* classifyRemoteFailure(failureOutput);
       if (
         /could not resolve host|certificate|ssl|tls|schannel|\b429\b|rate.?limit/iu.test(
-          result.stderr,
+          failureOutput,
         )
       )
-        return yield* classifyRemoteFailure(result.stderr);
+        return yield* classifyRemoteFailure(failureOutput);
       return "unknown";
     });
 

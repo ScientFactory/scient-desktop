@@ -1017,6 +1017,8 @@ function OperationDialog(props: {
                       path={detail.conflict.path}
                       overleaf={detail.overleaf ?? ""}
                       local={detail.local ?? ""}
+                      overleafHash={detail.conflict.overleafHash}
+                      localHash={detail.conflict.localHash}
                     />
                     {detail.base !== null ? (
                       <details className="rounded-lg border p-3">
@@ -1489,7 +1491,7 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   size="sm"
-                  disabled={connection.state === "operation_active"}
+                  disabled={connection.state !== "ready" && connection.state !== "local_ahead"}
                   onClick={() => void startSync(connection)}
                 >
                   <RefreshCwIcon /> Sync

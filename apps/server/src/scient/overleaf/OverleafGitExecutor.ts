@@ -150,14 +150,14 @@ export function buildOverleafGitEnvironment(input: {
   };
 }
 
-async function firstExisting(fs: FileSystem.FileSystem, candidates: ReadonlyArray<string>) {
-  for (const candidate of candidates) {
-    if (await Effect.runPromise(fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))) {
-      return candidate;
-    }
-  }
+const firstExisting = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  candidates: ReadonlyArray<string>,
+) {
+  for (const candidate of candidates)
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return candidate;
   return null;
-}
+});
 
 const collectOutput = Effect.fnUntraced(function* (
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
@@ -274,10 +274,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* () {
   } else {
     candidates.push("/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git");
   }
-  const gitExecutable = yield* Effect.tryPromise({
-    try: () => firstExisting(fs, candidates),
-    catch: () => new OverleafGitError({ reason: "git-not-found", retryable: false }),
-  }).pipe(
+  const gitExecutable = yield* firstExisting(fs, candidates).pipe(
     Effect.flatMap((candidate) =>
       candidate === null
         ? Effect.fail(new OverleafGitError({ reason: "git-not-found", retryable: false }))
@@ -314,14 +311,26 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* () {
       ? path.join(commandDirectory, "askpass.cmd")
       : path.join(commandDirectory, "askpass.sh");
 
-    const cleanup = fs
-      .remove(commandDirectory, { recursive: true, force: true })
-      .pipe(
-        Effect.andThen(
-          fs.remove(path.dirname(commandDirectory), { force: false }).pipe(Effect.ignore),
-        ),
-        Effect.ignore,
-      );
+    const cleanup = fs.remove(commandDirectory, { recursive: true, force: true }).pipe(
+      Effect.andThen(
+        Effect.tryPromise({
+          try: async () => {
+            try {
+              await NodeFSP.rmdir(path.dirname(commandDirectory));
+            } catch (cause) {
+              if (
+                !["ENOENT", "ENOTEMPTY", "EEXIST"].includes(
+                  (cause as NodeJS.ErrnoException).code ?? "",
+                )
+              )
+                throw cause;
+            }
+          },
+          catch: () => new OverleafGitError({ reason: "runtime-failed", retryable: true }),
+        }).pipe(Effect.ignore),
+      ),
+      Effect.ignore,
+    );
     return yield* Effect.scoped(
       Effect.gen(function* () {
         yield* fs.makeDirectory(commandDirectory, { recursive: true });

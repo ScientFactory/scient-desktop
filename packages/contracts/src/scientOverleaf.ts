@@ -2,10 +2,30 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
+import { PositiveInt } from "./baseSchemas.ts";
+
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const ShortString = NonEmptyString.check(Schema.isMaxLength(512));
-const PathString = NonEmptyString.check(Schema.isMaxLength(4_096));
-const OptionalShortString = Schema.optionalKey(ShortString);
+const hasNoControlCharacters = Schema.makeFilter((value: string) =>
+  [...value].every((character) => {
+    const code = character.charCodeAt(0);
+    return code > 0x1f && code !== 0x7f;
+  })
+    ? true
+    : "Value must not contain control characters.",
+);
+const hasNoNullCharacter = Schema.makeFilter((value: string) =>
+  [...value].every((character) => character.charCodeAt(0) !== 0)
+    ? true
+    : "Value must not contain a null character.",
+);
+const SafeShortString = ShortString.check(hasNoControlCharacters);
+const PathString = NonEmptyString.check(Schema.isMaxLength(4_096), hasNoNullCharacter);
+const OptionalShortString = Schema.optionalKey(SafeShortString);
+const OpaqueId = NonEmptyString.check(
+  Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu),
+);
+const GitObjectId = NonEmptyString.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu));
 
 export const ScientOverleafAccountKind = Schema.Literals(["cloud", "server-pro"]);
 export type ScientOverleafAccountKind = typeof ScientOverleafAccountKind.Type;
@@ -15,7 +35,7 @@ export type ScientOverleafCommitPolicyKind = typeof ScientOverleafCommitPolicyKi
 
 export const ScientOverleafCommitPolicy = Schema.Struct({
   kind: ScientOverleafCommitPolicyKind,
-  message: Schema.optionalKey(ShortString),
+  message: Schema.optionalKey(SafeShortString),
 });
 export type ScientOverleafCommitPolicy = typeof ScientOverleafCommitPolicy.Type;
 
@@ -80,12 +100,12 @@ export class ScientOverleafOperationError extends Schema.TaggedErrorClass<Scient
 }
 
 export const ScientOverleafAccount = Schema.Struct({
-  accountId: NonEmptyString,
-  label: ShortString,
+  accountId: OpaqueId,
+  label: SafeShortString,
   kind: ScientOverleafAccountKind,
-  host: ShortString,
-  authorName: ShortString,
-  authorEmail: ShortString,
+  host: SafeShortString,
+  authorName: SafeShortString,
+  authorEmail: SafeShortString,
   credentialStatus: Schema.Literals(["saved", "missing"]),
   createdAtEpochMs: Schema.Number,
   updatedAtEpochMs: Schema.Number,
@@ -104,20 +124,20 @@ export const ScientOverleafConnectionState = Schema.Literals([
 export type ScientOverleafConnectionState = typeof ScientOverleafConnectionState.Type;
 
 export const ScientOverleafConnection = Schema.Struct({
-  connectionId: NonEmptyString,
-  accountId: NonEmptyString,
-  label: ShortString,
+  connectionId: OpaqueId,
+  accountId: OpaqueId,
+  label: SafeShortString,
   workspaceRoot: PathString,
   relativeFolder: Schema.String.check(Schema.isMaxLength(4_096)),
-  projectUrl: ShortString,
-  gitUrl: ShortString,
-  host: ShortString,
+  projectUrl: SafeShortString,
+  gitUrl: SafeShortString,
+  host: SafeShortString,
   branch: Schema.Literal("master"),
   commitPolicy: ScientOverleafCommitPolicy,
   suppressRenameWarning: Schema.Boolean,
   state: ScientOverleafConnectionState,
-  remoteBaselineCommit: Schema.NullOr(Schema.String),
-  lastConvergedCommit: Schema.NullOr(Schema.String),
+  remoteBaselineCommit: Schema.NullOr(GitObjectId),
+  lastConvergedCommit: Schema.NullOr(GitObjectId),
   localAhead: Schema.Boolean,
   localOnlyCompanions: Schema.Array(PathString),
   lastSyncedAtEpochMs: Schema.NullOr(Schema.Number),
@@ -165,7 +185,7 @@ export const ScientOverleafWarning = Schema.Struct({
 export type ScientOverleafWarning = typeof ScientOverleafWarning.Type;
 
 export const ScientOverleafReview = Schema.Struct({
-  candidateCommit: NonEmptyString,
+  candidateCommit: GitObjectId,
   changes: Schema.Array(ScientOverleafChange),
   warnings: Schema.Array(ScientOverleafWarning),
   requiresConfirmation: Schema.Boolean,
@@ -207,11 +227,11 @@ export const ScientOverleafConflictDetail = Schema.Struct({
 export type ScientOverleafConflictDetail = typeof ScientOverleafConflictDetail.Type;
 
 export const ScientOverleafOperationSnapshot = Schema.Struct({
-  operationId: NonEmptyString,
-  generation: Schema.Int,
+  operationId: OpaqueId,
+  generation: PositiveInt,
   kind: Schema.Literals(["connect", "sync", "reconcile", "repair", "disconnect"]),
   connectStage: Schema.NullOr(Schema.Literals(["preflight", "connected"])),
-  connectionId: Schema.NullOr(NonEmptyString),
+  connectionId: Schema.NullOr(OpaqueId),
   phase: ScientOverleafOperationPhase,
   startedAtEpochMs: Schema.Number,
   updatedAtEpochMs: Schema.Number,
@@ -236,21 +256,21 @@ export const ScientOverleafOverview = Schema.Struct({
 export type ScientOverleafOverview = typeof ScientOverleafOverview.Type;
 
 export const ScientOverleafSaveAccountRequest = Schema.Struct({
-  accountId: Schema.optionalKey(NonEmptyString),
-  label: ShortString,
+  accountId: Schema.optionalKey(OpaqueId),
+  label: SafeShortString,
   kind: ScientOverleafAccountKind,
-  host: ShortString,
-  authorName: ShortString,
-  authorEmail: ShortString,
+  host: SafeShortString,
+  authorName: SafeShortString,
+  authorEmail: SafeShortString,
   token: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(8_192))),
 });
 export type ScientOverleafSaveAccountRequest = typeof ScientOverleafSaveAccountRequest.Type;
 
-export const ScientOverleafAccountRequest = Schema.Struct({ accountId: NonEmptyString });
+export const ScientOverleafAccountRequest = Schema.Struct({ accountId: OpaqueId });
 export type ScientOverleafAccountRequest = typeof ScientOverleafAccountRequest.Type;
 
 export const ScientOverleafPreflightStartRequest = Schema.Struct({
-  accountId: NonEmptyString,
+  accountId: OpaqueId,
   workspaceRoot: PathString,
   relativeFolder: Schema.String.check(Schema.isMaxLength(4_096)),
   projectInput: NonEmptyString.check(Schema.isMaxLength(8_192)),
@@ -259,21 +279,21 @@ export const ScientOverleafPreflightStartRequest = Schema.Struct({
 });
 export type ScientOverleafPreflightStartRequest = typeof ScientOverleafPreflightStartRequest.Type;
 
-export const ScientOverleafOperationRequest = Schema.Struct({ operationId: NonEmptyString });
+export const ScientOverleafOperationRequest = Schema.Struct({ operationId: OpaqueId });
 export type ScientOverleafOperationRequest = typeof ScientOverleafOperationRequest.Type;
 
 export const ScientOverleafContinueRequest = Schema.Struct({
-  operationId: NonEmptyString,
+  operationId: OpaqueId,
   commitMessage: OptionalShortString,
 });
 export type ScientOverleafContinueRequest = typeof ScientOverleafContinueRequest.Type;
 
-export const ScientOverleafConnectionRequest = Schema.Struct({ connectionId: NonEmptyString });
+export const ScientOverleafConnectionRequest = Schema.Struct({ connectionId: OpaqueId });
 export type ScientOverleafConnectionRequest = typeof ScientOverleafConnectionRequest.Type;
 
 export const ScientOverleafPreflightCompleteRequest = Schema.Struct({
-  operationId: NonEmptyString,
-  generation: Schema.Int,
+  operationId: OpaqueId,
+  generation: PositiveInt,
   mode: Schema.Literals(["combine", "replace-local", "replace-overleaf"]),
   acknowledgeWarnings: Schema.Boolean,
   commitMessage: OptionalShortString,
@@ -282,7 +302,7 @@ export type ScientOverleafPreflightCompleteRequest =
   typeof ScientOverleafPreflightCompleteRequest.Type;
 
 export const ScientOverleafConnectionSettingsRequest = Schema.Struct({
-  connectionId: NonEmptyString,
+  connectionId: OpaqueId,
   label: OptionalShortString,
   commitPolicy: Schema.optionalKey(ScientOverleafCommitPolicy),
   suppressRenameWarning: Schema.optionalKey(Schema.Boolean),
@@ -292,15 +312,15 @@ export type ScientOverleafConnectionSettingsRequest =
   typeof ScientOverleafConnectionSettingsRequest.Type;
 
 export const ScientOverleafSyncStartRequest = Schema.Struct({
-  connectionId: NonEmptyString,
+  connectionId: OpaqueId,
   commitMessage: OptionalShortString,
 });
 export type ScientOverleafSyncStartRequest = typeof ScientOverleafSyncStartRequest.Type;
 
 export const ScientOverleafReviewConfirmationRequest = Schema.Struct({
-  operationId: NonEmptyString,
-  generation: Schema.Int,
-  candidateCommit: NonEmptyString,
+  operationId: OpaqueId,
+  generation: PositiveInt,
+  candidateCommit: GitObjectId,
   acknowledgeWarnings: Schema.Boolean,
   suppressFutureRenameWarnings: Schema.Boolean,
 });
@@ -308,14 +328,14 @@ export type ScientOverleafReviewConfirmationRequest =
   typeof ScientOverleafReviewConfirmationRequest.Type;
 
 export const ScientOverleafConflictRequest = Schema.Struct({
-  operationId: NonEmptyString,
+  operationId: OpaqueId,
   conflictId: NonEmptyString,
 });
 export type ScientOverleafConflictRequest = typeof ScientOverleafConflictRequest.Type;
 
 export const ScientOverleafConflictResolutionRequest = Schema.Struct({
-  operationId: NonEmptyString,
-  generation: Schema.Int,
+  operationId: OpaqueId,
+  generation: PositiveInt,
   conflictId: NonEmptyString,
   resolution: Schema.Literals(["overleaf", "local", "delete", "both"]),
   keepBothPath: Schema.optionalKey(PathString),
@@ -326,7 +346,7 @@ export type ScientOverleafConflictResolutionRequest =
   typeof ScientOverleafConflictResolutionRequest.Type;
 
 export const ScientOverleafDisconnectRequest = Schema.Struct({
-  connectionId: NonEmptyString,
+  connectionId: OpaqueId,
   mode: Schema.Literals(["check", "sync-and-disconnect", "disconnect-without-sync"]),
   commitMessage: OptionalShortString,
 });

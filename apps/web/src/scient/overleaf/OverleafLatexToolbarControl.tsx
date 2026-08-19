@@ -104,10 +104,12 @@ export function OverleafLatexToolbarControl(props: {
   }, [operation, polling, props.environmentId, readPersisted]);
 
   if (connection === null) return null;
+  const syncAllowed = connection.state === "ready" || connection.state === "local_ahead";
   const needsAttention =
-    operation !== null &&
-    !BUSY.has(operation.phase) &&
-    !["succeeded", "cancelled"].includes(operation.phase);
+    !syncAllowed ||
+    (operation !== null &&
+      !BUSY.has(operation.phase) &&
+      !["succeeded", "cancelled"].includes(operation.phase));
   const busy = operation !== null && BUSY.has(operation.phase);
 
   const openSettings = () => {

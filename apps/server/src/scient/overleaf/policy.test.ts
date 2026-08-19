@@ -6,6 +6,7 @@ import { parseNameStatus, parseUnmerged, uncertainPushWasAccepted } from "./Over
 describe("managed Overleaf path policy", () => {
   it("normalizes safe paths and rejects escapes, platform-invalid names, and .git", () => {
     expect(normalizeManagedPath("sections\\intro.tex")).toBe("sections/intro.tex");
+    expect(normalizeManagedPath(".gitignore")).toBe(".gitignore");
     for (const path of [
       "../secret",
       "/absolute",
@@ -63,6 +64,12 @@ describe("Git machine-output parsing", () => {
       { mode: "100644", hash: "bbbbb", stage: 2, path: "main.tex" },
       { mode: "100644", hash: "ccccc", stage: 3, path: "main.tex" },
     ]);
+  });
+
+  it("rejects truncated or unsupported name-status records", () => {
+    for (const output of ["R050\0old.tex\0", "R999\0old.tex\0new.tex\0", "X\0path.tex\0"]) {
+      expect(() => parseNameStatus(output)).toThrow();
+    }
   });
 });
 

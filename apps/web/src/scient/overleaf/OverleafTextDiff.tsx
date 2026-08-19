@@ -9,6 +9,8 @@ export function OverleafTextDiff(props: {
   readonly path: string;
   readonly overleaf: string;
   readonly local: string;
+  readonly overleafHash: string | null;
+  readonly localHash: string | null;
 }) {
   const { resolvedTheme } = useTheme();
   const fileDiff = useMemo(
@@ -17,15 +19,15 @@ export function OverleafTextDiff(props: {
         {
           name: props.path,
           contents: props.overleaf,
-          cacheKey: `overleaf:${props.path}:${props.overleaf.length}`,
+          cacheKey: `overleaf:${props.path}:${props.overleafHash ?? props.overleaf}`,
         },
         {
           name: props.path,
           contents: props.local,
-          cacheKey: `local:${props.path}:${props.local.length}`,
+          cacheKey: `local:${props.path}:${props.localHash ?? props.local}`,
         },
       ),
-    [props.local, props.overleaf, props.path],
+    [props.local, props.localHash, props.overleaf, props.overleafHash, props.path],
   );
 
   return (
