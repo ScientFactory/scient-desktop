@@ -11,6 +11,14 @@ import {
   TRIAGE_PLAYBOOK,
 } from "./triagePrompt.ts";
 
+it("describes Scient CLI and desktop surfaces, not T3 hosted web or mobile", () => {
+  assert.include(TRIAGE_PLAYBOOK, "npx t3 serve");
+  assert.include(TRIAGE_PLAYBOOK, "local web app opened by the");
+  assert.include(TRIAGE_PLAYBOOK, "desktop app against a local server");
+  assert.notInclude(TRIAGE_PLAYBOOK, "app.t3.codes");
+  assert.notInclude(TRIAGE_PLAYBOOK, "mobile app");
+});
+
 it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
   // Old releases fetch the repo copy from `main` and follow it when it differs
   // from their bundled playbook. The two must say the same thing at HEAD, or a

@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Terminal from "effect/Terminal";
+import * as TestConsole from "effect/testing/TestConsole";
 
 import * as BootService from "../cloud/bootService.ts";
 import {
@@ -84,11 +85,15 @@ it.effect("keeps a successful connection when a remote service update is pending
 it.effect("does not offer the inherited global service during Scient Next onboarding", () =>
   Effect.gen(function* () {
     const result = yield* offerServiceDuringOnboarding;
+    const output = (yield* TestConsole.logLines).join("\n");
     assert.isFalse(result);
+    assert.include(output, "safety envelope is enabled");
+    assert.notInclude(output, "distinct Scient service identity");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        TestConsole.layer,
         Layer.succeed(BootService.BootService, unreachableBootService),
       ),
     ),

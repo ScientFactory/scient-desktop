@@ -186,7 +186,7 @@ const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
 // selected-user cloud route must not mutate service lifecycle state.
 export const offerServiceDuringOnboarding = serviceOnboardingDisabled
   ? Console.log(
-      "Background service setup is disabled until this candidate has a distinct Scient service identity.",
+      "Background service setup is disabled while this candidate's safety envelope is enabled.",
     ).pipe(Effect.as(false))
   : offerInheritedServiceDuringOnboarding;
 
