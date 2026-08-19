@@ -19,7 +19,7 @@ import {
   Trash2Icon,
   WrenchIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -34,12 +34,18 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
-import { Textarea } from "../../components/ui/textarea";
 import { toastManager } from "../../components/ui/toast";
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
 import { overleafClient } from "./client";
+import {
+  normalizeOverleafClipboardText,
+  overleafNewProjectUrl,
+  overleafProjectDashboardUrl,
+  shouldAutoCompleteOverleafPreflight,
+  type OverleafInitialMode,
+} from "./onboarding";
 import { OverleafTextDiff } from "./OverleafTextDiff";
 import { overleafAuthorEmailError, overleafOperationFailureMessage } from "./validation";
 
@@ -139,6 +145,7 @@ function AccountEditor(props: {
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [emailTouched, setEmailTouched] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!props.open) return;
@@ -149,13 +156,17 @@ function AccountEditor(props: {
     setAuthorEmail(props.account?.authorEmail ?? "");
     setToken("");
     setEmailTouched(false);
+    setSaveError(null);
   }, [props.account, props.open]);
 
   const authorEmailError = overleafAuthorEmailError(authorEmail);
+  const accountSettingsUrl =
+    kind === "cloud" ? "https://www.overleaf.com/user/settings" : `https://${host}/user/settings`;
 
   const save = async () => {
     setEmailTouched(true);
     if (authorEmailError !== null) return;
+    setSaveError(null);
     setSaving(true);
     try {
       await overleafClient.saveAccount(props.environmentId, {
@@ -167,13 +178,15 @@ function AccountEditor(props: {
         authorEmail,
         ...(token.trim() === "" ? {} : { token }),
       });
-      props.onOpenChange(false);
       props.onSaved();
+      props.onOpenChange(false);
     } catch (error) {
+      const message = errorMessage(error);
+      setSaveError(message);
       toastManager.add({
         type: "error",
         title: "Could not save Overleaf account",
-        description: errorMessage(error),
+        description: message,
       });
     } finally {
       setSaving(false);
@@ -185,45 +198,60 @@ function AccountEditor(props: {
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {props.account === null ? "Add Overleaf account" : "Edit Overleaf account"}
+            {props.account === null ? "Connect Overleaf account" : "Edit Overleaf account"}
           </DialogTitle>
           <DialogDescription>
-            Tokens are saved by the environment and are never returned to this browser. Commit
-            metadata uses the human identity below.
+            Connect once, then reuse this account for any project on the same Overleaf host.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="grid gap-4">
-          <label className="grid gap-1.5">
-            <Label>Label</Label>
-            <Input value={label} onChange={(event) => setLabel(event.target.value)} />
-          </label>
-          <label className="grid gap-1.5">
-            <Label>Service</Label>
-            <select
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={kind}
-              onChange={(event) => {
-                const next = event.target.value as "cloud" | "server-pro";
-                setKind(next);
-                if (next === "cloud") setHost("git.overleaf.com");
-              }}
+          {props.account === null ? (
+            <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+              <div className="font-medium">First, get your Git authentication token</div>
+              <ol className="mt-2 list-decimal space-y-1 ps-5 text-xs text-muted-foreground">
+                <li>Open your Overleaf account settings.</li>
+                <li>Find Git integration and create or copy an authentication token.</li>
+                <li>Return here and paste the token below.</li>
+              </ol>
+              <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                <a
+                  className="inline-flex items-center gap-1 font-medium underline"
+                  href={accountSettingsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Overleaf settings <ExternalLinkIcon className="size-3" />
+                </a>
+                <a
+                  className="inline-flex items-center gap-1 underline"
+                  href="https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git/git-integration-authentication-tokens"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Token instructions <ExternalLinkIcon className="size-3" />
+                </a>
+              </div>
+            </div>
+          ) : null}
+          {saveError !== null ? (
+            <div
+              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+              role="alert"
             >
-              <option value="cloud">Overleaf Cloud</option>
-              <option value="server-pro">Overleaf Server Pro</option>
-            </select>
-          </label>
-          <label className="grid gap-1.5">
-            <Label>Exact credential host</Label>
-            <Input
-              value={host}
-              disabled={kind === "cloud"}
-              onChange={(event) => setHost(event.target.value)}
-            />
-          </label>
+              <div className="font-medium">Could not connect this account</div>
+              <div className="mt-1 text-xs">{saveError}</div>
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="grid gap-1.5">
               <Label>Your name</Label>
-              <Input value={authorName} onChange={(event) => setAuthorName(event.target.value)} />
+              <Input
+                value={authorName}
+                onChange={(event) => {
+                  setAuthorName(event.target.value);
+                  setSaveError(null);
+                }}
+              />
             </label>
             <label className="grid gap-1.5">
               <Label>Your email</Label>
@@ -233,7 +261,10 @@ function AccountEditor(props: {
                 aria-invalid={emailTouched && authorEmailError !== null ? true : undefined}
                 aria-describedby="overleaf-author-email-error"
                 onBlur={() => setEmailTouched(true)}
-                onChange={(event) => setAuthorEmail(event.target.value)}
+                onChange={(event) => {
+                  setAuthorEmail(event.target.value);
+                  setSaveError(null);
+                }}
               />
               {emailTouched && authorEmailError !== null ? (
                 <span
@@ -256,9 +287,49 @@ function AccountEditor(props: {
               type="password"
               autoComplete="new-password"
               value={token}
-              onChange={(event) => setToken(event.target.value)}
+              onChange={(event) => {
+                setToken(event.target.value);
+                setSaveError(null);
+              }}
             />
+            <span className="text-xs text-muted-foreground">
+              The token is saved by the environment and is never returned to this browser.
+            </span>
           </label>
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Advanced account settings
+            </summary>
+            <div className="mt-3 grid gap-4">
+              <label className="grid gap-1.5">
+                <Label>Account label</Label>
+                <Input value={label} onChange={(event) => setLabel(event.target.value)} />
+              </label>
+              <label className="grid gap-1.5">
+                <Label>Service</Label>
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={kind}
+                  onChange={(event) => {
+                    const next = event.target.value as "cloud" | "server-pro";
+                    setKind(next);
+                    if (next === "cloud") setHost("git.overleaf.com");
+                  }}
+                >
+                  <option value="cloud">Overleaf Cloud</option>
+                  <option value="server-pro">Overleaf Server Pro</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5">
+                <Label>Exact credential host</Label>
+                <Input
+                  value={host}
+                  disabled={kind === "cloud"}
+                  onChange={(event) => setHost(event.target.value)}
+                />
+              </label>
+            </div>
+          </details>
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
@@ -275,7 +346,8 @@ function AccountEditor(props: {
             }
             onClick={() => void save()}
           >
-            {saving ? <LoaderCircleIcon className="animate-spin" /> : null} Save account
+            {saving ? <LoaderCircleIcon className="animate-spin" /> : null}{" "}
+            {props.account === null ? "Connect account" : "Save account"}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -366,6 +438,53 @@ function FolderBrowserDialog(props: {
   );
 }
 
+function InitialModeChoices(props: {
+  readonly mode: OverleafInitialMode;
+  readonly onChange: (mode: OverleafInitialMode) => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <label className="rounded-lg border p-3">
+        <input
+          className="me-2"
+          type="radio"
+          checked={props.mode === "combine"}
+          onChange={() => props.onChange("combine")}
+        />{" "}
+        <strong>Safe Combine (recommended)</strong>
+        <p className="ms-5 mt-1 text-xs text-muted-foreground">
+          Preserve unique files on both sides and ask about same-path differences.
+        </p>
+      </label>
+      <label className="rounded-lg border p-3">
+        <input
+          className="me-2"
+          type="radio"
+          checked={props.mode === "replace-local"}
+          onChange={() => props.onChange("replace-local")}
+        />{" "}
+        <strong>Replace local</strong>
+        <p className="ms-5 mt-1 text-xs text-muted-foreground">
+          Use Overleaf managed files locally. Replaced files are backed up.
+        </p>
+      </label>
+      <label className="rounded-lg border p-3">
+        <input
+          className="me-2"
+          type="radio"
+          checked={props.mode === "replace-overleaf"}
+          onChange={() => props.onChange("replace-overleaf")}
+        />{" "}
+        <strong>Replace Overleaf</strong>
+        <p className="ms-5 mt-1 text-xs text-muted-foreground">
+          Push the local managed tree without force-pushing. Comments and Track Changes metadata may
+          be displaced.
+        </p>
+      </label>
+    </div>
+  );
+}
+
 function ConnectionWizard(props: {
   readonly open: boolean;
   readonly environmentId: EnvironmentId;
@@ -380,20 +499,46 @@ function ConnectionWizard(props: {
 }) {
   const [accountId, setAccountId] = useState("");
   const [projectInput, setProjectInput] = useState("");
+  const [destinationKind, setDestinationKind] = useState<"subfolder" | "root">("subfolder");
   const [relativeFolder, setRelativeFolder] = useState("");
   const [label, setLabel] = useState(props.projectName);
   const [commitKind, setCommitKind] = useState<ScientOverleafCommitPolicy["kind"]>("neutral");
   const [customMessage, setCustomMessage] = useState("Update project");
-  const [mode, setMode] = useState<"combine" | "replace-local" | "replace-overleaf">("combine");
+  const [mode, setMode] = useState<OverleafInitialMode>("combine");
   const [acknowledged, setAcknowledged] = useState(false);
   const [working, setWorking] = useState(false);
   const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
+  const [clipboardError, setClipboardError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [automaticCompletionFailed, setAutomaticCompletionFailed] = useState(false);
+  const automaticCompletionKey = useRef<string | null>(null);
+  const wasOpen = useRef(false);
+
+  useEffect(() => {
+    if (props.open && !wasOpen.current) {
+      setAccountId(props.accounts[0]?.accountId ?? "");
+      setProjectInput("");
+      setDestinationKind("subfolder");
+      setRelativeFolder("");
+      setLabel(props.projectName || "Overleaf project");
+      setCommitKind("neutral");
+      setCustomMessage("Update project");
+      setMode("combine");
+      setAcknowledged(false);
+      setClipboardError(null);
+      setFormError(null);
+      setAutomaticCompletionFailed(false);
+      automaticCompletionKey.current = null;
+    }
+    wasOpen.current = props.open;
+  }, [props.accounts, props.open, props.projectName]);
 
   useEffect(() => {
     if (props.open && !accountId && props.accounts[0]) setAccountId(props.accounts[0].accountId);
   }, [accountId, props.accounts, props.open]);
   useEffect(() => {
     setAcknowledged(false);
+    setAutomaticCompletionFailed(false);
   }, [props.operation?.generation]);
 
   const preflightReady =
@@ -411,14 +556,16 @@ function ConnectionWizard(props: {
   );
   const warnings = props.operation?.review?.warnings ?? [];
   const selectedAccount = props.accounts.find((account) => account.accountId === accountId) ?? null;
-  const newProjectUrl =
-    selectedAccount === null
-      ? "https://www.overleaf.com/project/new"
-      : selectedAccount.kind === "cloud"
-        ? "https://www.overleaf.com/project/new"
-        : `https://${selectedAccount.host}/project/new`;
+  const projectDashboardUrl = overleafProjectDashboardUrl(selectedAccount);
+  const newProjectUrl = overleafNewProjectUrl(selectedAccount);
+  const automaticCompletion = shouldAutoCompleteOverleafPreflight({
+    open: props.open,
+    mode,
+    operation: props.operation,
+  });
 
   const start = async () => {
+    setFormError(null);
     setWorking(true);
     try {
       const commitPolicy: ScientOverleafCommitPolicy =
@@ -426,58 +573,102 @@ function ConnectionWizard(props: {
       const operation = await overleafClient.startPreflight(props.environmentId, {
         accountId,
         workspaceRoot: props.workspaceRoot,
-        relativeFolder,
+        relativeFolder: destinationKind === "root" ? "" : relativeFolder,
         projectInput,
         label,
         commitPolicy,
       });
       props.onStarted(operation);
     } catch (error) {
+      const message = errorMessage(error);
+      setFormError(message);
       toastManager.add({
         type: "error",
-        title: "Could not check Overleaf project",
-        description: errorMessage(error),
+        title: "Could not connect Overleaf project",
+        description: message,
       });
     } finally {
       setWorking(false);
     }
   };
 
-  const complete = async () => {
-    if (!props.operation) return;
-    setWorking(true);
+  const complete = useCallback(
+    async (automatic = false) => {
+      if (!props.operation) return;
+      setFormError(null);
+      setWorking(true);
+      try {
+        const operation = await overleafClient.completePreflight(props.environmentId, {
+          operationId: props.operation.operationId,
+          generation: props.operation.generation,
+          mode,
+          acknowledgeWarnings: acknowledged || warnings.length === 0,
+        });
+        props.onCompleted(operation);
+      } catch (error) {
+        const message = errorMessage(error);
+        setFormError(message);
+        if (automatic) setAutomaticCompletionFailed(true);
+        toastManager.add({
+          type: "error",
+          title: "Could not connect Overleaf project",
+          description: message,
+        });
+      } finally {
+        setWorking(false);
+      }
+    },
+    [acknowledged, mode, props.environmentId, props.onCompleted, props.operation, warnings.length],
+  );
+
+  useEffect(() => {
+    if (!automaticCompletion || automaticCompletionFailed || !props.operation) return;
+    const key = `${props.operation.operationId}:${props.operation.generation}`;
+    if (automaticCompletionKey.current === key) return;
+    automaticCompletionKey.current = key;
+    void complete(true);
+  }, [automaticCompletion, automaticCompletionFailed, complete, props.operation]);
+
+  const pasteProjectLink = async () => {
+    setClipboardError(null);
     try {
-      const operation = await overleafClient.completePreflight(props.environmentId, {
-        operationId: props.operation.operationId,
-        generation: props.operation.generation,
-        mode,
-        acknowledgeWarnings: acknowledged || warnings.length === 0,
-      });
-      props.onCompleted(operation);
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not connect Overleaf project",
-        description: errorMessage(error),
-      });
-    } finally {
-      setWorking(false);
+      if (!navigator.clipboard?.readText)
+        throw new Error("Clipboard access is not available in this session.");
+      const value = normalizeOverleafClipboardText(await navigator.clipboard.readText());
+      if (!value) throw new Error("The clipboard is empty.");
+      setProjectInput(value);
+      setFormError(null);
+    } catch {
+      setClipboardError("Could not read the clipboard. Paste the project link into the field.");
     }
   };
+
+  const cancellableOperation =
+    props.operation !== null && !TERMINAL_PHASES.has(props.operation.phase);
+  const automaticConnecting = automaticCompletion && !automaticCompletionFailed;
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-h-[90dvh] max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>
-            {preflightReady ? "Choose how to connect" : "Connect an Overleaf project"}
+            {preflightReady ? "Review connection" : "Connect an Overleaf project"}
           </DialogTitle>
           <DialogDescription>
-            Synchronization is manual. The app keeps Git data privately; no .git folder is added to
-            your workspace.
+            Choose the project and its local folder. Scient keeps Git data private and synchronizes
+            only when you click Sync.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="max-h-[65dvh] space-y-4 overflow-y-auto">
+          {formError !== null ? (
+            <div
+              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+              role="alert"
+            >
+              <div className="font-medium">Could not connect this Overleaf project</div>
+              <div className="mt-1 text-xs">{formError}</div>
+            </div>
+          ) : null}
           {preflightFailure !== null ? (
             <div
               className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
@@ -487,10 +678,14 @@ function ConnectionWizard(props: {
               <div className="mt-1 text-xs">{preflightFailure}</div>
             </div>
           ) : null}
-          {preflightRunning ? (
+          {preflightRunning || automaticConnecting ? (
             <div className="flex items-center gap-3 rounded-lg border p-4 text-sm">
               <LoaderCircleIcon className="size-4 animate-spin" />
-              <span>{props.operation?.message}</span>
+              <span>
+                {automaticConnecting
+                  ? "Project found. Connecting with Safe Combine…"
+                  : props.operation?.message}
+              </span>
             </div>
           ) : !preflightReady ? (
             <>
@@ -501,7 +696,7 @@ function ConnectionWizard(props: {
                     Add account
                   </Button>
                 </div>
-              ) : (
+              ) : props.accounts.length > 1 ? (
                 <label className="grid gap-1.5">
                   <Label>Account</Label>
                   <select
@@ -516,117 +711,180 @@ function ConnectionWizard(props: {
                     ))}
                   </select>
                 </label>
-              )}
-              <label className="grid gap-1.5">
-                <Label>Overleaf project or Git URL</Label>
-                <Textarea
-                  value={projectInput}
-                  onChange={(event) => setProjectInput(event.target.value)}
-                  placeholder="https://www.overleaf.com/project/… or git clone …"
-                />
-                <span className="text-xs text-muted-foreground">
-                  Need a project first?{" "}
-                  <a
-                    className="inline-flex items-center gap-1 underline"
-                    href={newProjectUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Create it in Overleaf <ExternalLinkIcon className="size-3" />
-                  </a>
-                  , then paste its project or Git URL here.
-                </span>
-              </label>
-              <label className="grid gap-1.5">
-                <Label>Where should this Overleaf project appear in this workspace?</Label>
-                <div className="flex gap-2">
-                  <Input
-                    value={relativeFolder}
-                    onChange={(event) => setRelativeFolder(event.target.value)}
-                    placeholder="Leave blank for workspace root, or enter papers/my-paper"
+              ) : selectedAccount !== null ? (
+                <div className="rounded-lg border px-3 py-2 text-sm">
+                  <span>
+                    <span className="text-muted-foreground">Account:</span>{" "}
+                    <strong>{selectedAccount.label}</strong> · {selectedAccount.authorName}
+                  </span>
+                </div>
+              ) : null}
+              <div className="rounded-lg border p-4">
+                <div className="font-medium">1. Choose a project on Overleaf</div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Open your signed-in project list, select a project, and copy the address from the
+                  browser.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    render={
+                      <a href={projectDashboardUrl} target="_blank" rel="noreferrer">
+                        <ExternalLinkIcon /> Open project list
+                      </a>
+                    }
                   />
                   <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setFolderBrowserOpen(true)}
-                  >
-                    Browse
-                  </Button>
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  Existing and new subdirectories are supported. The server verifies that the final
-                  path stays inside the workspace.
-                </span>
-              </label>
-              <label className="grid gap-1.5">
-                <Label>Connection label</Label>
-                <Input value={label} onChange={(event) => setLabel(event.target.value)} />
-              </label>
-              <label className="grid gap-1.5">
-                <Label>Commit message</Label>
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                  value={commitKind}
-                  onChange={(event) =>
-                    setCommitKind(event.target.value as ScientOverleafCommitPolicy["kind"])
-                  }
-                >
-                  <option value="neutral">Always “Update project”</option>
-                  <option value="custom">Always use a custom message</option>
-                  <option value="prompt">Ask when a commit is needed</option>
-                </select>
-              </label>
-              {commitKind === "custom" ? (
-                <label className="grid gap-1.5">
-                  <Label>Custom message</Label>
-                  <Input
-                    value={customMessage}
-                    onChange={(event) => setCustomMessage(event.target.value)}
+                    size="sm"
+                    variant="ghost"
+                    render={
+                      <a href={newProjectUrl} target="_blank" rel="noreferrer">
+                        Create a new project <ExternalLinkIcon className="size-3" />
+                      </a>
+                    }
                   />
+                </div>
+                <label className="mt-4 grid gap-1.5">
+                  <Label>Project link</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={projectInput}
+                      aria-invalid={
+                        clipboardError !== null || preflightFailure !== null ? true : undefined
+                      }
+                      onChange={(event) => {
+                        setProjectInput(event.target.value);
+                        setClipboardError(null);
+                        setFormError(null);
+                      }}
+                      placeholder="https://www.overleaf.com/project/…"
+                    />
+                    <Button type="button" variant="outline" onClick={() => void pasteProjectLink()}>
+                      Paste
+                    </Button>
+                  </div>
+                  {clipboardError !== null ? (
+                    <span className="text-xs text-destructive" role="alert">
+                      {clipboardError}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      A project URL, Git URL, or copied git clone command is accepted.
+                    </span>
+                  )}
                 </label>
-              ) : null}
+              </div>
+              <div className="rounded-lg border p-4">
+                <div className="font-medium">2. Choose where it should live</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <label className="rounded-lg border p-3">
+                    <input
+                      className="me-2"
+                      type="radio"
+                      checked={destinationKind === "subfolder"}
+                      onChange={() => setDestinationKind("subfolder")}
+                    />{" "}
+                    <strong>Project folder</strong>
+                    <p className="ms-5 mt-1 text-xs text-muted-foreground">
+                      Recommended for a paper inside a larger workspace.
+                    </p>
+                  </label>
+                  <label className="rounded-lg border p-3">
+                    <input
+                      className="me-2"
+                      type="radio"
+                      checked={destinationKind === "root"}
+                      onChange={() => setDestinationKind("root")}
+                    />{" "}
+                    <strong>Workspace root</strong>
+                    <p className="ms-5 mt-1 text-xs text-muted-foreground">
+                      Use the entire workspace for this project.
+                    </p>
+                  </label>
+                </div>
+                {destinationKind === "subfolder" ? (
+                  <label className="mt-3 grid gap-1.5">
+                    <Label>Folder</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={relativeFolder}
+                        onChange={(event) => setRelativeFolder(event.target.value)}
+                        placeholder="papers/my-paper"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setFolderBrowserOpen(true)}
+                      >
+                        Browse
+                      </Button>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      Choose an existing folder or type a new one. It must stay inside this
+                      workspace.
+                    </span>
+                  </label>
+                ) : null}
+              </div>
+              <details className="rounded-lg border p-3">
+                <summary className="cursor-pointer text-sm font-medium">Advanced setup</summary>
+                <div className="mt-3 grid gap-4">
+                  <label className="grid gap-1.5">
+                    <Label>Connection label</Label>
+                    <Input value={label} onChange={(event) => setLabel(event.target.value)} />
+                  </label>
+                  <label className="grid gap-1.5">
+                    <Label>Commit message</Label>
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      value={commitKind}
+                      onChange={(event) =>
+                        setCommitKind(event.target.value as ScientOverleafCommitPolicy["kind"])
+                      }
+                    >
+                      <option value="neutral">Always “Update project”</option>
+                      <option value="custom">Always use a custom message</option>
+                      <option value="prompt">Ask when a commit is needed</option>
+                    </select>
+                  </label>
+                  {commitKind === "custom" ? (
+                    <label className="grid gap-1.5">
+                      <Label>Custom message</Label>
+                      <Input
+                        value={customMessage}
+                        onChange={(event) => setCustomMessage(event.target.value)}
+                      />
+                    </label>
+                  ) : null}
+                  <div className="grid gap-1.5">
+                    <Label>Initial file handling</Label>
+                    <InitialModeChoices mode={mode} onChange={setMode} />
+                  </div>
+                </div>
+              </details>
             </>
           ) : (
             <>
-              <div className="grid gap-2">
-                <label className="rounded-lg border p-3">
-                  <input
-                    className="me-2"
-                    type="radio"
-                    checked={mode === "combine"}
-                    onChange={() => setMode("combine")}
-                  />{" "}
-                  <strong>Safe Combine</strong>
-                  <p className="ms-5 mt-1 text-xs text-muted-foreground">
-                    Preserve unique files on both sides and resolve same-path differences.
-                  </p>
-                </label>
-                <label className="rounded-lg border p-3">
-                  <input
-                    className="me-2"
-                    type="radio"
-                    checked={mode === "replace-local"}
-                    onChange={() => setMode("replace-local")}
-                  />{" "}
-                  <strong>Replace local</strong>
-                  <p className="ms-5 mt-1 text-xs text-muted-foreground">
-                    Use Overleaf managed files locally. Replaced files are backed up.
-                  </p>
-                </label>
-                <label className="rounded-lg border p-3">
-                  <input
-                    className="me-2"
-                    type="radio"
-                    checked={mode === "replace-overleaf"}
-                    onChange={() => setMode("replace-overleaf")}
-                  />{" "}
-                  <strong>Replace Overleaf</strong>
-                  <p className="ms-5 mt-1 text-xs text-muted-foreground">
-                    Push the local managed tree without force-pushing. Comments and Track Changes
-                    metadata may be displaced.
-                  </p>
-                </label>
+              <div className="rounded-lg border bg-muted/20 p-3 text-sm">
+                <strong>
+                  {mode === "combine"
+                    ? "Safe Combine"
+                    : mode === "replace-local"
+                      ? "Replace local"
+                      : "Replace Overleaf"}
+                </strong>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  The project was found. Review the items below before anything is changed.
+                </div>
               </div>
+              <details className="rounded-lg border p-3">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Change initial file handling
+                </summary>
+                <div className="mt-3">
+                  <InitialModeChoices mode={mode} onChange={setMode} />
+                </div>
+              </details>
               {warnings.length > 0 ? (
                 <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
                   <div className="mb-2 flex items-center gap-2 font-medium">
@@ -674,7 +932,7 @@ function ConnectionWizard(props: {
             variant="outline"
             disabled={working}
             onClick={() => {
-              if (!props.operation || ["succeeded", "cancelled"].includes(props.operation.phase)) {
+              if (!cancellableOperation || !props.operation) {
                 props.onOpenChange(false);
                 return;
               }
@@ -693,16 +951,23 @@ function ConnectionWizard(props: {
                 );
             }}
           >
-            {props.operation && !["succeeded", "cancelled"].includes(props.operation.phase)
-              ? "Cancel connection"
-              : "Close"}
+            {cancellableOperation ? "Cancel connection" : "Close"}
           </Button>
           {preflightReady ? (
             <Button
-              disabled={working || (warnings.length > 0 && !acknowledged)}
-              onClick={() => void complete()}
+              disabled={working || automaticConnecting || (warnings.length > 0 && !acknowledged)}
+              onClick={() => void complete(false)}
             >
-              {working ? <LoaderCircleIcon className="animate-spin" /> : null} Connect
+              {working || automaticConnecting ? (
+                <LoaderCircleIcon className="animate-spin" />
+              ) : null}{" "}
+              {automaticConnecting
+                ? "Connecting…"
+                : automaticCompletionFailed
+                  ? "Retry connection"
+                  : warnings.length > 0
+                    ? "Connect anyway"
+                    : "Connect"}
             </Button>
           ) : !preflightRunning ? (
             <Button
@@ -710,12 +975,13 @@ function ConnectionWizard(props: {
                 working ||
                 !accountId ||
                 !projectInput.trim() ||
+                (destinationKind === "subfolder" && !relativeFolder.trim()) ||
                 !label.trim() ||
                 (commitKind === "custom" && !customMessage.trim())
               }
               onClick={() => void start()}
             >
-              {working ? <LoaderCircleIcon className="animate-spin" /> : null} Check project
+              {working ? <LoaderCircleIcon className="animate-spin" /> : null} Connect
             </Button>
           ) : null}
         </DialogFooter>
@@ -726,7 +992,10 @@ function ConnectionWizard(props: {
         workspaceRoot={props.workspaceRoot}
         initialPath={relativeFolder}
         onOpenChange={setFolderBrowserOpen}
-        onSelect={setRelativeFolder}
+        onSelect={(selected) => {
+          setRelativeFolder(selected);
+          setDestinationKind(selected ? "subfolder" : "root");
+        }}
       />
     </Dialog>
   );
@@ -1236,6 +1505,7 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
   const [editedConnection, setEditedConnection] = useState<ScientOverleafConnection | null>(null);
   const [operation, setOperation] = useState<ScientOverleafOperationSnapshot | null>(null);
   const [pollOperationId, setPollOperationId] = useState<string | null>(null);
+  const continueConnectingAfterAccount = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -1442,7 +1712,20 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
         title="Overleaf"
         icon={<GitCompareArrowsIcon className="size-5" />}
         headerAction={
-          <Button size="sm" onClick={() => setConnectOpen(true)}>
+          <Button
+            size="sm"
+            disabled={loading}
+            onClick={() => {
+              if ((overview?.accounts.length ?? 0) === 0) {
+                continueConnectingAfterAccount.current = true;
+                setEditedAccount(null);
+                setAccountEditorOpen(true);
+                return;
+              }
+              setOperation(null);
+              setConnectOpen(true);
+            }}
+          >
             <PlusIcon /> Connect
           </Button>
         }
@@ -1692,6 +1975,7 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
                 size="sm"
                 variant="outline"
                 onClick={() => {
+                  continueConnectingAfterAccount.current = false;
                   setEditedAccount(null);
                   setAccountEditorOpen(true);
                 }}
@@ -1714,6 +1998,7 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
                     size="xs"
                     variant="ghost"
                     onClick={() => {
+                      continueConnectingAfterAccount.current = false;
                       setEditedAccount(account);
                       setAccountEditorOpen(true);
                     }}
@@ -1757,9 +2042,14 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
         onStarted={track}
         onCompleted={(next) => {
           track(next);
+          if (next.kind === "connect" && next.connectStage === "connected") {
+            setConnectOpen(false);
+          }
           void refresh();
         }}
         onAddAccount={() => {
+          continueConnectingAfterAccount.current = true;
+          setConnectOpen(false);
           setEditedAccount(null);
           setAccountEditorOpen(true);
         }}
@@ -1768,8 +2058,17 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
         open={accountEditorOpen}
         environmentId={environmentId}
         account={editedAccount}
-        onOpenChange={setAccountEditorOpen}
-        onSaved={() => void refresh()}
+        onOpenChange={(open) => {
+          setAccountEditorOpen(open);
+          if (!open) continueConnectingAfterAccount.current = false;
+        }}
+        onSaved={() => {
+          const shouldContinue = continueConnectingAfterAccount.current;
+          continueConnectingAfterAccount.current = false;
+          void refresh().then(() => {
+            if (shouldContinue) setConnectOpen(true);
+          });
+        }}
       />
       <ConnectionSettingsDialog
         open={connectionEditorOpen}
@@ -1778,6 +2077,217 @@ export function OverleafProjectSettings({ environmentId, workspaceRoot, projectN
         onOpenChange={setConnectionEditorOpen}
         onSaved={() => void refresh()}
       />
+      <OperationDialog
+        environmentId={environmentId}
+        operation={attentionOperation}
+        onChanged={track}
+        onClose={() => setOperation(null)}
+      />
+    </>
+  );
+}
+
+function latestConnectOperation(
+  overview: ScientOverleafOverview,
+): ScientOverleafOperationSnapshot | null {
+  return (
+    overview.operations
+      .filter((candidate) => candidate.kind === "connect" && !TERMINAL_PHASES.has(candidate.phase))
+      .toSorted((left, right) => right.updatedAtEpochMs - left.updatedAtEpochMs)[0] ?? null
+  );
+}
+
+export function OverleafQuickConnect({ environmentId, workspaceRoot, projectName }: Props) {
+  const [overview, setOverview] = useState<ScientOverleafOverview | null>(null);
+  const [launching, setLaunching] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [accountEditorOpen, setAccountEditorOpen] = useState(false);
+  const [operation, setOperation] = useState<ScientOverleafOperationSnapshot | null>(null);
+  const [pollOperationId, setPollOperationId] = useState<string | null>(null);
+
+  const refresh = useCallback(async (): Promise<ScientOverleafOverview | null> => {
+    try {
+      const next = await overleafClient.overview(environmentId, workspaceRoot);
+      setOverview(next);
+      return next;
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not open Overleaf",
+        description: errorMessage(error),
+      });
+      return null;
+    }
+  }, [environmentId, workspaceRoot]);
+
+  const track = useCallback((next: ScientOverleafOperationSnapshot) => {
+    setOperation(next);
+    setPollOperationId(ACTIVE_PHASES.has(next.phase) ? next.operationId : null);
+  }, []);
+
+  useEffect(() => {
+    if (pollOperationId === null) return;
+    const timer = window.setInterval(() => {
+      void overleafClient
+        .operation(environmentId, pollOperationId)
+        .then((next) => {
+          setOperation(next);
+          if (ACTIVE_PHASES.has(next.phase)) return;
+          setPollOperationId(null);
+          void refresh();
+          if (next.kind === "connect" && next.connectStage === "connected") {
+            setConnectOpen(false);
+          }
+          if (next.phase === "succeeded") {
+            setConnectOpen(false);
+            toastManager.add({
+              type: "success",
+              title: "Overleaf project connected",
+              description: next.message,
+            });
+            return;
+          }
+          const failure = overleafOperationFailureMessage(next);
+          if (failure !== null) {
+            toastManager.add({
+              type: "error",
+              title:
+                next.kind === "connect" && next.connectStage === "preflight"
+                  ? "Could not check Overleaf project"
+                  : "Overleaf operation failed",
+              description: failure,
+            });
+          }
+        })
+        .catch((error) => {
+          setPollOperationId(null);
+          toastManager.add({
+            type: "error",
+            title: "Could not read Overleaf progress",
+            description: errorMessage(error),
+          });
+        });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [environmentId, pollOperationId, refresh]);
+
+  const launch = async () => {
+    setLaunching(true);
+    const next = await refresh();
+    setLaunching(false);
+    if (next === null) return;
+    const pending = latestConnectOperation(next);
+    setOperation(pending);
+    setPollOperationId(
+      pending !== null && ACTIVE_PHASES.has(pending.phase) ? pending.operationId : null,
+    );
+    if (pending?.connectStage === "connected") {
+      setConnectOpen(false);
+      return;
+    }
+    if (next.accounts.length === 0) setAccountEditorOpen(true);
+    else setConnectOpen(true);
+  };
+
+  const continueAfterAccount = async () => {
+    const next = await refresh();
+    if (next === null) return;
+    const pending = latestConnectOperation(next);
+    setOperation(pending);
+    setPollOperationId(
+      pending !== null && ACTIVE_PHASES.has(pending.phase) ? pending.operationId : null,
+    );
+    setConnectOpen(pending?.connectStage !== "connected");
+  };
+
+  const connectionDraftOperation =
+    operation?.kind === "connect" && operation.connectStage === "preflight" ? operation : null;
+  const activeConnectOperation =
+    operation?.kind === "connect" &&
+    operation.connectStage === "connected" &&
+    ACTIVE_PHASES.has(operation.phase)
+      ? operation
+      : null;
+  const attentionOperation =
+    operation?.kind === "connect" &&
+    (operation.connectStage === "preflight" || ACTIVE_PHASES.has(operation.phase))
+      ? null
+      : operation;
+
+  return (
+    <>
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={launching}
+        aria-label="Connect an Overleaf project"
+        onClick={() => void launch()}
+      >
+        {launching ? <LoaderCircleIcon className="animate-spin" /> : <GitCompareArrowsIcon />}
+        Overleaf
+      </Button>
+      <ConnectionWizard
+        open={connectOpen}
+        environmentId={environmentId}
+        workspaceRoot={workspaceRoot}
+        projectName={projectName}
+        accounts={overview?.accounts ?? []}
+        operation={connectionDraftOperation}
+        onOpenChange={setConnectOpen}
+        onStarted={track}
+        onCompleted={(next) => {
+          track(next);
+          if (next.kind === "connect" && next.connectStage === "connected") {
+            setConnectOpen(false);
+          }
+          void refresh();
+        }}
+        onAddAccount={() => {
+          setConnectOpen(false);
+          setAccountEditorOpen(true);
+        }}
+      />
+      <AccountEditor
+        open={accountEditorOpen}
+        environmentId={environmentId}
+        account={null}
+        onOpenChange={setAccountEditorOpen}
+        onSaved={() => void continueAfterAccount()}
+      />
+      <Dialog
+        open={activeConnectOperation !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          setOperation(null);
+          setPollOperationId(null);
+        }}
+      >
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Connecting Overleaf project</DialogTitle>
+            <DialogDescription>
+              This is the connection you started; no background synchronization is being enabled.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="flex items-center gap-3 rounded-lg border p-4 text-sm">
+              <LoaderCircleIcon className="size-4 animate-spin" />
+              <span>{activeConnectOperation?.message}</span>
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOperation(null);
+                setPollOperationId(null);
+              }}
+            >
+              Continue in background
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       <OperationDialog
         environmentId={environmentId}
         operation={attentionOperation}

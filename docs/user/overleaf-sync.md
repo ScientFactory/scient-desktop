@@ -1,9 +1,23 @@
 # Manual Overleaf synchronization
 
-Connect an Overleaf project from **Project Settings → Overleaf**. The project can appear at the
-workspace root, in an existing subdirectory, or in a new subdirectory. The selected folder remains
-an ordinary workspace folder: the app keeps the Git mirror in its private state directory and does
-not create an Overleaf `.git` repository there.
+Use **Overleaf** beside **Import sources** in the Sources header, or open **Project Settings →
+Overleaf**, to connect a project:
+
+1. Connect your Overleaf account once. The dialog links directly to Overleaf account settings and
+   explains how to create a Git authentication token.
+2. Select **Open project list**, choose the project in your signed-in Overleaf browser session, and
+   copy its browser address.
+3. Return to the dialog and select **Paste**, or paste the address into the project-link field.
+4. Choose a project subfolder (recommended) or the workspace root, then select **Connect**.
+
+Overleaf does not provide a supported account project-list API, so the app opens the normal
+Overleaf dashboard rather than asking for a second browser login or scraping private endpoints.
+Clipboard access occurs only when you explicitly select **Paste**.
+
+Safe Combine is the default and continues automatically when no review is needed. Connection label,
+commit-message policy, and replacement modes remain available under **Advanced setup**. The selected
+folder stays an ordinary workspace folder: the app keeps the Git mirror in its private state
+directory and does not create an Overleaf `.git` repository there.
 
 Synchronization is manual. The app does not poll Overleaf and does not synchronize on open, save,
 close, or a timer. Select **Sync** in Project Settings or in the LaTeX toolbar when you want to:

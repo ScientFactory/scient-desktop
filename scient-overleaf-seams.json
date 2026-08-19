@@ -14,6 +14,7 @@
     "scient-overleaf",
     "/api/scient/overleaf",
     "OverleafProjectSettings",
+    "OverleafQuickConnect",
     "OverleafLatexToolbarControl"
   ],
   "upstreamDependencies": [
@@ -60,6 +61,11 @@
       "path": "apps/web/src/scient/latex/ScientLatexSurface.tsx",
       "anchor": "<OverleafLatexToolbarControl",
       "purpose": "Expose manual Sync and conflict status in the additive LaTeX toolbar."
+    },
+    {
+      "path": "apps/web/src/scient/sources/ScientSourcesPanel.tsx",
+      "anchor": "<OverleafQuickConnect",
+      "purpose": "Expose account and project onboarding beside the existing project-level source integrations."
     }
   ]
 }
