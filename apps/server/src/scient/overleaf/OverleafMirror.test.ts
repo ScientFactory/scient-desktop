@@ -15,7 +15,11 @@ import * as Layer from "effect/Layer";
 
 import { layer as managedTreeLayer } from "./ManagedTree.ts";
 import { layer as executorLayer } from "./OverleafGitExecutor.ts";
-import { layer as mirrorLayer, OverleafMirror } from "./OverleafMirror.ts";
+import {
+  layer as mirrorLayer,
+  OverleafMirror,
+  parseRemoteBranchAdvertisement,
+} from "./OverleafMirror.ts";
 import { OverleafStateStore } from "./OverleafStateStore.ts";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -65,6 +69,24 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 }
 
 describe("OverleafMirror", () => {
+  it("discovers current main and legacy master Overleaf branches", () => {
+    expect(
+      parseRemoteBranchAdvertisement(
+        "ref: refs/heads/main\tHEAD\n0123456789abcdef0123456789abcdef01234567\tHEAD\n0123456789abcdef0123456789abcdef01234567\trefs/heads/main\n",
+      ),
+    ).toBe("main");
+    expect(
+      parseRemoteBranchAdvertisement(
+        "0123456789abcdef0123456789abcdef01234567\trefs/heads/master\n",
+      ),
+    ).toBe("master");
+    expect(
+      parseRemoteBranchAdvertisement(
+        "0123456789abcdef0123456789abcdef01234567\trefs/heads/main\n89abcdef0123456789abcdef0123456789abcdef\trefs/heads/master\n",
+      ),
+    ).toBeNull();
+  });
+
   it.effect("rejects an existing private mirror whose origin does not match the connection", () =>
     Effect.gen(function* () {
       const root = yield* temporaryDirectory;
@@ -103,8 +125,8 @@ describe("OverleafMirror", () => {
         await git(cwd, "commit", "-m", "old");
         await NodeFSP.writeFile(NodePath.join(cwd, "chapter.tex"), currentText);
         await git(cwd, "commit", "-am", "current");
-        await git(cwd, "update-ref", "refs/remotes/origin/master", "HEAD");
-        const remoteHead = await git(cwd, "rev-parse", "refs/remotes/origin/master");
+        await git(cwd, "update-ref", "refs/remotes/origin/main", "HEAD");
+        const remoteHead = await git(cwd, "rev-parse", "refs/remotes/origin/main");
         await git(cwd, "mv", "chapter.tex", "renamed.tex");
         await NodeFSP.writeFile(NodePath.join(cwd, "renamed.tex"), oldText);
         await git(cwd, "add", "-A");
@@ -115,6 +137,7 @@ describe("OverleafMirror", () => {
       const review = yield* mirror.review({
         operationId: NodeCrypto.randomUUID(),
         cwd,
+        branch: "main",
         connection: {
           connectionId: NodeCrypto.randomUUID(),
           accountId: NodeCrypto.randomUUID(),
@@ -124,7 +147,7 @@ describe("OverleafMirror", () => {
           projectUrl: "https://www.overleaf.com/project/0123456789abcdef01234567",
           gitUrl: "https://git.overleaf.com/0123456789abcdef01234567",
           host: "git.overleaf.com",
-          branch: "master",
+          branch: "main",
           commitPolicy: { kind: "neutral" },
           suppressRenameWarning: true,
           state: "operation_active",

@@ -538,6 +538,7 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
     cwd: mirror.mirrorRoot(connection.connectionId),
     account,
     token,
+    branch: connection.branch,
   });
 
   const credentialsForConnection = Effect.fnUntraced(function* (
@@ -960,7 +961,7 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
 
       yield* patchOperation(operationId, {
         phase: "fetching",
-        message: "Overleaf changed; fetching the latest master…",
+        message: `Overleaf changed; fetching the latest ${connection.branch}…`,
         review: null,
       });
       const prePushBase = yield* mirror.fetch(context);
@@ -1018,7 +1019,10 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
   ) {
     const credentials = yield* credentialsForConnection(connection);
     const context = gitContext(operationId, connection, credentials.account, credentials.token);
-    yield* patchOperation(operationId, { phase: "fetching", message: "Fetching Overleaf master…" });
+    yield* patchOperation(operationId, {
+      phase: "fetching",
+      message: `Fetching Overleaf ${connection.branch}…`,
+    });
     const prePushBase = yield* mirror.fetch(context);
     yield* patchOperation(operationId, {
       phase: "rebasing",
@@ -1088,7 +1092,7 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
       tracked,
       connection.localOnlyCompanions,
     );
-    const baseline = connection.remoteBaselineCommit ?? "refs/remotes/origin/master";
+    const baseline = connection.remoteBaselineCommit ?? `refs/remotes/origin/${connection.branch}`;
     yield* patchOperation(
       operationId,
       { phase: "preparing", message: "Capturing the local project snapshot…" },
@@ -1354,8 +1358,10 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
               message: "Checking Overleaf Git access…",
             });
             yield* mirror.initialize({ ...context, connectionId, gitUrl: parsed.gitUrl });
-            const remoteHead = yield* mirror.fetch(context);
-            const remoteManifest = yield* mirror.manifest({ ...context, commit: remoteHead });
+            const branch = yield* mirror.discoverBranch(context);
+            const branchContext = { ...context, branch };
+            const remoteHead = yield* mirror.fetch(branchContext);
+            const remoteManifest = yield* mirror.manifest({ ...branchContext, commit: remoteHead });
             const localManifest = yield* scanTarget(
               operation.snapshot.operationId,
               root,
@@ -1388,6 +1394,7 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
                 remoteManifest,
                 candidateCommit: remoteHead,
                 prePushBase: remoteHead,
+                branch,
               },
             );
           }),
@@ -1430,6 +1437,7 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
             !context.accountId ||
             !context.projectUrl ||
             !context.gitUrl ||
+            !context.branch ||
             !context.host ||
             !context.label ||
             !context.commitPolicy ||
@@ -1526,7 +1534,7 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
             projectUrl: context.projectUrl,
             gitUrl: context.gitUrl,
             host: context.host,
-            branch: "master",
+            branch: context.branch,
             commitPolicy: context.commitPolicy,
             suppressRenameWarning: false,
             state: "operation_active",

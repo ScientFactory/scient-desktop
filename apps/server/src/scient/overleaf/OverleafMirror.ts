@@ -32,6 +32,26 @@ interface GitContext {
   readonly cwd: string;
   readonly token?: Uint8Array;
   readonly account?: PersistedOverleafAccount;
+  readonly branch?: PersistedOverleafConnection["branch"];
+}
+
+function remoteBranch(input: GitContext): PersistedOverleafConnection["branch"] {
+  return input.branch ?? "master";
+}
+
+function remoteTrackingRef(input: GitContext): string {
+  return `refs/remotes/origin/${remoteBranch(input)}`;
+}
+
+export function parseRemoteBranchAdvertisement(
+  output: string,
+): PersistedOverleafConnection["branch"] | null {
+  const symbolicHead = /^ref:\s+refs\/heads\/(main|master)\s+HEAD$/mu.exec(output)?.[1];
+  if (symbolicHead === "main" || symbolicHead === "master") return symbolicHead;
+  const advertised = new Set<PersistedOverleafConnection["branch"]>();
+  for (const match of output.matchAll(/^[0-9a-f]{40,64}\s+refs\/heads\/(main|master)$/gmu))
+    advertised.add(match[1] as PersistedOverleafConnection["branch"]);
+  return advertised.size === 1 ? [...advertised][0]! : null;
 }
 
 function operationError(
@@ -242,6 +262,9 @@ export class OverleafMirror extends Context.Service<
     readonly initialize: (
       input: GitContext & { readonly connectionId: string; readonly gitUrl: string },
     ) => Effect.Effect<void, ScientOverleafOperationError>;
+    readonly discoverBranch: (
+      input: GitContext,
+    ) => Effect.Effect<PersistedOverleafConnection["branch"], ScientOverleafOperationError>;
     readonly fetch: (input: GitContext) => Effect.Effect<string, ScientOverleafOperationError>;
     readonly checkout: (
       input: GitContext & { readonly commit: string },
@@ -418,16 +441,34 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
           "--prune",
           "--no-tags",
           "origin",
-          "+refs/heads/master:refs/remotes/origin/master",
+          `+refs/heads/${remoteBranch(input)}:${remoteTrackingRef(input)}`,
         ],
         { timeoutMs: 180_000, credentialed: true, allowNonZeroExit: true },
       );
       if (fetched.exitCode !== 0) return yield* classifyRemoteFailure(fetched.stderr);
-      const head = (yield* run(input, ["rev-parse", "refs/remotes/origin/master"]).pipe(
-        Effect.mapError(mapGitError("The Overleaf master branch is unavailable.", false)),
+      const head = (yield* run(input, ["rev-parse", remoteTrackingRef(input)]).pipe(
+        Effect.mapError(mapGitError("The Overleaf project branch is unavailable.", false)),
       )).stdout.trim();
       if (input.account !== undefined) yield* state.markAccountValidated(input.account.accountId);
       return head;
+    });
+
+  const discoverBranch: OverleafMirror["Service"]["discoverBranch"] = (input) =>
+    Effect.gen(function* () {
+      const advertised = yield* run(
+        input,
+        ["ls-remote", "--symref", "origin", "HEAD", "refs/heads/main", "refs/heads/master"],
+        { timeoutMs: 180_000, credentialed: true, allowNonZeroExit: true },
+      );
+      if (advertised.exitCode !== 0) return yield* classifyRemoteFailure(advertised.stderr);
+      const branch = parseRemoteBranchAdvertisement(advertised.stdout);
+      if (branch === null)
+        return yield* operationError(
+          "unsupported_tree",
+          "This Overleaf project does not expose an unambiguous main or master branch.",
+          false,
+        );
+      return branch;
     });
 
   const checkout: OverleafMirror["Service"]["checkout"] = (input) =>
@@ -588,13 +629,13 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
   const rebaseSnapshot: OverleafMirror["Service"]["rebaseSnapshot"] = (input) =>
     Effect.gen(function* () {
       if (input.snapshotCommit === null) {
-        yield* checkout({ ...input, commit: "refs/remotes/origin/master" });
+        yield* checkout({ ...input, commit: remoteTrackingRef(input) });
         const candidateCommit = (yield* run(input, ["rev-parse", "HEAD"]).pipe(
           Effect.mapError(mapGitError("Unable to identify the Overleaf candidate.")),
         )).stdout.trim();
         return { candidateCommit, conflicted: false };
       }
-      const rebased = yield* run(input, ["rebase", "refs/remotes/origin/master"], {
+      const rebased = yield* run(input, ["rebase", remoteTrackingRef(input)], {
         allowNonZeroExit: true,
       });
       if (rebased.exitCode !== 0) {
@@ -770,7 +811,7 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
           "--find-renames=50%",
           "--name-status",
           "-z",
-          "refs/remotes/origin/master",
+          remoteTrackingRef(input),
           input.candidateCommit,
         ])).stdout,
       );
@@ -800,7 +841,7 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
 
       const headTree = (yield* run(input, [
         "rev-parse",
-        "refs/remotes/origin/master^{tree}",
+        `${remoteTrackingRef(input)}^{tree}`,
       ])).stdout.trim();
       const candidateTree = (yield* run(input, [
         "rev-parse",
@@ -810,7 +851,7 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
         "log",
         "--first-parent",
         "--format=%T",
-        "refs/remotes/origin/master",
+        remoteTrackingRef(input),
       ])).stdout
         .split("\n")
         .filter(Boolean)
@@ -839,18 +880,18 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
         )).stdout.trim();
         const headBlob = (yield* run(
           input,
-          ["rev-parse", `refs/remotes/origin/master:${historyPath}`],
+          ["rev-parse", `${remoteTrackingRef(input)}:${historyPath}`],
           { allowNonZeroExit: true },
         )).stdout.trim();
         if (!candidateBlob || candidateBlob === headBlob) continue;
         const remoteHead = (yield* run(input, [
           "rev-parse",
-          "refs/remotes/origin/master",
+          remoteTrackingRef(input),
         ])).stdout.trim();
         const history = (yield* run(input, [
           "rev-list",
           "--first-parent",
-          "refs/remotes/origin/master",
+          remoteTrackingRef(input),
           "--",
           historyPath,
         ])).stdout
@@ -888,7 +929,7 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
     Effect.gen(function* () {
       const result: OverleafGitExecuteResult = yield* run(
         input,
-        ["push", "--porcelain", "origin", "HEAD:master"],
+        ["push", "--porcelain", "origin", `HEAD:${remoteBranch(input)}`],
         { allowNonZeroExit: true, timeoutMs: 180_000, credentialed: true, unknownOnTimeout: true },
       ).pipe(
         Effect.catch(() =>
@@ -972,6 +1013,7 @@ export const make = Effect.fn("OverleafMirror.make")(function* () {
   return OverleafMirror.of({
     mirrorRoot,
     initialize,
+    discoverBranch,
     fetch,
     checkout,
     manifest,

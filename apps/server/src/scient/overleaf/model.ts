@@ -35,6 +35,7 @@ export interface OperationContext {
   readonly accountId?: string;
   readonly projectUrl?: string;
   readonly gitUrl?: string;
+  readonly branch?: ScientOverleafConnection["branch"];
   readonly host?: string;
   readonly label?: string;
   readonly commitPolicy?: ScientOverleafCommitPolicy;

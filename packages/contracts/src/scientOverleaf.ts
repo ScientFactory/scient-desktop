@@ -132,7 +132,7 @@ export const ScientOverleafConnection = Schema.Struct({
   projectUrl: SafeShortString,
   gitUrl: SafeShortString,
   host: SafeShortString,
-  branch: Schema.Literal("master"),
+  branch: Schema.Literals(["main", "master"]),
   commitPolicy: ScientOverleafCommitPolicy,
   suppressRenameWarning: Schema.Boolean,
   state: ScientOverleafConnectionState,

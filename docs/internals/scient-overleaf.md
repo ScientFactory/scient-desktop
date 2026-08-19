@@ -13,7 +13,8 @@ The v1 invariants are:
   request;
 - one connection operation is admitted at a time and concurrent requests fail instead of queueing;
 - an operation creates at most one unpublished outbound workspace snapshot commit;
-- only `HEAD:master` is pushed, without force and without tags or private refs;
+- the advertised `main` or legacy `master` branch is discovered during preflight and only
+  `HEAD:<discovered-branch>` is pushed, without force and without tags or private refs;
 - the candidate is pushed before workspace projection;
 - workspace projection uses click-time hashes, a durable journal, same-filesystem temporary files,
   and per-file backups;

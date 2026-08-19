@@ -9,7 +9,7 @@ Synchronization is manual. The app does not poll Overleaf and does not synchroni
 close, or a timer. Select **Sync** in Project Settings or in the LaTeX toolbar when you want to:
 
 1. capture the current managed workspace files;
-2. fetch and merge `master` from Overleaf in the private mirror;
+2. fetch and merge the project's advertised `main` or legacy `master` branch in the private mirror;
 3. review any destructive or reverting candidate;
 4. push the confirmed result; and
 5. update the workspace without overwriting edits made after Sync began.
@@ -20,7 +20,7 @@ The first connection offers three choices:
   structural conflicts.
 - **Replace local** uses Overleaf's managed tree locally. The exact changes are shown first, and
   replaced or deleted managed files are retained in the connection's private pre-connect backup.
-- **Replace Overleaf** commits the local managed tree on top of `master`. It does not force-push,
+- **Replace Overleaf** commits the local managed tree on top of the discovered Overleaf branch. It does not force-push,
   and the review warns that comments or Track Changes metadata may be displaced.
 
 ## Accounts and identity
@@ -73,5 +73,5 @@ Local-only companion files are left as ordinary workspace files by default.
 
 If access fails, the app reports that Git access is unavailable rather than guessing a subscription
 cause. Check the project/Git URL, collaborator permissions, token expiry, Cloud project-owner Git
-eligibility, or Server Pro Git Bridge configuration. Only HTTPS and the Overleaf `master` branch are
-supported in this version.
+eligibility, or Server Pro Git Bridge configuration. Only HTTPS projects advertising an unambiguous
+`main` or legacy `master` branch are supported in this version.

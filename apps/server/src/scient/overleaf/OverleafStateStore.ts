@@ -93,6 +93,7 @@ const OperationContextSchema = Schema.Struct({
   accountId: Schema.optionalKey(ScientOverleafAccountSchema.fields.accountId),
   projectUrl: Schema.optionalKey(Schema.String),
   gitUrl: Schema.optionalKey(Schema.String),
+  branch: Schema.optionalKey(ScientOverleafConnectionSchema.fields.branch),
   host: Schema.optionalKey(Schema.String),
   label: Schema.optionalKey(Schema.String),
   commitPolicy: Schema.optionalKey(ScientOverleafCommitPolicy),
