@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import type {
   ScientOverleafAccount,
   ScientOverleafConnection,
+  ScientOverleafConflictDetail as ScientOverleafConflictDetailType,
   ScientOverleafOperationSnapshot,
   ScientOverleafSaveAccountRequest,
 } from "@t3tools/contracts";
@@ -70,6 +71,9 @@ const PersistedConnectionRecordSchema = Schema.Struct({
 const PersistedBaselineSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   recordRevision: Schema.optionalKey(Schema.String),
+  // The baseline is written before connection.json and carries the matching
+  // metadata so a crash between the two atomic renames is recoverable.
+  connectionRecord: Schema.optionalKey(PersistedConnectionRecordSchema),
   state: ScientOverleafConnectionSchema.fields.state,
   remoteBaselineCommit: ScientOverleafConnectionSchema.fields.remoteBaselineCommit,
   lastConvergedCommit: ScientOverleafConnectionSchema.fields.lastConvergedCommit,
@@ -171,6 +175,30 @@ const emptyRegistry: Registry = {
   operations: [],
 };
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const operationConflictPreviewBudgetBytes = 8 * 1024 * 1024;
+
+function boundConflictPreviews(
+  conflicts: ReadonlyArray<ScientOverleafConflictDetailType>,
+): ReadonlyArray<ScientOverleafConflictDetailType> {
+  let remaining = operationConflictPreviewBudgetBytes;
+  return conflicts.map((detail) => {
+    const bytes = [detail.base, detail.overleaf, detail.local].reduce(
+      (total, preview) => total + (preview === null ? 0 : Buffer.byteLength(preview, "utf8")),
+      0,
+    );
+    if (bytes <= remaining) {
+      remaining -= bytes;
+      return detail;
+    }
+    return {
+      ...detail,
+      conflict: { ...detail.conflict, previewable: false },
+      base: null,
+      overleaf: null,
+      local: null,
+    };
+  });
+}
 
 function stateError(
   code:
@@ -423,14 +451,15 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
       ...record
     } = connection;
     const recordRevision = NodeCrypto.randomUUID();
-    yield* writeJson(connectionPath(connection.connectionId), {
+    const connectionRecord = {
       schemaVersion: 1,
       recordRevision,
       ...record,
-    });
+    } as const;
     yield* writeJson(baselinePath(connection.connectionId), {
       schemaVersion: 1,
       recordRevision,
+      connectionRecord,
       state: connectionState,
       remoteBaselineCommit,
       lastConvergedCommit,
@@ -440,9 +469,24 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
       pendingRemoteCommit,
       activeOperationId,
     });
+    yield* writeJson(connectionPath(connection.connectionId), connectionRecord);
   });
-  const writeOperationFile = (operation: PersistedOverleafOperation) =>
-    writeJson(operationPath(operation.snapshot.operationId), { schemaVersion: 1, ...operation });
+  const writeOperationFile = (operation: PersistedOverleafOperation) => {
+    const bounded =
+      operation.context.conflicts === undefined
+        ? operation
+        : {
+            ...operation,
+            context: {
+              ...operation.context,
+              conflicts: boundConflictPreviews(operation.context.conflicts),
+            },
+          };
+    return writeJson(operationPath(operation.snapshot.operationId), {
+      schemaVersion: 1,
+      ...bounded,
+    });
+  };
 
   const readConnection = Effect.fn("OverleafStateStore.readConnection")(function* (
     connectionId: string,
@@ -453,17 +497,26 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
     ]);
     if (Option.isNone(connectionContents) && Option.isNone(baselineContents))
       return yield* stateError("not_found", "The Overleaf connection was not found.");
-    if (Option.isNone(connectionContents) || Option.isNone(baselineContents))
+    if (Option.isNone(baselineContents))
       return yield* stateError("corrupt_state", "Saved Overleaf connection state is incomplete.");
-    const record = yield* decodeConnectionJson(connectionContents.value).pipe(
-      Effect.mapError(() =>
-        stateError("corrupt_state", "Saved Overleaf connection is unreadable."),
-      ),
-    );
     const baseline = yield* decodeBaselineJson(baselineContents.value).pipe(
       Effect.mapError(() => stateError("corrupt_state", "Saved Overleaf baseline is unreadable.")),
     );
-    if (record.recordRevision !== baseline.recordRevision)
+    const fileRecord = Option.isSome(connectionContents)
+      ? yield* decodeConnectionJson(connectionContents.value).pipe(
+          Effect.mapError(() =>
+            stateError("corrupt_state", "Saved Overleaf connection is unreadable."),
+          ),
+        )
+      : undefined;
+    const embeddedRecord = baseline.connectionRecord;
+    const record =
+      fileRecord?.recordRevision === baseline.recordRevision
+        ? fileRecord
+        : embeddedRecord?.recordRevision === baseline.recordRevision
+          ? embeddedRecord
+          : undefined;
+    if (record === undefined || record.connectionId !== connectionId)
       return yield* stateError(
         "corrupt_state",
         "Saved Overleaf connection files belong to different revisions.",
@@ -476,6 +529,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
     const {
       schemaVersion: _baselineVersion,
       recordRevision: _baselineRevision,
+      connectionRecord: _connectionRecord,
       ...connectionBaseline
     } = baseline;
     return { ...connectionRecord, ...connectionBaseline } satisfies PersistedOverleafConnection;
@@ -524,8 +578,27 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
   yield* lock.withPermits(1)(
     Effect.gen(function* () {
       const registry = yield* readRegistry();
+      const directoryNames = (directory: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            try {
+              return (await NodeFSP.readdir(directory, { withFileTypes: true }))
+                .filter((entry) => entry.isDirectory())
+                .map((entry) => entry.name);
+            } catch (cause) {
+              if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+              throw cause;
+            }
+          },
+          catch: () =>
+            stateError("filesystem_failed", "Unable to inspect saved Overleaf state.", true),
+        });
       const validConnections: string[] = [];
-      for (const connectionId of registry.connectionIds) {
+      const connectionCandidates = new Set([
+        ...registry.connectionIds,
+        ...(yield* directoryNames(connectionsRoot)),
+      ]);
+      for (const connectionId of connectionCandidates) {
         const decoded = yield* readConnection(connectionId).pipe(Effect.result);
         if (Result.isSuccess(decoded) && decoded.success.connectionId === connectionId) {
           validConnections.push(connectionId);
@@ -534,8 +607,27 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
         yield* quarantinePath(connectionDirectory(connectionId), "connection", connectionId);
       }
       const validConnectionSet = new Set(validConnections);
+      const operationCandidates = new Map(
+        registry.operations.map((operation) => [operation.operationId, operation.connectionId]),
+      );
+      for (const connectionId of validConnections) {
+        const operationsDirectory = path.join(connectionDirectory(connectionId), "operations");
+        for (const operationId of yield* directoryNames(operationsDirectory)) {
+          if (!operationCandidates.has(operationId)) {
+            operationCandidates.set(operationId, connectionId);
+            operationConnections.set(operationId, connectionId);
+          }
+        }
+      }
+      for (const operationId of yield* directoryNames(orphanOperationsRoot)) {
+        if (!operationCandidates.has(operationId)) {
+          operationCandidates.set(operationId, null);
+          operationConnections.set(operationId, null);
+        }
+      }
       const validOperations: Registry["operations"][number][] = [];
-      for (const registered of registry.operations) {
+      for (const [operationId, connectionId] of operationCandidates) {
+        const registered = { operationId, connectionId };
         if (registered.connectionId !== null && !validConnectionSet.has(registered.connectionId)) {
           operationConnections.delete(registered.operationId);
           continue;
@@ -544,7 +636,8 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
         if (
           Result.isSuccess(decoded) &&
           decoded.success.snapshot.operationId === registered.operationId &&
-          decoded.success.snapshot.connectionId === registered.connectionId
+          (registered.connectionId === null ||
+            decoded.success.snapshot.connectionId === registered.connectionId)
         ) {
           validOperations.push(registered);
           continue;
@@ -556,15 +649,11 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
         );
         operationConnections.delete(registered.operationId);
       }
-      if (
-        validConnections.length !== registry.connectionIds.length ||
-        validOperations.length !== registry.operations.length
-      )
-        yield* writeRegistry({
-          ...registry,
-          connectionIds: validConnections,
-          operations: validOperations,
-        });
+      yield* writeRegistry({
+        ...registry,
+        connectionIds: validConnections,
+        operations: validOperations,
+      });
     }),
   );
 
@@ -1071,6 +1160,14 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
       }),
     );
 
+  // Public reads share the registry semaphore with multi-file writes. Internal
+  // callers above use the raw readers while already holding the permit.
+  const lockedListConnections = lock.withPermits(1)(listConnections);
+  const lockedGetConnection = (connectionId: string) =>
+    lock.withPermits(1)(readConnection(connectionId));
+  const lockedGetOperation = (operationId: string) =>
+    lock.withPermits(1)(readOperation(operationId));
+
   return OverleafStateStore.of({
     root,
     runtimeRoot,
@@ -1080,12 +1177,12 @@ export const make = Effect.fn("OverleafStateStore.make")(function* () {
     removeAccount,
     accountWithToken,
     markAccountValidated,
-    listConnections,
-    getConnection: readConnection,
+    listConnections: lockedListConnections,
+    getConnection: lockedGetConnection,
     saveConnection,
     createConnection,
     deleteConnection,
-    getOperation: readOperation,
+    getOperation: lockedGetOperation,
     saveOperation,
     updateOperation,
     createOperation,

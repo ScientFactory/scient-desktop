@@ -142,4 +142,125 @@ describe("OverleafStateStore", () => {
       ).toBe(true);
     }).pipe(Effect.scoped),
   );
+
+  it.effect(
+    "recovers connection metadata from a committed baseline after an interrupted write",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = yield* temporaryDirectory;
+        const fixture = connectionFixture(baseDir);
+        const root = yield* Effect.gen(function* () {
+          const state = yield* OverleafStateStore;
+          yield* state.createConnection(fixture);
+          return state.root;
+        }).pipe(Effect.provide(storeLayer(baseDir)));
+        yield* Effect.promise(() =>
+          NodeFSP.rm(NodePath.join(root, "connections", fixture.connectionId, "connection.json"), {
+            force: true,
+          }),
+        );
+        const overview = yield* Effect.gen(function* () {
+          return yield* (yield* OverleafStateStore).overview(baseDir);
+        }).pipe(Effect.provide(storeLayer(baseDir)));
+        expect(overview.connections).toHaveLength(1);
+        expect(overview.connections[0]?.connectionId).toBe(fixture.connectionId);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("retains a completed disconnect operation across restart", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* temporaryDirectory;
+      const fixture = connectionFixture(baseDir);
+      const operationId = yield* Effect.gen(function* () {
+        const state = yield* OverleafStateStore;
+        yield* state.createConnection(fixture);
+        const operation = yield* state.createOperation("disconnect", fixture.connectionId, {
+          workspaceRoot: baseDir,
+        });
+        yield* state.updateOperation(operation.snapshot.operationId, (current) => ({
+          ...current,
+          snapshot: { ...current.snapshot, phase: "succeeded" },
+        }));
+        yield* state.deleteConnection(fixture.connectionId, operation.snapshot.operationId);
+        return operation.snapshot.operationId;
+      }).pipe(Effect.provide(storeLayer(baseDir)));
+      const overview = yield* Effect.gen(function* () {
+        return yield* (yield* OverleafStateStore).overview(baseDir);
+      }).pipe(Effect.provide(storeLayer(baseDir)));
+      expect(overview.connections).toEqual([]);
+      expect(overview.operations.map((operation) => operation.operationId)).toContain(operationId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "recovers fully written connection and operation records missing from the registry",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = yield* temporaryDirectory;
+        const fixture = connectionFixture(baseDir);
+        const { root, operationId } = yield* Effect.gen(function* () {
+          const state = yield* OverleafStateStore;
+          yield* state.createConnection(fixture);
+          const operation = yield* state.createOperation("sync", fixture.connectionId, {
+            workspaceRoot: baseDir,
+          });
+          return { root: state.root, operationId: operation.snapshot.operationId };
+        }).pipe(Effect.provide(storeLayer(baseDir)));
+        yield* Effect.promise(async () => {
+          const registryPath = NodePath.join(root, "registry.json");
+          const registry = JSON.parse(await NodeFSP.readFile(registryPath, "utf8")) as {
+            connectionIds: string[];
+            operations: unknown[];
+          };
+          registry.connectionIds = [];
+          registry.operations = [];
+          await NodeFSP.writeFile(registryPath, `${JSON.stringify(registry)}\n`, "utf8");
+        });
+        const overview = yield* Effect.gen(function* () {
+          return yield* (yield* OverleafStateStore).overview(baseDir);
+        }).pipe(Effect.provide(storeLayer(baseDir)));
+        expect(overview.connections.map((connection) => connection.connectionId)).toContain(
+          fixture.connectionId,
+        );
+        expect(overview.operations.map((operation) => operation.operationId)).toContain(
+          operationId,
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("bounds persisted conflict previews", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* temporaryDirectory;
+      const hugePreview = "x".repeat(9 * 1024 * 1024);
+      const operation = yield* Effect.gen(function* () {
+        const state = yield* OverleafStateStore;
+        const created = yield* state.createOperation("connect", null, {
+          workspaceRoot: baseDir,
+          conflicts: [
+            {
+              conflict: {
+                conflictId: "conflict-1",
+                kind: "content",
+                path: "chapter.tex",
+                baseSize: hugePreview.length,
+                overleafSize: null,
+                localSize: null,
+                baseHash: "0123456789abcdef0123456789abcdef01234567",
+                overleafHash: null,
+                localHash: null,
+                previewable: true,
+                resolved: false,
+              },
+              base: hugePreview,
+              overleaf: null,
+              local: null,
+            },
+          ],
+        });
+        return yield* state.getOperation(created.snapshot.operationId);
+      }).pipe(Effect.provide(storeLayer(baseDir)));
+      expect(operation.context.conflicts?.[0]?.base).toBeNull();
+      expect(operation.context.conflicts?.[0]?.conflict.previewable).toBe(false);
+    }).pipe(Effect.scoped),
+  );
 });

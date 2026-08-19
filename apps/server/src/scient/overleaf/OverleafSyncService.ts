@@ -474,11 +474,29 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
   ) {
     const mapping = yield* validateWorkspaceMapping(workspaceRoot, relativeFolder);
     const folder = mapping.folder;
-    const exists = yield* Effect.tryPromise({
-      try: async () => (await NodeFSP.lstat(folder)).isDirectory(),
-      catch: () => false,
-    }).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) return emptyManifest;
+    const target = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          return await NodeFSP.lstat(folder);
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw cause;
+        }
+      },
+      catch: () =>
+        new ScientOverleafOperationError({
+          code: "filesystem_failed",
+          message: "Unable to inspect the selected Overleaf folder.",
+          retryable: true,
+        }),
+    });
+    if (target === undefined) return emptyManifest;
+    if (!target.isDirectory() || target.isSymbolicLink())
+      return yield* new ScientOverleafOperationError({
+        code: "unsafe_tree",
+        message: "The selected Overleaf folder is not a safe directory.",
+        retryable: false,
+      });
     return yield* tree.scan({ operationId, root: folder, trackedPaths, excludedPaths });
   });
 
@@ -585,10 +603,44 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
           message: "A conflict companion references material outside its operation.",
           retryable: false,
         });
+      yield* Effect.tryPromise({
+        try: async () => {
+          const parent = NodePath.dirname(target);
+          const relativeParent = NodePath.relative(root, parent);
+          let cursor = root;
+          for (const segment of ["", ...relativeParent.split(NodePath.sep).filter(Boolean)]) {
+            cursor = NodePath.join(cursor, segment);
+            try {
+              await NodeFSP.lstat(cursor);
+            } catch (cause) {
+              if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+              await NodeFSP.mkdir(cursor);
+            }
+            const stat = await NodeFSP.lstat(cursor);
+            if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe parent");
+          }
+          const [realRoot, realParent] = await Promise.all([
+            NodeFSP.realpath(root),
+            NodeFSP.realpath(parent),
+          ]);
+          const relativeReal = NodePath.relative(realRoot, realParent);
+          if (
+            relativeReal === ".." ||
+            relativeReal.startsWith(`..${NodePath.sep}`) ||
+            NodePath.isAbsolute(relativeReal)
+          )
+            throw new Error("escaped parent");
+        },
+        catch: () =>
+          new ScientOverleafOperationError({
+            code: "unsafe_tree",
+            message: "A local-only companion path traverses an unsafe directory.",
+            retryable: false,
+          }),
+      });
       const materialIdentity = yield* tree.hashFile(material);
       const written = yield* Effect.tryPromise({
         try: async () => {
-          await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
           try {
             await NodeFSP.copyFile(material, target, NodeFS.constants.COPYFILE_EXCL);
           } catch (cause) {
@@ -2002,14 +2054,59 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
         connection.workspaceBaselineManifest.files.map((file) => file.path),
         connection.localOnlyCompanions,
       ));
-    yield* projector.project({
-      sourceRoot: mirror.mirrorRoot(connection.connectionId),
-      targetRoot: root,
-      desired,
-      expected,
-      previousManaged: connection.workspaceBaselineManifest,
-      operationDirectory: state.operationDirectory(operationId),
-    });
+    const observed = yield* scanTarget(
+      operationId,
+      connection.workspaceRoot,
+      connection.relativeFolder,
+      expected.files.map((file) => file.path),
+      connection.localOnlyCompanions,
+    );
+    if (!manifestsEqual(observed, desired)) {
+      if (!manifestsEqual(observed, expected)) {
+        yield* state.saveConnection({
+          ...connection,
+          state: "local_projection_pending",
+          pendingRemoteCommit: acceptedCommit,
+          activeOperationId: operationId,
+        });
+        yield* patchOperation(operationId, {
+          phase: "remote_synced_local_pending",
+          message:
+            "Local files changed while reconciliation was being applied. Retry Reconcile local to preserve them.",
+          errorCode: "workspace_changed",
+          retryable: false,
+        });
+        return;
+      }
+      const projected = yield* projector
+        .project({
+          sourceRoot: mirror.mirrorRoot(connection.connectionId),
+          targetRoot: root,
+          desired,
+          expected,
+          previousManaged: connection.workspaceBaselineManifest,
+          operationDirectory: state.operationDirectory(operationId),
+        })
+        .pipe(Effect.result);
+      if (Result.isFailure(projected)) {
+        yield* state.saveConnection({
+          ...connection,
+          state: "local_projection_pending",
+          pendingRemoteCommit: acceptedCommit,
+          activeOperationId: operationId,
+        });
+        yield* patchOperation(operationId, {
+          phase: "remote_synced_local_pending",
+          message:
+            projected.failure.code === "workspace_changed"
+              ? "Local files changed while reconciliation was being applied. Retry Reconcile local to preserve them."
+              : "Local reconciliation is ready. Retry when the filesystem is available.",
+          errorCode: projected.failure.code,
+          retryable: projected.failure.retryable,
+        });
+        return;
+      }
+    }
     const resultCommit = yield* mirror.treeHash({ ...context, commit: "HEAD" });
     const remoteTree = yield* mirror.treeHash({ ...context, commit: acceptedCommit });
     const companionResult = yield* writeCompanions(operation, connection).pipe(Effect.result);
@@ -2142,12 +2239,19 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
               );
               return;
             }
-            if (operation.context.localReconcile)
+            if (operation.context.localReconcile) {
+              if (connection.pendingRemoteCommit === null)
+                return yield* new ScientOverleafOperationError({
+                  code: "corrupt_state",
+                  message: "Local reconciliation is missing its accepted Overleaf commit.",
+                  retryable: false,
+                });
               return yield* finishLocalReconcile(
                 operationId,
                 connection,
-                connection.pendingRemoteCommit!,
+                connection.pendingRemoteCommit,
               );
+            }
             const candidateManifest = yield* mirror.manifest({
               ...gitContext(operationId, connection, credentials.account, credentials.token),
               commit: continued.candidateCommit,
@@ -2291,6 +2395,14 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
           connection !== null &&
           connection.pendingRemoteCommit !== null
         ) {
+          const pendingRemoteCommit = connection.pendingRemoteCommit;
+          if (operation.context.localReconcile) {
+            yield* launch(
+              operationId,
+              finishLocalReconcile(operationId, connection, pendingRemoteCommit),
+            );
+            return operation.snapshot;
+          }
           const current = yield* scanTarget(
             operationId,
             connection.workspaceRoot,
@@ -2322,14 +2434,9 @@ export const make = Effect.fn("OverleafSyncService.make")(function* () {
               );
               const desired = yield* mirror.manifest({
                 ...context,
-                commit: connection.pendingRemoteCommit!,
+                commit: pendingRemoteCommit,
               });
-              yield* completeProjection(
-                operationId,
-                connection,
-                connection.pendingRemoteCommit!,
-                desired,
-              );
+              yield* completeProjection(operationId, connection, pendingRemoteCommit, desired);
             }),
           );
           return operation.snapshot;
