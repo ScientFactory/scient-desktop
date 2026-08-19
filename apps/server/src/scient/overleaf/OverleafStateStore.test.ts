@@ -208,13 +208,11 @@ describe("OverleafStateStore", () => {
         }).pipe(Effect.provide(storeLayer(baseDir)));
         yield* Effect.promise(async () => {
           const registryPath = NodePath.join(root, "registry.json");
-          const registry = JSON.parse(await NodeFSP.readFile(registryPath, "utf8")) as {
-            connectionIds: string[];
-            operations: unknown[];
-          };
-          registry.connectionIds = [];
-          registry.operations = [];
-          await NodeFSP.writeFile(registryPath, `${JSON.stringify(registry)}\n`, "utf8");
+          await NodeFSP.writeFile(
+            registryPath,
+            '{"schemaVersion":1,"accounts":[],"connectionIds":[],"operations":[]}\n',
+            "utf8",
+          );
         });
         const overview = yield* Effect.gen(function* () {
           return yield* (yield* OverleafStateStore).overview(baseDir);
