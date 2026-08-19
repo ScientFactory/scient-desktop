@@ -102,7 +102,7 @@ function SidebarBrand({
     <Link
       aria-label={`Go to ${APP_BASE_NAME} threads`}
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
         onBackdrop ? "sidebar-brand-on-stage" : "text-foreground",
       )}
       data-stage-variant={stageVariant ?? undefined}

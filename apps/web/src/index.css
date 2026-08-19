@@ -500,8 +500,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     display: none;
   }
 
-  /* The desktop sidebar never narrows below its legal 13rem minimum, where
-     the compact Scient wordmark and native window controls still fit. */
+  /* The desktop sidebar never narrows below its legal 13.5rem minimum, where
+     the compact Scient wordmark and native window controls still fit. The
+     brand also stays shrinkable, so a wider titlebar inset or a larger OS
+     font truncates the wordmark instead of spilling past the sidebar edge. */
   @media (min-width: 48rem) {
     .sidebar-brand {
       display: flex;
