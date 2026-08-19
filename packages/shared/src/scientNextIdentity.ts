@@ -21,6 +21,8 @@ export const SCIENT_NEXT_IDENTITY = {
   linuxDevelopmentDesktopEntryName: "scient-next-dev.desktop",
   linuxWmClass: "scient",
   linuxDevelopmentWmClass: "scient-next-dev",
+  serviceUnitName: "scient.service",
+  serviceLaunchdLabel: "com.scientfactory.scient.service",
   previewPartitionPrefix: "persist:scient-next-preview-",
   clientSettingsStorageKey: "scient-next:client-settings:v1",
   safetyEnvelopeMarker: "true",

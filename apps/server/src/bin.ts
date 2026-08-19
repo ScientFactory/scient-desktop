@@ -16,6 +16,7 @@ import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
+import { triageCommand } from "./cli/triage.ts";
 import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
@@ -58,6 +59,7 @@ export const makeCli = ({
       authCommand,
       projectCommand,
       ...(serviceEnabled ? [serviceCommand, servicePreflightCommand] : []),
+      triageCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
