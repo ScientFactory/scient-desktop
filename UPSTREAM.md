@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-17-upstream-sync-cd096b9ad5.md`](docs/internals/2026-08-17-upstream-sync-cd096b9ad5.md)
+[`docs/internals/2026-08-19-upstream-sync-f2d5fc91e3.md`](docs/internals/2026-08-19-upstream-sync-f2d5fc91e3.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `c7e6d711d3f2982e54854258987509e8f69b31cd` into the refresh
+checkpoint `f2d5fc91e3030e5c3956fdadc13e1eaa25bcabe3` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`bab4b6f02b8bdaf15fd32636a97f69ff657cec50`. Later observed T3
+`c7e6d711d3f2982e54854258987509e8f69b31cd`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -188,6 +188,17 @@ preview resizing while composing the matching T3 behavior. Scient adopts T3's
 tooltip primitive through one direction-aware portal seam and defaults agent
 browser access to opt-in. The exact merge record also documents the post-merge
 accessibility and deterministic-gate hardening.
+
+The 2026-08-19 sync through `f2d5fc91e3` receives 30 official commits covering
+desktop and preview lifecycle reliability, browser-tab audio, timestamped
+pull-request settlement, opt-in provider probing, command-palette and mobile
+polish, Clerk passkey fixes, coding-agent-assisted triage, and macOS launchd
+service support. Eleven textual conflicts retain projectless Quick Chat,
+Sources and scientific preview mounts, provider lifecycle controls, Scient
+identity, and D4 service and release guards. The dormant service code uses
+distinct Scient systemd and launchd identities, while service registration and
+onboarding remain disabled. Orchestration V2 is absent from this official
+range and remains excluded.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
