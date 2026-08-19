@@ -144,6 +144,13 @@ import * as LatexSyncTex from "./scient/latex/LatexSyncTex.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
 import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
+import * as OverleafStateStore from "./scient/overleaf/OverleafStateStore.ts";
+import * as OverleafGitExecutor from "./scient/overleaf/OverleafGitExecutor.ts";
+import * as ManagedOverleafTree from "./scient/overleaf/ManagedTree.ts";
+import * as OverleafMirror from "./scient/overleaf/OverleafMirror.ts";
+import * as WorkspaceProjector from "./scient/overleaf/WorkspaceProjector.ts";
+import * as OverleafSyncService from "./scient/overleaf/OverleafSyncService.ts";
+import { scientOverleafHttpApiLayer } from "./scient/overleaf/http.ts";
 import { scientAnalyticsHttpApiLayer } from "./telemetry/http.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
@@ -509,6 +516,29 @@ const ScientLatexServicesLive = LatexBuildService.layer.pipe(
   Layer.provideMerge(LatexPackageInstaller.layer),
 );
 
+const OverleafStateStoreLive = OverleafStateStore.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+);
+const OverleafGitExecutorLive = OverleafGitExecutor.layer.pipe(
+  Layer.provide(OverleafStateStoreLive),
+);
+const ManagedOverleafTreeLive = ManagedOverleafTree.layer.pipe(
+  Layer.provide(OverleafGitExecutorLive),
+  Layer.provide(OverleafStateStoreLive),
+);
+const OverleafMirrorLive = OverleafMirror.layer.pipe(
+  Layer.provide(ManagedOverleafTreeLive),
+  Layer.provide(OverleafGitExecutorLive),
+  Layer.provide(OverleafStateStoreLive),
+);
+const OverleafSyncServiceLive = OverleafSyncService.layer.pipe(
+  Layer.provide(OverleafMirrorLive),
+  Layer.provide(ManagedOverleafTreeLive),
+  Layer.provide(WorkspaceProjector.layer),
+  Layer.provide(OverleafStateStoreLive),
+  Layer.provide(WorkspaceEntriesLayerLive),
+);
+
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -520,6 +550,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientSourcesHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
       Layer.provide(scientLatexHttpApiLayer),
+      Layer.provide(scientOverleafHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -540,6 +571,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
   Layer.provide(ScientLatexServicesLive),
+  Layer.provide(OverleafSyncServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),

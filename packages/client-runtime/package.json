@@ -127,6 +127,10 @@
       "types": "./src/state/scientLatexHttp.ts",
       "default": "./src/state/scientLatexHttp.ts"
     },
+    "./state/scient-overleaf": {
+      "types": "./src/state/scientOverleafHttp.ts",
+      "default": "./src/state/scientOverleafHttp.ts"
+    },
     "./state/scient-sources": {
       "types": "./src/state/scientSourcesHttp.ts",
       "default": "./src/state/scientSourcesHttp.ts"

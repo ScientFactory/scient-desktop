@@ -53,6 +53,7 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { OverleafQuickConnect } from "../overleaf/OverleafProjectSettings";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceJournalIcon } from "./SourceJournalIcon";
@@ -970,42 +971,49 @@ export function ScientSourcesPanel(props: {
       <PanelHeader
         title="Sources"
         action={
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={sources.busy || sources.checkingZotero}
-                  aria-label="Import sources"
-                >
-                  {sources.busy || sources.checkingZotero ? (
-                    <LoaderCircle className="animate-spin" />
-                  ) : (
-                    <Download />
-                  )}
-                  Import sources
-                </Button>
-              }
+          <div className="flex items-center gap-1">
+            <OverleafQuickConnect
+              environmentId={props.environmentId}
+              workspaceRoot={props.root}
+              projectName={props.projectTitle}
             />
-            <MenuPopup align="end" side="bottom" className="min-w-44">
-              <MenuItem onClick={() => localFileInput.current?.click()}>
-                <FileUp />
-                Import PDF files
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setSelectedSourceId(null);
-                  setImportOutcome(null);
-                  sources.clearOperationSummary();
-                  void sources.openZoteroLibrary();
-                }}
-              >
-                <ZoteroMark />
-                Import from Zotero
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={sources.busy || sources.checkingZotero}
+                    aria-label="Import sources"
+                  >
+                    {sources.busy || sources.checkingZotero ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Download />
+                    )}
+                    Import sources
+                  </Button>
+                }
+              />
+              <MenuPopup align="end" side="bottom" className="min-w-44">
+                <MenuItem onClick={() => localFileInput.current?.click()}>
+                  <FileUp />
+                  Import PDF files
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setSelectedSourceId(null);
+                    setImportOutcome(null);
+                    sources.clearOperationSummary();
+                    void sources.openZoteroLibrary();
+                  }}
+                >
+                  <ZoteroMark />
+                  Import from Zotero
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          </div>
         }
       />
       {dragActive ? (

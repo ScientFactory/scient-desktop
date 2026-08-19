@@ -47,6 +47,7 @@ import type {
 import { documentBindingChanges } from "./bindingChanges";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
+import { OverleafLatexToolbarControl } from "../overleaf/OverleafLatexToolbarControl";
 import {
   cancelLatexBuild,
   notifyLatexBindingChange,
@@ -385,6 +386,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [overleafEditingBlocked, setOverleafEditingBlocked] = useState(false);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
   const splitRef = useRef<HTMLDivElement>(null);
@@ -735,6 +737,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           )}
         </div>
         <div className="scient-latex-actions">
+          <OverleafLatexToolbarControl
+            environmentId={props.environmentId}
+            workspaceRoot={props.cwd}
+            relativePath={props.relativePath}
+            onBlockingChange={setOverleafEditingBlocked}
+          />
           {status.canCancel ? (
             <button
               type="button"
@@ -793,7 +801,25 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
       ) : null}
 
-      <div className="scient-latex-content" ref={splitRef}>
+      {overleafEditingBlocked ? (
+        <div
+          className="flex min-h-8 items-center gap-2 border-b border-warning/30 bg-warning/5 px-3 text-xs text-warning"
+          role="status"
+        >
+          <TriangleAlert className="size-3.5" /> Resolve the pending Overleaf conflict in Project
+          Settings before editing this document.
+        </div>
+      ) : null}
+
+      <div
+        className={cn(
+          "scient-latex-content",
+          overleafEditingBlocked ? "pointer-events-none opacity-60" : undefined,
+        )}
+        ref={splitRef}
+        aria-disabled={overleafEditingBlocked}
+        inert={overleafEditingBlocked}
+      >
         {showEditor ? (
           <ScientTooltip content="Ctrl/Command-double-click a source line to find it in the PDF">
             <div
