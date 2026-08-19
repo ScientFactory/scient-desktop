@@ -52,6 +52,7 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
+import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 // SCIENT-FORK:START — steer shortcut for the Scient thread queue.
 import { isSteerShortcut } from "../../scient/threadQueue/disposition";
@@ -3170,7 +3171,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             : phase === "disconnected"
                               ? isQuickChat
                                 ? "Ask anything or attach images"
-                                : "Ask for follow-up changes or attach images"
+                                : DISCONNECTED_COMPOSER_PLACEHOLDER
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}

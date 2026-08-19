@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -49,7 +50,7 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "Scient service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd";
+    return "Scient service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
   }
   if (!status.installed) {
     return "Scient service\n  Status: not installed\n  Next: Run `t3 service install`.";
@@ -153,12 +154,18 @@ const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log("Scient is already set up to run in the background on this machine.");
     return true;
   }
+  // A LaunchAgent starts at login and dies at logout; there is no
+  // enable-linger equivalent on macOS. Do not promise more than that.
+  const platform = yield* HostProcessPlatform;
   const wanted = yield* Prompt.run(
     Prompt.confirm({
       message: installed
         ? "The installed Scient service needs an update or repair. Update it now?"
-        : "Run Scient in the background whenever this machine boots? " +
-          "It stays reachable through T3 Connect even after you log out.",
+        : platform === "darwin"
+          ? "Run Scient in the background whenever you log in to this Mac? " +
+            "It stays reachable through T3 Connect while you are logged in."
+          : "Run Scient in the background whenever this machine boots? " +
+            "It stays reachable through T3 Connect even after you log out.",
       initial: true,
     }),
   );
@@ -174,13 +181,12 @@ const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
   return true;
 });
 
-// The inherited service implementation still targets the global
-// `t3code.service` unit. Keep that effect out of the candidate's dependency
-// graph even when a selected-user cloud route is explicitly enabled; cloud
-// access must not mutate an installed Scient service or its lifecycle state.
+// Keep service installation out of the candidate's dependency graph even
+// though the dormant implementation has a distinct Scient identity. A
+// selected-user cloud route must not mutate service lifecycle state.
 export const offerServiceDuringOnboarding = serviceOnboardingDisabled
   ? Console.log(
-      "Background service setup is disabled until this candidate has a distinct Scient service identity.",
+      "Background service setup is disabled while this candidate's safety envelope is enabled.",
     ).pipe(Effect.as(false))
   : offerInheritedServiceDuringOnboarding;
 
