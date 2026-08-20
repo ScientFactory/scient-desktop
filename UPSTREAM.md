@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-19-upstream-sync-f2d5fc91e3.md`](docs/internals/2026-08-19-upstream-sync-f2d5fc91e3.md)
+[`docs/internals/2026-08-20-upstream-sync-beab6886f4.md`](docs/internals/2026-08-20-upstream-sync-beab6886f4.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `f2d5fc91e3030e5c3956fdadc13e1eaa25bcabe3` into the refresh
+checkpoint `beab6886f45bf42906d0bd01aefe5dfe9e66a867` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`c7e6d711d3f2982e54854258987509e8f69b31cd`. Later observed T3
+`f2d5fc91e3030e5c3956fdadc13e1eaa25bcabe3`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -199,6 +199,16 @@ identity, and D4 service and release guards. The dormant service code uses
 distinct Scient systemd and launchd identities, while service registration and
 onboarding remain disabled. Orchestration V2 is absent from this official
 range and remains excluded.
+
+The 2026-08-20 sync through `beab6886f4` receives 19 official commits covering
+composer state drawers, compact tool activity, workspace navigation,
+pull-request and usage refinements, OpenCode skill discovery, stable Clerk
+Electron dependencies, terminal-close confirmation, file refresh, and desktop
+updater reliability. Seven textual conflicts retain Scient's projectless Quick
+Chat, queue and steer flow, voice and provider-onboarding controls, Sources
+actions, scientific preview anchors, BiDi and fork markers, sidebar identity,
+and reading profile while using T3's new component structure. The D4 updater
+guard remains effective within T3's new updater concurrency model.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
