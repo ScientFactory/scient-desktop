@@ -1350,6 +1350,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               onOpenFileSource={onOpenFileSource}
+              {...(relativePath && !isImage ? { onRefreshSelectedFile: file.refresh } : {})}
             />
           </aside>
         ) : null}
