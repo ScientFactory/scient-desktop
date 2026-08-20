@@ -4,10 +4,10 @@ import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useStat
 import { FlaskConical, X } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
-import { ScientComputeSessionPanel } from "./ScientComputeSessionPanel";
 import { type ComputeLabScenario, computeLabFixture, computeLabScenarios } from "./computeFixtures";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { scientComputeSurface } from "../rightPanel/surfaces";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import {
   SCIENT_UX_LAB_ENABLED,
@@ -75,7 +75,6 @@ export function ScientUxLabHost() {
   const [open, setOpen] = useState(false);
   const [computeScenario, setComputeScenario] =
     useState<ComputeLabScenario>(readComputeLabScenario);
-  const [computeOpen, setComputeOpen] = useState(true);
   const [position, setPosition] = useState<UxLabControlPosition | null>(readUxLabControlPosition);
   const latestPositionRef = useRef(position);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -98,6 +97,18 @@ export function ScientUxLabHost() {
     if (activeJourney !== "matlab-run-file" || activeThreadRef === null) return;
     useRightPanelStore.getState().openFile(activeThreadRef, matlabScenario.relativePath);
   }, [activeJourney, activeThreadRef, matlabScenario.relativePath]);
+
+  /*
+   * The compute journey opens a real `scient:compute` right-panel surface, the
+   * same way the MATLAB journey opens a file. Scient puts work either in the
+   * chat or in the right panel; a floating overlay is neither.
+   */
+  useEffect(() => {
+    if (activeJourney !== "compute-session" || activeThreadRef === null) return;
+    const store = useRightPanelStore.getState();
+    store.openScient(activeThreadRef, scientComputeSurface());
+    store.show(activeThreadRef);
+  }, [activeJourney, activeThreadRef]);
 
   useEffect(() => {
     const keepControlOnScreen = () => {
@@ -293,25 +304,26 @@ export function ScientUxLabHost() {
               <p className="leading-relaxed text-muted-foreground">{computeFixture.note}</p>
               <Button
                 className="w-full"
-                onClick={() => setComputeOpen((value) => !value)}
+                disabled={activeThreadRef === null}
+                onClick={() => {
+                  if (activeThreadRef === null) return;
+                  const store = useRightPanelStore.getState();
+                  store.openScient(activeThreadRef, scientComputeSurface());
+                  store.show(activeThreadRef);
+                }}
                 size="sm"
                 variant="secondary"
               >
-                {computeOpen ? "Hide compute panel" : "Show compute panel"}
+                Reopen compute panel
               </Button>
               <p className="leading-relaxed text-muted-foreground">
-                Phase 4 has not created a production compute surface yet, so this is a lab-only
-                design proposition rather than the real panel driven by fixtures.
+                Opens as a <code>scient:compute</code> panel surface. Phase 4 has not created a
+                production compute panel yet, so this is the lab's design proposition sitting in the
+                real surface slot.
               </p>
             </div>
           ) : null}
         </section>
-      ) : null}
-
-      {activeJourney === "compute-session" && computeOpen ? (
-        <aside className="pointer-events-auto fixed inset-y-0 right-0 z-[99] flex w-[420px] max-w-[calc(100vw-2rem)] flex-col border-l border-border bg-background/98 shadow-2xl backdrop-blur">
-          <ScientComputeSessionPanel fixture={computeFixture} />
-        </aside>
       ) : null}
 
       <Button

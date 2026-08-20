@@ -19,6 +19,7 @@ export type ScientRightPanelSurface =
       readonly module: "artifact";
       readonly artifact: PreviewStaticImageSurfaceDescriptor;
     }
+  | { readonly id: "scient:compute"; readonly kind: "scient"; readonly module: "compute" }
   | {
       readonly id: `scient:file:${string}`;
       readonly kind: "scient";
@@ -29,6 +30,10 @@ export type ScientRightPanelSurface =
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
   return { id: "scient:sources", kind: "scient", module: "sources" };
+}
+
+export function scientComputeSurface(): Extract<ScientRightPanelSurface, { module: "compute" }> {
+  return { id: "scient:compute", kind: "scient", module: "compute" };
 }
 
 export function scientSourcePdfSurface(input: {
@@ -86,6 +91,9 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   if (surface.id === "scient:sources" && surface.module === "sources") {
     return scientSourcesSurface();
   }
+  if (surface.id === "scient:compute" && surface.module === "compute") {
+    return scientComputeSurface();
+  }
   if (
     surface.module === "source-pdf" &&
     typeof surface.sourceId === "string" &&
@@ -123,6 +131,8 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
   switch (surface.module) {
     case "sources":
       return "Sources";
+    case "compute":
+      return "Compute";
     case "source-pdf":
       return surface.fileName;
     case "artifact":

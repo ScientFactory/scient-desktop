@@ -482,7 +482,20 @@ const ScientArtifactPreview = lazy(() =>
     default: module.ScientArtifactPreview,
   })),
 );
+import { SCIENT_UX_LAB_ENABLED } from "../scient/uxLab/state";
+
 const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/EnvironmentFilePreview"));
+/**
+ * Lab-only. Phase 4 has not built a production compute panel yet, so the
+ * `scient:compute` surface renders the UX lab's design proposition. Gated on
+ * SCIENT_UX_LAB_ENABLED at the render site, and lazy so the chunk is never
+ * fetched in a normal build.
+ */
+const ScientComputeLabPanel = lazy(() =>
+  import("../scient/uxLab/ScientComputeLabPanel").then((module) => ({
+    default: module.ScientComputeLabPanel,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -6557,6 +6570,12 @@ function ChatViewContent(props: ChatViewProps) {
           root={activeWorkspaceRoot}
           sourceId={activeRightPanelSurface.sourceId}
         />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "scient" &&
+      activeRightPanelSurface.module === "compute" &&
+      SCIENT_UX_LAB_ENABLED ? (
+      <Suspense fallback={null}>
+        <ScientComputeLabPanel />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "scient" &&
       activeRightPanelSurface.module === "sources" &&

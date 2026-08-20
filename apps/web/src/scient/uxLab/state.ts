@@ -4,6 +4,8 @@ import {
   type ComputeLabScenario,
 } from "./computeFixtures";
 
+export type ComputeLabScenarioName = ComputeLabScenario;
+
 export const SCIENT_UX_LAB_ENABLED = import.meta.env.VITE_SCIENT_UX_LAB === "1";
 
 export const uxLabJourneys = [
@@ -47,6 +49,9 @@ const JOURNEY_STORAGE_KEY = "scient.uxLab.journey";
 const SOURCES_SCENARIO_STORAGE_KEY = "scient.uxLab.sourcesScenario";
 const MATLAB_SCENARIO_STORAGE_KEY = "scient.uxLab.matlabScenario";
 const COMPUTE_SCENARIO_STORAGE_KEY = "scient.uxLab.computeScenario";
+
+/** Lets the panel, which lives in the right panel rather than in the control, follow the picker. */
+export const COMPUTE_LAB_SCENARIO_EVENT = "scient.uxLab.computeScenarioChanged";
 const CONTROL_POSITION_STORAGE_KEY = "scient.uxLab.controlPosition";
 
 export interface UxLabControlPosition {
@@ -122,6 +127,7 @@ export function readComputeLabScenario(): ComputeLabScenario {
  */
 export function selectComputeLabScenario(value: ComputeLabScenario): void {
   window.localStorage.setItem(COMPUTE_SCENARIO_STORAGE_KEY, value);
+  window.dispatchEvent(new CustomEvent(COMPUTE_LAB_SCENARIO_EVENT, { detail: value }));
 }
 
 export function normalizeUxLabControlPosition(value: string | null): UxLabControlPosition | null {
