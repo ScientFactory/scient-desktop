@@ -1,0 +1,31 @@
+#!/bin/sh
+
+entrypoint="${SCIENT_MATLAB_ENTRYPOINT:-}"
+name="${entrypoint##*/}"
+
+case "$name" in
+  failed_analysis.m)
+    printf '%s\n' 'Preparing synthetic analysis...'
+    printf '%s\n' 'Error using cohort_analysis: Synthetic dataset is missing the required outcome column.' >&2
+    exit 2
+    ;;
+  long_running_analysis.m)
+    trap 'printf "%s\n" "Synthetic MATLAB run stopped."; exit 143' INT TERM
+    printf '%s\n' 'Starting a long synthetic analysis...'
+    step=1
+    while [ "$step" -le 20 ]; do
+      printf 'Completed step %s of 20\n' "$step"
+      sleep 1
+      step=$((step + 1))
+    done
+    ;;
+  *)
+    printf '%s\n' 'Scient MATLAB UX Lab'
+    sleep 0.35
+    printf '%s\n' 'Analyzing two synthetic cohorts...'
+    sleep 0.35
+    printf '%s\n' 'Group A mean: 12.94'
+    printf '%s\n' 'Group B mean: 12.08'
+    printf '%s\n' 'Difference: 0.86'
+    ;;
+esac

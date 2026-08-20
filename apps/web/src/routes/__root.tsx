@@ -55,6 +55,8 @@ import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
+import { ScientUxLabHost } from "../scient/uxLab/ScientUxLabHost";
+import { SCIENT_UX_LAB_ENABLED } from "../scient/uxLab/state";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -142,6 +144,7 @@ function RootRouteView() {
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
+        {SCIENT_UX_LAB_ENABLED ? <ScientUxLabHost /> : null}
         {/* Above the router: a theme draft is judged by walking the app, so the
             editor has to survive navigation away from settings. */}
         <ThemeEditorHost />
