@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { computeExperienceFixture } from "./computeExperienceFixtures";
 import { ScientComputeSessionPanel } from "./ScientComputeSessionPanel";
-import { computeLabFixture } from "./computeFixtures";
 import {
   COMPUTE_LAB_SCENARIO_EVENT,
   readComputeLabScenario,
@@ -9,11 +9,12 @@ import {
 } from "./state";
 
 /**
- * The lab's compute panel as a real right-panel surface.
+ * The one seam between lab state and the design.
  *
- * The panel itself takes a fixture and knows nothing about the lab; this is the
- * only piece that reads lab state, so the design component stays the thing that
- * Phase 4 can adopt unchanged.
+ * `ScientComputeSessionPanel` takes a fixture and nothing else, so Phase 4 can
+ * adopt it by replacing this file with a hook over real session state. Keeping
+ * the scenario subscription here rather than inside the panel is what makes that
+ * swap a one-file change.
  */
 export function ScientComputeLabPanel() {
   const [scenario, setScenario] = useState<ComputeLabScenarioName>(readComputeLabScenario);
@@ -27,6 +28,7 @@ export function ScientComputeLabPanel() {
     return () => window.removeEventListener(COMPUTE_LAB_SCENARIO_EVENT, onChange);
   }, []);
 
-  const fixture = useMemo(() => computeLabFixture(scenario), [scenario]);
+  const fixture = useMemo(() => computeExperienceFixture(scenario), [scenario]);
+
   return <ScientComputeSessionPanel fixture={fixture} />;
 }

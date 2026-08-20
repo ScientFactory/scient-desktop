@@ -4,7 +4,11 @@ import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useStat
 import { FlaskConical, X } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
-import { type ComputeLabScenario, computeLabFixture, computeLabScenarios } from "./computeFixtures";
+import {
+  computeExperienceFixture,
+  computeExperienceScenarios,
+  type ComputeExperienceScenario,
+} from "./computeExperienceFixtures";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { scientComputeSurface } from "../rightPanel/surfaces";
@@ -33,6 +37,7 @@ import {
 
 const VIEWPORT_MARGIN = 8;
 const MATLAB_RUNTIME_PATH = "apps/server/ux-lab-fixtures/matlab/fake-runtime/matlab";
+const PYTHON_FIXTURE_PATH = "ux-lab-fixtures/python/analysis.py";
 
 function useActiveThreadRef(): ScopedThreadRef | null {
   const routeTarget = useParams({
@@ -74,7 +79,7 @@ function clampPosition(
 export function ScientUxLabHost() {
   const [open, setOpen] = useState(false);
   const [computeScenario, setComputeScenario] =
-    useState<ComputeLabScenario>(readComputeLabScenario);
+    useState<ComputeExperienceScenario>(readComputeLabScenario);
   const [position, setPosition] = useState<UxLabControlPosition | null>(readUxLabControlPosition);
   const latestPositionRef = useRef(position);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -106,6 +111,10 @@ export function ScientUxLabHost() {
   useEffect(() => {
     if (activeJourney !== "compute-session" || activeThreadRef === null) return;
     const store = useRightPanelStore.getState();
+    // Both surfaces, as two panel tabs. The editor strip's design turns on
+    // whether the compute panel is the surface you are looking at, so the only
+    // way to judge it is to be able to switch between them.
+    store.openFile(activeThreadRef, PYTHON_FIXTURE_PATH);
     store.openScient(activeThreadRef, scientComputeSurface());
     store.show(activeThreadRef);
   }, [activeJourney, activeThreadRef]);
@@ -174,7 +183,10 @@ export function ScientUxLabHost() {
     event.preventDefault();
   };
 
-  const computeFixture = useMemo(() => computeLabFixture(computeScenario), [computeScenario]);
+  const computeFixture = useMemo(
+    () => computeExperienceFixture(computeScenario),
+    [computeScenario],
+  );
 
   const anchorX = position?.x ?? 16;
   const anchorY = position?.y ?? window.innerHeight - 52;
@@ -251,7 +263,7 @@ export function ScientUxLabHost() {
               if (activeJourney === "zotero-sources") {
                 selectSourcesLabScenario(event.currentTarget.value as SourcesLabScenario);
               } else if (activeJourney === "compute-session") {
-                const next = event.currentTarget.value as ComputeLabScenario;
+                const next = event.currentTarget.value as ComputeExperienceScenario;
                 selectComputeLabScenario(next);
                 setComputeScenario(next);
               } else {
@@ -269,7 +281,7 @@ export function ScientUxLabHost() {
             {(activeJourney === "zotero-sources"
               ? sourcesLabScenarios
               : activeJourney === "compute-session"
-                ? computeLabScenarios
+                ? computeExperienceScenarios
                 : matlabLabScenarios
             ).map((scenario) => (
               <option key={scenario.value} value={scenario.value}>
@@ -302,24 +314,46 @@ export function ScientUxLabHost() {
           {activeJourney === "compute-session" ? (
             <div className="mt-3 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5 text-xs">
               <p className="leading-relaxed text-muted-foreground">{computeFixture.note}</p>
-              <Button
-                className="w-full"
-                disabled={activeThreadRef === null}
-                onClick={() => {
-                  if (activeThreadRef === null) return;
-                  const store = useRightPanelStore.getState();
-                  store.openScient(activeThreadRef, scientComputeSurface());
-                  store.show(activeThreadRef);
-                }}
-                size="sm"
-                variant="secondary"
-              >
-                Reopen compute panel
-              </Button>
+              <div>
+                <p className="font-medium">Tests</p>
+                <p className="mt-0.5 leading-relaxed text-muted-foreground">
+                  {computeFixture.claim}
+                </p>
+              </div>
+              <div className="flex gap-1.5">
+                <Button
+                  className="flex-1"
+                  disabled={activeThreadRef === null}
+                  onClick={() => {
+                    if (activeThreadRef === null) return;
+                    const store = useRightPanelStore.getState();
+                    store.openScient(activeThreadRef, scientComputeSurface());
+                    store.show(activeThreadRef);
+                  }}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Compute panel
+                </Button>
+                <Button
+                  className="flex-1"
+                  disabled={activeThreadRef === null}
+                  onClick={() => {
+                    if (activeThreadRef === null) return;
+                    const store = useRightPanelStore.getState();
+                    store.openFile(activeThreadRef, PYTHON_FIXTURE_PATH);
+                    store.show(activeThreadRef);
+                  }}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Editor strip
+                </Button>
+              </div>
               <p className="leading-relaxed text-muted-foreground">
-                Opens as a <code>scient:compute</code> panel surface. Phase 4 has not created a
-                production compute panel yet, so this is the lab's design proposition sitting in the
-                real surface slot.
+                Three surfaces share this scenario: the <code>scient:compute</code> panel, the strip
+                under <code>analysis.py</code>, and Settings → Scientific Computing. None of it is
+                shipped behaviour — Phase 4 has no compute client yet.
               </p>
             </div>
           ) : null}

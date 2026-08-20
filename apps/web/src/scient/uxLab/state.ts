@@ -1,10 +1,10 @@
 import {
-  DEFAULT_COMPUTE_LAB_SCENARIO,
-  normalizeComputeLabScenario,
-  type ComputeLabScenario,
-} from "./computeFixtures";
+  DEFAULT_COMPUTE_EXPERIENCE_SCENARIO,
+  normalizeComputeExperienceScenario,
+  type ComputeExperienceScenario,
+} from "./computeExperienceFixtures";
 
-export type ComputeLabScenarioName = ComputeLabScenario;
+export type ComputeLabScenarioName = ComputeExperienceScenario;
 
 export const SCIENT_UX_LAB_ENABLED = import.meta.env.VITE_SCIENT_UX_LAB === "1";
 
@@ -111,9 +111,13 @@ export function matlabLabScenarioDefinition(value: MatlabLabScenario) {
   return matlabLabScenarios.find((scenario) => scenario.value === value)!;
 }
 
-export function readComputeLabScenario(): ComputeLabScenario {
-  if (!SCIENT_UX_LAB_ENABLED || typeof window === "undefined") return DEFAULT_COMPUTE_LAB_SCENARIO;
-  return normalizeComputeLabScenario(window.localStorage.getItem(COMPUTE_SCENARIO_STORAGE_KEY));
+export function readComputeLabScenario(): ComputeExperienceScenario {
+  if (!SCIENT_UX_LAB_ENABLED || typeof window === "undefined") {
+    return DEFAULT_COMPUTE_EXPERIENCE_SCENARIO;
+  }
+  return normalizeComputeExperienceScenario(
+    window.localStorage.getItem(COMPUTE_SCENARIO_STORAGE_KEY),
+  );
 }
 
 /**
@@ -125,7 +129,7 @@ export function readComputeLabScenario(): ComputeLabScenario {
  * its expanded tracebacks -- exactly the state a designer is comparing across
  * scenarios.
  */
-export function selectComputeLabScenario(value: ComputeLabScenario): void {
+export function selectComputeLabScenario(value: ComputeExperienceScenario): void {
   window.localStorage.setItem(COMPUTE_SCENARIO_STORAGE_KEY, value);
   window.dispatchEvent(new CustomEvent(COMPUTE_LAB_SCENARIO_EVENT, { detail: value }));
 }

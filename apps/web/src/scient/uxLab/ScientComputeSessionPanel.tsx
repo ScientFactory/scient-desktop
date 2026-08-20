@@ -11,6 +11,7 @@ import {
   FileCode2,
   Image as ImageIcon,
   Loader2,
+  Power,
   RotateCcw,
   Scissors,
   Square,
@@ -18,11 +19,15 @@ import {
   TriangleAlert,
   Unplug,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import { resolveComputeFixtureImage } from "./computeFigureFixture";
-import type { ComputeLabFixture } from "./computeFixtures";
+import type {
+  ComputeConsoleState,
+  ComputeExperienceFixture,
+  ComputeLifetime,
+} from "./computeExperienceFixtures";
 
 /**
  * A design proposition for the Phase 4 compute session surface.
@@ -429,6 +434,18 @@ function ExecutionCard({
             ) : null}
             {status === "queued" && queuePosition !== null ? `queued · ${queuePosition}` : status}
           </span>
+          {/*
+            Cancel belongs to the queued execution, not to the header. Interrupt
+            in the header stops whatever the session is doing now; a queued cell
+            has not started, so stopping it is a different act with a different
+            consequence, and the only unambiguous place to say which one you mean
+            is on the row itself.
+          */}
+          {status === "queued" ? (
+            <Button className="h-6 px-1.5 text-[10px]" size="sm" variant="ghost">
+              Cancel
+            </Button>
+          ) : null}
         </div>
       </header>
 
@@ -458,16 +475,102 @@ function ExecutionCard({
  * `cohort = pd.read_parquet(...)` succeed, and concluding that `cohort` is
  * available is drawing a false conclusion from a true record. Dimming alone does
  * not say why, so the boundary is labelled.
+ *
+ * REVISED — the earlier version of this said the same thing twice. It rendered
+ * the `session-restarted` system marker and then this seal immediately below it,
+ * so a restart produced two adjacent notices with the same content, and the one
+ * that mattered ("the variables are gone") was the smaller of the two. It also
+ * leaned on `opacity-60` alone to mark the dead generation, which at this text
+ * size reads as "loading" rather than "sealed".
+ *
+ * Now: the marker is absorbed into the seal -- one statement, carrying the
+ * runtime's own detail when it has any -- and the executions above it are
+ * separated by a struck band rather than only dimmed.
  */
-function GenerationSeal({ generation }: { readonly generation: number }) {
+function GenerationSeal({
+  generation,
+  detail,
+}: {
+  readonly generation: number;
+  readonly detail: string | null;
+}) {
   return (
-    <div className="flex items-center gap-2 py-1">
-      <div className="h-px flex-1 bg-border" />
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
-        <RotateCcw className="size-2.5" aria-hidden="true" />
-        Generation {generation} ended · its variables are gone
-      </span>
-      <div className="h-px flex-1 bg-border" />
+    <div className="my-2 overflow-hidden rounded-md border border-amber-500/40 bg-amber-500/10">
+      <div className="flex items-center gap-1.5 px-2 py-1.5">
+        <RotateCcw
+          className="size-3 shrink-0 text-amber-600 dark:text-amber-400"
+          aria-hidden="true"
+        />
+        <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+          Restarted · everything above lost its variables
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-amber-700/70 dark:text-amber-400/70">
+          gen {generation} → {generation + 1}
+        </span>
+      </div>
+      {detail === null ? null : (
+        <p className="border-t border-amber-500/30 px-2 py-1 text-[10px] leading-relaxed text-amber-700/90 dark:text-amber-400/90">
+          {detail}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The boundary between session lifetimes -- a different thing from a restart.
+ *
+ * A restart is a new generation inside one session: same runtime choice, same
+ * identity, variables cleared. A new lifetime is a new `sessionId`: possibly a
+ * different interpreter, a different environment fingerprint, a different
+ * machine. Treating them as one boundary (the proposal's copy nearly does) hides
+ * the case that actually misleads people -- scrolling past a result that was
+ * produced by a Python they are no longer using.
+ *
+ * So this is a heavier rule than a generation seal, and it names the runtime.
+ */
+function LifetimeBoundary({
+  lifetime,
+  expanded,
+  onToggle,
+}: {
+  readonly lifetime: ComputeLifetime;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <div className="my-2">
+      <button
+        className="flex w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-left transition hover:bg-muted/70"
+        onClick={onToggle}
+        type="button"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={`size-3 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}
+        />
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-[11px] font-semibold">Earlier session</span>
+            <span className="truncate text-[10px] text-muted-foreground">
+              {lifetime.endedReason}
+            </span>
+          </div>
+          <p className="truncate text-[10px] text-muted-foreground">
+            {lifetime.runtimeLabel} · {lifetime.executionCount} executions ·{" "}
+            {lifetime.generationCount} generation{lifetime.generationCount === 1 ? "" : "s"}
+          </p>
+        </div>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+          {new Date(lifetime.endedAt).toLocaleDateString()}
+        </span>
+      </button>
+      {expanded ? (
+        <p className="mt-1 px-2 text-[10px] leading-relaxed text-muted-foreground">
+          Collapsed by default. Its records are readable, and nothing in it is connected to the
+          session running now — a variable defined here does not exist there.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -566,34 +669,280 @@ function InterpreterRow({
 // Panel
 // ---------------------------------------------------------------------------
 
-export function ScientComputeSessionPanel({ fixture }: { readonly fixture: ComputeLabFixture }) {
-  const { session, executions, outputs, discovered } = fixture;
-  const [showEnvironment, setShowEnvironment] = useState(false);
+// ---------------------------------------------------------------------------
+// Console
+// ---------------------------------------------------------------------------
 
-  if (session === null) {
+/**
+ * The console lives at the bottom of the full surface, and only here.
+ *
+ * The proposal is right that exploratory code needs somewhere to go that is not
+ * a file, and right to put it under the durable timeline rather than in a
+ * separate REPL surface: a console execution is the same kind of record as a
+ * file execution and belongs in the same history. What it must not do is look
+ * like the chat composer -- this box sends code to a kernel, and the failure
+ * mode of confusing the two is running a sentence of English as Python.
+ */
+function ConsoleComposer({ state }: { readonly state: ComputeConsoleState }) {
+  const [draft, setDraft] = useState(state.draft);
+
+  if (!state.enabled) {
     return (
-      <div className="flex h-full flex-col">
-        <header className="border-b border-border px-3 py-2.5">
-          <h2 className="text-sm font-semibold">Python session</h2>
-          <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-            No session yet. Choose an interpreter to start one.
-          </p>
-        </header>
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-          {discovered.map((verification) => (
+      <div className="border-t border-border px-3 py-2">
+        <p className="text-[11px] text-muted-foreground">
+          <Terminal className="mr-1 inline size-3" aria-hidden="true" />
+          Console unavailable · {state.disabledReason}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-border p-2">
+      <div className="rounded-md border border-border bg-muted/30 focus-within:border-primary/50">
+        <div className="flex items-center gap-1.5 border-b border-border/60 px-2 py-1">
+          <Terminal className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="text-[10px] font-medium text-muted-foreground">Console</span>
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            {state.historyDepth} in history · ⏎ to run, ⇧⏎ for a new line
+          </span>
+        </div>
+        <textarea
+          className="block max-h-40 min-h-[2.25rem] w-full resize-y bg-transparent px-2 py-1.5 font-mono text-[11px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60"
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          placeholder="cohort.describe()"
+          rows={draft.split("\n").length}
+          spellCheck={false}
+          value={draft}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// States before a session exists
+// ---------------------------------------------------------------------------
+
+function PanelFrame({
+  title,
+  subtitle,
+  children,
+}: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-border px-3 py-2.5">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{subtitle}</p>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Off is a calm state, and that is a deliberate design constraint rather than a
+ * cosmetic one. This panel can be opened by someone who has no interest in
+ * running code and reached it by exploring; it must not look like something is
+ * wrong, must not offer to install anything, and must not have probed the
+ * machine to render.
+ */
+function OffState() {
+  return (
+    <PanelFrame subtitle="Not enabled for this environment." title="Compute">
+      <div className="rounded-lg border border-dashed border-border p-4 text-center">
+        <Power className="mx-auto size-5 text-muted-foreground/60" aria-hidden="true" />
+        <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+          Scientific computing is not enabled for this environment. Enable only the languages you
+          use — Scient will not download or modify a runtime.
+        </p>
+        <Button className="mt-3" size="sm" variant="secondary">
+          Open Scientific Computing settings
+        </Button>
+      </div>
+    </PanelFrame>
+  );
+}
+
+/** Enabled, discovery done, nothing started. The resolved path is shown before the first run. */
+function NotStartedState({ fixture }: { readonly fixture: ComputeExperienceFixture }) {
+  const resolved = fixture.discovered.find((candidate) => candidate.readiness === "ready") ?? null;
+  const usable = fixture.discovered.filter((candidate) => candidate.readiness === "ready").length;
+  const [showAll, setShowAll] = useState(resolved === null);
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-border px-3 py-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">Compute</h2>
+            {resolved === null ? (
+              <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                No usable interpreter on this environment.
+              </p>
+            ) : (
+              <>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  Python {resolved.profile.languageVersion} · {resolved.profile.displayName}
+                </p>
+                {/*
+                  The exact path, before the first execution, where it is still
+                  cheap to change. Once a session starts its runtime is locked,
+                  so this is the last moment this decision is reversible without
+                  losing state -- which is exactly why it is full width and not
+                  hidden behind a details disclosure.
+                */}
+                <code className="mt-1 block wrap-anywhere text-[10px] text-muted-foreground">
+                  {resolved.profile.executable}
+                </code>
+              </>
+            )}
+          </div>
+          <span className="shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium border-border bg-muted/60 text-muted-foreground">
+            No session
+          </span>
+        </div>
+
+        <div className="mt-2 flex items-center gap-1.5">
+          <Button disabled={resolved === null} size="sm">
+            Start session
+          </Button>
+          <button
+            className="ml-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => setShowAll((value) => !value)}
+            type="button"
+          >
+            {showAll ? "Hide" : `Change (${usable} usable of ${fixture.discovered.length})`}
+          </button>
+        </div>
+
+        <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
+          Chosen automatically: configured runtime, then this project&apos;s <code>.venv</code>,
+          then PATH. Once a session starts, its runtime is fixed until you stop it.
+        </p>
+      </header>
+
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        {showAll ? (
+          fixture.discovered.map((verification) => (
             <InterpreterRow
               key={verification.profile.executable}
-              selected={false}
+              selected={verification === resolved}
               verification={verification}
             />
-          ))}
-        </div>
+          ))
+        ) : (
+          <p className="py-8 text-center text-[11px] text-muted-foreground">
+            Nothing has run in this project yet.
+          </p>
+        )}
       </div>
+
+      <ConsoleComposer state={fixture.console} />
+    </div>
+  );
+}
+
+/**
+ * Reopened after Scient closed: real history, no live runtime.
+ *
+ * The honest version of this state is the whole point of the proposal's session
+ * correction. Nothing restarts on its own, nothing is replayed, and the
+ * transcript stays readable -- but every card in it must be unmistakably inert,
+ * or a user reads yesterday's successful `cohort = ...` as today's state.
+ */
+function PriorLifetimeState({ fixture }: { readonly fixture: ComputeExperienceFixture }) {
+  const lifetime = fixture.priorLifetimes[0]!;
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="border-b border-border px-3 py-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">Compute</h2>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {lifetime.runtimeLabel}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            No session
+          </span>
+        </div>
+
+        <div className="mt-2 rounded-md border border-border bg-muted/40 px-2 py-1.5">
+          <p className="text-[11px] leading-relaxed text-foreground/80">
+            {lifetime.endedReason}. Its variables are no longer available.
+          </p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            The records below are still readable. Starting again creates a new session and leaves
+            this one untouched.
+          </p>
+        </div>
+
+        <div className="mt-2">
+          <Button size="sm">Start new session</Button>
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <LifetimeBoundary
+          expanded={expanded}
+          lifetime={lifetime}
+          onToggle={() => setExpanded((value) => !value)}
+        />
+        {expanded ? (
+          <div className="space-y-2">
+            {fixture.executions.map((record) => (
+              <ExecutionCard
+                key={record.request.executionId}
+                outputs={fixture.outputs[record.request.executionId] ?? []}
+                record={record}
+                stale
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <ConsoleComposer state={fixture.console} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Panel
+// ---------------------------------------------------------------------------
+
+export function ScientComputeSessionPanel({
+  fixture,
+}: {
+  readonly fixture: ComputeExperienceFixture;
+}) {
+  const { session, executions, outputs, priorLifetimes } = fixture;
+  const [showEnvironment, setShowEnvironment] = useState(false);
+  const [expandedLifetimes, setExpandedLifetimes] = useState<readonly string[]>([]);
+
+  if (fixture.enablement === "off") return <OffState />;
+  if (session === null) {
+    return priorLifetimes.length > 0 ? (
+      <PriorLifetimeState fixture={fixture} />
+    ) : (
+      <NotStartedState fixture={fixture} />
     );
   }
 
   const view = describeSession(session);
   const sessionMarkers = outputs[""] ?? [];
+  const restartDetail =
+    sessionMarkers.find(
+      (marker): marker is Extract<ComputeOutput, { _tag: "system" }> =>
+        marker._tag === "system" && marker.event === "session-restarted",
+    )?.detail ?? null;
   const canInterrupt = session.status === "ready" && session.activity === "busy";
   const canRestart =
     session.status === "ready" || session.status === "lost" || session.status === "failed";
@@ -671,6 +1020,10 @@ export function ScientComputeSessionPanel({ fixture }: { readonly fixture: Compu
               <dd className="min-w-0 break-all font-mono">{session.workingDirectory}</dd>
             </div>
             <div className="flex gap-2">
+              <dt className="w-20 shrink-0 text-muted-foreground">Session</dt>
+              <dd className="min-w-0 break-all font-mono">{String(session.sessionId)}</dd>
+            </div>
+            <div className="flex gap-2">
               <dt className="w-20 shrink-0 text-muted-foreground">Processes</dt>
               <dd className="min-w-0 font-mono">
                 transport {session.identity?.transportProcessId ?? "—"} · runtime{" "}
@@ -698,6 +1051,31 @@ export function ScientComputeSessionPanel({ fixture }: { readonly fixture: Compu
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {/*
+          Ended lifetimes sit above the live transcript, collapsed. They are
+          older than everything below them, so they read in the same direction as
+          the rest of the scroll -- and collapsed, because the common case is a
+          user who wants today's session and would otherwise scroll through
+          yesterday's to reach it.
+        */}
+        {priorLifetimes.map((lifetime) => {
+          const expanded = expandedLifetimes.includes(lifetime.sessionId);
+          return (
+            <LifetimeBoundary
+              expanded={expanded}
+              key={lifetime.sessionId}
+              lifetime={lifetime}
+              onToggle={() =>
+                setExpandedLifetimes((current) =>
+                  expanded
+                    ? current.filter((entry) => entry !== lifetime.sessionId)
+                    : [...current, lifetime.sessionId],
+                )
+              }
+            />
+          );
+        })}
+
         {executions.length === 0 ? (
           <p className="py-8 text-center text-[11px] text-muted-foreground">
             Nothing has run in this session yet.
@@ -716,14 +1094,7 @@ export function ScientComputeSessionPanel({ fixture }: { readonly fixture: Compu
               return (
                 <div key={record.request.executionId}>
                   {sealBefore === null ? null : (
-                    <>
-                      {sessionMarkers.map((marker) =>
-                        marker._tag === "system" ? (
-                          <SystemMarker key={`marker-${marker.sequence}`} output={marker} />
-                        ) : null,
-                      )}
-                      <GenerationSeal generation={sealBefore} />
-                    </>
+                    <GenerationSeal detail={restartDetail} generation={sealBefore} />
                   )}
                   <ExecutionCard
                     outputs={outputs[record.request.executionId] ?? []}
@@ -734,22 +1105,30 @@ export function ScientComputeSessionPanel({ fixture }: { readonly fixture: Compu
               );
             })}
 
-            {/* Session-scoped markers that are not a generation boundary belong at the end. */}
-            {Number(session.generation) === 1
-              ? sessionMarkers.map((marker) =>
-                  marker._tag === "system" ? (
-                    <SystemMarker key={`tail-${marker.sequence}`} output={marker} />
-                  ) : null,
-                )
-              : null}
+            {/*
+              Session-scoped markers that are not a generation boundary belong at
+              the end. A restart marker is not rendered here: the generation seal
+              above already carries it, and printing both was the duplication
+              this panel used to have.
+            */}
+            {sessionMarkers.map((marker) =>
+              marker._tag === "system" && marker.event !== "session-restarted" ? (
+                <SystemMarker key={`tail-${marker.sequence}`} output={marker} />
+              ) : null,
+            )}
           </div>
         )}
       </div>
+
+      <ConsoleComposer state={fixture.console} />
 
       <footer className="border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
         {executions.length} execution{executions.length === 1 ? "" : "s"} ·{" "}
         {(session.storage.totalBytes / 1024).toFixed(1)} KB stored
         {session.pendingCount > 0 ? ` · ${session.pendingCount} queued` : ""}
+        {priorLifetimes.length > 0
+          ? ` · ${priorLifetimes.length} earlier session${priorLifetimes.length === 1 ? "" : "s"}`
+          : ""}
       </footer>
     </div>
   );

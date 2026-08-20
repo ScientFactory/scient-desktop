@@ -14,6 +14,7 @@ import {
   BotIcon,
   GitBranchIcon,
   KeyboardIcon,
+  FlaskConicalIcon,
   Link2Icon,
   PaletteIcon,
   SearchIcon,
@@ -36,6 +37,7 @@ import {
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
 import { scrollToSettingsTarget } from "./settingsLayout";
+import { SCIENT_UX_LAB_ENABLED } from "../../scient/uxLab/state";
 import {
   searchSettings,
   SETTINGS_SECTION_LABELS,
@@ -53,6 +55,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
+  "/settings/scientific-computing": FlaskConicalIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -60,11 +63,16 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
-  to,
-  label: SETTINGS_SECTION_LABELS[to],
-  icon: SETTINGS_SECTION_ICONS[to],
-}));
+}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[])
+  // Scientific Computing is a UX Lab design proposition, so it only appears in
+  // the sidebar when the lab is running. Its route stays registered either way,
+  // because the settings path union is exhaustive.
+  .filter((to) => to !== "/settings/scientific-computing" || SCIENT_UX_LAB_ENABLED)
+  .map((to) => ({
+    to,
+    label: SETTINGS_SECTION_LABELS[to],
+    icon: SETTINGS_SECTION_ICONS[to],
+  }));
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
