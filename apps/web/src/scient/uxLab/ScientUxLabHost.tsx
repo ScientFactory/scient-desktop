@@ -4,12 +4,16 @@ import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useStat
 import { FlaskConical, X } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
+import { ScientComputeSessionPanel } from "./ScientComputeSessionPanel";
+import { type ComputeLabScenario, computeLabFixture, computeLabScenarios } from "./computeFixtures";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import {
   SCIENT_UX_LAB_ENABLED,
   matlabLabScenarioDefinition,
+  readComputeLabScenario,
+  selectComputeLabScenario,
   matlabLabScenarios,
   type MatlabLabScenario,
   readMatlabLabScenario,
@@ -69,6 +73,9 @@ function clampPosition(
 
 export function ScientUxLabHost() {
   const [open, setOpen] = useState(false);
+  const [computeScenario, setComputeScenario] =
+    useState<ComputeLabScenario>(readComputeLabScenario);
+  const [computeOpen, setComputeOpen] = useState(true);
   const [position, setPosition] = useState<UxLabControlPosition | null>(readUxLabControlPosition);
   const latestPositionRef = useRef(position);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -156,6 +163,8 @@ export function ScientUxLabHost() {
     event.preventDefault();
   };
 
+  const computeFixture = useMemo(() => computeLabFixture(computeScenario), [computeScenario]);
+
   const anchorX = position?.x ?? 16;
   const anchorY = position?.y ?? window.innerHeight - 52;
   const openPanelToLeft = anchorX > window.innerWidth / 2;
@@ -230,21 +239,32 @@ export function ScientUxLabHost() {
             onChange={(event) => {
               if (activeJourney === "zotero-sources") {
                 selectSourcesLabScenario(event.currentTarget.value as SourcesLabScenario);
+              } else if (activeJourney === "compute-session") {
+                const next = event.currentTarget.value as ComputeLabScenario;
+                selectComputeLabScenario(next);
+                setComputeScenario(next);
               } else {
                 selectMatlabLabScenario(event.currentTarget.value as MatlabLabScenario);
               }
             }}
             value={
-              activeJourney === "zotero-sources" ? activeSourcesScenario : activeMatlabScenario
+              activeJourney === "zotero-sources"
+                ? activeSourcesScenario
+                : activeJourney === "compute-session"
+                  ? computeScenario
+                  : activeMatlabScenario
             }
           >
-            {(activeJourney === "zotero-sources" ? sourcesLabScenarios : matlabLabScenarios).map(
-              (scenario) => (
-                <option key={scenario.value} value={scenario.value}>
-                  {scenario.label}
-                </option>
-              ),
-            )}
+            {(activeJourney === "zotero-sources"
+              ? sourcesLabScenarios
+              : activeJourney === "compute-session"
+                ? computeLabScenarios
+                : matlabLabScenarios
+            ).map((scenario) => (
+              <option key={scenario.value} value={scenario.value}>
+                {scenario.label}
+              </option>
+            ))}
           </select>
 
           {activeJourney === "matlab-run-file" ? (
@@ -267,7 +287,31 @@ export function ScientUxLabHost() {
               </div>
             </div>
           ) : null}
+
+          {activeJourney === "compute-session" ? (
+            <div className="mt-3 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5 text-xs">
+              <p className="leading-relaxed text-muted-foreground">{computeFixture.note}</p>
+              <Button
+                className="w-full"
+                onClick={() => setComputeOpen((value) => !value)}
+                size="sm"
+                variant="secondary"
+              >
+                {computeOpen ? "Hide compute panel" : "Show compute panel"}
+              </Button>
+              <p className="leading-relaxed text-muted-foreground">
+                Phase 4 has not created a production compute surface yet, so this is a lab-only
+                design proposition rather than the real panel driven by fixtures.
+              </p>
+            </div>
+          ) : null}
         </section>
+      ) : null}
+
+      {activeJourney === "compute-session" && computeOpen ? (
+        <aside className="pointer-events-auto fixed inset-y-0 right-0 z-[99] flex w-[420px] max-w-[calc(100vw-2rem)] flex-col border-l border-border bg-background/98 shadow-2xl backdrop-blur">
+          <ScientComputeSessionPanel fixture={computeFixture} />
+        </aside>
       ) : null}
 
       <Button

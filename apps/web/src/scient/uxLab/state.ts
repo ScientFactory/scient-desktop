@@ -1,8 +1,15 @@
+import {
+  DEFAULT_COMPUTE_LAB_SCENARIO,
+  normalizeComputeLabScenario,
+  type ComputeLabScenario,
+} from "./computeFixtures";
+
 export const SCIENT_UX_LAB_ENABLED = import.meta.env.VITE_SCIENT_UX_LAB === "1";
 
 export const uxLabJourneys = [
   { value: "zotero-sources", label: "Zotero sources" },
   { value: "matlab-run-file", label: "MATLAB run file" },
+  { value: "compute-session", label: "Compute session (design)" },
 ] as const;
 
 export type UxLabJourney = (typeof uxLabJourneys)[number]["value"];
@@ -39,6 +46,7 @@ export type MatlabLabScenario = (typeof matlabLabScenarios)[number]["value"];
 const JOURNEY_STORAGE_KEY = "scient.uxLab.journey";
 const SOURCES_SCENARIO_STORAGE_KEY = "scient.uxLab.sourcesScenario";
 const MATLAB_SCENARIO_STORAGE_KEY = "scient.uxLab.matlabScenario";
+const COMPUTE_SCENARIO_STORAGE_KEY = "scient.uxLab.computeScenario";
 const CONTROL_POSITION_STORAGE_KEY = "scient.uxLab.controlPosition";
 
 export interface UxLabControlPosition {
@@ -96,6 +104,24 @@ export function selectMatlabLabScenario(value: MatlabLabScenario): void {
 
 export function matlabLabScenarioDefinition(value: MatlabLabScenario) {
   return matlabLabScenarios.find((scenario) => scenario.value === value)!;
+}
+
+export function readComputeLabScenario(): ComputeLabScenario {
+  if (!SCIENT_UX_LAB_ENABLED || typeof window === "undefined") return DEFAULT_COMPUTE_LAB_SCENARIO;
+  return normalizeComputeLabScenario(window.localStorage.getItem(COMPUTE_SCENARIO_STORAGE_KEY));
+}
+
+/**
+ * Unlike the other journeys, selecting a compute scenario does not reload.
+ *
+ * Sources and MATLAB scenarios are installed before the app boots, because they
+ * replace external state the app reads once at startup. Compute fixtures are
+ * read by a lab surface at render time, so a reload would only cost the panel
+ * its expanded tracebacks -- exactly the state a designer is comparing across
+ * scenarios.
+ */
+export function selectComputeLabScenario(value: ComputeLabScenario): void {
+  window.localStorage.setItem(COMPUTE_SCENARIO_STORAGE_KEY, value);
 }
 
 export function normalizeUxLabControlPosition(value: string | null): UxLabControlPosition | null {
