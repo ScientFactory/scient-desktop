@@ -8,6 +8,7 @@ import {
   Globe2,
   Library,
   Plus,
+  Sigma,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -79,6 +80,7 @@ interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddCompute: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -86,6 +88,7 @@ interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
   sourcesAvailable: boolean;
+  computeAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -108,6 +111,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
   sources: "Sources are only available inside a project workspace.",
+  compute: "Compute is only available inside a project workspace.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -298,6 +302,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddCompute: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -305,6 +310,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
   sourcesAvailable: boolean;
+  computeAvailable: boolean;
   liveAgentCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -319,6 +325,16 @@ function RightPanelEmptyState(props: {
       available: props.sourcesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.sources,
       onClick: props.onAddSources,
+      badgeCount: 0,
+    },
+    {
+      label: "Compute",
+      description: "Run and inspect scientific code.",
+      icon: Sigma,
+      shortcut: "C",
+      available: props.computeAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.compute,
+      onClick: props.onAddCompute,
       badgeCount: 0,
     },
     {
@@ -997,6 +1013,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
             onAddSources={props.onAddSources}
+            onAddCompute={props.onAddCompute}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1004,6 +1021,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
             sourcesAvailable={props.sourcesAvailable}
+            computeAvailable={props.computeAvailable}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (
