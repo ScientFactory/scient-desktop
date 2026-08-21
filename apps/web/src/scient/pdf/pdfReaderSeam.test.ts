@@ -70,8 +70,11 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("onClick={scheduleSourceSyncHint}");
     expect(source).toContain("onScroll={dismissSourceSyncHint}");
     expect(source).toContain("showSourceSyncHint();");
-    expect(source).toContain('"⌘ double-click the PDF to open the matching source line"');
-    expect(source).toContain('"Ctrl double-click the PDF to open the matching source line"');
+    expect(source).toContain("Double-click a PDF word to show its matching source line");
+    expect(source).toContain("const onInverseSearch = props.syncNavigation?.onInverseSearch;");
+    expect(source).not.toContain(
+      "props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)",
+    );
     expect(styles).toContain("inset-block-start: 20px;");
     expect(styles).toMatch(
       /\.scient-pdf-source-sync-hint \{[^}]*position: absolute;[^}]*pointer-events: none;/su,

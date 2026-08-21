@@ -76,6 +76,15 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
   });
 
+  it("keeps plain double-click navigation inside an already-open split", () => {
+    expect(surfaceSource).toContain('if (mode !== "split") return;');
+    expect(surfaceSource).toContain(
+      '...(mode === "split" ? { onInverseSearch: handleInverseSync } : {})',
+    );
+    expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
+    expect(surfaceSource).not.toMatch(/event\.(?:ctrlKey|metaKey)/u);
+  });
+
   it("keeps the LaTeX surface off the chat markdown pipeline", () => {
     expect(surfaceSource).not.toMatch(/ChatMarkdown/u);
     expect(surfaceSource).not.toMatch(/from "~\/components\/ChatMarkdown"/u);

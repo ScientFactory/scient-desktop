@@ -36,7 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { ensureLocalApi } from "~/localApi";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
@@ -75,7 +75,7 @@ export interface PdfInverseSyncPoint {
 
 export interface PdfSyncNavigation {
   readonly forwardTarget: PdfForwardSyncTarget | null;
-  readonly onInverseSearch: (point: PdfInverseSyncPoint) => void;
+  readonly onInverseSearch?: (point: PdfInverseSyncPoint) => void;
   readonly onPageChange: (page: number) => void;
 }
 
@@ -280,7 +280,7 @@ function LoadedScientPdfReader(props: {
   const scheduleSourceSyncHint = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (
-        props.syncNavigation === undefined ||
+        props.syncNavigation?.onInverseSearch === undefined ||
         state.phase !== "ready" ||
         pdfSourceSyncHintLearnedThisSession ||
         event.ctrlKey ||
@@ -309,7 +309,7 @@ function LoadedScientPdfReader(props: {
         showSourceSyncHint();
       }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
     },
-    [props.syncNavigation, showSourceSyncHint, sourceSyncHintVisible, state.phase],
+    [props.syncNavigation?.onInverseSearch, showSourceSyncHint, sourceSyncHintVisible, state.phase],
   );
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -655,9 +655,8 @@ function LoadedScientPdfReader(props: {
             onClick={scheduleSourceSyncHint}
             onDoubleClick={(event) => {
               dismissSourceSyncHint();
-              if (props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)) {
-                return;
-              }
+              const onInverseSearch = props.syncNavigation?.onInverseSearch;
+              if (onInverseSearch === undefined) return;
               const target = event.target;
               if (!(target instanceof Element)) return;
               const pageElement = target.closest<HTMLElement>(".page[data-page-number]");
@@ -669,7 +668,7 @@ function LoadedScientPdfReader(props: {
               });
               if (point !== null) {
                 pdfSourceSyncHintLearnedThisSession = true;
-                props.syncNavigation.onInverseSearch(point);
+                onInverseSearch(point);
               }
             }}
             onScroll={dismissSourceSyncHint}
@@ -678,9 +677,7 @@ function LoadedScientPdfReader(props: {
           </div>
           {sourceSyncHintVisible ? (
             <div className="scient-pdf-source-sync-hint" role="status">
-              {isMacPlatform(navigator.platform)
-                ? "⌘ double-click the PDF to open the matching source line"
-                : "Ctrl double-click the PDF to open the matching source line"}
+              Double-click a PDF word to show its matching source line
             </div>
           ) : null}
           {state.phase === "loading" ? (

@@ -10,10 +10,12 @@ warnings from the build appear in a list above the document; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
 
-Hold Ctrl (Command on a Mac) and double-click a line of source to jump to the
-matching place in the current successful PDF; the same gesture on the PDF opens
-the corresponding source line. Scient briefly marks a source-to-PDF destination
-so the matching place is easy to see. This needs a successful current build. If the
+In Split, double-click a line of source to jump to the matching place in the
+current successful PDF. Double-clicking a word in the PDF keeps the normal word
+selection and reveals the corresponding source line in the source pane. These
+gestures never open Split automatically; select Split first when you want both
+sides to follow one another. Scient briefly marks a source-to-PDF destination so
+the matching place is easy to see. This needs a successful current build. If the
 PDF has no navigation index, it still opens and reads normally. Scient ships
 the small source-navigation helper itself, so this works the same way with
 TinyTeX, TeX Live, MiKTeX, or Tectonic and requires no extra package or PATH

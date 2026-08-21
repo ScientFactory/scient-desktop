@@ -546,7 +546,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             x: result.x,
             y: result.y,
           });
-          if (preferredMode === "source") selectMode("split");
         })
         .catch((error: unknown) => {
           if (syncRequestRef.current !== issued) return;
@@ -556,15 +555,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           });
         });
     },
-    [
-      build.snapshot,
-      descriptor,
-      preferredMode,
-      props.cwd,
-      props.environmentId,
-      props.relativePath,
-      selectMode,
-    ],
+    [build.snapshot, descriptor, props.cwd, props.environmentId, props.relativePath],
   );
 
   const handleInverseSync = useCallback(
@@ -618,11 +609,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       descriptor?._tag === "generated-pdf"
         ? {
             forwardTarget: forwardSyncTarget,
-            onInverseSearch: handleInverseSync,
+            ...(mode === "split" ? { onInverseSearch: handleInverseSync } : {}),
             onPageChange: handlePdfPageChange,
           }
         : undefined,
-    [descriptor?._tag, forwardSyncTarget, handleInverseSync, handlePdfPageChange],
+    [descriptor?._tag, forwardSyncTarget, handleInverseSync, handlePdfPageChange, mode],
   );
   // Keyed by artifact, never by revision: a rebuild of the same document swaps
   // the reader's asset URL, and the reader keeps page and zoom across that.
@@ -785,7 +776,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
 
       <div className="scient-latex-content" ref={containerRef}>
         {showEditor ? (
-          <ScientTooltip content="Ctrl/Command-double-click a source line to find it in the PDF">
+          <ScientTooltip content="In Split, double-click a source line to find it in the PDF">
             <div
               ref={primaryPaneRef}
               className={cn(
@@ -793,7 +784,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 mode === "split" ? "scient-latex-pane-sized" : null,
               )}
               onDoubleClickCapture={(event) => {
-                if (!event.ctrlKey && !event.metaKey) return;
+                if (mode !== "split") return;
                 const position = sourcePositionFromPointerEvent(event);
                 if (position !== null) handleForwardSync(position);
               }}

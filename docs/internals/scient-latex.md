@@ -642,11 +642,12 @@ back to an arbitrary `synctex` on `PATH`. Windows ships its native helper as a
 desktop resource and Linux x64 inside the WSL server sidecar. Remote server
 assets carry every released platform key.
 
-Forward search starts on a Ctrl/Command-double-click in the source editor and
-asks `synctex view` for the current successful descriptor's exact
-artifact/revision. It converts the editor's zero-based character offset to the
-one-based source column required by SyncTeX (using zero only when no column is
-available) and includes the reader's current page as a disambiguation hint. SyncTeX
+Forward search starts on a plain double-click in the source editor only while
+Split is already open and asks `synctex view` for the current successful
+descriptor's exact artifact/revision. The inherited editor does not expose its
+internal cursor on the current upstream seam, so Scient sends SyncTeX's explicit
+unknown-column value instead of guessing a visual DOM offset for wrapped or
+bidirectional text. It includes the reader's current page as a disambiguation hint. SyncTeX
 returns ordered candidates: Scient preserves that order, uses the first valid
 target point (`x`/`y`, not the potentially page-spanning `h`/`v` enclosing box
 reported for some RTL material), converts that top-left big-point coordinate
@@ -655,10 +656,12 @@ destination. If an engine records only line-level locations for a source line,
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 
-Inverse search starts on a Ctrl/Command-double-click in the PDF, converts the
+Inverse search starts when a plain PDF double-click selects a word while Split
+is already open. The reader preserves native selection, converts the pointer's
 page position back to top-left big points, asks `synctex edit`, and selects the
-first returned candidate whose input is contained in the workspace. It opens
-that file at the reported line; a negative or absent helper column remains
+first returned candidate whose input is contained in the workspace. Source-only
+and PDF-only modes never switch layout implicitly. The source pane opens that
+file at the reported line; a negative or absent helper column remains
 truthfully line-level instead of being guessed. Diagnostics with a valid
 workspace-relative file are buttons through the same line-aware open seam. Any
 revision change invalidates the in-flight navigation request and target, and a
