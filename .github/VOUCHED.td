@@ -4,34 +4,15 @@
 # workflow. Collaborators with write access are automatically trusted and
 # do not need to be duplicated in this file.
 #
+# Scient governance note: unlike the official T3 project, this candidate
+# repository does not mirror T3's contributor list. Trust entries are
+# granted deliberately, one at a time. The labels carry no permissions;
+# they only mark PRs as trusted in the vouch workflow.
+#
 # Syntax:
 #   github:username
 #   -github:username reason for denouncement
 #
 # Keep entries sorted alphabetically.
-github:adityavardhansharma
-github:binbandit
-github:chrisdeeming
-github:chuks-qua
-github:cursoragent
-github:gbarros-dev
-github:github-actions[bot]
-github:hwanseoc
-github:jamesx0416
-github:jasonLaster
-github:JoeEverest
-github:maria-rcks
-github:nmggithub
-github:Noojuno
-github:notkainoa
-github:PatrickBauer
-github:realAhmedRoach
-github:shiroyasha9
-github:StiensWout
-github:Yash-Singh1
-github:eggfriedrice24
-github:Ymit24
-github:shivamhwp
-github:jappyjan
-github:justsomelegs
-github:UtkarshUsername
+github:yaacovcorcos
+github:YishayPo

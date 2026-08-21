@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-20-upstream-sync-beab6886f4.md`](docs/internals/2026-08-20-upstream-sync-beab6886f4.md)
+[`docs/internals/2026-08-21-upstream-sync-be7d35aaeb.md`](docs/internals/2026-08-21-upstream-sync-be7d35aaeb.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `beab6886f45bf42906d0bd01aefe5dfe9e66a867` into the refresh
+checkpoint `be7d35aaeb49a04483ec5e0d2284e8b5b70a3b6e` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`f2d5fc91e3030e5c3956fdadc13e1eaa25bcabe3`. Later observed T3
+`beab6886f45bf42906d0bd01aefe5dfe9e66a867`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -209,6 +209,24 @@ Chat, queue and steer flow, voice and provider-onboarding controls, Sources
 actions, scientific preview anchors, BiDi and fork markers, sidebar identity,
 and reading profile while using T3's new component structure. The D4 updater
 guard remains effective within T3's new updater concurrency model.
+
+The 2026-08-21 sync through `be7d35aaeb` receives 31 official commits covering
+thread bootstrap retry, terminal clipboard and shifted-character fixes,
+pinned-thread and reorder stability, per-environment sidebar provider icons,
+stream-follow correction, preview rerender performance, UTF-8 HTML asset
+serving, slash-command skill listing, Cursor provider default enablement,
+HTTPS-default GitHub clones, editor deep-link tightening, and a CI
+restructure. Five textual conflicts were composed: the CI workflow adopts T3's
+parallelized suite, dedicated Rust job, gated macOS native analysis, and the
+single `thread-transfer-results` artifact contract (which also repairs the
+transfer-report publisher that Scient's shard-suffixed names had silently
+broken) while keeping Scient's documentation fast path, brand check, runner
+fleet, and release lanes; the server asset layer combines T3's charset header
+with Scient's range-capable PDF/media seam; the sidebar keeps Scient's Quick
+Chat seams on top of T3's jump-hint suppression and provider-icon resolution;
+and the trust list takes T3's superset. The merge also drops upstream's
+removed `.plans/` planning docs per its new work-artifact policy; the content
+remains recoverable from history.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this

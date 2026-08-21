@@ -54,6 +54,7 @@ export function assetResponseHeaders(
   filePath: string,
   cacheControl = "private, max-age=3600",
 ): Record<string, string> {
+  const lowerPath = filePath.toLowerCase();
   return {
     "Cache-Control": cacheControl,
     // Asset images are also fetched as bytes for copy/download. The initial
@@ -62,11 +63,15 @@ export function assetResponseHeaders(
     // rejects as an unusable CORS response.
     Vary: "Origin",
     "X-Content-Type-Options": "nosniff",
-    ...(filePath.toLowerCase().endsWith(".svg")
+    ...(lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+      ? { "Content-Type": "text/html; charset=utf-8" }
+      : {}),
+    ...(lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
 }
+
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });

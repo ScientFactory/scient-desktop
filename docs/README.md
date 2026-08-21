@@ -62,6 +62,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
 - [Candidate upstream maintenance](../UPSTREAM.md)
 - [CI gates](./internals/ci.md)
+- [Engineering work artifacts](./internals/work-artifacts.md)
 
 ### Runbooks
 
