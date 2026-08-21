@@ -74,7 +74,11 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Scient's suite is roughly three times upstream's (Scient-owned packages
+    # plus a larger web unit suite), and this runner has half the vCPUs of the
+    # official fleet, so the combined parallel run needs a wider ceiling than
+    # upstream's 10 minutes.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6

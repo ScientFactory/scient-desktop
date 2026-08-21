@@ -25,7 +25,9 @@ runs these quality gates on pull requests and pushes to `main`:
   still exports its expected symbols.
 - **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo'
 test` across every workspace package except the server app and the monorepo root, dropping the
-  dependency-ordering wait that only bought idle runner time.
+  dependency-ordering wait that only bought idle runner time. The 20-minute job ceiling is wider
+  than upstream's 10 because Scient's suite is roughly three times larger on a runner with half
+  the vCPUs.
 - **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
   `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
   separate runners instead of workers: no two server test files ever share a machine, and no

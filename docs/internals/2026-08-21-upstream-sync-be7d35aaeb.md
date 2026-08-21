@@ -79,6 +79,12 @@ Every overlapping CI feature was compared across base, Scient, and upstream:
   `ubuntu-24.04`/`macos-26` runner fleet (no Blacksmith labels anywhere,
   including the adopted jobs), the release smoke lane, and all Scient-only
   workflows (provenance, LaTeX managed install, release promotion).
+- Scient adaptation inside the adopted job: the `test` job ceiling is 20
+  minutes instead of upstream's 10. Scient's suite is roughly three times
+  larger than upstream's (Scient-owned packages plus a larger web unit suite)
+  and the GitHub-hosted runner has half the vCPUs of upstream's Blacksmith
+  fleet, so the first CI run exceeded 10 minutes and was killed; 20 minutes
+  matches the previous Scient lane ceilings without changing the job graph.
 - Repaired incidentally: Scient's previous shard-suffixed artifact names
   (`thread-transfer-results-N-of-3`) could never match the name hardcoded in
   `thread-transfer-report.cjs`, so PR transfer-budget comments had silently
