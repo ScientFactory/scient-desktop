@@ -78,9 +78,11 @@ export interface AppModelOption {
   isCustom: boolean;
   isDefault?: boolean;
   isLegacy?: boolean;
+  /** Opaque provider-formatted cost label (e.g. Droid's `"0.5×"`); absent when unknown. */
+  providerCostLabel?: string;
 }
 
-function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
+export function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
   const option: AppModelOption = {
     slug: model.slug,
     name: model.name,
@@ -90,6 +92,7 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
+  if (model.providerCostLabel) option.providerCostLabel = model.providerCostLabel;
   return option;
 }
 

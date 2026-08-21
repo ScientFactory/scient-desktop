@@ -71,6 +71,14 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /**
+   * Opaque provider-formatted cost label (e.g. Droid's factory-token rate
+   * label `"0.5×"`), extracted from the live model catalog when the agent
+   * advertises one. The server does not interpret or reformat the value;
+   * clients render it verbatim next to the model name. Absent when the
+   * provider reports nothing.
+   */
+  providerCostLabel: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;

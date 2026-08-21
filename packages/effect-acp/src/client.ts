@@ -111,12 +111,14 @@ export class AcpClient extends Context.Service<
         payload: AcpSchema.SetSessionModelRequest,
       ) => Effect.Effect<AcpSchema.SetSessionModelResponse, AcpError.AcpError>;
       /**
-       * Updates a session configuration option.
+       * Updates a session configuration option. The response is lenient:
+       * nonconforming agents may omit `configOptions` and publish the
+       * refreshed inventory asynchronously via a notification.
        * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
        */
       readonly setSessionConfigOption: (
         payload: AcpSchema.SetSessionConfigOptionRequest,
-      ) => Effect.Effect<AcpSchema.SetSessionConfigOptionResponse, AcpError.AcpError>;
+      ) => Effect.Effect<AcpRpcs.LenientSetSessionConfigOptionResponseData, AcpError.AcpError>;
       /**
        * Sends a prompt turn to the agent.
        * @see https://agentclientprotocol.com/protocol/schema#session/prompt
@@ -483,7 +485,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       setSessionModel: (payload) =>
         callRpc(AGENT_METHODS.session_set_model, rpc[AGENT_METHODS.session_set_model](payload)),
       setSessionConfigOption: (payload) =>
-        callRpc(
+        callRpc<AcpRpcs.LenientSetSessionConfigOptionResponseData>(
           AGENT_METHODS.session_set_config_option,
           rpc[AGENT_METHODS.session_set_config_option](payload),
         ),

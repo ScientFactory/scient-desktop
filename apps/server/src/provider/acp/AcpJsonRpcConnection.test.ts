@@ -455,6 +455,116 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect(
+    "keeps notification-published inventory when an async agent acknowledges with an empty response",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
+
+        // The mock agent runs in Droid-async mode: it publishes the refreshed
+        // inventory via a `config_option_update` notification and then acks
+        // the write with `{}`. The acknowledgment must not erase the
+        // authoritative inventory that preceded it.
+        yield* runtime.setConfigOption("model", "gpt-5.4");
+        const configOptions = yield* runtime.getConfigOptions;
+
+        const modelOption = configOptions.find((option) => option.id === "model");
+        expect(modelOption).toBeDefined();
+        if (modelOption?.type !== "select") throw new Error("model option must be select");
+        expect(modelOption.currentValue).toBe("gpt-5.4");
+        // The per-model ladder for the selected model survived too.
+        const effortOption = configOptions.find((option) => option.id === "reasoning");
+        expect(effortOption).toBeDefined();
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            spawn: {
+              command: mockAgentCommand,
+              args: mockAgentArgs,
+              env: {
+                T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
+              },
+            },
+            cwd: process.cwd(),
+            clientCapabilities: {
+              _meta: { parameterizedModelPicker: true },
+            },
+            clientInfo: { name: "t3-test", version: "0.0.0" },
+            authMethodId: "test",
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+      ),
+  );
+
+  it.effect("confirms a notification-transport config write when the agent never responds", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      // Factory Droid 0.200.0 publishes the authoritative update but leaves
+      // the JSON-RPC request pending forever. Notification transport avoids
+      // creating that pending request and completes only after this state is
+      // observed locally.
+      yield* runtime.setModel("gpt-5.4");
+      const modelOption = (yield* runtime.getConfigOptions).find((option) => option.id === "model");
+      expect(modelOption?.currentValue).toBe("gpt-5.4");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
+              T3_ACP_DROID_DROP_CONFIG_RESPONSE: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientCapabilities: {
+            _meta: { parameterizedModelPicker: true },
+          },
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          configOptionTransport: (configId) => (configId === "model" ? "notification" : "request"),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("tracks a successful config write when the agent returns an empty response", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.setConfigOption("mode", "code");
+      const modeOption = (yield* runtime.getConfigOptions).find((option) => option.id === "mode");
+      expect(modeOption?.currentValue).toBe("code");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_DROID_EMPTY_CONFIG_RESPONSE: "1" },
+          },
+          cwd: process.cwd(),
+          clientCapabilities: {
+            _meta: { parameterizedModelPicker: true },
+          },
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("emits low-level ACP protocol logs for raw and decoded messages", () => {
     const protocolEvents: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];
     return Effect.gen(function* () {

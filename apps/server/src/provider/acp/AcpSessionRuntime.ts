@@ -13,12 +13,14 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import * as EffectAcpRpc from "effect-acp/rpc";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
@@ -68,7 +70,28 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  readonly authMethodId:
+    | string
+    | ((initializeResult: EffectAcpSchema.InitializeResponse) => string);
+  /**
+   * Extra `_meta` merged into the `authenticate` request. Agents use it to
+   * gate interactivity (e.g. Droid's `_meta.headless` keeps background
+   * probes from ever opening a pairing browser).
+   */
+  readonly authenticateMeta?: { readonly [key: string]: unknown };
+  /**
+   * ACP normally models `session/set_config_option` as request/response. A few
+   * agents apply particular option writes and publish the updated inventory,
+   * but never complete the request. Those options use notification transport;
+   * Scient then waits for the authoritative `config_option_update`. A resolver
+   * keeps compatibility scoped to the affected option instead of weakening
+   * every config write for that agent.
+   */
+  readonly configOptionTransport?:
+    | "request"
+    | "notification"
+    | ((configId: string) => "request" | "notification");
+  readonly configOptionSettleTimeout?: Duration.Input;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -214,7 +237,10 @@ export class AcpSessionRuntime extends Context.Service<
     readonly setConfigOption: (
       configId: string,
       value: string | boolean,
-    ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
+    ) => Effect.Effect<
+      EffectAcpRpc.LenientSetSessionConfigOptionResponseData,
+      EffectAcpErrors.AcpError
+    >;
     /**
      * Selects the base model through the negotiated model configuration option.
      * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
@@ -290,7 +316,7 @@ export const make = (
       ),
     );
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
-    const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+    const configOptionsRef = yield* SubscriptionRef.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
@@ -393,6 +419,13 @@ export const make = (
         ) {
           return;
         }
+        // Agents may publish configuration writes asynchronously. Fold the
+        // update into the local snapshot so model/effort state stays
+        // authoritative without a re-probe.
+        if (notification.update.sessionUpdate === "config_option_update") {
+          yield* SubscriptionRef.set(configOptionsRef, notification.update.configOptions);
+          return;
+        }
         yield* handleSessionUpdate({
           queue: eventQueue,
           modeStateRef,
@@ -433,7 +466,10 @@ export const make = (
       value: string | boolean,
     ): Effect.Effect<void, EffectAcpErrors.AcpError> =>
       Effect.gen(function* () {
-        const configOption = findSessionConfigOption(yield* Ref.get(configOptionsRef), configId);
+        const configOption = findSessionConfigOption(
+          yield* SubscriptionRef.get(configOptionsRef),
+          configId,
+        );
         if (!configOption) {
           return;
         }
@@ -477,13 +513,84 @@ export const make = (
         });
       });
 
-    const updateConfigOptions = (
-      response:
-        | EffectAcpSchema.SetSessionConfigOptionResponse
-        | EffectAcpSchema.LoadSessionResponse
-        | EffectAcpSchema.NewSessionResponse
-        | EffectAcpSchema.ResumeSessionResponse,
-    ): Effect.Effect<void> => Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(response));
+    // Some agents acknowledge `session/set_config_option` asynchronously: an
+    // absent/null inventory means "see the upcoming
+    // config_option_update notification", so it must not overwrite state that
+    // notification may already have published. Only a supplied inventory is
+    // authoritative.
+    const applySetConfigOptionResponse = (
+      response: EffectAcpRpc.LenientSetSessionConfigOptionResponseData,
+      previousConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+      configId: string,
+      value: string | boolean,
+    ): Effect.Effect<void> => {
+      if (response.configOptions !== undefined && response.configOptions !== null) {
+        return SubscriptionRef.set(configOptionsRef, response.configOptions);
+      }
+      // A successful empty acknowledgment still confirms the requested value.
+      // Patch only when no notification replaced the snapshot while the RPC
+      // was pending; a concurrently published inventory remains authoritative.
+      return SubscriptionRef.update(configOptionsRef, (currentConfigOptions) =>
+        currentConfigOptions !== previousConfigOptions
+          ? currentConfigOptions
+          : currentConfigOptions.map((option): EffectAcpSchema.SessionConfigOption => {
+              if (option.id !== configId) return option;
+              if (option.type === "select" && typeof value === "string") {
+                return { ...option, currentValue: value };
+              }
+              if (option.type === "boolean" && typeof value === "boolean") {
+                return { ...option, currentValue: value };
+              }
+              return option;
+            }),
+      );
+    };
+
+    const waitForConfigOptionValue = (
+      configId: string,
+      value: string | boolean,
+    ): Effect.Effect<
+      ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+      EffectAcpErrors.AcpError
+    > =>
+      SubscriptionRef.changes(configOptionsRef).pipe(
+        Stream.filter((configOptions) => {
+          const option = findSessionConfigOption(configOptions, configId);
+          return option !== undefined && configOptionCurrentValueMatches(option, value);
+        }),
+        Stream.runHead,
+        Effect.flatMap((result) =>
+          Option.match(result, {
+            onNone: () =>
+              Effect.fail(
+                new EffectAcpErrors.AcpTransportError({
+                  operation: "call-rpc",
+                  method: "session/set_config_option",
+                  detail: "ACP config-option update stream ended before confirmation",
+                  cause: undefined,
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
+        ),
+        Effect.timeoutOption(
+          Duration.fromInputUnsafe(options.configOptionSettleTimeout ?? Duration.seconds(5)),
+        ),
+        Effect.flatMap((result) =>
+          Option.match(result, {
+            onNone: () =>
+              Effect.fail(
+                new EffectAcpErrors.AcpTransportError({
+                  operation: "call-rpc",
+                  method: "session/set_config_option",
+                  detail: `session/set_config_option did not publish ${configId}=${formatConfigOptionValue(value)} before the confirmation timeout`,
+                  cause: undefined,
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
 
     const updateCurrentModeId = (modeId: string): Effect.Effect<void> =>
       Ref.update(modeStateRef, (current) =>
@@ -493,17 +600,20 @@ export const make = (
     const setConfigOption = (
       configId: string,
       value: string | boolean,
-    ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
+    ): Effect.Effect<
+      EffectAcpRpc.LenientSetSessionConfigOptionResponseData,
+      EffectAcpErrors.AcpError
+    > =>
       validateConfigOptionValue(configId, value).pipe(
         Effect.flatMap(() => getStartedState),
         Effect.flatMap((started) =>
-          Ref.get(configOptionsRef).pipe(
+          SubscriptionRef.get(configOptionsRef).pipe(
             Effect.flatMap((configOptions) => {
               const existing = findSessionConfigOption(configOptions, configId);
               if (existing && configOptionCurrentValueMatches(existing, value)) {
                 return Effect.succeed({
                   configOptions,
-                } satisfies EffectAcpSchema.SetSessionConfigOptionResponse);
+                } satisfies EffectAcpRpc.LenientSetSessionConfigOptionResponseData);
               }
               const requestPayload =
                 typeof value === "boolean"
@@ -518,11 +628,35 @@ export const make = (
                       configId,
                       value: String(value),
                     } satisfies EffectAcpSchema.SetSessionConfigOptionRequest);
+              const configOptionTransport =
+                typeof options.configOptionTransport === "function"
+                  ? options.configOptionTransport(configId)
+                  : (options.configOptionTransport ?? "request");
+              if (configOptionTransport === "notification") {
+                return runLoggedRequest(
+                  "session/set_config_option",
+                  requestPayload,
+                  acp.raw
+                    .notify("session/set_config_option", requestPayload)
+                    .pipe(Effect.flatMap(() => waitForConfigOptionValue(configId, value))),
+                ).pipe(
+                  Effect.map(
+                    (configOptions) =>
+                      ({
+                        configOptions,
+                      }) satisfies EffectAcpRpc.LenientSetSessionConfigOptionResponseData,
+                  ),
+                );
+              }
               return runLoggedRequest(
                 "session/set_config_option",
                 requestPayload,
                 acp.agent.setSessionConfigOption(requestPayload),
-              ).pipe(Effect.tap((response) => updateConfigOptions(response)));
+              ).pipe(
+                Effect.tap((response) =>
+                  applySetConfigOptionResponse(response, configOptions, configId, value),
+                ),
+              );
             }),
           ),
         ),
@@ -542,7 +676,11 @@ export const make = (
       );
 
       const authenticatePayload = {
-        methodId: options.authMethodId,
+        methodId:
+          typeof options.authMethodId === "function"
+            ? options.authMethodId(initializeResult)
+            : options.authMethodId,
+        ...(options.authenticateMeta ? { _meta: options.authenticateMeta } : {}),
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
       yield* runLoggedRequest(
@@ -645,7 +783,10 @@ export const make = (
       }
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(
+        configOptionsRef,
+        sessionConfigOptionsFromSetup(sessionSetupResult),
+      );
 
       const nextState = {
         sessionId,
@@ -715,7 +856,7 @@ export const make = (
         yield* Deferred.await(acknowledge);
       }),
       getModeState: Ref.get(modeStateRef),
-      getConfigOptions: Ref.get(configOptionsRef),
+      getConfigOptions: SubscriptionRef.get(configOptionsRef),
       prompt: (payload) =>
         promptSerializationSemaphore.withPermit(
           Effect.gen(function* () {
@@ -777,9 +918,22 @@ export const make = (
             if (modeState?.currentModeId === modeId) {
               return Effect.succeed({} satisfies EffectAcpSchema.SetSessionModeResponse);
             }
-            return setConfigOption("mode", modeId).pipe(
-              Effect.tap(() => updateCurrentModeId(modeId)),
-              Effect.as({} satisfies EffectAcpSchema.SetSessionModeResponse),
+            // The mode selector's config id is agent-defined (Cursor uses
+            // `mode`, Droid `autonomy_level`); resolve it by category with a
+            // spec-default fallback instead of hardcoding one id.
+            return SubscriptionRef.get(configOptionsRef).pipe(
+              Effect.flatMap((configOptions) => {
+                const modeOption = configOptions.find(
+                  (option) =>
+                    option.type === "select" &&
+                    (option.category?.trim().toLowerCase() === "mode" ||
+                      option.id.trim().toLowerCase() === "mode"),
+                );
+                return setConfigOption(modeOption?.id ?? "mode", modeId).pipe(
+                  Effect.tap(() => updateCurrentModeId(modeId)),
+                  Effect.as({} satisfies EffectAcpSchema.SetSessionModeResponse),
+                );
+              }),
             );
           }),
         ),

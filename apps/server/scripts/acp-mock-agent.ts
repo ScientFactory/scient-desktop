@@ -9,7 +9,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as EffectAcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
@@ -19,6 +19,7 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -38,6 +39,12 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+// Droid-style async config refresh: publish the new inventory through a
+// `config_option_update`. The optional drop flag additionally leaves the
+// request pending, reproducing @factory/cli 0.200.0's exact wire behavior.
+const droidAsyncConfigRefresh = process.env.T3_ACP_DROID_ASYNC_CONFIG_REFRESH === "1";
+const droidDropsConfigResponse = process.env.T3_ACP_DROID_DROP_CONFIG_RESPONSE === "1";
+const droidReturnsEmptyConfigResponse = process.env.T3_ACP_DROID_EMPTY_CONFIG_RESPONSE === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
@@ -116,9 +123,18 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         currentValue: currentModelId,
         options: [
           { value: "default", name: "Auto" },
-          { value: "composer-2", name: "Composer 2" },
-          { value: "gpt-5.4", name: "GPT-5.4" },
+          {
+            value: "composer-2",
+            name: "Composer 2",
+            description: "0.5x Factory token rate",
+          },
+          {
+            value: "gpt-5.4",
+            name: "GPT-5.4",
+            description: "2x Factory token rate",
+          },
           { value: "claude-opus-4-6", name: "Opus 4.6" },
+          { value: "custom:Ox-Alpha-0", name: "Ox Alpha" },
         ],
       },
     ];
@@ -207,21 +223,39 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     }
   }
 
-  return [
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      type: "select" as const,
-      currentValue: currentModelId,
-      options: [
-        { value: "default", name: "Auto" },
-        { value: "composer-2", name: "Composer 2" },
-        { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
-        { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
-      ],
-    },
-  ];
+  const modelOption = {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select" as const,
+    currentValue: currentModelId,
+    options: [
+      { value: "default", name: "Auto" },
+      { value: "composer-2", name: "Composer 2" },
+      { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
+      { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
+      { value: "custom:Ox-Alpha-0", name: "Ox Alpha" },
+    ],
+  };
+  return currentModelId === "custom:Ox-Alpha-0"
+    ? [
+        modelOption,
+        {
+          id: "reasoning_effort",
+          name: "Reasoning",
+          category: "thought_level",
+          type: "select" as const,
+          currentValue: currentReasoning,
+          options: [
+            { value: "off", name: "Off" },
+            { value: "low", name: "Low" },
+            { value: "medium", name: "Medium" },
+            { value: "high", name: "High" },
+            { value: "none", name: "None" },
+          ],
+        },
+      ]
+    : [modelOption];
 }
 
 function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
@@ -396,7 +430,7 @@ const program = Effect.gen(function* () {
     }),
   );
 
-  yield* agent.handleSetSessionConfigOption((request) =>
+  const applySessionConfigOption = (request: AcpSchema.SetSessionConfigOptionRequest) =>
     Effect.gen(function* () {
       if (exitOnSetConfigOption) {
         return yield* Effect.sync(() => {
@@ -417,8 +451,14 @@ const program = Effect.gen(function* () {
       }
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
+        if (currentModelId === "custom:Ox-Alpha-0") {
+          currentReasoning = "none";
+        }
       }
-      if (request.configId === "reasoning" && typeof request.value === "string") {
+      if (
+        (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
+        typeof request.value === "string"
+      ) {
         currentReasoning = request.value;
       }
       if (request.configId === "context" && typeof request.value === "string") {
@@ -427,10 +467,52 @@ const program = Effect.gen(function* () {
       if (request.configId === "fast") {
         currentFast = request.value === true || request.value === "true";
       }
+      if (droidAsyncConfigRefresh) {
+        yield* agent.client.sessionUpdate({
+          sessionId: String(request.sessionId ?? sessionId),
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: configOptions(),
+          },
+        });
+      }
+    });
+
+  yield* agent.handleSetSessionConfigOption((request) =>
+    Effect.gen(function* () {
+      yield* applySessionConfigOption(request);
+      if (droidDropsConfigResponse) {
+        // Factory Droid 0.200.0 never completes this request after publishing
+        // the authoritative update. Keep the handler pending to reproduce
+        // that wire behavior in the notification-transport regression test.
+        return yield* Effect.never;
+      }
+      if (droidAsyncConfigRefresh) {
+        // Droid-style empty acknowledgment: the inventory was already
+        // published above as a notification. The lenient client codec
+        // (`LenientSetSessionConfigOptionResponse`) keeps this absent — the
+        // runtime must not overwrite the notification with an empty list.
+        // Deliberate protocol violation used only to exercise the client's
+        // lenient inbound compatibility. Public agent handlers remain typed
+        // to the strict ACP response shape.
+        return {} as AcpSchema.SetSessionConfigOptionResponse;
+      }
+      if (droidReturnsEmptyConfigResponse) {
+        return {} as AcpSchema.SetSessionConfigOptionResponse;
+      }
       return {
         configOptions: configOptions(),
       };
     }),
+  );
+
+  // Factory Droid also accepts this normally request-shaped method as a
+  // JSON-RPC notification. The real compatibility path uses that form so it
+  // cannot be wedged by Droid's missing response.
+  yield* agent.handleExtNotification(
+    "session/set_config_option",
+    AcpSchema.SetSessionConfigOptionRequest,
+    applySessionConfigOption,
   );
 
   yield* agent.handleCancel(({ sessionId }) =>
@@ -463,6 +545,36 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (emitElicitation) {
+        const response = yield* agent.client.elicit({
+          sessionId: requestedSessionId,
+          message: "Choose the scope for this turn.",
+          mode: "form",
+          requestedSchema: {
+            type: "object",
+            title: "Turn scope",
+            properties: {
+              scope: {
+                type: "string",
+                title: "Scope",
+                description: "Which scope should Droid use?",
+                oneOf: [
+                  { const: "workspace", title: "Workspace" },
+                  { const: "session", title: "Session" },
+                ],
+              },
+            },
+            required: ["scope"],
+          },
+        });
+        if (response.action.action !== "accept" || response.action.content?.scope !== "workspace") {
+          return yield* AcpError.AcpRequestError.internalError(
+            "Expected an accepted Droid elicitation response for the workspace scope.",
+          );
+        }
+        return { stopReason: "end_turn" };
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {

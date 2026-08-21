@@ -181,6 +181,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
+          {selectedModel?.providerCostLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="shrink-0 text-[10px] font-medium leading-none text-muted-foreground/70" />
+                }
+              >
+                {selectedModel.providerCostLabel}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                Costs {selectedModel.providerCostLabel} of the provider&apos;s base token rate
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </span>
         <span aria-hidden="true" className="flex items-center">
           <ComposerControlChevron />
