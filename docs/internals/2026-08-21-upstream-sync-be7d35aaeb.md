@@ -55,13 +55,13 @@ cherry-picked.
 
 ## Conflict composition
 
-| File                                  | T3 behavior adopted                                                                                                                                                                                         | Scient behavior retained                                                                                                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/ci.yml`            | Parallelized workspace test job, sharded server job with presence-gated single `thread-transfer-results` artifact, dedicated Rust job, gated macOS native analysis with fail-open detector, PR-asset guard. | Documentation fast path (`paths-ignore`), brand check, vanilla runner fleet (`ubuntu-24.04`/`macos-26`), release smoke lane.                                                 |
-| `docs/internals/ci.md`                | Gate narrative for Test/Test Server/Rust and the mobile-native gate.                                                                                                                                        | Documentation workflow paragraphs and release/promotion documentation.                                                                                                       |
-| `.github/VOUCHED.td`                  | Superset trust list (contains every prior entry plus ten new vouches).                                                                                                                                      | Nothing dropped; union equals upstream's version.                                                                                                                            |
-| `apps/server/src/http.ts`             | UTF-8 charset header groundwork (`lowerPath`, conditional `.html/.htm` Content-Type) inside the shared body.                                                                                                | Parameterized `assetResponseHeaders(filePath, cacheControl)` signature powering range-capable PDF/media serving; blank-line restoration.                                     |
-| `apps/web/src/components/Sidebar.tsx` | Per-environment provider entries, jump-hint suppression on terminal focus, sortable layout animation, richer row comments, pinned-block list wrapper.                                                       | Component-scope `renderThreadRow` with Quick Chat labels/icons/projectless guards; delete-vs-modify resolved by keeping the moved helper and porting upstream edits into it. |
+| File                                  | T3 behavior adopted                                                                                                                                                                                         | Scient behavior retained                                                                                                                                                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`            | Parallelized workspace test job, sharded server job with presence-gated single `thread-transfer-results` artifact, dedicated Rust job, gated macOS native analysis with fail-open detector, PR-asset guard. | Documentation fast path (`paths-ignore`), brand check, vanilla runner fleet (`ubuntu-24.04`/`macos-26`), release smoke lane.                                                                                                                 |
+| `docs/internals/ci.md`                | Gate narrative for Test/Test Server/Rust and the mobile-native gate.                                                                                                                                        | Documentation workflow paragraphs and release/promotion documentation.                                                                                                                                                                       |
+| `.github/VOUCHED.td`                  | Upstream's expanded trust list arrived through the merge.                                                                                                                                                   | Deliberate governance reset: the list now contains only `yaacovcorcos` and `YishayPo`. Unlike the official T3 project, Scient grants vouch entries one at a time and does not mirror T3's contributor list; the labels carry no permissions. |
+| `apps/server/src/http.ts`             | UTF-8 charset header groundwork (`lowerPath`, conditional `.html/.htm` Content-Type) inside the shared body.                                                                                                | Parameterized `assetResponseHeaders(filePath, cacheControl)` signature powering range-capable PDF/media serving; blank-line restoration.                                                                                                     |
+| `apps/web/src/components/Sidebar.tsx` | Per-environment provider entries, jump-hint suppression on terminal focus, sortable layout animation, richer row comments, pinned-block list wrapper.                                                       | Component-scope `renderThreadRow` with Quick Chat labels/icons/projectless guards; delete-vs-modify resolved by keeping the moved helper and porting upstream edits into it.                                                                 |
 
 ## CI feature adjudication
 
@@ -122,8 +122,37 @@ error.
 
 Upstream deleted `.plans/*` and `.github/pr-assets/*` and ignores both paths;
 the merge adopts those deletions. The pr-assets guard step remains as the
-sentinel against recommitting evidence. Deleted planning content remains
-recoverable from history.
+sentinel against recommitting evidence.
+
+Before confirming the `.plans/` deletion, all 32 files were skimmed against
+the current tree: 18 are fully shipped, 6 partially shipped, 6 obsolete
+(their target modules were replaced by the Effect-native orchestration,
+server-side VCS, and source-control architecture), and 2 are pure historical
+records. No plan describes concrete unshipped functionality that the tree
+lacks. Four small defects from the retired PR #89 checklist do remain live in
+code and should be tracked as ordinary issues rather than restored plans:
+
+1. `GitVcsDriverCore.parseNumstatEntries` slices after `" => "`, producing a
+   wrong path for braced renames like `src/{old => new}/file.ts`.
+2. `OrchestrationCommandReceipts` collapses Schema decode failures and SQL
+   errors into a single `PersistenceSqlError`.
+3. `ProviderSessionDirectory` upsert is an unguarded read-merge-write.
+4. `BunPtyAdapter` registers its data callback before `processHandle` is
+   assigned (theoretical ordering hazard).
+
+Known feature residues, deliberately deferred rather than lost: hosted-static
+app polish (offline states, CSP hardening) and capability-gated source-control
+review-thread operations for a future review surface.
+
+### Contributor trust
+
+The merge carried upstream's expanded vouch list (37 entries), which would
+have silently reversed two deliberate Scient trust decisions and restored
+four entries dropped during the 2026-08-15 checkpoint rebuild. Per owner
+decision, `.github/VOUCHED.td` is reset to exactly `yaacovcorcos` and
+`YishayPo`, with a governance note in the file: Scient does not mirror T3's
+contributor list and grants vouch entries one at a time. The labels carry no
+permissions; branch protection and required checks are unaffected.
 
 ## Validation
 
