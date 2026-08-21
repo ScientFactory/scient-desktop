@@ -168,6 +168,7 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
+import type { PreviewStaticImageSurfaceDescriptor } from "../previewStaticImageSurface";
 import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
@@ -532,6 +533,11 @@ const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/Environm
 const ComputePanel = lazy(() =>
   import("../scient/compute/ComputePanel").then((module) => ({
     default: module.ComputePanel,
+  })),
+);
+const ComputeFigureFollower = lazy(() =>
+  import("../scient/compute/ComputeFigureFollower").then((module) => ({
+    default: module.ComputeFigureFollower,
   })),
 );
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
@@ -1824,6 +1830,19 @@ function ChatViewContent(props: ChatViewProps) {
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
+  const openStaticArtifacts = useMemo(() => {
+    const bySurfaceId = new Map<string, PreviewStaticImageSurfaceDescriptor>();
+    for (const surface of rightPanelState.surfaces) {
+      if (surface.kind === "scient" && surface.module === "artifact") {
+        bySurfaceId.set(surface.artifact.surfaceId, surface.artifact);
+      }
+    }
+    if (activePreviewMiniPlayer?.content.kind === "static-artifact") {
+      const artifact = activePreviewMiniPlayer.content.artifact;
+      bySurfaceId.set(artifact.surfaceId, artifact);
+    }
+    return [...bySurfaceId.values()];
+  }, [activePreviewMiniPlayer, rightPanelState.surfaces]);
   const panelTerminalIds = useMemo(
     () =>
       new Set(
@@ -7596,6 +7615,17 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
             </div>
+
+            {activeThreadRef && activeWorkspaceRoot && openStaticArtifacts.length > 0 ? (
+              <Suspense fallback={null}>
+                <ComputeFigureFollower
+                  artifacts={openStaticArtifacts}
+                  cwd={activeWorkspaceRoot}
+                  environmentId={activeThreadRef.environmentId}
+                  threadRef={activeThreadRef}
+                />
+              </Suspense>
+            ) : null}
 
             {activeThreadRef && activePreviewMiniPlayer ? (
               <ThreadPreviewMiniPlayer
