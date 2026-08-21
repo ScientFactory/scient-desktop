@@ -8,10 +8,11 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { texliveScriptInvocation } from "./LatexPackageInstaller.ts";
 import { resolveTinyTexAsset } from "./tinytexManifest.ts";
+import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
 
 const RUN_ASSET_SMOKE = process.env.SCIENT_TINYTEX_ASSET_SMOKE === "1";
+const SYNCTEX_RUNTIME = process.env.SCIENT_SYNCTEX_RUNTIME;
 const SMOKE_TIMEOUT_MS = 15 * 60 * 1_000;
 // oxlint-disable-next-line t3code/no-global-process-runtime -- native runner selection happens at collection time, before an Effect runtime exists.
 const HOST_PLATFORM = NodeOS.platform();
@@ -33,6 +34,9 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         true,
       );
       if (!lookup.supported) return;
+      expect(SYNCTEX_RUNTIME, "SCIENT_SYNCTEX_RUNTIME must name the bundled helper").toBeTruthy();
+      if (!SYNCTEX_RUNTIME) return;
+      expect(NodeFS.existsSync(SYNCTEX_RUNTIME)).toBe(true);
 
       const temporaryRoot = await NodeFSP.mkdtemp(
         NodePath.join(NodeOS.tmpdir(), "scient-tinytex-asset-smoke-"),
@@ -92,29 +96,6 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         expect(started.status, started.stderr || started.stdout).toBe(0);
         expect(`${started.stdout}\n${started.stderr}`).toMatch(/latexmk/iu);
 
-        const tlmgr = texliveScriptInvocation({
-          binDirectory,
-          script: "tlmgr",
-          args: ["install", "synctex"],
-          platform: HOST_PLATFORM,
-          join: (...segments) => NodePath.join(...segments),
-          dirname: (segment) => NodePath.dirname(segment),
-          pathDelimiter: NodePath.delimiter,
-        });
-        const installedSyncTex = NodeChildProcess.spawnSync(tlmgr.executable, tlmgr.args, {
-          cwd: binDirectory,
-          encoding: "utf8",
-          maxBuffer: 4 * 1024 * 1024,
-          timeout: 5 * 60_000,
-          env: {
-            ...engineEnvironment,
-            ...tlmgr.environment,
-            PATH: `${tlmgr.pathPrefix}${NodePath.delimiter}${process.env.PATH ?? ""}`,
-          },
-        });
-        expect(installedSyncTex.error).toBeUndefined();
-        expect(installedSyncTex.status, installedSyncTex.stderr || installedSyncTex.stdout).toBe(0);
-
         // Prove the exact navigation arrangement used by LatexSyncTex: the
         // immutable PDF is not copied, while an existing same-stem marker lets
         // `synctex` discover the retained index through `-d`.
@@ -164,35 +145,37 @@ describe.runIf(RUN_ASSET_SMOKE)("pinned TinyTeX native asset", () => {
         const outputMarker = NodePath.join(navigationDirectory, "main.pdf");
         await NodeFSP.writeFile(outputMarker, new Uint8Array());
 
-        const syncTexExecutable = NodePath.join(
-          binDirectory,
-          HOST_PLATFORM === "win32" ? "synctex.exe" : "synctex",
-        );
         const forward = NodeChildProcess.spawnSync(
-          syncTexExecutable,
+          SYNCTEX_RUNTIME,
           ["view", "-i", `3:0:${bodyPath}`, "-o", outputMarker, "-d", navigationDirectory],
           { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000, env: engineEnvironment },
         );
         expect(forward.error).toBeUndefined();
         expect(forward.status, forward.stderr || forward.stdout).toBe(0);
         expect(forward.stdout).toMatch(/SyncTeX result begin/iu);
-        const page = forward.stdout.match(/^Page:([0-9]+(?:\.[0-9]+)?)$/imu)?.[1];
-        const x = forward.stdout.match(/^h:([0-9]+(?:\.[0-9]+)?)$/imu)?.[1];
-        const y = forward.stdout.match(/^v:([0-9]+(?:\.[0-9]+)?)$/imu)?.[1];
-        expect(page).toBeDefined();
-        expect(x).toBeDefined();
-        expect(y).toBeDefined();
+        const forwardLocation = parseSyncTexForwardLocation(forward.stdout);
+        expect(forwardLocation).not.toBeNull();
+        if (forwardLocation === null) return;
 
         const inverse = NodeChildProcess.spawnSync(
-          syncTexExecutable,
-          ["edit", "-o", `${page}:${x}:${y}:${outputMarker}`, "-d", navigationDirectory],
+          SYNCTEX_RUNTIME,
+          [
+            "edit",
+            "-o",
+            `${forwardLocation.page}:${forwardLocation.x}:${forwardLocation.y}:${outputMarker}`,
+            "-d",
+            navigationDirectory,
+          ],
           { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000, env: engineEnvironment },
         );
         expect(inverse.error).toBeUndefined();
         expect(inverse.status, inverse.stderr || inverse.stdout).toBe(0);
         expect(inverse.stdout).toMatch(/SyncTeX result begin/iu);
-        expect(inverse.stdout).toMatch(/^Input:.*chapters[\\/]body\.tex$/imu);
-        expect(inverse.stdout).toMatch(/^Line:[1-9][0-9]*$/imu);
+        expect(
+          parseSyncTexInverseLocations(inverse.stdout).some(
+            (location) => /chapters[\\/]body\.tex$/iu.test(location.input) && location.line >= 1,
+          ),
+        ).toBe(true);
       } finally {
         await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
       }

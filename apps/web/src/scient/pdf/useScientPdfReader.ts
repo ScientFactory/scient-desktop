@@ -101,11 +101,32 @@ export function useScientPdfReader(input: {
   const responsiveZoomRef = useRef<PdfResponsiveZoomController | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
   const activeSearchQueryRef = useRef("");
+  const syncMarkerRef = useRef<HTMLElement | null>(null);
+  const syncMarkerFrameRef = useRef<number | null>(null);
+  const syncMarkerTimerRef = useRef<number | null>(null);
   const documentKeyRef = useRef(input.documentKey);
   if (documentKeyRef.current !== input.documentKey) {
     documentKeyRef.current = input.documentKey;
     activeSearchQueryRef.current = "";
   }
+
+  const clearSyncMarker = useCallback(() => {
+    if (syncMarkerFrameRef.current !== null) {
+      cancelAnimationFrame(syncMarkerFrameRef.current);
+      syncMarkerFrameRef.current = null;
+    }
+    if (syncMarkerTimerRef.current !== null) {
+      window.clearTimeout(syncMarkerTimerRef.current);
+      syncMarkerTimerRef.current = null;
+    }
+    syncMarkerRef.current?.remove();
+    syncMarkerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    clearSyncMarker();
+    return clearSyncMarker;
+  }, [clearSyncMarker, input.sourceUrl]);
 
   useEffect(() => {
     if (!input.container || !input.viewerElement) return;
@@ -379,25 +400,52 @@ export function useScientPdfReader(input: {
     runtime.viewer.currentPageNumber = clampPdfPage(page, runtime.document.numPages);
   }, []);
 
-  const goToSyncPoint = useCallback((input: { page: number; x: number; y: number }) => {
-    const runtime = runtimeRef.current;
-    if (!runtime) return;
-    const page = clampPdfPage(input.page, runtime.document.numPages);
-    const pageView = runtime.viewer.getPageView(page - 1);
-    const pageHeight = pageView?.viewport.rawDims.pageHeight;
-    if (pageHeight === undefined) {
-      runtime.viewer.currentPageNumber = page;
-      return;
-    }
-    runtime.viewer.scrollPageIntoView({
-      pageNumber: page,
-      // SyncTeX measures from the top-left in 72-dpi big points; PDF
-      // destinations measure from the bottom-left in the same unit.
-      destArray: [null, { name: "XYZ" }, input.x, pageHeight - input.y, null],
-      allowNegativeOffset: true,
-      ignoreDestinationZoom: true,
-    });
-  }, []);
+  const goToSyncPoint = useCallback(
+    (target: { page: number; x: number; y: number }) => {
+      const runtime = runtimeRef.current;
+      if (!runtime) return;
+      clearSyncMarker();
+      const page = clampPdfPage(target.page, runtime.document.numPages);
+      const pageView = runtime.viewer.getPageView(page - 1);
+      const pageHeight = pageView?.viewport.rawDims.pageHeight;
+      if (pageHeight === undefined) {
+        runtime.viewer.currentPageNumber = page;
+        return;
+      }
+      runtime.viewer.scrollPageIntoView({
+        pageNumber: page,
+        // SyncTeX measures from the top-left in 72-dpi big points; PDF
+        // destinations measure from the bottom-left in the same unit.
+        destArray: [null, { name: "XYZ" }, target.x, pageHeight - target.y, null],
+        allowNegativeOffset: true,
+        ignoreDestinationZoom: true,
+      });
+      syncMarkerFrameRef.current = requestAnimationFrame(() => {
+        syncMarkerFrameRef.current = null;
+        const pageElement = input.viewerElement?.querySelector<HTMLElement>(
+          `.page[data-page-number="${page}"]`,
+        );
+        if (pageElement === undefined || pageElement === null) return;
+        const [rawLeft, rawTop] = pageView.viewport.convertToViewportPoint(
+          target.x,
+          pageHeight - target.y,
+        );
+        const marker = document.createElement("span");
+        marker.className = "scient-pdf-sync-marker";
+        marker.setAttribute("aria-hidden", "true");
+        marker.style.left = `${Math.max(0, Math.min(pageElement.clientWidth, rawLeft))}px`;
+        marker.style.top = `${Math.max(0, Math.min(pageElement.clientHeight, rawTop))}px`;
+        pageElement.append(marker);
+        syncMarkerRef.current = marker;
+        syncMarkerTimerRef.current = window.setTimeout(() => {
+          syncMarkerTimerRef.current = null;
+          marker.remove();
+          if (syncMarkerRef.current === marker) syncMarkerRef.current = null;
+        }, 1_600);
+      });
+    },
+    [clearSyncMarker, input.viewerElement],
+  );
 
   const syncPointFromClient = useCallback(
     (input: { pageElement: HTMLElement; clientX: number; clientY: number }) => {

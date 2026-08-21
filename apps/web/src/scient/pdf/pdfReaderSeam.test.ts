@@ -78,6 +78,25 @@ describe("Scient PDF reader source seam", () => {
     );
   });
 
+  it("reports the current page and marks a successful forward-sync point", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+    const hookSource = NodeFS.readFileSync(
+      new URL("./useScientPdfReader.ts", import.meta.url),
+      "utf8",
+    );
+    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
+
+    expect(readerSource).toContain("onSyncPageChange?.(state.page)");
+    expect(hookSource).toContain('marker.className = "scient-pdf-sync-marker"');
+    expect(hookSource).toContain("pageView.viewport.convertToViewportPoint(");
+    expect(styles).toMatch(
+      /\.scient-pdf-sync-marker \{[^}]*position: absolute;[^}]*pointer-events: none;/su,
+    );
+  });
+
   it("adapts to the reader width while preserving compact actions in the More menu", () => {
     const source = NodeFS.readFileSync(new URL("./ScientPdfReader.tsx", import.meta.url), "utf8");
     const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");

@@ -2,7 +2,6 @@
 import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,8 +21,7 @@ import {
   type ResolvedGeneratedDocumentRevision,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { LatexSyncTex, make as makeSyncTex } from "./LatexSyncTex.ts";
-import { encodeManagedLatexInstallRecord, managedLatexPaths } from "./managedLatexInstall.ts";
-import { resolveTinyTexAsset, TinyTexManifestRef } from "./tinytexManifest.ts";
+import * as SyncTexRuntime from "./SyncTexRuntime.ts";
 
 const LegacyNavigationMetadataJson = Schema.fromJsonString(
   Schema.Struct({
@@ -75,6 +73,10 @@ const makeHarness = Effect.gen(function* () {
 
   const liveRevisions = yield* Ref.make(new Set<string>([revisionKey(firstRevisionId)]));
   const invocations = yield* Ref.make<ReadonlyArray<ProcessRunner.ProcessRunInput>>([]);
+  const navigationOutput = yield* Ref.make<ProcessRunner.ProcessRunOutput | "spawn-error" | null>(
+    null,
+  );
+  const runtimeError = yield* Ref.make<SyncTexRuntime.SyncTexRuntimeError | null>(null);
   const inverseInputPath = yield* Ref.make(bodyPath);
   const resolvedRevision = {
     artifact: {},
@@ -113,6 +115,15 @@ const makeHarness = Effect.gen(function* () {
     run: (input) =>
       Effect.gen(function* () {
         yield* Ref.update(invocations, (previous) => [...previous, input]);
+        const overridden = yield* Ref.get(navigationOutput);
+        if (overridden === "spawn-error") {
+          return yield* new ProcessRunner.ProcessSpawnError({
+            command: input.command,
+            argumentCount: input.args.length,
+            cause: new Error("spawn failed"),
+          });
+        }
+        if (overridden !== null) return overridden;
         return input.args[0] === "view"
           ? processOutput(`SyncTeX result begin
 Page:2
@@ -132,15 +143,25 @@ SyncTeX result end`);
     getEnvironmentId: Effect.succeed(environmentId),
     getDescriptor: Effect.die("unused"),
   });
+  const runtime = SyncTexRuntime.SyncTexRuntime.of({
+    resolve: Ref.get(runtimeError).pipe(
+      Effect.flatMap((error) =>
+        error === null
+          ? Effect.succeed({ command: "/bundled/synctex", source: "bundled" } as const)
+          : Effect.fail(error),
+      ),
+    ),
+  });
   const serviceLayer = Layer.effect(LatexSyncTex, makeSyncTex).pipe(
     Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
+    Layer.provide(Layer.succeed(SyncTexRuntime.SyncTexRuntime, runtime)),
     Layer.provide(Layer.succeed(GeneratedDocumentStore, store)),
     Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, serverEnvironment)),
     Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
 
-  const publish = (revisionId: ArtifactRevisionId, managed = false) =>
+  const publish = (revisionId: ArtifactRevisionId) =>
     Effect.gen(function* () {
       const syncTexPath = path.join(buildDirectory, `main-${revisionId}.synctex.gz`);
       yield* fileSystem.writeFileString(syncTexPath, `index for ${revisionId}`);
@@ -152,42 +173,11 @@ SyncTeX result end`);
         rootRelativePath: "main.tex",
         compileDirectory,
         syncTexPath,
-        managed,
       });
     }).pipe(Effect.provide(serviceLayer));
 
   const navigationDirectory = (revisionId: ArtifactRevisionId) =>
     path.join(baseDir, "userdata", "latex", "synctex", artifactId, revisionId);
-
-  const setManagedInstall = (name: string) =>
-    Effect.gen(function* () {
-      const platform = yield* HostProcessPlatform;
-      const architecture = yield* HostProcessArchitecture;
-      const manifest = yield* TinyTexManifestRef;
-      const lookup = resolveTinyTexAsset(platform, architecture, manifest);
-      expect(lookup.supported).toBe(true);
-      if (!lookup.supported) return null;
-      const latexDir = path.join(baseDir, "userdata", "latex");
-      const paths = managedLatexPaths({ latexDir, join: (...segments) => path.join(...segments) });
-      const root = path.join(paths.managedRoot, name);
-      const executable = path.join(root, lookup.asset.executableRelativePath);
-      const binDirectory = path.dirname(executable);
-      const syncTexExecutable = path.join(
-        binDirectory,
-        platform === "win32" ? "synctex.exe" : "synctex",
-      );
-      yield* fileSystem.makeDirectory(binDirectory, { recursive: true });
-      yield* fileSystem.writeFile(executable, new Uint8Array());
-      yield* fileSystem.writeFile(syncTexExecutable, new Uint8Array());
-      const state = yield* encodeManagedLatexInstallRecord({
-        schemaVersion: 1,
-        version: "test",
-        installedAtEpochMs: 1,
-        root,
-      });
-      yield* fileSystem.writeFileString(paths.statePath, `${state}\n`);
-      return { binDirectory, root, syncTexExecutable };
-    });
 
   return {
     workspaceRoot,
@@ -196,11 +186,12 @@ SyncTeX result end`);
     baseDir,
     liveRevisions,
     invocations,
+    navigationOutput,
+    runtimeError,
     inverseInputPath,
     serviceLayer,
     publish,
     navigationDirectory,
-    setManagedInstall,
   };
 });
 
@@ -241,7 +232,7 @@ describe("LatexSyncTex", () => {
         line: 17,
         column: 4,
       });
-      expect(forward).toEqual({ _tag: "found", page: 2, x: 18, y: 72, width: 9, height: 12 });
+      expect(forward).toEqual({ _tag: "found", page: 2, x: 18, y: 72 });
 
       const inverse = yield* service.inverse({
         workspaceRoot: harness.workspaceRoot,
@@ -331,18 +322,84 @@ describe("LatexSyncTex", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("resolves the current contained managed install and ignores legacy command paths", () =>
+  it.effect("uses the first workspace-contained inverse candidate in helper order", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+
+      yield* Ref.set(
+        harness.navigationOutput,
+        processOutput(`SyncTeX result begin
+Output:main.pdf
+Input:${path.join(harness.baseDir, "texmf", "article.cls")}
+Line:900
+Column:-1
+Output:main.pdf
+Input:${harness.bodyPath}
+Line:51
+Column:-1
+Output:main.pdf
+Input:${harness.bodyPath}
+Line:52
+Column:-1
+SyncTeX result end`),
+      );
+      expect(
+        yield* service.inverse({
+          workspaceRoot: harness.workspaceRoot,
+          rootRelativePath: "main.tex",
+          artifactId,
+          revisionId: firstRevisionId,
+          page: 1,
+          x: 100,
+          y: 600,
+        }),
+      ).toEqual({
+        _tag: "found",
+        relativePath: "chapters/body.tex",
+        line: 51,
+        column: null,
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("passes source column and current PDF page as forward-search context", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+
+      yield* service.forward({
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        sourceRelativePath: "chapters/body.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+        line: 17,
+        column: 11,
+        pageHint: 3,
+      });
+
+      expect((yield* Ref.get(harness.invocations)).at(-1)?.args).toEqual([
+        "view",
+        "-i",
+        `17:11:3:${harness.bodyPath}`,
+        "-o",
+        expect.stringMatching(/main-revision-latex-synctex-first\.pdf$/u),
+        "-d",
+        expect.stringMatching(/revision-latex-synctex-first$/u),
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("uses the bundled runtime and ignores legacy persisted command paths", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const harness = yield* makeHarness;
-      const superseded = yield* harness.setManagedInstall("tinytex-superseded");
-      expect(superseded).not.toBeNull();
-      yield* harness.publish(firstRevisionId, true);
-      const current = yield* harness.setManagedInstall("tinytex-current");
-      expect(current).not.toBeNull();
-      if (current === null || superseded === null) return;
-      yield* fileSystem.remove(superseded.root, { recursive: true });
+      yield* harness.publish(firstRevisionId);
       const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
 
       yield* service.forward({
@@ -353,11 +410,11 @@ describe("LatexSyncTex", () => {
         revisionId: firstRevisionId,
         line: 17,
       });
-      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe(current.syncTexExecutable);
+      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe("/bundled/synctex");
 
       // Version 1 persisted an executable and bin directory. Treat both as
-      // untrusted migration input: only their managed/system provenance may
-      // survive, and the current contained install still supplies the command.
+      // untrusted migration input. The current verified bundled runtime still
+      // supplies the command, independently of the producing LaTeX engine.
       const navigationDirectory = harness.navigationDirectory(firstRevisionId);
       const outputFileName = "main-revision-latex-synctex-first.pdf";
       yield* fileSystem.writeFileString(
@@ -380,7 +437,7 @@ describe("LatexSyncTex", () => {
         revisionId: firstRevisionId,
         line: 17,
       });
-      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe(current.syncTexExecutable);
+      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe("/bundled/synctex");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -396,6 +453,67 @@ describe("LatexSyncTex", () => {
       const indexRoot = path.join(harness.baseDir, "userdata", "latex", "synctex", artifactId);
       expect(yield* fileSystem.exists(path.join(indexRoot, firstRevisionId))).toBe(false);
       expect(yield* fileSystem.exists(path.join(indexRoot, secondRevisionId))).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("reports each native navigation failure without collapsing its cause", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      const request = {
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        sourceRelativePath: "chapters/body.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+        line: 17,
+      } as const;
+
+      yield* Ref.set(harness.navigationOutput, {
+        ...processOutput(""),
+        code: null,
+        timedOut: true,
+      });
+      expect(yield* service.forward(request)).toMatchObject({
+        _tag: "unavailable",
+        reason: "query-timed-out",
+      });
+
+      yield* Ref.set(harness.navigationOutput, {
+        ...processOutput(""),
+        code: ChildProcessSpawner.ExitCode(2),
+      });
+      expect(yield* service.forward(request)).toMatchObject({
+        _tag: "unavailable",
+        reason: "navigator-failed",
+      });
+
+      yield* Ref.set(harness.navigationOutput, processOutput("not a SyncTeX result"));
+      expect(yield* service.forward(request)).toMatchObject({
+        _tag: "unavailable",
+        reason: "position-unmapped",
+      });
+
+      yield* Ref.set(harness.navigationOutput, "spawn-error");
+      expect(yield* service.forward(request)).toMatchObject({
+        _tag: "unavailable",
+        reason: "navigator-failed",
+      });
+
+      yield* Ref.set(harness.navigationOutput, null);
+      yield* Ref.set(
+        harness.runtimeError,
+        new SyncTexRuntime.SyncTexRuntimeError({
+          reason: "damaged",
+          detail: "Scient's source-navigation helper failed its integrity check.",
+        }),
+      );
+      expect(yield* service.forward(request)).toMatchObject({
+        _tag: "unavailable",
+        reason: "navigator-unavailable",
+        message: expect.stringContaining("integrity check"),
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

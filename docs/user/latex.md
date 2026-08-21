@@ -12,8 +12,17 @@ that names a project file to open that file at the reported line.
 
 Hold Ctrl (Command on a Mac) and double-click a line of source to jump to the
 matching place in the current successful PDF; the same gesture on the PDF opens
-the corresponding source line. This needs a successful current build. If the
-PDF has no navigation index, it still opens and reads normally.
+the corresponding source line. Scient briefly marks a source-to-PDF destination
+so the matching place is easy to see. This needs a successful current build. If the
+PDF has no navigation index, it still opens and reads normally. Scient ships
+the small source-navigation helper itself, so this works the same way with
+TinyTeX, TeX Live, MiKTeX, or Tectonic and requires no extra package or PATH
+setup. If navigation cannot run, the status names the actual condition — for
+example a missing index, no mapping at that position, a timed-out query, or a
+damaged application helper — while leaving the PDF usable.
+The exactness comes from the compiler's navigation index: some complex or RTL
+lines contain only a line-level location, so those lines can land near the
+typeset line instead of on the exact word.
 
 The PDF keeps your place across rebuilds: your page, zoom, and scroll position
 stay put while a new version comes in, instead of snapping back to the top. If

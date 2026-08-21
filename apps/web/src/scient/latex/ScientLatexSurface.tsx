@@ -11,6 +11,7 @@ import {
   type ScientLatexBuildSnapshot,
   type ScientLatexDiagnostic,
   type ScientLatexManagedInstallState,
+  type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
@@ -98,6 +99,32 @@ const EMPTY_BINDING_CHANGES_ATOM = Atom.make(
   AsyncResult.initial<DocumentBindingChange, never>(false),
 ).pipe(Atom.withLabel("scient-latex-binding-changes:empty"));
 const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
+
+interface LatexSyncNotice {
+  readonly label: string;
+  readonly message: string;
+}
+
+function syncUnavailableLabel(reason: ScientLatexSyncUnavailableReason): string {
+  switch (reason) {
+    case "revision-unavailable":
+      return "PDF revision unavailable";
+    case "index-missing":
+      return "Navigation index missing";
+    case "index-invalid":
+      return "Navigation index damaged";
+    case "navigator-unavailable":
+      return "Navigation needs repair";
+    case "navigator-failed":
+      return "Navigation failed";
+    case "query-timed-out":
+      return "Navigation timed out";
+    case "position-unmapped":
+      return "No source mapping";
+    case "invalid-source":
+      return "Source mismatch";
+  }
+}
 /**
  * Mirrors the file panel's private editor theming for the read-only half. The
  * editable half is that panel's own component, so it carries the panel's copy.
@@ -348,13 +375,27 @@ const LatexViewerPane = memo(function LatexViewerPane({
   );
 });
 
-function sourceLineFromPointerEvent(event: React.MouseEvent<HTMLElement>): number | null {
+interface SourceSyncPosition {
+  readonly line: number;
+  readonly column: number;
+}
+
+function sourcePositionFromPointerEvent(
+  event: React.MouseEvent<HTMLElement>,
+): SourceSyncPosition | null {
   for (const candidate of event.nativeEvent.composedPath()) {
     if (!(candidate instanceof HTMLElement)) continue;
     const raw = candidate.dataset.line;
     if (raw === undefined) continue;
     const line = Number(raw);
-    if (Number.isSafeInteger(line) && line >= 1) return line;
+    if (!Number.isSafeInteger(line) || line < 1) return null;
+    return {
+      line,
+      // The inherited editor surface does not expose its internal cursor on
+      // main. Zero is SyncTeX's explicit "unknown column" value; guessing a
+      // visual DOM offset would be wrong for wrapped and bidirectional text.
+      column: 0,
+    };
   }
   return null;
 }
@@ -375,11 +416,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
   const syncRequestRef = useRef(0);
+  const pdfPageRef = useRef<number | null>(null);
 
   useEffect(() => startWatchingLatexBuild(target), [target]);
   useEffect(() => {
@@ -454,12 +496,17 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const descriptorRevision = descriptor?._tag === "generated-pdf" ? descriptor.revisionId : null;
   useEffect(() => {
     syncRequestRef.current += 1;
+    pdfPageRef.current = null;
     setForwardSyncTarget(null);
-    setSyncError(null);
+    setSyncNotice(null);
   }, [descriptorRevision]);
 
+  const handlePdfPageChange = useCallback((page: number) => {
+    pdfPageRef.current = page;
+  }, []);
+
   const handleForwardSync = useCallback(
-    (line: number) => {
+    (position: SourceSyncPosition) => {
       const snapshot = build.snapshot;
       if (
         snapshot === null ||
@@ -468,25 +515,29 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         snapshot.state !== "succeeded" ||
         descriptor.bindingStatus !== "current"
       ) {
-        setSyncError("Source-to-PDF navigation is available after the current build succeeds.");
+        setSyncNotice({
+          label: "Build required",
+          message: "Source-to-PDF navigation is available after the current build succeeds.",
+        });
         return;
       }
       const issued = syncRequestRef.current + 1;
       syncRequestRef.current = issued;
-      setSyncError(null);
+      setSyncNotice(null);
       void requestLatexForwardSync(props.environmentId, {
         workspaceRoot: props.cwd,
         rootRelativePath: snapshot.rootRelativePath,
         artifactId: descriptor.artifactId,
         revisionId: descriptor.revisionId,
         sourceRelativePath: props.relativePath,
-        line,
-        column: 0,
+        line: position.line,
+        column: position.column,
+        ...(pdfPageRef.current === null ? {} : { pageHint: pdfPageRef.current }),
       })
         .then((result) => {
           if (syncRequestRef.current !== issued) return;
           if (result._tag === "unavailable") {
-            setSyncError(result.message);
+            setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
             return;
           }
           setForwardSyncTarget({
@@ -499,7 +550,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         })
         .catch((error: unknown) => {
           if (syncRequestRef.current !== issued) return;
-          setSyncError(error instanceof Error ? error.message : "SyncTeX navigation failed.");
+          setSyncNotice({
+            label: "Navigation failed",
+            message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
+          });
         });
     },
     [
@@ -523,12 +577,15 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         snapshot.state !== "succeeded" ||
         descriptor.bindingStatus !== "current"
       ) {
-        setSyncError("PDF-to-source navigation is available after the current build succeeds.");
+        setSyncNotice({
+          label: "Build required",
+          message: "PDF-to-source navigation is available after the current build succeeds.",
+        });
         return;
       }
       const issued = syncRequestRef.current + 1;
       syncRequestRef.current = issued;
-      setSyncError(null);
+      setSyncNotice(null);
       void requestLatexInverseSync(props.environmentId, {
         workspaceRoot: props.cwd,
         rootRelativePath: snapshot.rootRelativePath,
@@ -541,14 +598,17 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         .then((result) => {
           if (syncRequestRef.current !== issued) return;
           if (result._tag === "unavailable") {
-            setSyncError(result.message);
+            setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
             return;
           }
           props.onOpenFileSource(result.relativePath, result.line);
         })
         .catch((error: unknown) => {
           if (syncRequestRef.current !== issued) return;
-          setSyncError(error instanceof Error ? error.message : "SyncTeX navigation failed.");
+          setSyncNotice({
+            label: "Navigation failed",
+            message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
+          });
         });
     },
     [build.snapshot, descriptor, props.cwd, props.environmentId, props.onOpenFileSource],
@@ -556,9 +616,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const syncNavigation = useMemo<PdfSyncNavigation | undefined>(
     () =>
       descriptor?._tag === "generated-pdf"
-        ? { forwardTarget: forwardSyncTarget, onInverseSearch: handleInverseSync }
+        ? {
+            forwardTarget: forwardSyncTarget,
+            onInverseSearch: handleInverseSync,
+            onPageChange: handlePdfPageChange,
+          }
         : undefined,
-    [descriptor?._tag, forwardSyncTarget, handleInverseSync],
+    [descriptor?._tag, forwardSyncTarget, handleInverseSync, handlePdfPageChange],
   );
   // Keyed by artifact, never by revision: a rebuild of the same document swaps
   // the reader's asset URL, and the reader keeps page and zoom across that.
@@ -647,15 +711,15 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
             </ScientTooltip>
           )}
-          {syncError === null ? null : (
-            <ScientTooltip content={syncError}>
+          {syncNotice === null ? null : (
+            <ScientTooltip content={syncNotice.message}>
               <span
                 className="scient-latex-chip scient-latex-chip-error"
                 role="status"
                 aria-live="polite"
-                aria-label={`Navigation unavailable: ${syncError}`}
+                aria-label={`${syncNotice.label}: ${syncNotice.message}`}
               >
-                Navigation unavailable
+                {syncNotice.label}
               </span>
             </ScientTooltip>
           )}
@@ -730,8 +794,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               )}
               onDoubleClickCapture={(event) => {
                 if (!event.ctrlKey && !event.metaKey) return;
-                const line = sourceLineFromPointerEvent(event);
-                if (line !== null) handleForwardSync(line);
+                const position = sourcePositionFromPointerEvent(event);
+                if (position !== null) handleForwardSync(position);
               }}
             >
               {props.truncated ? (

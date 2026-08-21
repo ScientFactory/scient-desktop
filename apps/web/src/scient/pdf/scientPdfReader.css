@@ -303,6 +303,19 @@
   background-color: rgb(255 140 0 / 68%);
 }
 
+.scient-pdf-sync-marker {
+  position: absolute;
+  z-index: 4;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border: 2px solid var(--primary);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--background) 78%, transparent);
+}
+
 .scient-pdf-source-sync-hint {
   position: absolute;
   z-index: 5;

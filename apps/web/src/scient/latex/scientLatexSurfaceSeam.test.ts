@@ -66,6 +66,16 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).not.toMatch(/useProjectFileQuery/u);
   });
 
+  it("passes truthful source and current PDF page context to forward SyncTeX", () => {
+    // The inherited editor does not expose its cursor on main. Zero is
+    // SyncTeX's specified unknown-column value, and avoids guessing visual
+    // offsets for wrapped or bidirectional source text.
+    expect(surfaceSource).toContain("column: 0");
+    expect(surfaceSource).toContain("column: position.column");
+    expect(surfaceSource).toContain("pageHint: pdfPageRef.current");
+    expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
+  });
+
   it("keeps the LaTeX surface off the chat markdown pipeline", () => {
     expect(surfaceSource).not.toMatch(/ChatMarkdown/u);
     expect(surfaceSource).not.toMatch(/from "~\/components\/ChatMarkdown"/u);

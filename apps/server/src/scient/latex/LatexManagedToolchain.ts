@@ -102,10 +102,6 @@ const ENGINE_VALIDATION_MAX_OUTPUT_BYTES = 64 * 1024;
  * while the per-build resolver catches up one package at a time.
  */
 const RECOMMENDED_PACKAGES: ReadonlyArray<string> = [
-  // TinyTeX-1's engines can emit `.synctex.gz`, but the minimal bundle does
-  // not include the CLI that reads it. Install that tool explicitly so the
-  // managed path supports the same source navigation as a full TeX Live.
-  "synctex",
   "collection-latexrecommended",
   "collection-fontsrecommended",
 ];
@@ -556,17 +552,9 @@ export const make = Effect.gen(function* () {
         binDirectory,
         timeout: COLLECTIONS_TIMEOUT,
       });
-      const syncTexExecutable = path.join(
-        binDirectory,
-        platform === "win32" ? "synctex.exe" : "synctex",
-      );
-      const syncTexPresent = yield* fileSystem
-        .exists(syncTexExecutable)
-        .pipe(Effect.orElseSucceed(() => false));
-      if (outcome.failed.length === 0 && syncTexPresent) return null;
+      if (outcome.failed.length === 0) return null;
       yield* Effect.logWarning("scient latex collections could not be preinstalled", {
         packages: outcome.failed,
-        syncTexPresent,
       });
       return COLLECTIONS_WARNING;
     }).pipe(Effect.catchCause(() => Effect.succeed(COLLECTIONS_WARNING)));

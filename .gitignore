@@ -33,6 +33,7 @@ apps/mobile/.showcase/
 artifacts/app-store/screenshots/
 native/**/target/
 native/whisper-runtime/
+native/synctex-runtime/
 node_modules/
 .alchemy/
 *.log

@@ -228,9 +228,60 @@ jobs:
           path: wsl-prebuild/pty.node
           if-no-files-found: error
 
+  build_synctex_runtime:
+    name: Build SyncTeX / ${{ matrix.label }}
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS arm64
+            runner: macos-26
+            platform: mac
+            arch: arm64
+            key: darwin-arm64
+          - label: macOS x64
+            runner: macos-15-intel
+            platform: mac
+            arch: x64
+            key: darwin-x64
+          - label: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+            key: linux-x64
+          - label: Windows x64
+            runner: windows-2025
+            platform: win
+            arch: x64
+            key: win32-x64
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - name: Build and verify pinned runtime
+        run: >-
+          node scripts/stage-synctex-runtime.ts
+          --platform ${{ matrix.platform }}
+          --arch ${{ matrix.arch }}
+          --output native/synctex-runtime/${{ matrix.key }}
+          --verbose
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: synctex-runtime-${{ matrix.key }}
+          path: native/synctex-runtime/${{ matrix.key }}/*
+          if-no-files-found: error
+
   build_desktop:
     name: Package ${{ matrix.label }}
-    needs: [preflight, build_wsl_node_pty]
+    needs: [preflight, build_wsl_node_pty, build_synctex_runtime]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -310,6 +361,19 @@ jobs:
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild
+
+      - name: Download target SyncTeX runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: synctex-runtime-${{ matrix.resource_key }}
+          path: synctex-runtime/current
+
+      - name: Download WSL SyncTeX runtime
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: synctex-runtime-linux-x64
+          path: synctex-runtime/wsl
 
       - name: Install Spectre-mitigated MSVC libraries
         if: matrix.platform == 'win'
@@ -396,6 +460,7 @@ jobs:
             --arch "$RELEASE_ARCH"
             --build-version "$RELEASE_VERSION"
             --verbose
+            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current"
           )
           signed=false
           key_path=""
@@ -415,6 +480,7 @@ jobs:
             fi
           elif [[ "$RELEASE_PLATFORM" == "win" ]]; then
             args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
+            args+=(--wsl-synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/wsl")
             if [[ "${SCIENT_WINDOWS_SIGNING_READY:-false}" == "true" ]]; then
               args+=(--signed)
               signed=true
@@ -461,12 +527,14 @@ jobs:
           dmg_apps=("$mount_dir"/*.app)
           [[ ${#dmg_apps[@]} -eq 1 ]] || { echo "Signed DMG does not contain exactly one app." >&2; exit 1; }
           codesign --verify --deep --strict --verbose=2 "${dmg_apps[0]}"
+          codesign --verify --strict --verbose=2 "${dmg_apps[0]}/Contents/Resources/synctex-runtime/synctex"
           xcrun stapler validate "${dmg_apps[0]}"
           spctl --assess --type execute --verbose=2 "${dmg_apps[0]}"
           ditto -x -k "${zips[0]}" "$zip_dir"
           zip_apps=("$zip_dir"/*.app)
           [[ ${#zip_apps[@]} -eq 1 ]] || { echo "Updater ZIP does not contain exactly one app." >&2; exit 1; }
           codesign --verify --deep --strict --verbose=2 "${zip_apps[0]}"
+          codesign --verify --strict --verbose=2 "${zip_apps[0]}/Contents/Resources/synctex-runtime/synctex"
           xcrun stapler validate "${zip_apps[0]}"
           spctl --assess --type execute --verbose=2 "${zip_apps[0]}"
 
@@ -532,6 +600,10 @@ jobs:
         with:
           pattern: resource-monitor-*
           path: resource-monitors
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: synctex-runtime-*
+          path: synctex-runtimes
       - name: Add native monitors and create tarball
         shell: bash
         env:
@@ -543,6 +615,12 @@ jobs:
             mkdir -p "apps/server/dist/resource-monitor/$key"
             cp "$dir"/t3-resource-monitor* "apps/server/dist/resource-monitor/$key/"
             chmod +x "apps/server/dist/resource-monitor/$key/t3-resource-monitor" 2>/dev/null || true
+          done
+          for dir in synctex-runtimes/synctex-runtime-*; do
+            key="${dir##*/synctex-runtime-}"
+            mkdir -p "apps/server/dist/synctex-runtime/$key"
+            cp "$dir"/* "apps/server/dist/synctex-runtime/$key/"
+            chmod +x "apps/server/dist/synctex-runtime/$key/synctex" 2>/dev/null || true
           done
           node scripts/package-scient-server.ts \
             --version "$RELEASE_VERSION" \

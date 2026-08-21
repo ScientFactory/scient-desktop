@@ -76,6 +76,7 @@ export interface PdfInverseSyncPoint {
 export interface PdfSyncNavigation {
   readonly forwardTarget: PdfForwardSyncTarget | null;
   readonly onInverseSearch: (point: PdfInverseSyncPoint) => void;
+  readonly onPageChange: (page: number) => void;
 }
 
 function ReaderButton(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
@@ -226,6 +227,10 @@ function LoadedScientPdfReader(props: {
   );
 
   useEffect(() => setPageInput(String(state.page)), [state.page]);
+  const onSyncPageChange = props.syncNavigation?.onPageChange;
+  useEffect(() => {
+    if (state.phase === "ready") onSyncPageChange?.(state.page);
+  }, [onSyncPageChange, state.page, state.phase]);
   useEffect(() => {
     if (!searchOpen) return;
     reader.prepareSearch();

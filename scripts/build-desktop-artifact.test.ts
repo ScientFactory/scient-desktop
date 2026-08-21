@@ -116,10 +116,14 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const sourceDir = path.join(tempDir, "server-source");
   const serverEntryPath = path.join(sourceDir, "apps/server/dist/bin.mjs");
   const nativePath = path.join(sourceDir, "node_modules/native/addon.node");
+  const wslSyncTexDirectory = path.join(sourceDir, "apps/server/dist/synctex-runtime/linux-x64");
   yield* fs.makeDirectory(path.dirname(serverEntryPath), { recursive: true });
   yield* fs.makeDirectory(path.dirname(nativePath), { recursive: true });
   yield* fs.writeFileString(serverEntryPath, input.serverEntrySource ?? "console.log('server');\n");
   yield* fs.writeFileString(nativePath, "native-binary");
+  yield* fs.makeDirectory(wslSyncTexDirectory, { recursive: true });
+  yield* fs.writeFileString(path.join(wslSyncTexDirectory, "synctex"), "synctex");
+  yield* fs.writeFileString(path.join(wslSyncTexDirectory, "provenance.json"), "{}");
 
   const generatedAsarPath = path.join(tempDir, WINDOWS_SERVER_ASAR_RESOURCE);
   yield* packWindowsServerAsar({ sourceDir, asarPath: generatedAsarPath });
@@ -128,6 +132,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const packagedAppDir = path.join(stageDistDir, "win-unpacked");
   const resourcesDir = path.join(packagedAppDir, "resources");
   yield* fs.makeDirectory(path.join(resourcesDir, "resource-monitor"), { recursive: true });
+  yield* fs.makeDirectory(path.join(resourcesDir, "synctex-runtime"), { recursive: true });
   yield* fs.copyFile(generatedAsarPath, path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE));
   if (input.copyUnpackedNatives) {
     yield* fs.copy(
@@ -139,6 +144,9 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
     "monitor",
   );
+  for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
+    yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
+  }
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
   yield* fs.writeFileString(path.join(packagedAppDir, "chrome_crashpad_handler.exe"), "crashpad");
@@ -786,6 +794,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(resourceMonitorError.missingFiles, [
           "resource-monitor/t3-resource-monitor.exe",
         ]);
+
+        yield* fs.remove(resourceMonitorPath, { recursive: true });
+        yield* fs.writeFileString(resourceMonitorPath, "monitor");
+        const syncTexPath = path.join(
+          fixture.packagedAppDir,
+          "resources/synctex-runtime/synctex.exe",
+        );
+        yield* fs.remove(syncTexPath);
+        yield* fs.makeDirectory(syncTexPath);
+
+        const syncTexError = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(syncTexError, WindowsPackagedPayloadValidationError);
+        assert.equal(syncTexError.reason, "synctex-runtime-missing");
+        assert.deepStrictEqual(syncTexError.missingFiles, ["synctex-runtime/synctex.exe"]);
       }),
     ),
   );
@@ -1118,6 +1144,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         from: "apps/desktop/prod-resources/whisper-runtime",
         to: "whisper-runtime",
       },
+      {
+        from: "apps/desktop/prod-resources/synctex-runtime",
+        to: "synctex-runtime",
+      },
     ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",
@@ -1239,6 +1269,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        syncTexRuntime: Option.none(),
+        wslSyncTexRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -1279,6 +1311,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslPrebuild: Option.none(),
+            syncTexRuntime: Option.none(),
+            wslSyncTexRuntime: Option.none(),
           }),
         );
 
@@ -1303,6 +1337,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        syncTexRuntime: Option.none(),
+        wslSyncTexRuntime: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
@@ -1342,6 +1378,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslPrebuild: Option.none(),
+        syncTexRuntime: Option.none(),
+        wslSyncTexRuntime: Option.none(),
       });
 
       assert.isTrue(resolved.signed);

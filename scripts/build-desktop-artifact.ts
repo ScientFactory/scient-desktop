@@ -36,6 +36,7 @@ import {
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
+import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -165,6 +166,8 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslPrebuild: Option.Option<string>;
+  readonly syncTexRuntime: Option.Option<string>;
+  readonly wslSyncTexRuntime: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -615,6 +618,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "synctex-runtime-missing",
   "file-limit-exceeded",
 ]);
 
@@ -638,6 +642,9 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorCla
     }
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
+    }
+    if (this.reason === "synctex-runtime-missing") {
+      return "Windows packaged payload is missing a verified SyncTeX runtime.";
     }
     if (this.reason === "sidecar-invalid") {
       return "Windows packaged payload contains an invalid server.asar sidecar.";
@@ -819,6 +826,8 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslPrebuild: string | undefined;
+  readonly syncTexRuntime: string | undefined;
+  readonly wslSyncTexRuntime: string | undefined;
 }
 
 interface StagePackageJson {
@@ -904,6 +913,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/whisper-runtime",
     to: "whisper-runtime",
+  },
+  {
+    from: "apps/desktop/prod-resources/synctex-runtime",
+    to: "synctex-runtime",
   },
 ] as const;
 
@@ -1307,6 +1320,8 @@ const BuildEnvConfig = Config.all({
   // into the staged node-pty so the WSL backend ships a ready binary and never
   // compiles on the user's machine.
   wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
+  syncTexRuntime: Config.string("SCIENT_SYNCTEX_RUNTIME").pipe(Config.option),
+  wslSyncTexRuntime: Config.string("SCIENT_WSL_SYNCTEX_RUNTIME").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1400,6 +1415,10 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslPrebuild =
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+  const syncTexRuntime =
+    Option.getOrUndefined(input.syncTexRuntime) ?? Option.getOrUndefined(env.syncTexRuntime);
+  const wslSyncTexRuntime =
+    Option.getOrUndefined(input.wslSyncTexRuntime) ?? Option.getOrUndefined(env.wslSyncTexRuntime);
 
   return {
     platform,
@@ -1414,6 +1433,8 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslPrebuild,
+    syncTexRuntime,
+    wslSyncTexRuntime,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2364,6 +2385,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly patchedDependencies: Record<string, string>;
   readonly overrides: Record<string, string>;
   readonly wslPrebuildPath: string | undefined;
+  readonly wslSyncTexRuntimePath: string | undefined;
   readonly asarPath: string;
   readonly verbose: boolean;
 }) {
@@ -2373,6 +2395,17 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   const serverStageDir = path.join(input.stageRoot, "server");
   yield* fs.makeDirectory(path.join(serverStageDir, "apps/server"), { recursive: true });
   yield* fs.copy(input.serverDistDir, path.join(serverStageDir, "apps/server/dist"));
+  if (input.wslSyncTexRuntimePath === undefined) {
+    return yield* new MissingDesktopBuildInputError({
+      artifact: "wsl-synctex-runtime",
+      artifactPath: "<not configured>",
+      buildCommand: "--wsl-synctex-runtime <linux-x64 runtime directory>",
+    });
+  }
+  yield* fs.copy(
+    input.wslSyncTexRuntimePath,
+    path.join(serverStageDir, "apps/server/dist/synctex-runtime/linux-x64"),
+  );
 
   const sidecarDependencies = {
     ...input.runtimeExternalDependencies,
@@ -2620,6 +2653,14 @@ export const validateWindowsPackagedPayload = Effect.fn(
       // POSIX separators work on Linux/macOS but fail on Windows even when the
       // entry is present in the archive.
       statFile(asarPath, path.join("apps", "server", "dist", "bin.mjs"));
+      statFile(
+        asarPath,
+        path.join("apps", "server", "dist", "synctex-runtime", "linux-x64", "synctex"),
+      );
+      statFile(
+        asarPath,
+        path.join("apps", "server", "dist", "synctex-runtime", "linux-x64", "provenance.json"),
+      );
       return [...collectUnpackedAsarFiles(getRawHeader(asarPath).header)].sort();
     },
     catch: (cause) =>
@@ -2666,6 +2707,19 @@ export const validateWindowsPackagedPayload = Effect.fn(
       reason: "resource-monitor-missing",
       packagedAppDir,
       missingFiles: ["resource-monitor/t3-resource-monitor.exe"],
+    });
+  }
+  const syncTexFiles = ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"];
+  const missingSyncTexFiles: string[] = [];
+  for (const file of syncTexFiles) {
+    const relative = `synctex-runtime/${file}`;
+    if (!(yield* isFile(path.join(resourcesDir, relative)))) missingSyncTexFiles.push(relative);
+  }
+  if (missingSyncTexFiles.length > 0) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "synctex-runtime-missing",
+      packagedAppDir,
+      missingFiles: missingSyncTexFiles,
     });
   }
 
@@ -2926,6 +2980,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         stderrTail: cause instanceof Error ? cause.message : String(cause),
       }),
   });
+  yield* Effect.tryPromise({
+    try: () =>
+      stageScientSyncTexRuntimeForDesktopBuild({
+        repoRoot,
+        stageResourcesDir,
+        platform: options.platform,
+        arch: options.arch,
+        sourceDirectory: options.syncTexRuntime,
+        verbose: options.verbose,
+      }),
+    catch: (cause) =>
+      new BuildCommandFailedError({
+        command: `stage SyncTeX (${options.platform}/${options.arch})`,
+        exitCode: 1,
+        stderrTail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
   yield* assertPlatformBuildResources(
     options.platform,
@@ -3071,6 +3142,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       patchedDependencies: workspacePatchedDependencies,
       overrides: resolvedOverrides,
       wslPrebuildPath: options.wslPrebuild,
+      wslSyncTexRuntimePath: options.wslSyncTexRuntime,
       asarPath: windowsServerAsarPath,
       verbose: options.verbose,
     });
@@ -3261,6 +3333,18 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslPrebuild: Flag.string("wsl-prebuild").pipe(
     Flag.withDescription(
       "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
+    ),
+    Flag.optional,
+  ),
+  syncTexRuntime: Flag.string("synctex-runtime").pipe(
+    Flag.withDescription(
+      "Path to the verified SyncTeX runtime directory for the desktop target (env: SCIENT_SYNCTEX_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  wslSyncTexRuntime: Flag.string("wsl-synctex-runtime").pipe(
+    Flag.withDescription(
+      "Path to the verified Linux x64 SyncTeX runtime directory staged into the WSL sidecar (env: SCIENT_WSL_SYNCTEX_RUNTIME).",
     ),
     Flag.optional,
   ),
