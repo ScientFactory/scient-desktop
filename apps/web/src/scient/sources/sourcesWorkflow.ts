@@ -11,8 +11,6 @@ import type {
 
 import {
   completedImportCounts,
-  preflightImportCounts,
-  reviewedImportCounts,
   type ScientSourcesImportCounts,
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
@@ -22,11 +20,16 @@ import {
  *
  * The durable server operation stays the only authority for import phase,
  * per-item states, retries, and resumability; this reducer only tracks what
- * the panel presents between server snapshots: which request is current, what
- * transient feedback is visible, and which records are known. Request tokens
- * are issued synchronously by the hook (never derived from render timing) and
- * carried on response actions; stale tokens are dropped, so a late network
- * response can never overwrite newer state.
+ * the panel presents between server snapshots. Request tokens are issued
+ * synchronously by the hook (never derived from render timing) and carried on
+ * response actions; stale tokens are dropped, so a late network response can
+ * never overwrite newer state.
+ *
+ * Tokens are partitioned into three lanes because those concerns progress
+ * independently: imports (and the review/preparation flow around them), the
+ * overview load (which live-refresh repeats during long imports), and Zotero
+ * browsing. One shared counter would let a routine overview refresh or scope
+ * change silently drop every remaining update of a running import.
  */
 
 export type ImportPreparation =
@@ -35,6 +38,8 @@ export type ImportPreparation =
 
 export interface SourcesWorkflowState {
   readonly request: number;
+  readonly overviewRequest: number;
+  readonly zoteroRequest: number;
   readonly overview: ScientSourcesOverviewResult | null;
   readonly sourceDetails: Readonly<Record<string, ScientSourceDetailResult>>;
   readonly zoteroStatus: ZoteroConnectionStatus | null;
@@ -54,6 +59,8 @@ export interface SourcesWorkflowState {
 
 export const initialSourcesWorkflowState: SourcesWorkflowState = {
   request: 0,
+  overviewRequest: 0,
+  zoteroRequest: 0,
   overview: null,
   sourceDetails: {},
   zoteroStatus: null,
@@ -74,6 +81,8 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
 export type SourcesWorkflowAction =
   | { readonly type: "contextReset" }
   | { readonly type: "requestStarted" }
+  | { readonly type: "overviewRequestStarted"; readonly request: number }
+  | { readonly type: "zoteroRequestStarted"; readonly request: number }
   | {
       readonly type: "overviewArrived";
       readonly request: number;
@@ -96,6 +105,7 @@ export type SourcesWorkflowAction =
       readonly request: number;
       readonly page: ZoteroLibraryPage;
     }
+  | { readonly type: "zoteroLibrarySeeded"; readonly page: ZoteroLibraryPage }
   | { readonly type: "zoteroScopeChanged"; readonly scope: ZoteroImportScope }
   | {
       readonly type: "zoteroCollectionsArrived";
@@ -105,6 +115,7 @@ export type SourcesWorkflowAction =
   | { readonly type: "zoteroStatusDismissed" }
   | { readonly type: "zoteroCheckFeedbackChanged"; readonly feedback: string | null }
   | { readonly type: "importReviewDismissed" }
+  | { readonly type: "operationCleared" }
   | {
       readonly type: "importPreparationChanged";
       readonly preparation: ImportPreparation | null;
@@ -129,13 +140,9 @@ export type SourcesWorkflowAction =
   | { readonly type: "errorArrived"; readonly error: string | null }
   | { readonly type: "errorCleared" };
 
-function currentRequest(state: SourcesWorkflowState): number {
-  return state.request;
-}
-
-/** A response belongs to the present only if its token is still current. */
+/** A response belongs to the present only if its lane token is still current. */
 function isCurrent(state: SourcesWorkflowState, request: number): boolean {
-  return request === currentRequest(state);
+  return request === state.request;
 }
 
 function acceptRecordIntoOverview(
@@ -188,12 +195,23 @@ export function sourcesWorkflowReducer(
   switch (action.type) {
     case "contextReset": {
       // A new project context invalidates every in-flight request at once.
-      return { ...initialSourcesWorkflowState, request: state.request + 1 };
+      return {
+        ...initialSourcesWorkflowState,
+        request: state.request + 1,
+        overviewRequest: state.overviewRequest + 1,
+        zoteroRequest: state.zoteroRequest + 1,
+      };
     }
     case "requestStarted":
       return { ...state, request: state.request + 1 };
+    case "overviewRequestStarted":
+      return { ...state, overviewRequest: action.request };
+    case "zoteroRequestStarted":
+      return { ...state, zoteroRequest: action.request };
     case "overviewArrived": {
-      if (!isCurrent(state, action.request)) return state;
+      // Only the newest overview load wins; import progress and Zotero
+      // browsing run on their own lanes and are unaffected by this check.
+      if (action.request !== state.overviewRequest) return state;
       return {
         ...state,
         overview: action.overview,
@@ -248,7 +266,9 @@ export function sourcesWorkflowReducer(
         zoteroCheckFeedback: action.feedback,
       };
     case "zoteroLibraryArrived": {
-      if (!isCurrent(state, action.request)) return state;
+      // Only the newest Zotero search wins; an overview refresh or import
+      // progress cannot invalidate a browse response.
+      if (action.request !== state.zoteroRequest) return state;
       const page = action.page;
       if (page.start === 0 || !state.library) return { ...state, library: page };
       const items = [...state.library.items];
@@ -258,6 +278,9 @@ export function sourcesWorkflowReducer(
       }
       return { ...state, library: { ...page, items, start: 0 } };
     }
+    case "zoteroLibrarySeeded":
+      // Local placeholder with no request behind it; never gated.
+      return { ...state, library: action.page };
     case "zoteroScopeChanged":
       return { ...state, zoteroScope: action.scope };
     case "zoteroCollectionsArrived":
@@ -270,6 +293,10 @@ export function sourcesWorkflowReducer(
       return { ...state, zoteroCheckFeedback: action.feedback };
     case "importReviewDismissed":
       return { ...state, preflight: null, preflightAdapter: null };
+    case "operationCleared":
+      // An intake flow is starting; drop any previous operation summary so it
+      // cannot render alongside the new preparation banner.
+      return { ...state, operation: null };
     case "importPreparationChanged":
       return {
         ...state,
@@ -343,5 +370,5 @@ export function importOutcomeFromOperation(input: {
   };
 }
 
-export const workflowPreflightImportCounts = preflightImportCounts;
-export const workflowReviewedImportCounts = reviewedImportCounts;
+export { preflightImportCounts as workflowPreflightImportCounts } from "./importOutcome";
+export { reviewedImportCounts as workflowReviewedImportCounts } from "./importOutcome";

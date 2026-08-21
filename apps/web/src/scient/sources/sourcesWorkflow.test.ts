@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  emptyZoteroPage,
   importOutcomeFromOperation,
   initialSourcesWorkflowState,
   sourcesWorkflowReducer,
@@ -138,24 +139,80 @@ function reduceAll(
 
 describe("sources workflow tokens", () => {
   it("drops an overview response whose request token was superseded", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
-    const superseded = reduceAll(started, { type: "requestStarted" }, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    const superseded = sourcesWorkflowReducer(started, {
+      type: "overviewRequestStarted",
+      request: 2,
+    });
     const stale = sourcesWorkflowReducer(superseded, {
       type: "overviewArrived",
-      request: started.request,
+      request: 1,
       overview: overviewWith([{ sourceId: "late" }]),
     });
     expect(stale.overview).toBeNull();
 
     const fresh = sourcesWorkflowReducer(superseded, {
       type: "overviewArrived",
-      request: superseded.request,
+      request: 2,
       overview: overviewWith([{ sourceId: "current" }]),
     });
     expect(fresh.overview?.records[0]?.sourceId).toBe("current");
   });
 
-  it("drops a late operation update after a newer request started", () => {
+  it("keeps import progress alive across an overview refresh on another lane", () => {
+    // Live-refresh repeats overview loads while a durable import runs; the
+    // overview lane must never invalidate import progress updates.
+    const importing = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "requestStarted" },
+      {
+        type: "operationArrived",
+        request: 1,
+        operation: operation(["pending", "imported"]),
+      },
+    );
+    const refreshed = reduceAll(
+      importing,
+      { type: "overviewRequestStarted", request: 7 },
+      {
+        type: "overviewArrived",
+        request: 7,
+        overview: overviewWith([], null),
+      },
+      {
+        type: "operationArrived",
+        request: 1,
+        operation: operation(["imported", "imported"]),
+      },
+    );
+    expect(refreshed.operation?.items.map((item) => item.state)).toEqual(["imported", "imported"]);
+  });
+
+  it("keeps a Zotero page alive across an overview refresh on another lane", () => {
+    const browsing = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "zoteroRequestStarted", request: 3 },
+      { type: "requestStarted" },
+      {
+        type: "zoteroLibraryArrived",
+        request: 3,
+        page: {
+          scope: { kind: "library" },
+          items: [],
+          start: 0,
+          nextStart: 0,
+          total: 0,
+          hasMore: false,
+        },
+      },
+    );
+    expect(browsing.library).not.toBeNull();
+  });
+
+  it("drops a late operation update after a newer import request started", () => {
     const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
     const newer = sourcesWorkflowReducer(started, { type: "requestStarted" });
     const rejected = sourcesWorkflowReducer(newer, {
@@ -166,12 +223,15 @@ describe("sources workflow tokens", () => {
     expect(rejected.operation).toBeNull();
   });
 
-  it("drops a late Zotero page after a newer search started", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
-    const newer = sourcesWorkflowReducer(started, { type: "requestStarted" });
+  it("drops a late Zotero page after a newer Zotero request started", () => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "zoteroRequestStarted",
+      request: 1,
+    });
+    const newer = sourcesWorkflowReducer(started, { type: "zoteroRequestStarted", request: 2 });
     const rejected = sourcesWorkflowReducer(newer, {
       type: "zoteroLibraryArrived",
-      request: started.request,
+      request: 1,
       page: {
         scope: { kind: "library" },
         items: [],
@@ -184,14 +244,33 @@ describe("sources workflow tokens", () => {
     expect(rejected.library).toBeNull();
   });
 
+  it("seeds a Zotero page without a request token so it always lands", () => {
+    const seeded = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "zoteroLibrarySeeded",
+      page: emptyZoteroPage({ kind: "library" }),
+    });
+    expect(seeded.library?.items).toEqual([]);
+    expect(seeded.library?.total).toBe(0);
+  });
+
+  it("clears a previous operation summary when an intake flow starts", () => {
+    const withOperation = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "operationArrived",
+      request: 1,
+      operation: operation(["imported"]),
+    });
+    const cleared = sourcesWorkflowReducer(withOperation, { type: "operationCleared" });
+    expect(cleared.operation).toBeNull();
+  });
+
   it("invalidates every in-flight request when the project context changes", () => {
     const started = reduceAll(
       initialSourcesWorkflowState,
       { type: "requestStarted" },
-      { type: "requestStarted" },
+      { type: "overviewRequestStarted", request: 1 },
       {
         type: "overviewArrived",
-        request: 2,
+        request: 1,
         overview: overviewWith([{ sourceId: "old-context" }]),
       },
     );
@@ -199,9 +278,10 @@ describe("sources workflow tokens", () => {
     expect(reset.overview).toBeNull();
     expect(reset.operation).toBeNull();
     expect(reset.request).toBe(started.request + 1);
+    expect(reset.overviewRequest).toBe(started.overviewRequest + 1);
     const late = sourcesWorkflowReducer(reset, {
       type: "overviewArrived",
-      request: started.request,
+      request: started.overviewRequest,
       overview: overviewWith([{ sourceId: "late" }]),
     });
     expect(late.overview).toBeNull();
@@ -211,12 +291,13 @@ describe("sources workflow tokens", () => {
 describe("sources workflow data consistency", () => {
   it("adopts a running operation discovered in an overview snapshot", () => {
     const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
-      type: "requestStarted",
+      type: "overviewRequestStarted",
+      request: 1,
     });
     const running = operation(["pending", "imported"]);
     const state = sourcesWorkflowReducer(started, {
       type: "overviewArrived",
-      request: started.request,
+      request: 1,
       overview: overviewWith([{ sourceId: "source-1" }], running),
     });
     expect(state.operation).toEqual(running);
@@ -231,14 +312,17 @@ describe("sources workflow data consistency", () => {
     });
     const refreshed = sourcesWorkflowReducer(withOperation, {
       type: "overviewArrived",
-      request: started.request,
+      request: 1,
       overview: overviewWith([], null),
     });
     expect(refreshed.operation).toEqual(operation(["pending"]));
   });
 
   it("prunes cached details whose revision no longer matches the overview", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
     const withDetails = reduceAll(
       started,
       {
@@ -254,7 +338,7 @@ describe("sources workflow data consistency", () => {
     );
     const refreshed = sourcesWorkflowReducer(withDetails, {
       type: "overviewArrived",
-      request: started.request,
+      request: 1,
       overview: overviewWith([
         { sourceId: "current", revision: 2 },
         { sourceId: "stale", revision: 9 },
@@ -264,10 +348,13 @@ describe("sources workflow data consistency", () => {
   });
 
   it("accepts an edited record into details and the overview projection", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
     const withOverview = sourcesWorkflowReducer(started, {
       type: "overviewArrived",
-      request: started.request,
+      request: 1,
       overview: overviewWith([{ sourceId: "source-1", title: "Old title" }]),
     });
     const accepted = sourcesWorkflowReducer(withOverview, {
@@ -279,12 +366,15 @@ describe("sources workflow data consistency", () => {
   });
 
   it("removes a deleted source from details, records, and diagnostics together", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
     const base = reduceAll(
       started,
       {
         type: "overviewArrived",
-        request: started.request,
+        request: 1,
         overview: {
           ...overviewWith([{ sourceId: "gone" }, { sourceId: "kept" }]),
           recordDiagnostics: [

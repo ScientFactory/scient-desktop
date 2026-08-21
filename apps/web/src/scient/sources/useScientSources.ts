@@ -73,11 +73,23 @@ export function useScientSources(input: {
   // Request tokens are issued synchronously here rather than derived from
   // reducer state: dispatch commits on the next render, so a token captured
   // from render timing would read stale and every guarded response would be
-  // dropped. The reducer validates tokens; this ref is their only issuer.
+  // dropped. The reducer validates tokens; these refs are their only issuers.
+  // Three lanes because overview refreshes (live-refresh repeats them during
+  // long imports) and Zotero browsing must never invalidate import progress.
   const requestRef = useRef(0);
+  const overviewRequestRef = useRef(0);
+  const zoteroRequestRef = useRef(0);
   const nextRequestToken = useCallback(() => {
     requestRef.current += 1;
     return requestRef.current;
+  }, []);
+  const nextOverviewRequestToken = useCallback(() => {
+    overviewRequestRef.current += 1;
+    return overviewRequestRef.current;
+  }, []);
+  const nextZoteroRequestToken = useCallback(() => {
+    zoteroRequestRef.current += 1;
+    return zoteroRequestRef.current;
   }, []);
   const isCurrentContext = useCallback(
     () => mounted.current && contextKeyRef.current === contextKey,
@@ -107,14 +119,16 @@ export function useScientSources(input: {
   }, [input.environmentId, input.root]);
 
   const refreshOverview = useCallback(async () => {
-    const request = nextRequestToken();
-    dispatch({ type: "requestStarted" });
+    // The overview lane is independent of imports: live-refresh repeats this
+    // call while a durable import runs, and neither may starve the other.
+    const request = nextOverviewRequestToken();
+    dispatch({ type: "overviewRequestStarted", request });
     const next = await readScientSources(input.environmentId, input.root);
-    if (isCurrentContext() && requestRef.current === request) {
+    if (isCurrentContext() && overviewRequestRef.current === request) {
       dispatch({ type: "overviewArrived", request, overview: next });
     }
     return next;
-  }, [input.environmentId, input.root, isCurrentContext, nextRequestToken]);
+  }, [input.environmentId, input.root, isCurrentContext, nextOverviewRequestToken]);
 
   const reloadOverview = useCallback(async () => {
     dispatch({ type: "busyChanged", busy: true });
@@ -244,11 +258,11 @@ export function useScientSources(input: {
 
   useEffect(() => {
     dispatch({ type: "contextReset" });
-    nextRequestToken();
+    nextOverviewRequestToken();
     void refreshOverview().catch((cause) => {
       if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
     });
-  }, [input.environmentId, input.root, nextRequestToken, refreshOverview]);
+  }, [input.environmentId, input.root, nextOverviewRequestToken, refreshOverview]);
 
   const checkZotero = useCallback(
     async (showRetryFeedback: boolean) => {
@@ -293,8 +307,9 @@ export function useScientSources(input: {
 
   const searchZotero = useCallback(
     async (query: string, start = 0, scope: ZoteroImportScope = state.zoteroScope) => {
-      const request = nextRequestToken();
-      dispatch({ type: "requestStarted" });
+      // The Zotero browse lane is independent of imports and overview loads.
+      const request = nextZoteroRequestToken();
+      dispatch({ type: "zoteroRequestStarted", request });
       dispatch({ type: "busyChanged", busy: true });
       dispatch({ type: "errorCleared" });
       try {
@@ -304,16 +319,20 @@ export function useScientSources(input: {
           start,
           limit: 50,
         });
-        if (isCurrentRequest(request)) {
+        if (isCurrentContext() && zoteroRequestRef.current === request) {
           dispatch({ type: "zoteroLibraryArrived", request, page });
         }
       } catch (cause) {
-        if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
+        if (isCurrentContext() && zoteroRequestRef.current === request) {
+          dispatch({ type: "errorArrived", error: message(cause) });
+        }
       } finally {
-        if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
+        if (isCurrentContext() && zoteroRequestRef.current === request) {
+          dispatch({ type: "busyChanged", busy: false });
+        }
       }
     },
-    [input.environmentId, isCurrentRequest, nextRequestToken, state.zoteroScope],
+    [input.environmentId, isCurrentContext, nextZoteroRequestToken, state.zoteroScope],
   );
 
   const openZoteroLibrary = useCallback(
@@ -321,11 +340,7 @@ export function useScientSources(input: {
       const status = await checkZotero(showRetryFeedback);
       if (status?.state === "ready" && isCurrentContext()) {
         dispatch({ type: "zoteroScopeChanged", scope: DEFAULT_ZOTERO_SCOPE });
-        dispatch({
-          type: "zoteroLibraryArrived",
-          request: requestRef.current,
-          page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE),
-        });
+        dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
         try {
           const [collections] = await Promise.all([
             readZoteroCollections(input.environmentId),
@@ -346,11 +361,7 @@ export function useScientSources(input: {
   const selectZoteroScope = useCallback(
     async (scope: ZoteroImportScope) => {
       dispatch({ type: "zoteroScopeChanged", scope });
-      dispatch({
-        type: "zoteroLibraryArrived",
-        request: requestRef.current,
-        page: emptyZoteroPage(scope),
-      });
+      dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(scope) });
       await searchZotero("", 0, scope);
     },
     [searchZotero],
@@ -359,6 +370,7 @@ export function useScientSources(input: {
   const importZoteroScope = useCallback(async (): Promise<ScientSourcesImportOutcome | null> => {
     const count = state.library?.total ?? 0;
     if (count === 0) return null;
+    dispatch({ type: "operationCleared" });
     const request = nextRequestToken();
     dispatch({ type: "requestStarted" });
     dispatch({ type: "importPreparationChanged", preparation: { kind: "zotero", count } });
@@ -567,6 +579,7 @@ export function useScientSources(input: {
   const previewImport = useCallback(
     async (itemKeys: ReadonlyArray<string>): Promise<ScientSourcesImportOutcome | null> => {
       if (itemKeys.length === 0) return null;
+      dispatch({ type: "operationCleared" });
       const request = nextRequestToken();
       dispatch({ type: "requestStarted" });
       dispatch({
@@ -616,6 +629,7 @@ export function useScientSources(input: {
         invalidFiles.length > 0
           ? `Skipped ${invalidFiles.length} non-PDF file${invalidFiles.length === 1 ? "" : "s"}.`
           : null;
+      dispatch({ type: "operationCleared" });
       const request = nextRequestToken();
       dispatch({ type: "requestStarted" });
       dispatch({
@@ -837,28 +851,27 @@ export function useScientSources(input: {
     if (itemKeys.length === 0) return;
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted" });
     try {
       const retried = await retrySourcesImport(input.environmentId, {
         root: input.root,
         operationId: operation.operationId,
         itemKeys,
       });
-      if (isCurrentContext()) {
-        dispatch({
-          type: "operationArrived",
-          request: requestRef.current,
-          operation: retried,
-        });
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: retried });
       }
     } catch (cause) {
-      if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
+      if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
     } finally {
-      if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
+      if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
     }
   }, [
     input.environmentId,
     input.root,
-    isCurrentContext,
+    isCurrentRequest,
+    nextRequestToken,
     state.busy,
     state.cancelling,
     state.operation,
