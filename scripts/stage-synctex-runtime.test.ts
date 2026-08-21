@@ -5,6 +5,7 @@ import {
   assertStaticLinuxProgramHeaders,
   adaptSyncTexConfigForWindows,
   adaptSyncTexMainForWindows,
+  adaptSyncTexUtilsHeaderForWindows,
   cmakeArchitecture,
   renderCMakeProject,
   runtimeExecutableName,
@@ -80,6 +81,11 @@ describe("SyncTeX runtime staging", () => {
     expect(
       adaptSyncTexConfigForWindows("license\n#define HAVE_STRLCAT\n#define HAVE_STRLCPY\n"),
     ).toBe("license\n");
+    expect(
+      adaptSyncTexUtilsHeaderForWindows(
+        "#\t\tdefine SYNCTEX_ATTRIBUTE_FORMAT_PRINTF(STRING_INDEX, FIRST_TO_CHECK) ATTRIBUTE_FORMAT_PRINTF(STRING_INDEX, FIRST_TO_CHECK)\n",
+      ),
+    ).toBe("#\t\tdefine SYNCTEX_ATTRIBUTE_FORMAT_PRINTF(STRING_INDEX, FIRST_TO_CHECK)\n");
   });
 
   it("rejects a source tree whose official interface versions drift", () => {

@@ -232,6 +232,15 @@ export function adaptSyncTexConfigForWindows(configHeader: string): string {
   );
 }
 
+export function adaptSyncTexUtilsHeaderForWindows(utilsHeader: string): string {
+  return replaceRequiredOnce(
+    utilsHeader,
+    "#\t\tdefine SYNCTEX_ATTRIBUTE_FORMAT_PRINTF(STRING_INDEX, FIRST_TO_CHECK) ATTRIBUTE_FORMAT_PRINTF(STRING_INDEX, FIRST_TO_CHECK)",
+    "#\t\tdefine SYNCTEX_ATTRIBUTE_FORMAT_PRINTF(STRING_INDEX, FIRST_TO_CHECK)",
+    "MSVC printf annotation",
+  );
+}
+
 export function renderCMakeProject(input: {
   readonly syncTexDirectory: string;
   readonly zlibDirectory: string;
@@ -320,10 +329,11 @@ export async function stageSyncTexRuntime(options: StageOptions): Promise<void> 
     if (options.verbose) console.log(`[synctex-runtime] Downloading ${ZLIB_SOURCE.url}`);
     const zlibDirectory = await extractSource(ZLIB_SOURCE, workspace);
 
-    const [versionHeader, mainSource, configHeader] = await Promise.all([
+    const [versionHeader, mainSource, configHeader, utilsHeader] = await Promise.all([
       NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_version.h"), "utf8"),
       NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_main.c"), "utf8"),
       NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_parser_c-auto.h"), "utf8"),
+      NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_parser_utils.h"), "utf8"),
     ]);
     assertPinnedSyncTexSource(versionHeader, mainSource);
     if (options.platform === "win") {
@@ -335,6 +345,10 @@ export async function stageSyncTexRuntime(options: StageOptions): Promise<void> 
         NodeFSP.writeFile(
           NodePath.join(syncTexDirectory, "synctex_parser_c-auto.h"),
           adaptSyncTexConfigForWindows(configHeader),
+        ),
+        NodeFSP.writeFile(
+          NodePath.join(syncTexDirectory, "synctex_parser_utils.h"),
+          adaptSyncTexUtilsHeaderForWindows(utilsHeader),
         ),
       ]);
     }
