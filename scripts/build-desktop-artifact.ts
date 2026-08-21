@@ -453,6 +453,7 @@ const DesktopBuildInputArtifact = Schema.Literals([
   "desktop-resources",
   "server-dist",
   "bundled-server-client",
+  "wsl-synctex-runtime",
 ]);
 type DesktopBuildInputArtifact = typeof DesktopBuildInputArtifact.Type;
 const desktopBuildInputArtifactNames = {
@@ -460,6 +461,7 @@ const desktopBuildInputArtifactNames = {
   "desktop-resources": "desktopResources",
   "server-dist": "serverDist",
   "bundled-server-client": "bundled server client",
+  "wsl-synctex-runtime": "WSL SyncTeX runtime",
 } satisfies Record<DesktopBuildInputArtifact, string>;
 
 /**
@@ -531,7 +533,10 @@ export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<Missi
   {
     artifact: DesktopBuildInputArtifact,
     artifactPath: Schema.String,
-    buildCommand: Schema.Literal("vp run build:desktop"),
+    buildCommand: Schema.Literals([
+      "vp run build:desktop",
+      "--wsl-synctex-runtime <linux-x64 runtime directory>",
+    ]),
   },
 ) {
   override get message(): string {
@@ -2987,7 +2992,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         stageResourcesDir,
         platform: options.platform,
         arch: options.arch,
-        sourceDirectory: options.syncTexRuntime,
+        ...(options.syncTexRuntime === undefined
+          ? {}
+          : { sourceDirectory: options.syncTexRuntime }),
         verbose: options.verbose,
       }),
     catch: (cause) =>

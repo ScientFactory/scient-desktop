@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
   assertPinnedSyncTexSource,
   assertStaticLinuxProgramHeaders,
+  adaptSyncTexConfigForWindows,
+  adaptSyncTexMainForWindows,
   cmakeArchitecture,
   renderCMakeProject,
   runtimeExecutableName,
@@ -43,8 +45,41 @@ describe("SyncTeX runtime staging", () => {
     expect(project).not.toContain("target_compile_definitions(synctex PRIVATE SYNCTEX_STANDALONE)");
     expect(project).toContain("target_link_libraries(synctex PRIVATE zlibstatic)");
     expect(project).toContain("target_link_libraries(synctex PRIVATE Shlwapi)");
+    expect(project).toContain("target_compile_definitions(synctex PRIVATE WIN32)");
     expect(project).toContain('CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"');
     expect(project).toContain("target_link_options(synctex PRIVATE -static");
+  });
+
+  it("disables only the unsupported interactive CLI loop on Windows", () => {
+    const main = adaptSyncTexMainForWindows(
+      [
+        "before",
+        "#   include <poll.h>",
+        "#   include <unistd.h>",
+        "middle",
+        "    if (!status && g_interactive) {",
+        "        interactive();",
+        "    }",
+        "    synctex_scanner_free(g_scanner);",
+        "    g_scanner = NULL;",
+        "    return status;",
+        "}",
+        "",
+        "static void synctex_usage",
+        "after",
+      ].join("\n"),
+    );
+
+    expect(main).toContain("#       include <direct.h>");
+    expect(main).toContain("#       define getcwd _getcwd");
+    expect(main).toContain("interactive mode is unavailable on Windows");
+    expect(main).toContain("#else\n    if (!status && g_interactive)");
+    expect(main).toContain("#endif\n    synctex_scanner_free(g_scanner);");
+    expect(main).toContain("#       include <poll.h>");
+    expect(main).toContain("#       include <unistd.h>");
+    expect(
+      adaptSyncTexConfigForWindows("license\n#define HAVE_STRLCAT\n#define HAVE_STRLCPY\n"),
+    ).toBe("license\n");
   });
 
   it("rejects a source tree whose official interface versions drift", () => {

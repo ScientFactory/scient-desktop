@@ -158,6 +158,80 @@ export function assertStaticLinuxProgramHeaders(programHeaders: string): void {
   }
 }
 
+function replaceRequiredOnce(
+  source: string,
+  expected: string,
+  replacement: string,
+  label: string,
+): string {
+  const first = source.indexOf(expected);
+  if (first < 0 || first !== source.lastIndexOf(expected)) {
+    throw new Error(`Pinned SyncTeX source has an unexpected ${label} contract.`);
+  }
+  return `${source.slice(0, first)}${replacement}${source.slice(first + expected.length)}`;
+}
+
+/**
+ * The official standalone CLI uses a POSIX-only interactive loop even though
+ * its one-shot view/edit paths support Windows. Scient never enables that
+ * interactive mode, so the Windows asset fails it explicitly and keeps the
+ * official parser and one-shot CLI behavior unchanged.
+ */
+export function adaptSyncTexMainForWindows(mainSource: string): string {
+  const withPortableIncludes = replaceRequiredOnce(
+    mainSource,
+    "#   include <poll.h>\n#   include <unistd.h>",
+    `#   if defined(WIN32)
+#       include <direct.h>
+#       define getcwd _getcwd
+#   else
+#       include <poll.h>
+#       include <unistd.h>
+#   endif`,
+    "POSIX include",
+  );
+  const withExplicitWindowsFailure = replaceRequiredOnce(
+    withPortableIncludes,
+    "    if (!status && g_interactive) {",
+    `#if defined(WIN32)
+    if (!status && g_interactive) {
+        fputs("SyncTeX ERROR: interactive mode is unavailable on Windows.\\n", stderr);
+        status = 1;
+    }
+#else
+    if (!status && g_interactive) {`,
+    "interactive entry",
+  );
+  return replaceRequiredOnce(
+    withExplicitWindowsFailure,
+    `    }
+    synctex_scanner_free(g_scanner);
+    g_scanner = NULL;
+    return status;
+}
+
+static void synctex_usage`,
+    `    }
+#endif
+    synctex_scanner_free(g_scanner);
+    g_scanner = NULL;
+    return status;
+}
+
+static void synctex_usage`,
+    "interactive exit",
+  );
+}
+
+export function adaptSyncTexConfigForWindows(configHeader: string): string {
+  return replaceRequiredOnce(
+    configHeader,
+    "#define HAVE_STRLCAT\n#define HAVE_STRLCPY\n",
+    "",
+    "standalone feature header",
+  );
+}
+
 export function renderCMakeProject(input: {
   readonly syncTexDirectory: string;
   readonly zlibDirectory: string;
@@ -183,6 +257,7 @@ set_source_files_properties("${syncTex}/synctex_main.c" PROPERTIES COMPILE_DEFIN
 target_include_directories(synctex PRIVATE "${syncTex}" "${zlib}" "\${CMAKE_CURRENT_BINARY_DIR}/zlib-build")
 target_link_libraries(synctex PRIVATE zlibstatic)
 if(WIN32)
+  target_compile_definitions(synctex PRIVATE WIN32)
   target_link_libraries(synctex PRIVATE Shlwapi)
   target_compile_options(synctex PRIVATE /W3 /guard:cf)
   target_link_options(synctex PRIVATE /guard:cf /DYNAMICBASE /NXCOMPAT)
@@ -245,11 +320,24 @@ export async function stageSyncTexRuntime(options: StageOptions): Promise<void> 
     if (options.verbose) console.log(`[synctex-runtime] Downloading ${ZLIB_SOURCE.url}`);
     const zlibDirectory = await extractSource(ZLIB_SOURCE, workspace);
 
-    const [versionHeader, mainSource] = await Promise.all([
+    const [versionHeader, mainSource, configHeader] = await Promise.all([
       NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_version.h"), "utf8"),
       NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_main.c"), "utf8"),
+      NodeFSP.readFile(NodePath.join(syncTexDirectory, "synctex_parser_c-auto.h"), "utf8"),
     ]);
     assertPinnedSyncTexSource(versionHeader, mainSource);
+    if (options.platform === "win") {
+      await Promise.all([
+        NodeFSP.writeFile(
+          NodePath.join(syncTexDirectory, "synctex_main.c"),
+          adaptSyncTexMainForWindows(mainSource),
+        ),
+        NodeFSP.writeFile(
+          NodePath.join(syncTexDirectory, "synctex_parser_c-auto.h"),
+          adaptSyncTexConfigForWindows(configHeader),
+        ),
+      ]);
+    }
 
     const projectDirectory = NodePath.join(workspace, "scient-build");
     const buildDirectory = NodePath.join(workspace, "build");
