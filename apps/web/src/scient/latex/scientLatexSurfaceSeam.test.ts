@@ -11,6 +11,7 @@ const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientLatexSurface.tsx", import.meta.url),
   "utf8",
 );
+const surfaceStyles = NodeFS.readFileSync(new URL("./scient-latex.css", import.meta.url), "utf8");
 
 function mountedPropNames(): ReadonlyArray<string> {
   const mount = panelSource.match(/<ScientLatexSurface\b([\s\S]*?)\/>/u);
@@ -68,6 +69,13 @@ describe("Scient LaTeX file-preview seam", () => {
   it("keeps the LaTeX surface off the chat markdown pipeline", () => {
     expect(surfaceSource).not.toMatch(/ChatMarkdown/u);
     expect(surfaceSource).not.toMatch(/from "~\/components\/ChatMarkdown"/u);
+  });
+
+  it("uses the hand cursor only for enabled buttons", () => {
+    expect(surfaceStyles).toContain(".scient-latex-surface button:not(:disabled)");
+    expect(surfaceStyles).toMatch(
+      /\.scient-latex-surface button:not\(:disabled\) \{\s*cursor: pointer;/u,
+    );
   });
 
   it("exports only the Scient-owned surface", () => {
