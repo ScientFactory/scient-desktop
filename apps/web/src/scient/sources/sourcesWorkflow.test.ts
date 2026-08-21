@@ -12,8 +12,6 @@ import {
   type SourcesWorkflowState,
 } from "./sourcesWorkflow";
 
-const REQUEST = 1;
-
 function overviewWith(
   records: Partial<ScientSourcesOverviewResult["records"][number]>[],
   activeOperation: ScientSourceImportOperation | null = null,
@@ -245,13 +243,11 @@ describe("sources workflow data consistency", () => {
       started,
       {
         type: "sourceDetailArrived",
-        request: started.request,
         sourceId: "current",
         detail: detail({ sourceId: "current", revision: 2 }),
       },
       {
         type: "sourceDetailArrived",
-        request: started.request,
         sourceId: "stale",
         detail: detail({ sourceId: "stale", revision: 7 }),
       },
@@ -299,7 +295,6 @@ describe("sources workflow data consistency", () => {
       },
       {
         type: "sourceDetailArrived",
-        request: started.request,
         sourceId: "gone",
         detail: detail({ sourceId: "gone" }),
       },
@@ -436,6 +431,28 @@ describe("sources workflow transient flags", () => {
     });
     expect(state.zoteroStatus?.state).toBe("unreachable");
     expect(state.zoteroCheckFeedback).toBe("Zotero is still unavailable.");
+  });
+
+  it("dismisses the Zotero status screen entirely, including feedback", () => {
+    const withStatus = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "zoteroStatusArrived",
+      status: { state: "unreachable", apiVersion: null, message: "" },
+      feedback: "Zotero is still unavailable.",
+    });
+    const dismissed = sourcesWorkflowReducer(withStatus, { type: "zoteroStatusDismissed" });
+    expect(dismissed.zoteroStatus).toBeNull();
+    expect(dismissed.zoteroCheckFeedback).toBeNull();
+  });
+
+  it("accepts a source detail without a request token so details land mid-import", () => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const superseded = sourcesWorkflowReducer(started, { type: "requestStarted" });
+    const arrived = sourcesWorkflowReducer(superseded, {
+      type: "sourceDetailArrived",
+      sourceId: "any",
+      detail: detail({ sourceId: "any" }),
+    });
+    expect(arrived.sourceDetails["any"]?.revision).toBe(1);
   });
 
   it("clears errors explicitly without touching tokens", () => {

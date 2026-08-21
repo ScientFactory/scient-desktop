@@ -70,10 +70,15 @@ export function useScientSources(input: {
   const contextKey = `${input.environmentId}\0${input.root}`;
   const contextKeyRef = useRef(contextKey);
   contextKeyRef.current = contextKey;
-  // Request tokens live in the reducer state; this ref mirrors the current
-  // token for imperative guards inside long-running async flows.
+  // Request tokens are issued synchronously here rather than derived from
+  // reducer state: dispatch commits on the next render, so a token captured
+  // from render timing would read stale and every guarded response would be
+  // dropped. The reducer validates tokens; this ref is their only issuer.
   const requestRef = useRef(0);
-  requestRef.current = state.request;
+  const nextRequestToken = useCallback(() => {
+    requestRef.current += 1;
+    return requestRef.current;
+  }, []);
   const isCurrentContext = useCallback(
     () => mounted.current && contextKeyRef.current === contextKey,
     [contextKey],
@@ -102,14 +107,14 @@ export function useScientSources(input: {
   }, [input.environmentId, input.root]);
 
   const refreshOverview = useCallback(async () => {
+    const request = nextRequestToken();
     dispatch({ type: "requestStarted" });
-    const request = requestRef.current;
     const next = await readScientSources(input.environmentId, input.root);
     if (isCurrentContext() && requestRef.current === request) {
       dispatch({ type: "overviewArrived", request, overview: next });
     }
     return next;
-  }, [input.environmentId, input.root, isCurrentContext]);
+  }, [input.environmentId, input.root, isCurrentContext, nextRequestToken]);
 
   const reloadOverview = useCallback(async () => {
     dispatch({ type: "busyChanged", busy: true });
@@ -136,7 +141,7 @@ export function useScientSources(input: {
       try {
         const detail = await readScientSource(input.environmentId, { root: input.root, sourceId });
         if (isCurrentContext()) {
-          dispatch({ type: "sourceDetailArrived", request: requestRef.current, sourceId, detail });
+          dispatch({ type: "sourceDetailArrived", sourceId, detail });
         }
         return detail;
       } catch (cause) {
@@ -239,11 +244,11 @@ export function useScientSources(input: {
 
   useEffect(() => {
     dispatch({ type: "contextReset" });
-    const request = requestRef.current;
+    nextRequestToken();
     void refreshOverview().catch((cause) => {
-      if (requestRef.current === request) dispatch({ type: "errorArrived", error: message(cause) });
+      if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
     });
-  }, [input.environmentId, input.root, refreshOverview]);
+  }, [input.environmentId, input.root, nextRequestToken, refreshOverview]);
 
   const checkZotero = useCallback(
     async (showRetryFeedback: boolean) => {
@@ -288,8 +293,8 @@ export function useScientSources(input: {
 
   const searchZotero = useCallback(
     async (query: string, start = 0, scope: ZoteroImportScope = state.zoteroScope) => {
+      const request = nextRequestToken();
       dispatch({ type: "requestStarted" });
-      const request = requestRef.current;
       dispatch({ type: "busyChanged", busy: true });
       dispatch({ type: "errorCleared" });
       try {
@@ -308,7 +313,7 @@ export function useScientSources(input: {
         if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
       }
     },
-    [input.environmentId, isCurrentRequest, state.zoteroScope],
+    [input.environmentId, isCurrentRequest, nextRequestToken, state.zoteroScope],
   );
 
   const openZoteroLibrary = useCallback(
@@ -354,11 +359,11 @@ export function useScientSources(input: {
   const importZoteroScope = useCallback(async (): Promise<ScientSourcesImportOutcome | null> => {
     const count = state.library?.total ?? 0;
     if (count === 0) return null;
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted" });
     dispatch({ type: "importPreparationChanged", preparation: { kind: "zotero", count } });
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
-    dispatch({ type: "requestStarted" });
-    const request = requestRef.current;
     try {
       let next = await beginZoteroScopeImport(input.environmentId, {
         root: input.root,
@@ -405,6 +410,7 @@ export function useScientSources(input: {
     input.environmentId,
     input.root,
     isCurrentRequest,
+    nextRequestToken,
     refreshOverview,
     state.library?.total,
     state.zoteroScope,
@@ -561,14 +567,14 @@ export function useScientSources(input: {
   const previewImport = useCallback(
     async (itemKeys: ReadonlyArray<string>): Promise<ScientSourcesImportOutcome | null> => {
       if (itemKeys.length === 0) return null;
+      const request = nextRequestToken();
+      dispatch({ type: "requestStarted" });
       dispatch({
         type: "importPreparationChanged",
         preparation: { kind: "zotero", count: itemKeys.length },
       });
       dispatch({ type: "busyChanged", busy: true });
       dispatch({ type: "errorCleared" });
-      dispatch({ type: "requestStarted" });
-      const request = requestRef.current;
       try {
         const result = await preflightZoteroItems(input.environmentId, {
           root: input.root,
@@ -585,7 +591,7 @@ export function useScientSources(input: {
         }
       }
     },
-    [importPreflight, input.environmentId, input.root, isCurrentRequest],
+    [importPreflight, input.environmentId, input.root, isCurrentRequest, nextRequestToken],
   );
 
   const uploadLocalFiles = useCallback(
@@ -610,14 +616,14 @@ export function useScientSources(input: {
         invalidFiles.length > 0
           ? `Skipped ${invalidFiles.length} non-PDF file${invalidFiles.length === 1 ? "" : "s"}.`
           : null;
+      const request = nextRequestToken();
+      dispatch({ type: "requestStarted" });
       dispatch({
         type: "importPreparationChanged",
         preparation: { kind: "local-files", names: validFiles.map((file) => file.name) },
         error: invalidFilesMessage,
       });
       dispatch({ type: "busyChanged", busy: true });
-      dispatch({ type: "requestStarted" });
-      const request = requestRef.current;
       const items: ScientSourcesPreflightResult["items"][number][] = [];
       const failedFiles: Array<{ readonly name: string; readonly reason: string }> = [];
       let operationStarted = false;
@@ -674,7 +680,7 @@ export function useScientSources(input: {
         }
       }
     },
-    [importPreflight, input.environmentId, input.root, isCurrentRequest],
+    [importPreflight, input.environmentId, input.root, isCurrentRequest, nextRequestToken],
   );
 
   const runImport = useCallback(
@@ -686,8 +692,8 @@ export function useScientSources(input: {
       dispatch({ type: "busyChanged", busy: true });
       dispatch({ type: "cancellingChanged", cancelling: false });
       dispatch({ type: "errorCleared" });
+      const request = nextRequestToken();
       dispatch({ type: "requestStarted" });
-      const request = requestRef.current;
       try {
         const selectedKeys = new Set(itemKeys);
         const reviewedCounts = workflowReviewedImportCounts(state.preflight, selectedKeys);
@@ -711,7 +717,7 @@ export function useScientSources(input: {
         if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
       }
     },
-    [executeImport, isCurrentRequest, state.preflight, state.preflightAdapter],
+    [executeImport, isCurrentRequest, nextRequestToken, state.preflight, state.preflightAdapter],
   );
 
   const resumeImport = useCallback(async () => {
@@ -726,8 +732,8 @@ export function useScientSources(input: {
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "cancellingChanged", cancelling: false });
     dispatch({ type: "errorCleared" });
+    const request = nextRequestToken();
     dispatch({ type: "requestStarted" });
-    const request = requestRef.current;
     try {
       const next = await continueSourceImport({
         environmentId: input.environmentId,
@@ -754,6 +760,7 @@ export function useScientSources(input: {
     input.environmentId,
     input.root,
     isCurrentRequest,
+    nextRequestToken,
     refreshOverview,
     state.busy,
     state.operation,
@@ -780,6 +787,9 @@ export function useScientSources(input: {
       projectId: operation.projectId,
       operationId: operation.operationId,
     });
+    // Supersede every in-flight import request, including the durable
+    // continuation whose progress updates would otherwise keep arriving.
+    const request = nextRequestToken();
     dispatch({ type: "requestStarted" });
     dispatch({ type: "cancellingChanged", cancelling: true });
     dispatch({ type: "busyChanged", busy: true });
@@ -790,7 +800,7 @@ export function useScientSources(input: {
         operationId: operation.operationId,
       });
       if (isCurrentContext()) {
-        dispatch({ type: "operationArrived", request: requestRef.current, operation: cancelled });
+        dispatch({ type: "operationArrived", request, operation: cancelled });
         dispatch({ type: "zoteroLibraryClosed" });
         await refreshOverview();
       }
@@ -806,6 +816,7 @@ export function useScientSources(input: {
     input.environmentId,
     input.root,
     isCurrentContext,
+    nextRequestToken,
     refreshOverview,
     state.cancelling,
     state.operation,
@@ -833,7 +844,11 @@ export function useScientSources(input: {
         itemKeys,
       });
       if (isCurrentContext()) {
-        dispatch({ type: "operationArrived", request: requestRef.current, operation: retried });
+        dispatch({
+          type: "operationArrived",
+          request: requestRef.current,
+          operation: retried,
+        });
       }
     } catch (cause) {
       if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
@@ -885,7 +900,7 @@ export function useScientSources(input: {
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
     clearOperationSummary: () => dispatch({ type: "importReviewDismissed" }),
-    closeZoteroStatus: () => dispatch({ type: "zoteroCheckFeedbackChanged", feedback: null }),
+    closeZoteroStatus: () => dispatch({ type: "zoteroStatusDismissed" }),
     closeLibrary: () => dispatch({ type: "zoteroLibraryClosed" }),
     resetImport: () => {
       const current = state.preflight;

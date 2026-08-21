@@ -23,9 +23,10 @@ import {
  * The durable server operation stays the only authority for import phase,
  * per-item states, retries, and resumability; this reducer only tracks what
  * the panel presents between server snapshots: which request is current, what
- * transient feedback is visible, and which records are known. Every action
- * carries the request token that produced it, and stale tokens are dropped,
- * so a late network response can never overwrite newer state.
+ * transient feedback is visible, and which records are known. Request tokens
+ * are issued synchronously by the hook (never derived from render timing) and
+ * carried on response actions; stale tokens are dropped, so a late network
+ * response can never overwrite newer state.
  */
 
 export type ImportPreparation =
@@ -80,7 +81,6 @@ export type SourcesWorkflowAction =
     }
   | {
       readonly type: "sourceDetailArrived";
-      readonly request: number;
       readonly sourceId: string;
       readonly detail: ScientSourceDetailResult;
     }
@@ -102,6 +102,7 @@ export type SourcesWorkflowAction =
       readonly collections: ReadonlyArray<ZoteroCollection>;
     }
   | { readonly type: "zoteroLibraryClosed" }
+  | { readonly type: "zoteroStatusDismissed" }
   | { readonly type: "zoteroCheckFeedbackChanged"; readonly feedback: string | null }
   | { readonly type: "importReviewDismissed" }
   | {
@@ -201,7 +202,6 @@ export function sourcesWorkflowReducer(
       };
     }
     case "sourceDetailArrived": {
-      if (!isCurrent(state, action.request)) return state;
       return {
         ...state,
         sourceDetails: {
@@ -264,6 +264,8 @@ export function sourcesWorkflowReducer(
       return { ...state, zoteroCollections: action.collections };
     case "zoteroLibraryClosed":
       return { ...state, library: null };
+    case "zoteroStatusDismissed":
+      return { ...state, zoteroStatus: null, zoteroCheckFeedback: null };
     case "zoteroCheckFeedbackChanged":
       return { ...state, zoteroCheckFeedback: action.feedback };
     case "importReviewDismissed":
