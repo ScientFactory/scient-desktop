@@ -8,6 +8,10 @@
   color: var(--foreground);
 }
 
+.scient-latex-surface button:not(:disabled) {
+  cursor: pointer;
+}
+
 .scient-latex-toolbar {
   display: flex;
   min-height: 34px;
@@ -217,20 +221,14 @@
   flex-shrink: 0;
 }
 
-.scient-latex-pane-viewer {
-  border-inline-start: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
-}
-
-.scient-latex-divider {
-  width: 6px;
-  flex: none;
-  background: color-mix(in srgb, var(--border) 64%, transparent);
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.scient-latex-divider:hover {
-  background: var(--ring);
+.scient-latex-viewer-shell {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+  border-inline-start: 1px solid var(--border);
 }
 
 .scient-latex-placeholder {

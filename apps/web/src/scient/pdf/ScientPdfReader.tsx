@@ -19,9 +19,12 @@ import {
   PanelLeftOpen,
   Plus,
   RotateCw,
+  Scan,
   Search,
   FolderSearch,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -29,10 +32,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { ensureLocalApi } from "~/localApi";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
@@ -50,6 +54,11 @@ import { useScientPdfReader } from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
+
+const PDF_SOURCE_SYNC_HINT_DELAY_MS = 300;
+const PDF_SOURCE_SYNC_HINT_VISIBLE_MS = 4_000;
+
+let pdfSourceSyncHintLearnedThisSession = false;
 
 export interface PdfForwardSyncTarget {
   readonly requestId: number;
@@ -191,7 +200,10 @@ function LoadedScientPdfReader(props: {
   const [searchQuery, setSearchQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const sourceSyncHintShowTimerRef = useRef<number | null>(null);
+  const sourceSyncHintHideTimerRef = useRef<number | null>(null);
   const [pageInput, setPageInput] = useState("1");
+  const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
   const reader = useScientPdfReader({
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
@@ -231,11 +243,83 @@ function LoadedScientPdfReader(props: {
     reader.closeSearch();
   }, [reader.closeSearch]);
 
+  const clearSourceSyncHintTimers = useCallback(() => {
+    if (sourceSyncHintShowTimerRef.current !== null) {
+      window.clearTimeout(sourceSyncHintShowTimerRef.current);
+      sourceSyncHintShowTimerRef.current = null;
+    }
+    if (sourceSyncHintHideTimerRef.current !== null) {
+      window.clearTimeout(sourceSyncHintHideTimerRef.current);
+      sourceSyncHintHideTimerRef.current = null;
+    }
+  }, []);
+
+  const dismissSourceSyncHint = useCallback(() => {
+    clearSourceSyncHintTimers();
+    setSourceSyncHintVisible(false);
+  }, [clearSourceSyncHintTimers]);
+
+  const showSourceSyncHint = useCallback(() => {
+    if (sourceSyncHintHideTimerRef.current !== null) {
+      window.clearTimeout(sourceSyncHintHideTimerRef.current);
+    }
+    setSourceSyncHintVisible(true);
+    sourceSyncHintHideTimerRef.current = window.setTimeout(() => {
+      sourceSyncHintHideTimerRef.current = null;
+      setSourceSyncHintVisible(false);
+    }, PDF_SOURCE_SYNC_HINT_VISIBLE_MS);
+  }, []);
+
+  useEffect(() => clearSourceSyncHintTimers, [clearSourceSyncHintTimers]);
+
+  const scheduleSourceSyncHint = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (
+        props.syncNavigation === undefined ||
+        state.phase !== "ready" ||
+        pdfSourceSyncHintLearnedThisSession ||
+        event.ctrlKey ||
+        event.metaKey
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("a, button, input, select, textarea, [contenteditable='true']")) return;
+      if (target.closest(".page[data-page-number]") === null) return;
+      if (window.getSelection()?.isCollapsed === false) return;
+
+      if (sourceSyncHintVisible) {
+        showSourceSyncHint();
+        return;
+      }
+      if (sourceSyncHintShowTimerRef.current !== null) return;
+
+      sourceSyncHintShowTimerRef.current = window.setTimeout(() => {
+        sourceSyncHintShowTimerRef.current = null;
+        if (pdfSourceSyncHintLearnedThisSession || window.getSelection()?.isCollapsed === false) {
+          return;
+        }
+        showSourceSyncHint();
+      }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
+    },
+    [props.syncNavigation, showSourceSyncHint, sourceSyncHintVisible, state.phase],
+  );
+
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const modified = event.metaKey || event.ctrlKey;
     if (modified && event.key.toLowerCase() === "f") {
       event.preventDefault();
       setSearchOpen(true);
+      return;
+    }
+    if (
+      event.key === "Escape" &&
+      (sourceSyncHintVisible || sourceSyncHintShowTimerRef.current !== null)
+    ) {
+      event.preventDefault();
+      dismissSourceSyncHint();
       return;
     }
     if (event.key === "Escape" && searchOpen) {
@@ -265,6 +349,9 @@ function LoadedScientPdfReader(props: {
     }
     reader.goToPage(page);
   };
+  const canRevealSource =
+    props.source.capabilities.canRevealSource && props.actions.revealSource !== undefined;
+  const hasSourceActions = props.source.capabilities.canSaveCopy || canRevealSource;
 
   return (
     <div
@@ -275,6 +362,7 @@ function LoadedScientPdfReader(props: {
     >
       <div className="scient-pdf-toolbar" role="toolbar" aria-label="PDF controls">
         <ReaderButton
+          className="scient-pdf-action-sidebar"
           label={sidebar === "closed" ? "Show thumbnails" : "Hide PDF sidebar"}
           onClick={() => setSidebar(sidebar === "closed" ? "thumbnails" : "closed")}
         >
@@ -311,6 +399,7 @@ function LoadedScientPdfReader(props: {
         </ReaderButton>
         <div className="scient-pdf-toolbar-separator" />
         <ReaderButton
+          className="scient-pdf-action-zoom-step"
           label="Zoom out"
           disabled={state.phase !== "ready"}
           onClick={() => reader.setZoom(stepPdfZoom(state.scale, "out"))}
@@ -328,6 +417,7 @@ function LoadedScientPdfReader(props: {
           </button>
         </ScientTooltip>
         <ReaderButton
+          className="scient-pdf-action-zoom-step"
           label="Zoom in"
           disabled={state.phase !== "ready"}
           onClick={() => reader.setZoom(stepPdfZoom(state.scale, "in"))}
@@ -335,6 +425,7 @@ function LoadedScientPdfReader(props: {
           <Plus />
         </ReaderButton>
         <ReaderButton
+          className="scient-pdf-action-fit"
           label="Fit width"
           disabled={state.phase !== "ready"}
           onClick={() => reader.setZoomMode("page-width")}
@@ -342,6 +433,7 @@ function LoadedScientPdfReader(props: {
           <Maximize2 />
         </ReaderButton>
         <ReaderButton
+          className="scient-pdf-action-rotate"
           label="Rotate clockwise"
           disabled={state.phase !== "ready"}
           onClick={reader.rotate}
@@ -350,6 +442,7 @@ function LoadedScientPdfReader(props: {
         </ReaderButton>
         <div className="min-w-1 flex-1" />
         <ReaderButton
+          className="scient-pdf-action-search"
           label="Search PDF"
           aria-pressed={searchOpen}
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
@@ -366,6 +459,37 @@ function LoadedScientPdfReader(props: {
             </DropdownMenuTrigger>
           </ScientTooltip>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={state.phase !== "ready"}
+              onClick={() => reader.setZoom(stepPdfZoom(state.scale, "out"))}
+            >
+              <ZoomOut /> Zoom out
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.phase !== "ready"}
+              onClick={() => reader.setZoomMode("page-actual")}
+            >
+              <Scan /> Actual size
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.phase !== "ready"}
+              onClick={() => reader.setZoom(stepPdfZoom(state.scale, "in"))}
+            >
+              <ZoomIn /> Zoom in
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={state.phase !== "ready"}
+              onClick={() => reader.setZoomMode("page-width")}
+            >
+              <Maximize2 /> Fit width
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={state.phase !== "ready"} onClick={reader.rotate}>
+              <RotateCw /> Rotate clockwise
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSearchOpen(true)}>
+              <Search /> Search PDF
+            </DropdownMenuItem>
+            {hasSourceActions ? <DropdownMenuSeparator /> : null}
             {props.source.capabilities.canSaveCopy ? (
               <DropdownMenuItem
                 onClick={() => {
@@ -379,7 +503,7 @@ function LoadedScientPdfReader(props: {
                 <Download /> Save a copy…
               </DropdownMenuItem>
             ) : null}
-            {props.source.capabilities.canRevealSource && props.actions.revealSource ? (
+            {canRevealSource ? (
               <DropdownMenuItem
                 onClick={() =>
                   props.actions.revealSource?.(props.source, {
@@ -441,6 +565,7 @@ function LoadedScientPdfReader(props: {
                 : ""}
           </span>
           <ReaderButton
+            className="scient-pdf-search-secondary"
             label="Previous result"
             disabled={!searchQuery}
             onClick={() => reader.findAgain(true)}
@@ -448,6 +573,7 @@ function LoadedScientPdfReader(props: {
             <ChevronDown className="rotate-180" />
           </ReaderButton>
           <ReaderButton
+            className="scient-pdf-search-secondary"
             label="Next result"
             disabled={!searchQuery}
             onClick={() => reader.findAgain(false)}
@@ -517,39 +643,41 @@ function LoadedScientPdfReader(props: {
           </aside>
         ) : null}
         <div className="scient-pdf-content">
-          {(() => {
-            const viewer = (
-              <div
-                ref={setContainer}
-                className="scient-pdf-viewer-container"
-                tabIndex={0}
-                onDoubleClick={(event) => {
-                  if (props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)) {
-                    return;
-                  }
-                  const pageElement = (event.target as Element).closest<HTMLElement>(
-                    ".page[data-page-number]",
-                  );
-                  if (pageElement === null) return;
-                  const point = reader.syncPointFromClient({
-                    pageElement,
-                    clientX: event.clientX,
-                    clientY: event.clientY,
-                  });
-                  if (point !== null) props.syncNavigation.onInverseSearch(point);
-                }}
-              >
-                <div ref={setViewerElement} className="pdfViewer" />
-              </div>
-            );
-            return props.syncNavigation === undefined ? (
-              viewer
-            ) : (
-              <ScientTooltip content="Ctrl/Command-double-click the PDF to open the matching source line">
-                {viewer}
-              </ScientTooltip>
-            );
-          })()}
+          <div
+            ref={setContainer}
+            className="scient-pdf-viewer-container"
+            tabIndex={0}
+            onClick={scheduleSourceSyncHint}
+            onDoubleClick={(event) => {
+              dismissSourceSyncHint();
+              if (props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)) {
+                return;
+              }
+              const target = event.target;
+              if (!(target instanceof Element)) return;
+              const pageElement = target.closest<HTMLElement>(".page[data-page-number]");
+              if (pageElement === null) return;
+              const point = reader.syncPointFromClient({
+                pageElement,
+                clientX: event.clientX,
+                clientY: event.clientY,
+              });
+              if (point !== null) {
+                pdfSourceSyncHintLearnedThisSession = true;
+                props.syncNavigation.onInverseSearch(point);
+              }
+            }}
+            onScroll={dismissSourceSyncHint}
+          >
+            <div ref={setViewerElement} className="pdfViewer" />
+          </div>
+          {sourceSyncHintVisible ? (
+            <div className="scient-pdf-source-sync-hint" role="status">
+              {isMacPlatform(navigator.platform)
+                ? "⌘ double-click the PDF to open the matching source line"
+                : "Ctrl double-click the PDF to open the matching source line"}
+            </div>
+          ) : null}
           {state.phase === "loading" ? (
             <div className="scient-pdf-state-overlay">
               <div className="scient-pdf-state-card">

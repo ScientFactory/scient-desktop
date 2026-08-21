@@ -1,4 +1,6 @@
 .scient-pdf-reader {
+  container-name: scient-pdf-reader;
+  container-type: inline-size;
   display: flex;
   min-height: 0;
   flex: 1;
@@ -6,6 +8,10 @@
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
+}
+
+.scient-pdf-reader button:not(:disabled) {
+  cursor: pointer;
 }
 
 .scient-pdf-toolbar,
@@ -55,10 +61,12 @@
 
 .scient-pdf-page-control {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 4px;
   color: var(--muted-foreground);
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .scient-pdf-page-control input {
@@ -295,6 +303,24 @@
   background-color: rgb(255 140 0 / 68%);
 }
 
+.scient-pdf-source-sync-hint {
+  position: absolute;
+  z-index: 5;
+  inset-block-start: 20px;
+  inset-inline-start: 50%;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  transform: translateX(-50%);
+  pointer-events: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--muted) 82%, transparent);
+  padding: 4px 8px;
+  color: var(--muted-foreground);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .scient-pdf-state-overlay {
   position: absolute;
   inset: 0;
@@ -364,16 +390,47 @@
   transition: width 100ms linear;
 }
 
-@media (max-width: 520px) {
+/*
+ * The reader lives in independently resizable panes, so its own width—not the
+ * browser viewport—decides which controls remain inline. Secondary actions
+ * stay available in the More menu as the toolbar becomes compact.
+ */
+@container scient-pdf-reader (max-width: 439px) {
   .scient-pdf-toolbar-separator,
-  .scient-pdf-zoom-label {
+  .scient-pdf-zoom-label,
+  .scient-pdf-action-rotate {
     display: none;
   }
-  .scient-pdf-toolbar {
-    overflow-x: auto;
-  }
+
   .scient-pdf-sidebar {
     width: 156px;
+  }
+}
+
+@container scient-pdf-reader (max-width: 359px) {
+  .scient-pdf-action-sidebar,
+  .scient-pdf-action-zoom-step,
+  .scient-pdf-sidebar {
+    display: none;
+  }
+}
+
+@container scient-pdf-reader (max-width: 239px) {
+  .scient-pdf-action-fit,
+  .scient-pdf-action-search,
+  .scient-pdf-searchbar > svg,
+  .scient-pdf-find-count {
+    display: none;
+  }
+
+  .scient-pdf-searchbar {
+    padding-inline: 8px;
+  }
+}
+
+@container scient-pdf-reader (max-width: 199px) {
+  .scient-pdf-search-secondary {
+    display: none;
   }
 }
 

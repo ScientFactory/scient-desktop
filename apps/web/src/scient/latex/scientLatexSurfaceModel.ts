@@ -6,6 +6,12 @@ import type {
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
 
+import {
+  clampScientSplitFraction,
+  nudgeScientSplitFraction,
+  scientSplitFractionFromPointer,
+} from "~/scient/layout/scientSplitFraction";
+
 import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 
 /**
@@ -29,6 +35,11 @@ export const DEFAULT_LATEX_PREVIEW_MODE: ScientLatexPreviewMode = "split";
 export const DEFAULT_LATEX_SPLIT_FRACTION = 0.5;
 /** Neither half may be squeezed into a strip too narrow to work in. */
 export const MIN_LATEX_SPLIT_FRACTION = 0.2;
+
+const LATEX_SPLIT_BOUNDS = {
+  minimum: MIN_LATEX_SPLIT_FRACTION,
+  fallback: DEFAULT_LATEX_SPLIT_FRACTION,
+} as const;
 
 export const LATEX_TOOLCHAIN_MISSING_TITLE = "No LaTeX toolchain found";
 export const LATEX_TOOLCHAIN_MISSING_HINT = "Install TeX Live, MiKTeX, or Tectonic to build PDFs.";
@@ -83,8 +94,7 @@ export function normalizeLatexPreviewMode(
 }
 
 export function clampLatexSplitFraction(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_LATEX_SPLIT_FRACTION;
-  return Math.min(Math.max(value, MIN_LATEX_SPLIT_FRACTION), 1 - MIN_LATEX_SPLIT_FRACTION);
+  return clampScientSplitFraction(value, LATEX_SPLIT_BOUNDS);
 }
 
 export function normalizeLatexSplitFraction(value: number | null | undefined): number {
@@ -99,8 +109,7 @@ export function latexSplitFractionFromPointer(input: {
   readonly left: number;
   readonly width: number;
 }): number {
-  if (input.width <= 0) return DEFAULT_LATEX_SPLIT_FRACTION;
-  return clampLatexSplitFraction((input.pointerX - input.left) / input.width);
+  return scientSplitFractionFromPointer(input, LATEX_SPLIT_BOUNDS);
 }
 
 /** One arrow press worth of divider travel. */
@@ -112,18 +121,7 @@ export const LATEX_SPLIT_KEYBOARD_STEP = 0.02;
  * is not the divider's to handle.
  */
 export function nudgeLatexSplitFraction(current: number, key: string): number | null {
-  switch (key) {
-    case "ArrowLeft":
-      return clampLatexSplitFraction(current - LATEX_SPLIT_KEYBOARD_STEP);
-    case "ArrowRight":
-      return clampLatexSplitFraction(current + LATEX_SPLIT_KEYBOARD_STEP);
-    case "Home":
-      return MIN_LATEX_SPLIT_FRACTION;
-    case "End":
-      return 1 - MIN_LATEX_SPLIT_FRACTION;
-    default:
-      return null;
-  }
+  return nudgeScientSplitFraction(current, key, LATEX_SPLIT_BOUNDS, LATEX_SPLIT_KEYBOARD_STEP);
 }
 
 /** Windows and POSIX paths compare and read the same way here. */

@@ -17,17 +17,7 @@ import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } f
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import {
-  lazy,
-  memo,
-  Suspense,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
@@ -36,13 +26,15 @@ import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorag
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
+import { useScientHorizontalSplit } from "~/scient/layout/useScientHorizontalSplit";
+import { ResizeSeparator } from "~/scient/layout/ResizeSeparator";
 import type {
   PdfForwardSyncTarget,
   PdfInverseSyncPoint,
   PdfSyncNavigation,
 } from "~/scient/pdf/ScientPdfReader";
+import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
@@ -61,17 +53,16 @@ import {
   LATEX_PREVIEW_MODE_LABELS,
   LATEX_PREVIEW_MODE_STORAGE_KEY,
   LATEX_PREVIEW_MODES,
+  LATEX_SPLIT_KEYBOARD_STEP,
   LATEX_SPLIT_RATIO_STORAGE_KEY,
   LATEX_TOOLCHAIN_MISSING_HINT,
   MIN_LATEX_SPLIT_FRACTION,
   formatLatexDiagnosticLocation,
   latexCompiledFromPath,
   latexDiagnosticRows,
-  latexSplitFractionFromPointer,
   latexStatusStripModel,
   normalizeLatexPreviewMode,
   normalizeLatexSplitFraction,
-  nudgeLatexSplitFraction,
   type LatexViewerState,
   type ScientLatexPreviewMode,
 } from "./scientLatexSurfaceModel";
@@ -323,7 +314,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
   syncNavigation,
 }: LatexViewerPaneProps) {
   return (
-    <div className="scient-latex-pane scient-latex-pane-viewer">
+    <div className="scient-latex-pane">
       {descriptor !== null && readerKey !== null ? (
         <Suspense fallback={<LatexPendingViewer label="Opening PDF…" />}>
           <ScientPdfReader
@@ -387,14 +378,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
-  const splitRef = useRef<HTMLDivElement>(null);
-  const editorPaneRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{
-    readonly left: number;
-    readonly width: number;
-    fraction: number;
-    frame: number | null;
-  } | null>(null);
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
   const syncRequestRef = useRef(0);
 
@@ -452,75 +435,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     [revealRequestId],
   );
 
-  // One writer owns the editor pane's width: the divider while a drag is live,
-  // this effect otherwise. React never renders flex-basis, so a snapshot
-  // landing mid-drag cannot snap the pane back to the last committed fraction.
-  useLayoutEffect(() => {
-    const pane = editorPaneRef.current;
-    if (pane === null || dragRef.current !== null) return;
-    pane.style.flexBasis = mode === "split" ? `${splitFraction * 100}%` : "";
-  }, [mode, splitFraction]);
-
   const commitSplitFraction = useCallback((fraction: number) => {
     setSplitFraction(fraction);
     persist(LATEX_SPLIT_RATIO_STORAGE_KEY, fraction, Schema.Number);
   }, []);
-
-  const handleDividerPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const container = splitRef.current;
-      if (!container || event.button !== 0) return;
-      const rect = container.getBoundingClientRect();
-      dragRef.current = {
-        left: rect.left,
-        width: rect.width,
-        fraction: splitFraction,
-        frame: null,
-      };
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.preventDefault();
-    },
-    [splitFraction],
-  );
-
-  const handleDividerPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    drag.fraction = latexSplitFractionFromPointer({
-      pointerX: event.clientX,
-      left: drag.left,
-      width: drag.width,
-    });
-    if (drag.frame !== null) return;
-    drag.frame = requestAnimationFrame(() => {
-      drag.frame = null;
-      editorPaneRef.current?.style.setProperty("flex-basis", `${drag.fraction * 100}%`);
-    });
-  }, []);
-
-  const handleDividerPointerUp = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      dragRef.current = null;
-      if (drag.frame !== null) cancelAnimationFrame(drag.frame);
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      commitSplitFraction(drag.fraction);
-    },
-    [commitSplitFraction],
-  );
-
-  const handleDividerKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      const next = nudgeLatexSplitFraction(splitFraction, event.key);
-      if (next === null) return;
-      event.preventDefault();
-      commitSplitFraction(next);
-    },
-    [commitSplitFraction, splitFraction],
-  );
+  const { containerRef, primaryPaneRef, separatorHandlers } = useScientHorizontalSplit({
+    active: mode === "split",
+    fraction: splitFraction,
+    minimum: MIN_LATEX_SPLIT_FRACTION,
+    fallback: DEFAULT_LATEX_SPLIT_FRACTION,
+    keyboardStep: LATEX_SPLIT_KEYBOARD_STEP,
+    onCommit: commitSplitFraction,
+  });
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
   const diagnosticRows = useMemo(() => latexDiagnosticRows(diagnostics), [diagnostics]);
@@ -793,11 +719,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
       ) : null}
 
-      <div className="scient-latex-content" ref={splitRef}>
+      <div className="scient-latex-content" ref={containerRef}>
         {showEditor ? (
           <ScientTooltip content="Ctrl/Command-double-click a source line to find it in the PDF">
             <div
-              ref={editorPaneRef}
+              ref={primaryPaneRef}
               className={cn(
                 "scient-latex-pane",
                 mode === "split" ? "scient-latex-pane-sized" : null,
@@ -840,37 +766,32 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           </ScientTooltip>
         ) : null}
 
-        {showEditor && showViewer ? (
-          <div
-            className="scient-latex-divider"
-            role="separator"
-            tabIndex={0}
-            aria-orientation="vertical"
-            aria-label="Resize LaTeX preview"
-            aria-valuemin={Math.round(MIN_LATEX_SPLIT_FRACTION * 100)}
-            aria-valuemax={Math.round((1 - MIN_LATEX_SPLIT_FRACTION) * 100)}
-            aria-valuenow={Math.round(splitFraction * 100)}
-            onKeyDown={handleDividerKeyDown}
-            onPointerDown={handleDividerPointerDown}
-            onPointerMove={handleDividerPointerMove}
-            onPointerUp={handleDividerPointerUp}
-            onPointerCancel={handleDividerPointerUp}
-          />
-        ) : null}
-
         {showViewer ? (
-          <LatexViewerPane
-            descriptor={descriptor}
-            readerKey={readerKey}
-            viewer={status.viewer}
-            toolchainMissing={status.toolchainMissing}
-            failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-            canInstallManaged={build.canInstallManaged}
-            managedInstall={build.managedInstall}
-            installRequesting={build.installRequesting}
-            onInstall={handleInstallToolchain}
-            {...(syncNavigation === undefined ? {} : { syncNavigation })}
-          />
+          <div className="scient-latex-viewer-shell">
+            {showEditor ? (
+              <ResizeSeparator
+                className="absolute inset-y-0 -start-1"
+                tabIndex={0}
+                aria-label="Resize LaTeX preview"
+                aria-valuemin={Math.round(MIN_LATEX_SPLIT_FRACTION * 100)}
+                aria-valuemax={Math.round((1 - MIN_LATEX_SPLIT_FRACTION) * 100)}
+                aria-valuenow={Math.round(splitFraction * 100)}
+                {...separatorHandlers}
+              />
+            ) : null}
+            <LatexViewerPane
+              descriptor={descriptor}
+              readerKey={readerKey}
+              viewer={status.viewer}
+              toolchainMissing={status.toolchainMissing}
+              failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
+              canInstallManaged={build.canInstallManaged}
+              managedInstall={build.managedInstall}
+              installRequesting={build.installRequesting}
+              onInstall={handleInstallToolchain}
+              {...(syncNavigation === undefined ? {} : { syncNavigation })}
+            />
+          </div>
         ) : null}
       </div>
     </div>

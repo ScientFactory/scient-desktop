@@ -335,6 +335,35 @@ describe("PDF reader viewport lifecycle", () => {
       }),
     );
   });
+
+  it("persists a preferred scale while a temporary responsive scale is rendered", () => {
+    const documentKey = "environment:responsive-paper";
+    const persisted = createMockStorage();
+    const store = createPdfReaderSessionStore({ storage: persisted.storage, writeDelayMs: 0 });
+    const session = createPdfReaderViewportSession({ documentKey, store });
+    const target = {
+      currentPageNumber: 1,
+      currentScale: 1.25,
+      currentScaleValue: "1.25",
+      pagesRotation: 0,
+      scrollPageIntoView: vi.fn(),
+    };
+    session.restore(target, 20);
+    session.completeRestore();
+
+    session.updateFromViewArea(
+      { pageNumber: 4, left: 0, top: 500, scale: 70, rotation: 0 },
+      "1.25",
+    );
+
+    expect(store.get(documentKey).viewport).toEqual({
+      page: 4,
+      left: 0,
+      top: 500,
+      scaleValue: "1.25",
+      rotation: 0,
+    });
+  });
 });
 
 describe("PDF.js viewport translation", () => {

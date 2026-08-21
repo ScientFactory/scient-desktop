@@ -7,6 +7,7 @@
     "apps/server/src/scient/latex",
     "apps/web/src/scient/analysis",
     "apps/web/src/scient/latex",
+    "apps/web/src/scient/layout",
     "apps/web/src/scient/artifacts",
     "apps/web/src/scient/fileSurfaces",
     "packages/scient-analysis",
@@ -30,7 +31,7 @@
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|execution)",
-    "(/|~)scient/(analysis|artifacts|execution|fileSurfaces)",
+    "(/|~)scient/(analysis|artifacts|execution|fileSurfaces|layout)",
     "analysis-artifact",
     "AnalysisArtifact",
     "ScientArtifact",
