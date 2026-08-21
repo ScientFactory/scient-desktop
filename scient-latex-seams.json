@@ -10,6 +10,8 @@
     "packages/scient-pdf-validation"
   ],
   "ownedFiles": [
+    "scripts/stage-synctex-runtime.ts",
+    "scripts/lib/scient-synctex-build.ts",
     "packages/client-runtime/src/state/scientLatexHttp.ts",
     "packages/contracts/src/scientLatex.ts"
   ],
@@ -25,6 +27,16 @@
   ],
   "upstreamMounts": [
     {
+      "path": ".gitignore",
+      "anchor": "native/synctex-runtime/",
+      "purpose": "Keep generated, reproducible native SyncTeX build output outside version control."
+    },
+    {
+      "path": "apps/desktop/src/backend/DesktopBackendConfiguration.ts",
+      "anchor": "syncTexNavigatorPath",
+      "purpose": "Pass the exact packaged SyncTeX helper to the local desktop server without exposing a user-configured executable path."
+    },
+    {
       "path": "apps/server/src/assets/AssetAccess.ts",
       "anchor": "generatedDocumentExpiresAtEpochMs",
       "purpose": "Issue generated-document asset capabilities for exactly the durable lease lifetime returned by the Scient-owned document store."
@@ -37,7 +49,12 @@
     {
       "path": "apps/server/src/config.ts",
       "anchor": "latexDir",
-      "purpose": "Derive the server-owned LaTeX build state from the configured state root."
+      "purpose": "Derive server-owned LaTeX state and carry the optional desktop-resolved SyncTeX helper path."
+    },
+    {
+      "path": "apps/server/src/cli/config.ts",
+      "anchor": "syncTexNavigatorPath",
+      "purpose": "Decode the desktop bootstrap's verified SyncTeX helper path into server configuration."
     },
     {
       "path": "apps/server/src/server.ts",
@@ -70,6 +87,11 @@
       "purpose": "Classify the document-binding RPC method as a subscription in the inherited transport client."
     },
     {
+      "path": "packages/contracts/src/desktopBootstrap.ts",
+      "anchor": "syncTexNavigatorPath",
+      "purpose": "Carry the optional desktop-resolved SyncTeX helper path over the existing bootstrap boundary."
+    },
+    {
       "path": "packages/contracts/src/environmentHttp.ts",
       "anchor": "scientLatex",
       "purpose": "Register the LaTeX endpoint group in the shared environment HTTP API."
@@ -88,6 +110,11 @@
       "path": "packages/client-runtime/package.json",
       "anchor": "./state/scient-latex",
       "purpose": "Expose the Scient LaTeX HTTP client module through the package export map."
+    },
+    {
+      "path": "scripts/build-desktop-artifact.ts",
+      "anchor": "stageScientSyncTexRuntimeForDesktopBuild",
+      "purpose": "Mount the Scient-owned verified SyncTeX staging adapter into inherited desktop, WSL-sidecar, and release packaging."
     },
     {
       "path": "apps/server/vite.config.ts",

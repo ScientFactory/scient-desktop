@@ -11,10 +11,12 @@ on:
       - "apps/server/src/scient/latex/LatexManagedToolchain.ts"
       - "apps/server/src/scient/latex/LatexPackageInstaller.ts"
       - "apps/server/src/scient/latex/LatexSyncTex.ts"
+      - "apps/server/src/scient/latex/SyncTexRuntime.ts"
       - "apps/server/src/scient/latex/latexCommand.ts"
       - "apps/server/src/scient/latex/managedLatexInstall.ts"
       - "apps/server/src/processRunner.ts"
       - "packages/shared/src/hostProcess.ts"
+      - "scripts/stage-synctex-runtime.ts"
 
 permissions:
   contents: read
@@ -34,16 +36,32 @@ jobs:
         include:
           - platform: Windows x64
             runner: windows-2025
+            runtime_platform: win
+            runtime_arch: x64
+            runtime_key: win32-x64
+            runtime_executable: synctex.exe
           - platform: Linux x64
             runner: ubuntu-24.04
+            runtime_platform: linux
+            runtime_arch: x64
+            runtime_key: linux-x64
+            runtime_executable: synctex
           - platform: macOS Apple Silicon
             runner: macos-15
+            runtime_platform: mac
+            runtime_arch: arm64
+            runtime_key: darwin-arm64
+            runtime_executable: synctex
           - platform: macOS Intel
             runner: macos-15-intel
+            runtime_platform: mac
+            runtime_arch: x64
+            runtime_key: darwin-x64
+            runtime_executable: synctex
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: |
             /*
@@ -51,7 +69,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -59,8 +77,17 @@ jobs:
             args:
               - --filter=t3...
 
+      - name: Build verified bundled SyncTeX helper
+        run: >-
+          node scripts/stage-synctex-runtime.ts
+          --platform ${{ matrix.runtime_platform }}
+          --arch ${{ matrix.runtime_arch }}
+          --output native/synctex-runtime/${{ matrix.runtime_key }}
+          --verbose
+
       - name: Verify pinned native TinyTeX asset
         working-directory: apps/server
         env:
           SCIENT_TINYTEX_ASSET_SMOKE: "1"
+          SCIENT_SYNCTEX_RUNTIME: ${{ github.workspace }}/native/synctex-runtime/${{ matrix.runtime_key }}/${{ matrix.runtime_executable }}
         run: vp test run src/scient/latex/TinyTexAssetSmoke.test.ts

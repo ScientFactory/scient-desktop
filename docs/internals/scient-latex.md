@@ -18,25 +18,33 @@ files sit outside those roots:
 `packages/contracts/src/scientLatex.ts` (the wire contract: toolchain status,
 build snapshot, diagnostic, and managed-install schemas) and
 `packages/client-runtime/src/state/scientLatexHttp.ts` (the typed HTTP client
-the web store calls through).
+the web store calls through). The native SyncTeX source/build logic is also
+Scient-owned: `scripts/stage-synctex-runtime.ts` pins, verifies, builds, strips,
+and receipts the official helper; `scripts/lib/scient-synctex-build.ts`
+re-verifies and stages it for desktop packaging.
 
 Everything else this feature touches is a declared, narrow mount into
 inherited T3 code:
 
-| Inherited file                                       | Anchor                                | Purpose                                                                                                                                                                                                      |
-| ---------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/server/src/auth/RpcAuthorization.ts`           | `subscribeDocumentBindingChanges`     | Authorize the producer-neutral document-binding subscription as a read operation.                                                                                                                            |
-| `apps/server/src/config.ts`                          | `latexDir`                            | Derive the server-owned LaTeX build state from the configured state root.                                                                                                                                    |
-| `apps/server/src/server.ts`                          | `LatexBuildService`                   | Provide the build coordinator and toolchain probe to the shared server layer.                                                                                                                                |
-| `apps/server/src/ws.ts`                              | `subscribeDocumentBindingChanges`     | Carry the shared document store's binding-change hints over the existing RPC transport.                                                                                                                      |
-| `apps/web/src/components/ChatView.tsx`               | `openFile(..., line)`                 | Open diagnostics and inverse-SyncTeX results at their reported source line through the inherited right-panel store.                                                                                          |
-| `apps/web/src/components/files/filePreviewMode.ts`   | `isLatexPreviewFile`                  | Recognize LaTeX sources in the inherited file preview mode selection.                                                                                                                                        |
-| `apps/web/src/components/files/FilePreviewPanel.tsx` | `export function EditableFileSurface` | Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination. |
-| `packages/client-runtime/src/rpc/client.ts`          | `subscribeDocumentBindingChanges`     | Classify the binding-change method as a subscription in the inherited transport client.                                                                                                                      |
-| `packages/contracts/src/environmentHttp.ts`          | `scientLatex`                         | Register the LaTeX endpoint group in the shared environment HTTP API.                                                                                                                                        |
-| `packages/contracts/src/index.ts`                    | `./scientLatex.ts`                    | Export the additive Scient LaTeX contract from the inherited contract package.                                                                                                                               |
-| `packages/contracts/src/rpc.ts`                      | `subscribeDocumentBindingChanges`     | Register the producer-neutral binding subscription in the shared RPC contract.                                                                                                                               |
-| `packages/client-runtime/package.json`               | `./state/scient-latex`                | Expose the Scient LaTeX HTTP client module through the package export map.                                                                                                                                   |
+| Inherited file                                            | Anchor                                     | Purpose                                                                                                                                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.gitignore`                                              | `native/synctex-runtime/`                  | Keep reproducible native helper build output outside version control.                                                                                                                                        |
+| `apps/desktop/src/backend/DesktopBackendConfiguration.ts` | `syncTexNavigatorPath`                     | Pass the exact packaged helper to the local desktop server.                                                                                                                                                  |
+| `apps/server/src/auth/RpcAuthorization.ts`                | `subscribeDocumentBindingChanges`          | Authorize the producer-neutral document-binding subscription as a read operation.                                                                                                                            |
+| `apps/server/src/config.ts`                               | `latexDir`                                 | Derive server-owned LaTeX state and carry the optional desktop-resolved helper path.                                                                                                                         |
+| `apps/server/src/cli/config.ts`                           | `syncTexNavigatorPath`                     | Decode the desktop bootstrap helper path into server configuration.                                                                                                                                          |
+| `apps/server/src/server.ts`                               | `LatexBuildService`                        | Provide the build coordinator and toolchain probe to the shared server layer.                                                                                                                                |
+| `apps/server/src/ws.ts`                                   | `subscribeDocumentBindingChanges`          | Carry the shared document store's binding-change hints over the existing RPC transport.                                                                                                                      |
+| `apps/web/src/components/ChatView.tsx`                    | `openFile(..., line)`                      | Open diagnostics and inverse-SyncTeX results at their reported source line through the inherited right-panel store.                                                                                          |
+| `apps/web/src/components/files/filePreviewMode.ts`        | `isLatexPreviewFile`                       | Recognize LaTeX sources in the inherited file preview mode selection.                                                                                                                                        |
+| `apps/web/src/components/files/FilePreviewPanel.tsx`      | `export function EditableFileSurface`      | Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination. |
+| `packages/client-runtime/src/rpc/client.ts`               | `subscribeDocumentBindingChanges`          | Classify the binding-change method as a subscription in the inherited transport client.                                                                                                                      |
+| `packages/contracts/src/desktopBootstrap.ts`              | `syncTexNavigatorPath`                     | Carry the helper path over the existing desktop bootstrap boundary.                                                                                                                                          |
+| `packages/contracts/src/environmentHttp.ts`               | `scientLatex`                              | Register the LaTeX endpoint group in the shared environment HTTP API.                                                                                                                                        |
+| `packages/contracts/src/index.ts`                         | `./scientLatex.ts`                         | Export the additive Scient LaTeX contract from the inherited contract package.                                                                                                                               |
+| `packages/contracts/src/rpc.ts`                           | `subscribeDocumentBindingChanges`          | Register the producer-neutral binding subscription in the shared RPC contract.                                                                                                                               |
+| `packages/client-runtime/package.json`                    | `./state/scient-latex`                     | Expose the Scient LaTeX HTTP client module through the package export map.                                                                                                                                   |
+| `scripts/build-desktop-artifact.ts`                       | `stageScientSyncTexRuntimeForDesktopBuild` | Mount verified helper staging into desktop, WSL-sidecar, and release packaging.                                                                                                                              |
 
 `scripts/verify-scient-latex-seams.mjs` (`pnpm latex:seams:check`) checks the
 manifest itself (schema version, owner), that every owned root/file and mount
@@ -564,12 +572,11 @@ gate rather than leaving the state saying an install is forever in flight.
 **Eagerly installed collections.** Promotion is not the last step. Once the
 state file names the new root — that is, once the engine is installed and
 discoverable — the run enters the `installing-packages` phase and asks
-`LatexPackageInstaller` for the `synctex` navigation CLI,
-`collection-latexrecommended`, and `collection-fontsrecommended` under a
-15-minute bound. TinyTeX-1's engines can emit an index, but its base archive
-does not include the CLI that reads it; the explicit `synctex` package gives a
-managed install the same forward/inverse navigation path as a full TeX Live.
-The base set
+`LatexPackageInstaller` for `collection-latexrecommended` and
+`collection-fontsrecommended` under a 15-minute bound. Source navigation is
+not a TinyTeX package and does not add an install-time network dependency: the
+application ships the same verified helper for managed TinyTeX, system TeX,
+and Tectonic. The base set
 holds neither `mathtools` nor `siunitx` nor most fonts, so without this a first
 build almost always stops on a missing `.sty` and waits for the per-build
 resolver to fetch one package at a time. The step can only ever add to a
@@ -612,29 +619,54 @@ Every invocation asks the engine for a SyncTeX index (`-synctex=1` for
 `latexmk`, `--synctex` for tectonic), and it is written next to the PDF in the
 build work directory like any other aux file. A successful publish copies that
 index into an exact-revision navigation directory after the immutable PDF is
-published and before the build reports success. Navigation metadata records the
-workspace/root identity, compile directory, synthetic output name, and whether
-the producing toolchain was managed. It never persists an executable path.
-Managed navigation resolves `synctex` from the current containment-checked
-install on every request, so replacing and cleaning an older TinyTeX tree does
-not strand existing revisions; system installations resolve `synctex` from
-their normal PATH. Schema-version-1 metadata remains readable, but its persisted
-command and bin directory are discarded as untrusted migration input.
+published and before the build reports success. Navigation metadata records
+only the workspace/root identity, compile directory, and synthetic output
+name. It never persists an executable path or the producing compiler's install
+kind. Schema-version-1 and -2 metadata remain readable, but their persisted
+command, bin directory, and managed flag are discarded as untrusted migration
+input.
 Failure to retain this auxiliary index never invalidates an otherwise valid
 PDF.
 
-Forward search starts on a Ctrl/Command-double-click in the source editor and
-asks `synctex view`
-for the current successful descriptor's exact artifact/revision. The PDF reader
-converts SyncTeX's top-left big-point coordinates into PDF.js's bottom-left
-coordinate system before scrolling. Inverse search starts on a PDF double
-Ctrl/Command-double-click, converts the page position back to top-left big points, asks `synctex
-edit`, confines the returned input to the workspace, and opens it at the
-reported line. Diagnostics with a valid workspace-relative file are buttons
-through the same line-aware open seam. Any revision change invalidates the
-in-flight navigation request and target, and a missing/evicted revision or
-index returns a typed `unavailable` result rather than navigating against a
-newer PDF.
+The reader CLI is the official MIT-licensed SyncTeX standalone program, pinned
+to source commit `82f46b64283b299b045a0295a09aadc11c644e1f` (CLI 1.7,
+parser 1.31), linked statically to pinned zlib 1.3.2. Linux is fully static so
+the helper does not inherit the hosted runner's glibc baseline; Windows uses
+the static MSVC runtime. The staging script verifies both source archives by
+SHA-256 before compiling, validates the source version contract, strips POSIX
+binaries, runs a version smoke test, and writes a
+per-file SHA-256/size provenance receipt beside both licenses. Desktop and
+remote-server builds re-verify that receipt and target before copying it. The
+server resolves only a receipt-verified bundled path; production never falls
+back to an arbitrary `synctex` on `PATH`. Windows ships its native helper as a
+desktop resource and Linux x64 inside the WSL server sidecar. Remote server
+assets carry every released platform key.
+
+Forward search starts on a plain double-click in the source editor only while
+Split is already open and asks `synctex view` for the current successful
+descriptor's exact artifact/revision. The inherited editor does not expose its
+internal cursor on the current upstream seam, so Scient sends SyncTeX's explicit
+unknown-column value instead of guessing a visual DOM offset for wrapped or
+bidirectional text. It includes the reader's current page as a disambiguation hint. SyncTeX
+returns ordered candidates: Scient preserves that order, uses the first valid
+target point (`x`/`y`, not the potentially page-spanning `h`/`v` enclosing box
+reported for some RTL material), converts that top-left big-point coordinate
+into PDF.js's bottom-left coordinate system, scrolls, and briefly marks the
+destination. If an engine records only line-level locations for a source line,
+different columns can legitimately return the same candidates; Scient keeps
+the official first candidate instead of inventing a more precise PDF position.
+
+Inverse search starts when a plain PDF double-click selects a word while Split
+is already open. The reader preserves native selection, converts the pointer's
+page position back to top-left big points, asks `synctex edit`, and selects the
+first returned candidate whose input is contained in the workspace. Source-only
+and PDF-only modes never switch layout implicitly. The source pane opens that
+file at the reported line; a negative or absent helper column remains
+truthfully line-level instead of being guessed. Diagnostics with a valid
+workspace-relative file are buttons through the same line-aware open seam. Any
+revision change invalidates the in-flight navigation request and target, and a
+missing/evicted revision or index returns a typed `unavailable` result rather
+than navigating against a newer PDF.
 
 ## Verification
 
@@ -646,12 +678,16 @@ managed-PATH construction), `latexLog.test.ts` (diagnostics parsing),
 install pipeline, including `artifactUrlRejection`, unpack argument and
 unpacker-path construction, staged-engine execution on Windows/macOS/Linux,
 refusal before promotion when that execution fails, and that a second install
-lands beside the first rather than over it), `syncTexOutput.test.ts` (multi-block
-command output, Windows-path colons, forward coordinates, legacy fields, and
-inverse locations), `LatexSyncTex.test.ts` (exact-revision publishing, command
-arguments, forward and inverse source confinement, current managed-install
-resolution, refusal to execute legacy persisted commands, unavailable stale
-revisions, and retained-index sweeping), `latexMissingPackages.test.ts` (missing-input parsing over real transcript
+lands beside the first rather than over it), `syncTexOutput.test.ts`
+(multi-block and multi-candidate command output, Windows-path colons, RTL
+point-versus-box coordinates, ordered inverse locations, and legacy fields),
+`LatexSyncTex.test.ts` (exact-revision publishing, column and page-hint
+arguments, ordered safe-candidate selection, forward and inverse source
+confinement, refusal to execute legacy persisted commands, truthful native
+failure outcomes, unavailable stale revisions, and retained-index sweeping),
+`SyncTexRuntime.test.ts` (release
+target mapping, receipt hashing, and tamper rejection),
+`latexMissingPackages.test.ts` (missing-input parsing over real transcript
 shapes, the file/package pairing, and the deliberate `null` for the author's own
 files), `latexPreamble.test.ts` (comment stripping, package and include
 extraction, the bounds, and the paths deliberately not followed),
@@ -734,12 +770,15 @@ pattern as `pdfFilePreviewSeam.test.ts` and `chatMarkdownMathSeam.test.ts`.
 `.github/workflows/scient-latex-managed-install.yml` is the opt-in native
 release-asset lane. On relevant pull-request changes it runs
 `TinyTexAssetSmoke.test.ts` on Windows x64, Linux x64, Apple Silicon, and Intel
-macOS runners; each job downloads the manifest pin, checks byte count and
-SHA-256, expands it with the host path the app relies on, applies POSIX execute
-permissions, starts the real `latexmk`, installs the SyncTeX CLI through the
-distribution's own `tlmgr`, compiles a multi-file PDF/index, forward-searches
-into the included child source, and exercises inverse navigation against the
-retained-index layout.
+macOS runners; each job builds the pinned official SyncTeX helper, downloads
+the TinyTeX manifest pin, checks byte count and SHA-256, expands it with the
+host path the app relies on, applies POSIX execute permissions, starts the real
+`latexmk`, compiles a multi-file PDF/index, forward-searches into the included
+child source with the bundled helper, and exercises inverse navigation against
+the retained-index layout. The stable release workflow separately builds the
+four helper artifacts, injects the matching one into every desktop package,
+injects Linux x64 into the Windows WSL sidecar, includes all four in the remote
+server asset, and verifies the nested helper's macOS signature.
 
 `scient-latex-seams.json` plus `scripts/verify-scient-latex-seams.mjs`
 (`pnpm latex:seams:check`) is the lane seam verifier described under

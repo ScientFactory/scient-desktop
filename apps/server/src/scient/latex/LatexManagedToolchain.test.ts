@@ -196,15 +196,6 @@ const unpackerLayer = (input: {
               .makeDirectory(path.dirname(target), { recursive: true })
               .pipe(Effect.orDie);
             yield* fileSystem.writeFileString(target, "engine").pipe(Effect.orDie);
-            // TinyTeX-1 emits indexes but its minimal archive does not ship
-            // the navigation CLI; the real install's eager package round adds
-            // it. Both names keep this cross-platform harness honest.
-            yield* fileSystem
-              .writeFileString(path.join(path.dirname(target), "synctex.exe"), "synctex")
-              .pipe(Effect.orDie);
-            yield* fileSystem
-              .writeFileString(path.join(path.dirname(target), "synctex"), "synctex")
-              .pipe(Effect.orDie);
           }),
       });
     }),
@@ -410,7 +401,7 @@ describe("LatexManagedToolchain", () => {
         const installRoot = yield* currentInstallRoot(harness.paths.statePath);
         expect(yield* Ref.get(harness.packageRequests)).toEqual([
           {
-            packages: ["synctex", "collection-latexrecommended", "collection-fontsrecommended"],
+            packages: ["collection-latexrecommended", "collection-fontsrecommended"],
             binDirectory: path.dirname(path.join(installRoot, EXECUTABLE_RELATIVE_PATH)),
             timeout: "15 minutes",
           },

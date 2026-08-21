@@ -581,6 +581,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
           assert.notProperty(config.bootstrap, "resourceMonitorPath");
+          assert.notProperty(config.bootstrap, "syncTexNavigatorPath");
           // httpBaseUrl uses the resolved distro IP from the test stub,
           // not localhost — the renderer reaches the backend directly to
           // avoid relying on wslhost forwarding.
@@ -892,6 +893,7 @@ describe("DesktopBackendConfiguration", () => {
       const dirname = `${resourcesPath}/app.asar/apps/desktop/dist-electron`;
       const embeddedMonitorPath = `${resourcesPath}/app.asar/apps/desktop/prod-resources/resource-monitor/t3-resource-monitor`;
       const monitorPath = `${resourcesPath}/resource-monitor/t3-resource-monitor`;
+      const syncTexPath = `${resourcesPath}/synctex-runtime/synctex`;
       yield* fileSystem.makeDirectory(
         `${resourcesPath}/app.asar/apps/desktop/prod-resources/resource-monitor`,
         { recursive: true },
@@ -899,14 +901,20 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.makeDirectory(`${resourcesPath}/resource-monitor`, {
         recursive: true,
       });
+      yield* fileSystem.makeDirectory(`${resourcesPath}/synctex-runtime`, {
+        recursive: true,
+      });
       yield* fileSystem.writeFileString(embeddedMonitorPath, "embedded");
       yield* fileSystem.writeFileString(monitorPath, "binary");
+      yield* fileSystem.writeFileString(syncTexPath, "binary");
       yield* fileSystem.chmod(monitorPath, 0o755);
+      yield* fileSystem.chmod(syncTexPath, 0o755);
 
       yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
+        assert.equal(config.bootstrap.syncTexNavigatorPath, syncTexPath);
         assert.equal(config.bootstrap.desktopTelemetryFd, 4);
         assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
       }).pipe(
@@ -922,6 +930,42 @@ describe("DesktopBackendConfiguration", () => {
                 dirname,
                 isPackaged: true,
                 resourcesPath,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolves the development SyncTeX helper from the Scient-owned native tree", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const dirname = path.join(baseDir, "apps/desktop/src");
+      const syncTexPath = path.join(baseDir, "native/synctex-runtime/darwin-x64/synctex");
+      yield* fileSystem.makeDirectory(path.dirname(syncTexPath), { recursive: true });
+      yield* fileSystem.writeFileString(syncTexPath, "binary");
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        assert.equal(config.bootstrap.syncTexNavigatorPath, syncTexPath);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                dirname,
+                devServerUrl: "http://127.0.0.1:5733",
+                isPackaged: false,
               }),
             ),
           ),

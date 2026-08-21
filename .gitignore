@@ -35,6 +35,7 @@ artifacts/app-store/screenshots/
 .github/pr-assets/
 native/**/target/
 native/whisper-runtime/
+native/synctex-runtime/
 node_modules/
 .alchemy/
 *.log

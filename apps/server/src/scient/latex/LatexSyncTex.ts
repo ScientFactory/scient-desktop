@@ -11,7 +11,7 @@ import type {
   ScientLatexSyncUnavailable,
   ScientLatexSyncUnavailableReason,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -26,9 +26,8 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as GeneratedDocumentStore from "../documentArtifacts/GeneratedDocumentStore.ts";
-import { latexEngineEnvironment } from "./latexCommand.ts";
-import { readManagedLatexInstall } from "./managedLatexInstall.ts";
-import { parseSyncTexForwardLocation, parseSyncTexInverseLocation } from "./syncTexOutput.ts";
+import * as SyncTexRuntime from "./SyncTexRuntime.ts";
+import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
 
 const SyncTexNavigationMetadataV1 = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -39,7 +38,7 @@ const SyncTexNavigationMetadataV1 = Schema.Struct({
   command: Schema.String,
   binDirectory: Schema.NullOr(Schema.String),
 });
-const SyncTexNavigationMetadata = Schema.Struct({
+const SyncTexNavigationMetadataV2 = Schema.Struct({
   schemaVersion: Schema.Literal(2),
   workspaceRoot: Schema.String,
   rootRelativePath: Schema.String,
@@ -48,26 +47,33 @@ const SyncTexNavigationMetadata = Schema.Struct({
   /** Resolve the current contained install at request time; never persist an executable path. */
   managed: Schema.Boolean,
 });
+const SyncTexNavigationMetadata = Schema.Struct({
+  schemaVersion: Schema.Literal(3),
+  workspaceRoot: Schema.String,
+  rootRelativePath: Schema.String,
+  compileDirectory: Schema.String,
+  outputFileName: Schema.String,
+});
 type SyncTexNavigationMetadata = typeof SyncTexNavigationMetadata.Type;
 const SyncTexNavigationMetadataJson = Schema.fromJsonString(
-  Schema.Union([SyncTexNavigationMetadataV1, SyncTexNavigationMetadata]),
+  Schema.Union([
+    SyncTexNavigationMetadataV1,
+    SyncTexNavigationMetadataV2,
+    SyncTexNavigationMetadata,
+  ]),
 );
 const encodeNavigationMetadata = Schema.encodeSync(SyncTexNavigationMetadataJson);
 const decodeNavigationMetadataFile = Schema.decodeUnknownOption(SyncTexNavigationMetadataJson);
 const decodeNavigationMetadata = (source: string): Option.Option<SyncTexNavigationMetadata> =>
   Option.map(decodeNavigationMetadataFile(source), (metadata) =>
-    metadata.schemaVersion === 2
+    metadata.schemaVersion === 3
       ? metadata
       : {
-          schemaVersion: 2,
+          schemaVersion: 3,
           workspaceRoot: metadata.workspaceRoot,
           rootRelativePath: metadata.rootRelativePath,
           compileDirectory: metadata.compileDirectory,
           outputFileName: metadata.outputFileName,
-          // Version 1 wrote a bin directory only for Scient-managed builds.
-          // Its command and directory are deliberately discarded: both are
-          // untrusted persisted input and may name an install already removed.
-          managed: metadata.binDirectory !== null,
         },
   );
 
@@ -78,7 +84,6 @@ interface PublishedSyncTexInput {
   readonly rootRelativePath: string;
   readonly compileDirectory: string;
   readonly syncTexPath: string;
-  readonly managed: boolean;
 }
 
 const NAVIGATION_TIMEOUT = "10 seconds";
@@ -119,15 +124,10 @@ export const make = Effect.gen(function* () {
   const store = yield* GeneratedDocumentStore.GeneratedDocumentStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const runner = yield* ProcessRunner.ProcessRunner;
+  const runtime = yield* SyncTexRuntime.SyncTexRuntime;
   const hostPlatform = yield* HostProcessPlatform;
-  const hostEnvironment = yield* HostProcessEnvironment;
   const crypto = yield* Crypto.Crypto;
   const authority = ArtifactAuthority.make(yield* environment.getEnvironmentId);
-  const pathDelimiter = hostPlatform === "win32" ? ";" : ":";
-  const managedContext = yield* Effect.context<
-    FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
-  >();
-  const findManagedInstall = readManagedLatexInstall().pipe(Effect.provideContext(managedContext));
 
   const navigationDirectory = (artifactId: ArtifactId, revisionId: ArtifactRevisionId) =>
     path.join(config.latexDir, "synctex", artifactId, revisionId);
@@ -205,18 +205,19 @@ export const make = Effect.gen(function* () {
       const outputStem = path.basename(sourcePath).replace(/\.synctex(?:\.gz)?$/iu, "");
       const outputFileName = `${outputStem}.pdf`;
       const metadata: SyncTexNavigationMetadata = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         workspaceRoot: input.workspaceRoot,
         rootRelativePath: normalizeRelativePath(input.rootRelativePath),
         compileDirectory: input.compileDirectory,
         outputFileName,
-        managed: input.managed,
       };
       const indexFileName = `${outputStem}.synctex${sourcePath.endsWith(".gz") ? ".gz" : ""}`;
-      const bytes = yield* fileSystem.readFile(sourcePath);
       yield* fileSystem.makeDirectory(path.dirname(finalDirectory), { recursive: true });
       yield* fileSystem.makeDirectory(stagingDirectory, { recursive: true });
-      yield* fileSystem.writeFile(path.join(stagingDirectory, indexFileName), bytes);
+      // Indexes can be large for long documents. Copy them directly into the
+      // atomic staging directory instead of materializing the whole file in
+      // the server heap.
+      yield* fileSystem.copyFile(sourcePath, path.join(stagingDirectory, indexFileName));
       // The SyncTeX CLI requires `-o` to name an existing output. It finds the
       // separately retained index by this basename and never reads PDF bytes,
       // so a zero-byte marker satisfies the contract without duplicating every
@@ -281,13 +282,16 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.option);
       if (Option.isNone(metadataText)) {
         return unavailable(
-          "index-unavailable",
+          "index-missing",
           "This PDF revision does not have a SyncTeX navigation index.",
         );
       }
       const decoded = decodeNavigationMetadata(metadataText.value);
       if (Option.isNone(decoded)) {
-        return unavailable("index-unavailable", "The SyncTeX navigation index is unreadable.");
+        return unavailable(
+          "index-invalid",
+          "This PDF's source-navigation index is unreadable. Rebuild the document.",
+        );
       }
       const metadata = decoded.value;
       const metadataRoot = workspaceSource(input.workspaceRoot, metadata.rootRelativePath);
@@ -312,58 +316,35 @@ export const make = Effect.gen(function* () {
       };
     });
 
-  interface NavigationCommand {
-    readonly command: string;
-    readonly binDirectory: string | null;
-  }
-
-  /**
-   * A retained index records provenance, never an executable capability. A
-   * managed reinstall replaces and then removes its old versioned directory,
-   * so navigation resolves the current, containment-checked install every
-   * time. Legacy metadata is migrated above and its persisted command is never
-   * executed. System builds continue to resolve `synctex` through PATH.
-   */
-  const resolveNavigationCommand = (
-    metadata: SyncTexNavigationMetadata,
-  ): Effect.Effect<NavigationCommand | null> =>
-    Effect.gen(function* () {
-      if (!metadata.managed) return { command: "synctex", binDirectory: null };
-      const install = yield* findManagedInstall;
-      if (install === null) return null;
-      const binDirectory = path.dirname(install.executable);
-      const command = path.join(binDirectory, hostPlatform === "win32" ? "synctex.exe" : "synctex");
-      const present = yield* fileSystem.exists(command).pipe(Effect.orElseSucceed(() => false));
-      return present ? { command, binDirectory } : null;
-    });
-
   const runNavigation = (input: {
     readonly metadata: SyncTexNavigationMetadata;
     readonly directory: string;
-    readonly navigationCommand: NavigationCommand;
+    readonly command: string;
     readonly args: ReadonlyArray<string>;
   }) =>
     runner
       .run({
-        command: input.navigationCommand.command,
+        command: input.command,
         args: input.args,
         cwd: input.metadata.compileDirectory,
-        ...(input.navigationCommand.binDirectory === null
-          ? {}
-          : {
-              env: latexEngineEnvironment({
-                base: {},
-                hostEnvironment,
-                binDirectory: input.navigationCommand.binDirectory,
-                pathDelimiter,
-              }),
-            }),
         timeout: NAVIGATION_TIMEOUT,
         maxOutputBytes: NAVIGATION_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
+
+  const resolveNavigator = runtime.resolve.pipe(
+    Effect.map((resolved) => ({ _tag: "available" as const, command: resolved.command })),
+    Effect.catch((error) =>
+      Effect.succeed(
+        unavailable(
+          "navigator-unavailable",
+          `${error.detail} Repair or reinstall Scient to restore source navigation.`,
+        ),
+      ),
+    ),
+  );
 
   const forward = (
     input: ScientLatexForwardSyncRequest,
@@ -375,31 +356,38 @@ export const make = Effect.gen(function* () {
       if (source === null) {
         return unavailable("invalid-source", "The requested source path is outside the workspace.");
       }
-      const navigationCommand = yield* resolveNavigationCommand(navigation.metadata);
-      if (navigationCommand === null) {
-        return unavailable("command-unavailable", "The SyncTeX command is not installed.");
-      }
+      const resolvedRuntime = yield* resolveNavigator;
+      if (resolvedRuntime._tag === "unavailable") return resolvedRuntime;
       const position =
         input.pageHint === undefined
           ? `${input.line}:${input.column ?? 0}:${source.absolutePath}`
           : `${input.line}:${input.column ?? 0}:${input.pageHint}:${source.absolutePath}`;
       const result = yield* runNavigation({
         ...navigation,
-        navigationCommand,
+        command: resolvedRuntime.command,
         args: ["view", "-i", position, "-o", navigation.outputPath, "-d", navigation.directory],
       });
       if (Option.isNone(result)) {
-        return unavailable("command-unavailable", "The SyncTeX command could not be started.");
+        return unavailable(
+          "navigator-failed",
+          "Scient's source-navigation helper could not be started.",
+        );
       }
-      if (result.value.timedOut || result.value.code !== 0) {
-        return unavailable("not-found", "No PDF position matched this source line.");
-      }
+      if (result.value.timedOut)
+        return unavailable("query-timed-out", "Source navigation took too long. Try again.");
+      if (result.value.code !== 0)
+        return unavailable("navigator-failed", "Source navigation could not be completed.");
       const location = parseSyncTexForwardLocation(
         `${result.value.stdout}\n${result.value.stderr}`,
       );
       return location === null
-        ? unavailable("not-found", "No PDF position matched this source line.")
-        : ({ _tag: "found", ...location } satisfies ScientLatexForwardSyncResult);
+        ? unavailable("position-unmapped", "No PDF position is mapped to this source line.")
+        : ({
+            _tag: "found",
+            page: location.page,
+            x: location.x,
+            y: location.y,
+          } satisfies ScientLatexForwardSyncResult);
     });
 
   const inverse = (
@@ -408,13 +396,11 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const navigation = yield* loadNavigation(input);
       if (navigation._tag === "unavailable") return navigation;
-      const navigationCommand = yield* resolveNavigationCommand(navigation.metadata);
-      if (navigationCommand === null) {
-        return unavailable("command-unavailable", "The SyncTeX command is not installed.");
-      }
+      const resolvedRuntime = yield* resolveNavigator;
+      if (resolvedRuntime._tag === "unavailable") return resolvedRuntime;
       const result = yield* runNavigation({
         ...navigation,
-        navigationCommand,
+        command: resolvedRuntime.command,
         args: [
           "edit",
           "-o",
@@ -424,33 +410,44 @@ export const make = Effect.gen(function* () {
         ],
       });
       if (Option.isNone(result)) {
-        return unavailable("command-unavailable", "The SyncTeX command could not be started.");
+        return unavailable(
+          "navigator-failed",
+          "Scient's source-navigation helper could not be started.",
+        );
       }
-      if (result.value.timedOut || result.value.code !== 0) {
-        return unavailable("not-found", "No source line matched this PDF position.");
-      }
-      const location = parseSyncTexInverseLocation(
+      if (result.value.timedOut)
+        return unavailable("query-timed-out", "Source navigation took too long. Try again.");
+      if (result.value.code !== 0)
+        return unavailable("navigator-failed", "Source navigation could not be completed.");
+      const locations = parseSyncTexInverseLocations(
         `${result.value.stdout}\n${result.value.stderr}`,
       );
-      if (location === null) {
-        return unavailable("not-found", "No source line matched this PDF position.");
+      if (locations.length === 0) {
+        return unavailable("position-unmapped", "No source line is mapped to this PDF position.");
       }
-      const absoluteInput = path.isAbsolute(location.input)
-        ? path.resolve(location.input)
-        : path.resolve(navigation.metadata.compileDirectory, location.input);
-      const relative = path.relative(path.resolve(input.workspaceRoot), absoluteInput);
-      if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+      for (const location of locations) {
+        const absoluteInput = path.isAbsolute(location.input)
+          ? path.resolve(location.input)
+          : path.resolve(navigation.metadata.compileDirectory, location.input);
+        const relative = path.relative(path.resolve(input.workspaceRoot), absoluteInput);
+        if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) continue;
+        return {
+          _tag: "found",
+          relativePath: normalizeRelativePath(relative),
+          line: location.line,
+          column: location.column,
+        } satisfies ScientLatexInverseSyncResult;
+      }
+      if (locations.length > 0) {
         return unavailable("invalid-source", "The matching source is outside the workspace.");
       }
-      return {
-        _tag: "found",
-        relativePath: normalizeRelativePath(relative),
-        line: location.line,
-        column: location.column,
-      } satisfies ScientLatexInverseSyncResult;
+      return unavailable("position-unmapped", "No source line is mapped to this PDF position.");
     });
 
   return LatexSyncTex.of({ publishIndex, forward, inverse });
 });
 
-export const layer = Layer.effect(LatexSyncTex, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(LatexSyncTex, make).pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(SyncTexRuntime.layer),
+);

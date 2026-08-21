@@ -684,7 +684,6 @@ export const make = Effect.gen(function* () {
                   rootRelativePath: input.rootRelativePath,
                   compileDirectory: input.compileDirectory,
                   syncTexPath: input.syncTexPath,
-                  managed: input.managedToolchain,
                 })
                 .pipe(
                   Effect.catchCause((cause) =>

@@ -188,9 +188,12 @@ export type ScientLatexInverseSyncRequest = typeof ScientLatexInverseSyncRequest
 
 export const ScientLatexSyncUnavailableReason = Schema.Literals([
   "revision-unavailable",
-  "index-unavailable",
-  "command-unavailable",
-  "not-found",
+  "index-missing",
+  "index-invalid",
+  "navigator-unavailable",
+  "navigator-failed",
+  "query-timed-out",
+  "position-unmapped",
   "invalid-source",
 ]);
 export type ScientLatexSyncUnavailableReason = typeof ScientLatexSyncUnavailableReason.Type;
@@ -206,8 +209,6 @@ export const ScientLatexForwardSyncResult = Schema.Union([
     page: PositiveLine,
     x: SyncCoordinate,
     y: SyncCoordinate,
-    width: SyncCoordinate,
-    height: SyncCoordinate,
   }),
   ScientLatexSyncUnavailable,
 ]);
