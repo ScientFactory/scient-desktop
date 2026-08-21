@@ -19,7 +19,10 @@ export interface PdfViewportSnapshotTarget {
 export interface PdfReaderViewportSession {
   readonly restore: (target: PdfViewportRestoreTarget, pageCount: number) => number;
   readonly completeRestore: () => void;
-  readonly updateFromViewArea: (location: PdfViewAreaLocation | null | undefined) => void;
+  readonly updateFromViewArea: (
+    location: PdfViewAreaLocation | null | undefined,
+    scaleValueOverride?: string,
+  ) => void;
   readonly snapshot: (target: PdfViewportSnapshotTarget, pageCount: number) => void;
   readonly flush: () => void;
 }
@@ -41,9 +44,13 @@ export function createPdfReaderViewportSession(input: {
     completeRestore: () => {
       acceptingViewUpdates = true;
     },
-    updateFromViewArea: (location) => {
+    updateFromViewArea: (location, scaleValueOverride) => {
       if (!acceptingViewUpdates) return;
-      const viewport = pdfReaderViewportFromLocation(location);
+      const viewport = pdfReaderViewportFromLocation(
+        location && scaleValueOverride !== undefined
+          ? { ...location, scale: scaleValueOverride }
+          : location,
+      );
       if (viewport === null) return;
       latestViewport = viewport;
       store.updateViewport(input.documentKey, viewport);

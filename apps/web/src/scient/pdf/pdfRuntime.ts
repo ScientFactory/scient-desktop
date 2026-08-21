@@ -17,6 +17,8 @@ import {
   PDFViewer,
 } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
 
+import { createPdfResizeSettlement } from "./pdfResizeSettlement";
+
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export type PdfPasswordReason = "required" | "incorrect";
@@ -49,7 +51,9 @@ export interface ScientPdfRuntime {
   readonly linkService: PDFLinkService;
   readonly loadingTask: PDFDocumentLoadingTask;
   readonly viewer: PDFViewer;
+  cancelContainerSizeRefresh: () => void;
   destroy: () => Promise<void>;
+  refreshForContainerSize: () => void;
 }
 
 export type PdfJsFindState = (typeof FindState)[keyof typeof FindState];
@@ -92,6 +96,7 @@ export function createPdfRuntime(input: {
   readonly container: HTMLDivElement;
   readonly document: PDFDocumentProxy;
   readonly loadingTask: PDFDocumentLoadingTask;
+  readonly onContainerResize?: ((viewer: PDFViewer) => void) | undefined;
   readonly sourceUrl: string;
   readonly viewerElement: HTMLDivElement;
 }): ScientPdfRuntime {
@@ -134,22 +139,32 @@ export function createPdfRuntime(input: {
   findController.setDocument(input.document);
   viewer.setDocument(input.document);
 
-  let resizeFrame: number | null = null;
-  const resizeObserver = new ResizeObserver(() => {
-    if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => {
-      resizeFrame = null;
-      if (viewer.currentScaleValue === "page-width" || viewer.currentScaleValue === "page-fit") {
-        const scaleMode = viewer.currentScaleValue;
-        viewer.currentScaleValue = scaleMode;
-      } else {
-        viewer.update();
-      }
-    });
-  });
-  resizeObserver.observe(input.container);
-
   let destroyed = false;
+  const resizeSettlement = createPdfResizeSettlement(() => {
+    if (destroyed) return;
+    if (input.onContainerResize) {
+      input.onContainerResize(viewer);
+      return;
+    }
+    if (viewer.currentScaleValue === "page-width" || viewer.currentScaleValue === "page-fit") {
+      const scaleMode = viewer.currentScaleValue;
+      viewer.currentScaleValue = scaleMode;
+    } else {
+      viewer.update();
+    }
+  });
+  const refreshForContainerSize = () => {
+    if (!destroyed) resizeSettlement.schedule();
+  };
+  let observedWidth = input.container.getBoundingClientRect().width;
+  const resizeObserver = new ResizeObserver(() => {
+    const nextWidth = input.container.getBoundingClientRect().width;
+    if (Math.abs(nextWidth - observedWidth) < 0.5) return;
+    observedWidth = nextWidth;
+    refreshForContainerSize();
+  });
+  resizeObserver.observe(input.container, { box: "border-box" });
+
   return {
     document: input.document,
     eventBus,
@@ -157,11 +172,13 @@ export function createPdfRuntime(input: {
     linkService,
     loadingTask: input.loadingTask,
     viewer,
+    cancelContainerSizeRefresh: resizeSettlement.cancel,
+    refreshForContainerSize,
     destroy: async () => {
       if (destroyed) return;
       destroyed = true;
       resizeObserver.disconnect();
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeSettlement.cancel();
       viewer.cleanup();
       input.viewerElement.replaceChildren();
       await input.loadingTask.destroy();

@@ -9,6 +9,10 @@ import {
   type ScientPdfRuntime,
 } from "./pdfRuntime";
 import { clampPdfPage, nextPdfRotation, normalizePdfZoom } from "./pdfReaderModel";
+import {
+  createPdfResponsiveZoomController,
+  type PdfResponsiveZoomController,
+} from "./pdfResponsiveZoom";
 import { type PdfViewAreaLocation } from "./pdfReaderSessionStore";
 import { createPdfReaderViewportSession } from "./pdfReaderViewportSession";
 
@@ -94,6 +98,7 @@ export function useScientPdfReader(input: {
 }) {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
+  const responsiveZoomRef = useRef<PdfResponsiveZoomController | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
   const activeSearchQueryRef = useRef("");
   const documentKeyRef = useRef(input.documentKey);
@@ -115,6 +120,7 @@ export function useScientPdfReader(input: {
     let pendingPinchOrigin: [number, number] = [0, 0];
     let onPinchWheel: ((event: WheelEvent) => void) | null = null;
     const viewportSession = createPdfReaderViewportSession({ documentKey: input.documentKey });
+    const responsiveZoom = createPdfResponsiveZoomController();
     setState(INITIAL_STATE);
     const loadingTask = startPdfDocumentLoad(input.sourceUrl, {
       onPassword: ({ reason, submit }) => {
@@ -144,18 +150,21 @@ export function useScientPdfReader(input: {
           viewerElement,
           document,
           loadingTask,
+          onContainerResize: (viewer) => responsiveZoom.reconcile(viewer, container.clientWidth),
           sourceUrl: input.sourceUrl,
         });
         runtimeRef.current = runtime;
+        responsiveZoomRef.current = responsiveZoom;
 
         const onPagesInit = () => {
           const restoredPage = viewportSession.restore(runtime.viewer, runtime.document.numPages);
+          responsiveZoom.capturePreference(runtime.viewer);
           if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
           restoreFrame = requestAnimationFrame(() => {
             restoreFrame = null;
             if (!current) return;
             viewportSession.completeRestore();
-            runtime.viewer.update();
+            runtime.refreshForContainerSize();
           });
           setState((previous) => ({
             ...previous,
@@ -210,15 +219,26 @@ export function useScientPdfReader(input: {
         };
         const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
           setState((previous) => ({ ...previous, page: pageNumber }));
+          runtime.refreshForContainerSize();
         };
-        const onScaleChanging = ({ scale }: { scale: number }) => {
+        const onScaleChanging = ({
+          scale,
+          presetValue,
+        }: {
+          scale: number;
+          presetValue?: string;
+        }) => {
+          if (responsiveZoom.observeScaleChange(runtime.viewer, scale, presetValue)) {
+            runtime.cancelContainerSizeRefresh();
+          }
           setState((previous) => ({ ...previous, scale }));
         };
         const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
+          runtime.refreshForContainerSize();
         };
         const onUpdateViewArea = ({ location }: { location?: PdfViewAreaLocation }) => {
-          viewportSession.updateFromViewArea(location);
+          viewportSession.updateFromViewArea(location, responsiveZoom.persistedScaleValue());
         };
         const onFindCount = ({
           matchesCount,
@@ -278,6 +298,8 @@ export function useScientPdfReader(input: {
             const targetScale = normalizePdfZoom(currentScale * pendingPinchFactor);
             pendingPinchFactor = 1;
             if (targetScale === currentScale) return;
+            runtime.cancelContainerSizeRefresh();
+            responsiveZoom.rememberScale(targetScale);
             runtime.viewer.updateScale({
               scaleFactor: targetScale / currentScale,
               origin: pendingPinchOrigin,
@@ -319,10 +341,19 @@ export function useScientPdfReader(input: {
       if (onPinchWheel) container.removeEventListener("wheel", onPinchWheel);
       const runtime = runtimeRef.current;
       if (runtime) {
-        viewportSession.snapshot(runtime.viewer, runtime.document.numPages);
+        viewportSession.snapshot(
+          {
+            currentPageNumber: runtime.viewer.currentPageNumber,
+            currentScale: runtime.viewer.currentScale,
+            currentScaleValue: responsiveZoom.persistedScaleValue(),
+            pagesRotation: runtime.viewer.pagesRotation,
+          },
+          runtime.document.numPages,
+        );
       }
       viewportSession.flush();
       runtimeRef.current = null;
+      responsiveZoomRef.current = null;
       void (runtime ? runtime.destroy() : loadingTask.destroy());
     };
   }, [
@@ -393,12 +424,16 @@ export function useScientPdfReader(input: {
   const setZoom = useCallback((scale: number) => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
-    runtime.viewer.currentScale = normalizePdfZoom(scale);
+    runtime.cancelContainerSizeRefresh();
+    const normalized = responsiveZoomRef.current?.rememberScale(scale) ?? normalizePdfZoom(scale);
+    runtime.viewer.currentScale = normalized;
   }, []);
 
   const setZoomMode = useCallback((mode: "page-width" | "page-fit" | "page-actual") => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
+    runtime.cancelContainerSizeRefresh();
+    responsiveZoomRef.current?.rememberMode(mode);
     runtime.viewer.currentScaleValue = mode;
   }, []);
 
