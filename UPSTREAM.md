@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-21-upstream-sync-be7d35aaeb.md`](docs/internals/2026-08-21-upstream-sync-be7d35aaeb.md)
+[`docs/internals/2026-08-22-upstream-sync-dedcd99a9d.md`](docs/internals/2026-08-22-upstream-sync-dedcd99a9d.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `be7d35aaeb49a04483ec5e0d2284e8b5b70a3b6e` into the refresh
+checkpoint `dedcd99a9d16240327ce763b885b326aff607bdb` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`beab6886f45bf42906d0bd01aefe5dfe9e66a867`. Later observed T3
+`be7d35aaeb49a04483ec5e0d2284e8b5b70a3b6e`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -224,9 +224,29 @@ broken) while keeping Scient's documentation fast path, brand check, runner
 fleet, and release lanes; the server asset layer combines T3's charset header
 with Scient's range-capable PDF/media seam; the sidebar keeps Scient's Quick
 Chat seams on top of T3's jump-hint suppression and provider-icon resolution;
-and the trust list takes T3's superset. The merge also drops upstream's
+and the trust list took T3's superset before the owner reset it the same day
+to the two deliberate entries described below. The merge also drops upstream's
 removed `.plans/` planning docs per its new work-artifact policy; the content
 remains recoverable from history.
+
+The 2026-08-22 sync through `dedcd99a9d` receives 20 official commits covering
+background thread creation on cmd+enter, follow-up push ordering, spaced
+folder link clicks, wide ordered-list markers, external project icons,
+client-origin thread analytics, oversized terminal-grapheme and search-query
+crash fixes, SSH remote PATH restoration, and tailscale endpoint hardening.
+Fifteen textual conflicts were composed: upstream's client-analytics plumbing
+lands verbatim while Scient's fork completion gates stay in the dispatch
+path; upstream's incoming migration renumbers to `042` because Scient's
+shipped `041` is never reused; the composer assigns draft threads upstream's
+background submission while server threads keep Scient steering; the markdown
+link layer takes upstream's space-tolerant extraction with Scient's
+decoded-key lookup and workspace-root resolution preserved; and the command
+palette footer renders Scient's project actions through upstream's new footer
+primitive. A pre-merge simulation under-predicted the conflict count; the
+real merge's fifteen conflicts and all thirty-two auto-merged overlapping
+files were audited against both parents with zero Scient seam losses. The
+trust list remains the owner-set two-entry list; upstream's range touched no
+governance files.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
