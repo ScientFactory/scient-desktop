@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.5",
+    publishedAt: "2026-08-22",
+    kicker: "New agent providers, a message queue, and effortless LaTeX navigation",
+    headline: "More ways to run agents, fewer reasons to wait",
+    summary:
+      "Scient connects to Factory Droid in early access, ships built-in SyncTeX navigation with every install, queues messages while your agent works, and continues to absorb workspace improvements from the maintained T3 foundation.",
+    highlights: [
+      {
+        id: "droid-provider",
+        title: "Connect Factory Droid",
+        description:
+          "Work with Factory's Droid agent from Scient in early access. Sign in by device pairing or API key, pick models with per-model reasoning effort and cost labels, switch mid-thread, and steer running turns.",
+      },
+      {
+        id: "built-in-synctex-navigation",
+        title: "Jump between PDF and source anywhere",
+        description:
+          "Double-click navigation between PDF and LaTeX source now ships built in on every desktop platform and works with TinyTeX, TeX Live, MiKTeX, or Tectonic without extra setup.",
+      },
+      {
+        id: "thread-message-queue",
+        title: "Queue messages while the agent works",
+        description:
+          "Messages sent during a turn wait in a queue that auto-sends in order when the turn finishes. Steer immediately with Cmd/Ctrl+Enter, edit, reorder, delete, and rely on the queue across restarts.",
+      },
+      {
+        id: "latex-managed-install-macos-linux",
+        title: "One-click LaTeX setup on macOS and Linux x64",
+        description:
+          "The managed TinyTeX installation extends beyond Windows to macOS and Linux x64, and build errors become clickable links that open the exact file and line.",
+      },
+      {
+        id: "agent-added-sources-review",
+        title: "Let agents add sources for review",
+        description:
+          "Agents can add project PDFs to your Sources library and attach them to references. Additions are flagged for your review before they become part of the project record.",
+      },
+    ],
+  },
+  {
     version: "0.6.4",
     publishedAt: "2026-08-14",
     kicker: "MATLAB analysis, source notes, and smoother project work",
