@@ -75,6 +75,20 @@ export const ModelListRow = memo(function ModelListRow(props: {
               New
             </span>
           ) : null}
+          {props.model.providerCostLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="shrink-0 text-[10px] font-medium leading-none text-muted-foreground/70" />
+                }
+              >
+                {props.model.providerCostLabel}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                Costs {props.model.providerCostLabel} of the provider&apos;s base token rate
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
         {props.showProvider && (
           <div className="mt-1 flex items-center gap-1.5">

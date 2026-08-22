@@ -1,5 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { ClaudeAI, CursorIcon, DroidIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
@@ -8,6 +8,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
+  [ProviderDriverKind.make("droid")]: DroidIcon,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
@@ -27,6 +28,8 @@ export type ModelEsque = {
   shortName?: string | undefined;
   subProvider?: string | undefined;
   isLegacy?: boolean | undefined;
+  /** Provider-reported compact cost label (e.g. `"0.5×"`); absent when unknown. */
+  providerCostLabel?: string | undefined;
 };
 
 function escapeRegExp(value: string): string {

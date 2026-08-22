@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with five entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
 
 | Driver kind   | Driver source                           |
 | ------------- | --------------------------------------- |
@@ -16,6 +16,7 @@ orchestration layer does not know which one is behind a thread.
 | `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
+| `droid`       | [`Drivers/DroidDriver.ts`][droid]       |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -38,6 +39,50 @@ directory to route session and turn operations for a thread, so callers name a t
 
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
+
+### Droid (Factory) driver
+
+Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`), sharing the ACP
+session runtime with Grok and Cursor. See [providers-droid.md](../user/providers-droid.md) for the
+user-facing setup flow. Implementation notes that go beyond the shared runtime:
+
+- `Drivers/DroidDriver.ts` is manual-maintenance only: no managed install/update actions are
+  declared yet.
+- `Layers/DroidProvider.ts` probes status as version check → one non-inference ACP session that
+  authenticates, reads the model inventory from `sessionSetupResult.configOptions`, and then walks
+  every catalog entry to observe its own reasoning-effort ladder (best-effort and time-bounded; on
+  failure the snapshot inventory stands with unknown per-model ladders rather than wrong ones). Only an
+  "Authentication required" failure maps to an unauthenticated snapshot; any other startup or spawn
+  failure is a generic probe error. Factory custom (`custom:`) models remain marked custom for
+  ownership and presentation, while their reasoning-effort capabilities come from the same
+  selected-model ACP snapshot as Factory-managed models.
+- `acp/DroidAcpSupport.ts` owns Droid-specific vocabulary: auth-method selection
+  (`FACTORY_API_KEY` env vs device pairing), model/effort config-option parsing (including the
+  per-model factory-token cost label parsed from each option description), autonomy-mode
+  mapping, and the shared `applyDroidModelAndEffort` used by both the interactive adapter and
+  headless text generation.
+- `Layers/DroidAdapter.ts` follows the Grok adapter chassis (thread-locked prompt preparation,
+  steering by prompt counting, atomic turn settlement under `Effect.ensuring`, two-phase interrupt)
+  and advertises standard ACP form elicitation so structured Droid questions use Scient's existing
+  user-input request/response lifecycle. It also adds a Droid idle watchdog: a silent child turn is cancelled after
+  `SCIENT_DROID_TURN_IDLE_TIMEOUT_MS` (default 600s; capped at 3600s while nested Tasks run).
+
+Shared-runtime edits this driver required (reconcile on upstream refreshes):
+
+- `AcpSessionRuntime.ts`: pass-through of authenticate metadata, folding of
+  `config_option_update` notifications into cached config state, and resolution of mode-selector
+  ids by category when `session/set_mode` names a value rather than an option id. Factory CLI 0.200.0
+  applies model writes and publishes their updates but never completes those JSON-RPC requests, so
+  Droid selects notification transport only for the `model` option and waits for the matching
+  authoritative update. Reasoning and autonomy keep normal request transport; a successful empty
+  acknowledgment updates the cached value only when no concurrent notification replaced the snapshot.
+- `packages/effect-acp`: `SetSessionConfigOptionResponse` decoding is made tolerant in
+  `rpc.ts` via a hand-written lenient wire codec (`LenientSetSessionConfigOptionResponse`), not by
+  editing the generated `schema.gen.ts`: a missing or `null` `configOptions` field normalizes to an
+  empty array while non-array payloads are still rejected. Keeping this out of generated code means
+  regeneration from the pinned schema assets cannot silently drop it; `rpc.test.ts` guards both
+  behaviors. Missing or null inventories remain absent rather than being normalized to an
+  authoritative empty list.
 
 ## Scient-assisted provider lifecycle
 
@@ -259,6 +304,7 @@ when a request opens (approval) or user input is requested, via
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
+[droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts

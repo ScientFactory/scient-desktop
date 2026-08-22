@@ -89,6 +89,18 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     return false;
   }
 
+  // Droid's ACP catalog is likewise authoritative: models are discovered live
+  // from the CLI, and a model Factory removes or revokes must not linger in
+  // the picker. Same state-aware policy as OpenCode below — retain during
+  // pending initial probes and failed installed-probe refreshes, replace on
+  // successful discovery.
+  if (provider.driver === ProviderDriverKind.make("droid")) {
+    const isPendingInitialProbe =
+      provider.enabled && !provider.installed && provider.status === "warning";
+    const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
+    return isPendingInitialProbe || didInstalledProviderProbeFail;
+  }
+
   if (provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
   }
@@ -119,6 +131,16 @@ const mergeProviderModels = (
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
+    if (provider.driver === ProviderDriverKind.make("droid")) {
+      // Droid uses the contract's nullable capability shape as an authority
+      // marker: null means the per-model ladder was not observed, while an
+      // empty descriptor list means the model was observed and has no effort
+      // selector. Only the unknown state may inherit a last-known value.
+      if (previousModel && model.capabilities === null && previousModel.capabilities !== null) {
+        return { ...model, capabilities: previousModel.capabilities };
+      }
+      return model;
+    }
     if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
       return model;
     }

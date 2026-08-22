@@ -1,8 +1,38 @@
+import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";
+
+/**
+ * Lenient wire codec for `session/set_config_option` responses.
+ *
+ * The ACP spec types the response as `{ configOptions: [...] }`, but real
+ * agents may be looser: an agent can acknowledge a write with `{}` (or
+ * `configOptions: null`) and publish the refreshed inventory asynchronously
+ * via `config_option_update` notifications. This is a
+ * deliberate, tested compatibility transformation living OUTSIDE the
+ * generated schema so a regeneration cannot silently drop it.
+ *
+ * A missing or `null` inventory is preserved as absent — it is NOT
+ * normalized to `[]`. An absent inventory means "see the async
+ * notification", while an authoritative empty inventory means "no options
+ * exist"; the session runtime relies on that distinction to avoid erasing
+ * notification-published state with an empty acknowledgment.
+ */
+export interface LenientSetSessionConfigOptionResponseData {
+  readonly _meta?: { readonly [x: string]: unknown } | null;
+  readonly configOptions?: ReadonlyArray<AcpSchema.SessionConfigOption> | null;
+}
+export const LenientSetSessionConfigOptionResponse = Schema.Struct({
+  _meta: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
+  configOptions: Schema.optionalKey(
+    Schema.Union([Schema.Array(AcpSchema.SessionConfigOption), Schema.Null]),
+  ),
+});
 
 export const InitializeRpc = Rpc.make(AGENT_METHODS.initialize, {
   payload: AcpSchema.InitializeRequest,
@@ -72,7 +102,9 @@ export const SetSessionModelRpc = Rpc.make(AGENT_METHODS.session_set_model, {
 
 export const SetSessionConfigOptionRpc = Rpc.make(AGENT_METHODS.session_set_config_option, {
   payload: AcpSchema.SetSessionConfigOptionRequest,
-  success: AcpSchema.SetSessionConfigOptionResponse,
+  // Lenient success codec: nonconforming agents may omit the
+  // inventory; see `LenientSetSessionConfigOptionResponse`.
+  success: LenientSetSessionConfigOptionResponse,
   error: AcpSchema.Error,
 });
 

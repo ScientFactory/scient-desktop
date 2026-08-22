@@ -729,6 +729,142 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("drops stale Droid models missing from a successful refresh", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("droid"),
+          driver: ProviderDriverKind.make("droid"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-21T00:00:00.000Z",
+          version: "0.200.0",
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "retired-model",
+              name: "Retired Model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-08-21T00:01:00.000Z",
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...refreshedProvider.models,
+        ]);
+      });
+
+      it("retains stale Droid models when the installed CLI probe fails", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("droid"),
+          driver: ProviderDriverKind.make("droid"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-21T00:00:00.000Z",
+          version: "0.200.0",
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const failedRefreshProvider = {
+          ...previousProvider,
+          status: "error",
+          auth: { status: "unknown" },
+          checkedAt: "2026-08-21T00:01:00.000Z",
+          models: [],
+          message: "Droid ACP startup failed.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, failedRefreshProvider).models,
+          [...previousProvider.models],
+        );
+      });
+
+      it("distinguishes unknown from authoritative-empty Droid capabilities", () => {
+        const knownCapabilities = createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoningEffort", "Reasoning", [
+              { id: "high", label: "High", isDefault: true },
+            ]),
+          ],
+        });
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("droid"),
+          driver: ProviderDriverKind.make("droid"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-21T00:00:00.000Z",
+          version: "0.200.0",
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: knownCapabilities,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const unknownRefresh = {
+          ...previousProvider,
+          checkedAt: "2026-08-21T00:01:00.000Z",
+          models: [{ ...previousProvider.models[0]!, capabilities: null }],
+        } satisfies ServerProvider;
+        const knownEmptyRefresh = {
+          ...previousProvider,
+          checkedAt: "2026-08-21T00:02:00.000Z",
+          models: [
+            {
+              ...previousProvider.models[0]!,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.strictEqual(
+          mergeProviderSnapshot(previousProvider, unknownRefresh).models[0]?.capabilities,
+          knownCapabilities,
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, knownEmptyRefresh).models[0]?.capabilities
+            ?.optionDescriptors,
+          [],
+        );
+      });
+
       it("classifies pending, logout, uninstall, and reconnect OpenCode inventories", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("opencode"),
@@ -1778,6 +1914,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "droid",
                 "grok",
                 "opencode",
               ]);
