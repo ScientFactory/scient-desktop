@@ -108,7 +108,13 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
-import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
+import {
+  cn,
+  getLocalFileManagerName,
+  isMacPlatform,
+  isWindowsPlatform,
+  newProjectId,
+} from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
@@ -173,7 +179,7 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
-import { CommandDialog, CommandDialogPopup } from "./ui/command";
+import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -199,16 +205,6 @@ function projectFavicon(project: Project) {
       className={ITEM_ICON_CLASS}
     />
   );
-}
-
-function getLocalFileManagerName(platform: string): string {
-  if (isMacPlatform(platform)) {
-    return "Finder";
-  }
-  if (isWindowsPlatform(platform)) {
-    return "Explorer";
-  }
-  return "Files";
 }
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
@@ -2759,28 +2755,20 @@ function OpenCommandPaletteDialog(props: {
     canBeginNewProjectFolder || canOpenProjectFromFileManager ? (
       <div className="ms-auto flex items-center gap-1">
         {canBeginNewProjectFolder ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-auto gap-1.5 px-2 text-xs"
-            onClick={beginNewProjectFolder}
-          >
+          <CommandFooterAction onClick={beginNewProjectFolder}>
             <FolderPlusIcon aria-hidden className="size-3.5" />
             New folder
-          </Button>
+          </CommandFooterAction>
         ) : null}
         {canOpenProjectFromFileManager ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-auto px-2 text-muted-foreground text-xs hover:bg-transparent hover:text-foreground"
+          <CommandFooterAction
             disabled={isPickingProjectFolder}
             onClick={() => {
               void handleOpenProjectFromFileManager();
             }}
           >
             {`Open in ${fileManagerName}`}
-          </Button>
+          </CommandFooterAction>
         ) : null}
       </div>
     ) : null;

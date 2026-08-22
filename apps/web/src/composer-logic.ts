@@ -2,7 +2,9 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
+// SCIENT-FORK: "fork" reseats conversation forks in the composer slash menu.
 export type ComposerSlashCommand = "model" | "fork" | "plan" | "default";
+export type ComposerSubmissionIntent = "foreground" | "background";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -11,11 +13,16 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-export function shouldSubmitComposerOnEnter(input: {
+export function composerSubmissionIntentForEnter(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
-}): boolean {
-  return !input.isMobileViewport && !input.shiftKey;
+  modifierKey: boolean;
+  isDraftThread: boolean;
+}): ComposerSubmissionIntent | null {
+  if (input.isMobileViewport || input.shiftKey) {
+    return null;
+  }
+  return input.modifierKey && input.isDraftThread ? "background" : "foreground";
 }
 
 const isInlineTokenSegment = (

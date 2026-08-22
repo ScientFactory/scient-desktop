@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
 
 import {
   extractMarkdownLinkHrefs,
@@ -7,7 +10,27 @@ import {
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
+  shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
+
+function renderMarkdownLinkHref(markdown: string): string | undefined {
+  let renderedHref: string | undefined;
+  renderToStaticMarkup(
+    createElement(
+      ReactMarkdown,
+      {
+        components: {
+          a({ href }) {
+            renderedHref = href;
+            return createElement("a", { href });
+          },
+        },
+      },
+      markdown,
+    ),
+  );
+  return renderedHref;
+}
 
 describe("extractMarkdownLinkHrefs", () => {
   it("extracts ordinary and angle-bracketed destinations containing spaces", () => {
@@ -15,13 +38,49 @@ describe("extractMarkdownLinkHrefs", () => {
       extractMarkdownLinkHrefs(
         '[figure](/tmp/figure.svg) and [report](</Users/scient/My Results/report.pdf> "PDF")',
       ),
-    ).toEqual(["/tmp/figure.svg", "</Users/scient/My Results/report.pdf>"]);
+    ).toEqual(["/tmp/figure.svg", "/Users/scient/My Results/report.pdf"]);
   });
 
   it("matches an angle-bracket path before and after React Markdown encodes its spaces", () => {
     expect(markdownLinkLookupKey("</Users/scient/My Results/report.pdf>")).toBe(
       markdownLinkLookupKey("/Users/scient/My%20Results/report.pdf"),
     );
+  });
+
+  it("extracts angle-bracketed paths containing spaces", () => {
+    expect(
+      extractMarkdownLinkHrefs(
+        "[Open the Bike Receipts folder](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts>)",
+      ),
+    ).toEqual(["/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts"]);
+  });
+
+  it("preserves ordinary destinations and ignores link titles", () => {
+    expect(
+      extractMarkdownLinkHrefs(
+        '[source](apps/web/src/markdown-links.ts "implementation") and [docs](https://example.com)',
+      ),
+    ).toEqual(["apps/web/src/markdown-links.ts", "https://example.com"]);
+  });
+});
+
+describe("shouldOpenMarkdownFileLinkInEditor", () => {
+  it("uses command-click on macOS", () => {
+    expect(shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "MacIntel")).toBe(
+      true,
+    );
+    expect(shouldOpenMarkdownFileLinkInEditor({ metaKey: false, ctrlKey: true }, "MacIntel")).toBe(
+      false,
+    );
+  });
+
+  it("uses control-click on other platforms", () => {
+    expect(
+      shouldOpenMarkdownFileLinkInEditor({ metaKey: false, ctrlKey: true }, "Linux x86_64"),
+    ).toBe(true);
+    expect(
+      shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "Linux x86_64"),
+    ).toBe(false);
   });
 });
 
@@ -103,6 +162,30 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toMatchObject({
       displayPath: "t3code/apps/web/src/session-logic.ts:501",
       workspaceRelativePath: "apps/web/src/session-logic.ts",
+    });
+  });
+
+  it("resolves the encoded spaces emitted by the markdown renderer", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/Users/dara/Downloads/Lime%20Ride%20Artifacts/Bike%20Receipts",
+        "/Users/dara/Downloads/Lime Ride Artifacts",
+      ),
+    ).toMatchObject({
+      targetPath: "/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts",
+      workspaceRelativePath: "Bike Receipts",
+      basename: "Bike Receipts",
+    });
+  });
+
+  it("resolves relative spaced folders from the markdown renderer", () => {
+    const href = renderMarkdownLinkHref("[folder](<docs/My Folder>)");
+
+    expect(href).toBe("docs/My%20Folder");
+    expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
+      targetPath: "/repo/project/docs/My Folder",
+      workspaceRelativePath: "docs/My Folder",
+      basename: "My Folder",
     });
   });
 

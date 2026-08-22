@@ -46,12 +46,13 @@ import {
 } from "../../scient/providerConnection/providerConnectionPresentation.ts";
 import {
   clampCollapsedComposerCursor,
+  type ComposerSubmissionIntent,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
-  shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -619,6 +620,7 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (
     e?: { preventDefault: () => void },
+    intent?: ComposerSubmissionIntent,
     directAnnotation?: {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
@@ -1971,7 +1973,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const submitComposer = useCallback(
-    (event?: { preventDefault: () => void }, options?: { steer?: boolean }) => {
+    (
+      event?: { preventDefault: () => void },
+      intent: ComposerSubmissionIntent = "foreground",
+      options?: { steer?: boolean },
+    ) => {
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -1997,7 +2003,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // ChatView reports its final composed-input preflight through the
           // composer handle before its first asynchronous send step.
           providerInputRejectedRef.current = false;
-          onSend(sendEvent, undefined, options);
+          onSend(sendEvent, intent, undefined, options);
           return !providerInputRejectedRef.current;
         },
       });
@@ -2071,20 +2077,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return true;
       }
     }
-    if (
-      key === "Enter" &&
-      shouldSubmitComposerOnEnter({ isMobileViewport, shiftKey: event.shiftKey })
-    ) {
-      // SCIENT-FORK:START — Cmd/Ctrl+Enter steers: the message dispatches
-      // immediately even while a turn is running. Plain Enter queues when
-      // busy; ChatView owns that decision.
-      if (isSteerShortcut(event)) {
-        submitComposer(undefined, { steer: true });
+    if (key === "Enter" && !isMobileViewport && !event.shiftKey) {
+      // SCIENT-FORK:START — Cmd/Ctrl+Enter steers an active server thread:
+      // the message dispatches immediately even while a turn is running.
+      // Draft threads reserve Cmd/Ctrl+Enter for upstream background
+      // submission (#7821), so steering is gated to server threads; plain
+      // Enter queues when busy and ChatView owns that decision.
+      if (routeKind === "server" && isSteerShortcut(event)) {
+        submitComposer(undefined, "foreground", { steer: true });
         return true;
       }
       // SCIENT-FORK:END
-      submitComposer();
-      return true;
+      const submissionIntent = composerSubmissionIntentForEnter({
+        isMobileViewport,
+        shiftKey: event.shiftKey,
+        modifierKey: event.metaKey || event.ctrlKey,
+        isDraftThread: routeKind === "draft",
+      });
+      if (submissionIntent) {
+        submitComposer(undefined, submissionIntent);
+        return true;
+      }
     }
     return false;
   };
