@@ -26,9 +26,11 @@ to the existing generated-document store and opened through the existing Scient 
   page must still fragment rather than overflow or disappear. The stylesheet is removed after every
   successful, failed, or navigation-raced export.
 - Background graphics, CSS page size, tagged PDF, and document outline generation are enabled;
-  headers and footers are disabled. A deterministic 16 px margin on every edge replaces Chromium's
-  larger implicit margin, leaving a small readable boundary while source styles control the
-  document's internal spacing.
+  headers and footers are disabled. A deterministic one-sixth-inch margin (16 CSS px at Chromium's
+  96 px/in reference ratio) on every edge replaces Chromium's larger implicit margin, leaving a
+  small readable boundary while source styles control the document's internal spacing. Electron's
+  `printToPDF` margin values are inches, even though its printer-margin type declarations describe
+  pixels.
 - Chromium prints the live DOM rather than a screenshot: text remains vector text with Unicode maps,
   RTL and mixed-direction runs retain Chromium's bidi layout, and surviving HTML anchors become PDF
   link annotations. Canvas, video, and WebGL remain flattened content and carry the warnings below.

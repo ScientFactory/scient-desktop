@@ -5,6 +5,9 @@ import type { WebContents } from "electron";
 
 const READINESS_TIMEOUT_MS = 2_500;
 const MAX_TITLE_LENGTH = 512;
+// printToPDF margins are measured in inches. One sixth of an inch is 16 CSS
+// pixels at Chromium's 96 px/in reference ratio.
+const DOCUMENT_MARGIN_INCHES = 1 / 6;
 const PAGINATION_CSS = `
   :where(table, thead, tfoot, tr, figure, blockquote, pre, details, .box, .card, [data-scient-pdf-keep-together]) {
     break-inside: avoid-page;
@@ -107,11 +110,10 @@ export function buildDocumentLayoutPrintOptions() {
     printBackground: true,
     displayHeaderFooter: false,
     margins: {
-      marginType: "custom",
-      top: 16,
-      bottom: 16,
-      left: 16,
-      right: 16,
+      top: DOCUMENT_MARGIN_INCHES,
+      bottom: DOCUMENT_MARGIN_INCHES,
+      left: DOCUMENT_MARGIN_INCHES,
+      right: DOCUMENT_MARGIN_INCHES,
     },
     preferCSSPageSize: true,
     generateTaggedPDF: true,
