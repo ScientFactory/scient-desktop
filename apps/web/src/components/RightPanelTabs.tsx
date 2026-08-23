@@ -35,6 +35,7 @@ import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { toastManager } from "~/components/ui/toast";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -93,6 +94,67 @@ interface RightPanelTabsProps {
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
   children: ReactNode;
+}
+
+export function pendingSurfaceBlocksActivation(input: {
+  readonly activeSurfaceId: string | null;
+  readonly targetSurfaceId: string;
+  readonly pendingSurfaceIds: ReadonlySet<string>;
+}): boolean {
+  return (
+    input.activeSurfaceId !== null &&
+    input.activeSurfaceId !== input.targetSurfaceId &&
+    input.pendingSurfaceIds.has(input.activeSurfaceId)
+  );
+}
+
+export function pendingSurfaceBlocksClose(
+  surfaceIds: ReadonlyArray<string>,
+  pendingSurfaceIds: ReadonlySet<string>,
+): boolean {
+  return surfaceIds.some((surfaceId) => pendingSurfaceIds.has(surfaceId));
+}
+
+interface PendingSurfaceDeparture {
+  readonly surfaceIds: ReadonlyArray<string>;
+  readonly run: () => void;
+}
+
+/**
+ * Defers an action that would unmount a dirty file until its serial save lane
+ * confirms. A failed or conflicted save remains pending, so the action resumes
+ * only after the user resolves the visible file notice.
+ */
+export function usePendingSurfaceDeparture(pendingSurfaceIds: ReadonlySet<string>) {
+  const departureRef = useRef<PendingSurfaceDeparture | null>(null);
+  const pendingSurfaceIdsRef = useRef(pendingSurfaceIds);
+  pendingSurfaceIdsRef.current = pendingSurfaceIds;
+  const runAfterPendingSave = useCallback((surfaceIds: ReadonlyArray<string>, run: () => void) => {
+    if (!pendingSurfaceBlocksClose(surfaceIds, pendingSurfaceIdsRef.current)) {
+      departureRef.current = null;
+      run();
+      return true;
+    }
+    departureRef.current = { surfaceIds: [...surfaceIds], run };
+    toastManager.add({
+      type: "warning",
+      title: "Finishing the file save",
+      description:
+        "Scient will continue automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
+    });
+    return false;
+  }, []);
+
+  useEffect(() => {
+    const departure = departureRef.current;
+    if (departure === null || pendingSurfaceBlocksClose(departure.surfaceIds, pendingSurfaceIds)) {
+      return;
+    }
+    departureRef.current = null;
+    departure.run();
+  }, [pendingSurfaceIds]);
+
+  return runAfterPendingSave;
 }
 
 export interface PullRequestTabStatus {
@@ -678,6 +740,26 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
+  const runAfterPendingSave = usePendingSurfaceDeparture(props.pendingSurfaceIds);
+  const activateSurface = useCallback(
+    (surface: RightPanelSurface) => {
+      const blockedSurfaceIds = pendingSurfaceBlocksActivation({
+        activeSurfaceId: props.activeSurfaceId,
+        targetSurfaceId: surface.id,
+        pendingSurfaceIds: props.pendingSurfaceIds,
+      })
+        ? [props.activeSurfaceId!]
+        : [];
+      runAfterPendingSave(blockedSurfaceIds, () => props.onActivate(surface));
+    },
+    [props, runAfterPendingSave],
+  );
+  const closeSurfaces = useCallback(
+    (surfaceIds: ReadonlyArray<string>, close: () => void) => {
+      runAfterPendingSave(surfaceIds, close);
+    },
+    [runAfterPendingSave],
+  );
 
   const addSurfaceActions = [
     {
@@ -802,22 +884,31 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           break;
         }
         case "close":
-          props.onCloseSurface(surface);
+          closeSurfaces([surface.id], () => props.onCloseSurface(surface));
           break;
         case "close-others":
-          props.onCloseOtherSurfaces(surface);
+          closeSurfaces(
+            props.surfaces.filter((entry) => entry.id !== surface.id).map((entry) => entry.id),
+            () => props.onCloseOtherSurfaces(surface),
+          );
           break;
         case "close-to-right":
-          props.onCloseSurfacesToRight(surface);
+          closeSurfaces(
+            props.surfaces.slice(surfaceIndex + 1).map((entry) => entry.id),
+            () => props.onCloseSurfacesToRight(surface),
+          );
           break;
         case "close-all":
-          props.onCloseAllSurfaces();
+          closeSurfaces(
+            props.surfaces.map((entry) => entry.id),
+            props.onCloseAllSurfaces,
+          );
           break;
         case null:
           break;
       }
     },
-    [props],
+    [closeSurfaces, props],
   );
   const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
     if (event.button !== 1) return;
@@ -828,9 +919,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (event.button !== 1) return;
       event.preventDefault();
       event.stopPropagation();
-      props.onCloseSurface(surface);
+      closeSurfaces([surface.id], () => props.onCloseSurface(surface));
     },
-    [props],
+    [closeSurfaces, props],
   );
 
   useEffect(() => {
@@ -893,9 +984,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
-                  <PanelTabCloseButton
-                    label={`Close ${title}`}
-                    onClick={() => props.onCloseSurface(surface)}
+                  <button
+                    type="button"
+                    className="cursor-pointer group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                    aria-label={`Close ${title}`}
+                    aria-disabled={pending}
+                    onClick={() => closeSurfaces([surface.id], () => props.onCloseSurface(surface))}
+
                   >
                     <SurfaceIcon
                       surface={surface}
@@ -944,8 +1039,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       render={
                         <button
                           type="button"
-                          className="cursor-pointer flex min-w-0 flex-1 items-center"
-                          onClick={() => props.onActivate(surface)}
+                          className="cursor-pointer flex min-w-0 items-center"
+                          onClick={() => activateSurface(surface)}
                         >
                           <span className="min-w-0 flex-1 truncate text-start" dir="auto">
                             {title}

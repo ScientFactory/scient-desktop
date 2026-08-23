@@ -1,14 +1,94 @@
+// @vitest-environment happy-dom
+
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
+import { act, useEffect } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildTabContextMenuItems,
+  pendingSurfaceBlocksActivation,
+  pendingSurfaceBlocksClose,
   RightPanelTabs,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
   tabMuteMenuItem,
+  usePendingSurfaceDeparture,
 } from "./RightPanelTabs";
+
+const mountedRoots: ReturnType<typeof createRoot>[] = [];
+
+afterEach(async () => {
+  while (mountedRoots.length > 0) {
+    const root = mountedRoots.pop();
+    if (root) await act(() => root.unmount());
+  }
+  document.body.replaceChildren();
+  vi.unstubAllGlobals();
+});
+
+describe("pending file surface guards", () => {
+  const pending = new Set(["file:notes.md"]);
+
+  it("blocks leaving an active pending file but allows staying or entering it", () => {
+    expect(
+      pendingSurfaceBlocksActivation({
+        activeSurfaceId: "file:notes.md",
+        targetSurfaceId: "browser:tab-1",
+        pendingSurfaceIds: pending,
+      }),
+    ).toBe(true);
+    expect(
+      pendingSurfaceBlocksActivation({
+        activeSurfaceId: "file:notes.md",
+        targetSurfaceId: "file:notes.md",
+        pendingSurfaceIds: pending,
+      }),
+    ).toBe(false);
+    expect(
+      pendingSurfaceBlocksActivation({
+        activeSurfaceId: "browser:tab-1",
+        targetSurfaceId: "file:notes.md",
+        pendingSurfaceIds: pending,
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks only close operations whose target set contains a pending file", () => {
+    expect(pendingSurfaceBlocksClose(["file:notes.md"], pending)).toBe(true);
+    expect(pendingSurfaceBlocksClose(["browser:tab-1"], pending)).toBe(false);
+    expect(pendingSurfaceBlocksClose([], pending)).toBe(false);
+  });
+
+  it("runs a requested departure automatically after the pending file confirms", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    mountedRoots.push(root);
+    let requestDeparture: ((surfaceIds: ReadonlyArray<string>, run: () => void) => boolean) | null =
+      null;
+    const departed = vi.fn();
+
+    function Harness(props: { readonly pendingSurfaceIds: ReadonlySet<string> }) {
+      const request = usePendingSurfaceDeparture(props.pendingSurfaceIds);
+      useEffect(() => {
+        requestDeparture = request;
+      }, [request]);
+      return null;
+    }
+
+    await act(() => root.render(<Harness pendingSurfaceIds={pending} />));
+    await act(() => {
+      requestDeparture?.(["file:notes.md"], departed);
+    });
+    expect(departed).not.toHaveBeenCalled();
+
+    await act(() => root.render(<Harness pendingSurfaceIds={new Set()} />));
+    expect(departed).toHaveBeenCalledOnce();
+  });
+});
 
 function shortcutEvent(
   key: string,
