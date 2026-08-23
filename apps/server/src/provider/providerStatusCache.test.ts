@@ -4,12 +4,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  ServerProvider as ServerProviderSchema,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 
 import {
   hydrateCachedProvider,
@@ -24,6 +26,9 @@ const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const providerSnapshotJson = Schema.fromJsonString(ServerProviderSchema);
+const decodeProviderSnapshotJson = Schema.decodeUnknownEffect(providerSnapshotJson);
+const encodeProviderSnapshotJson = Schema.encodeEffect(providerSnapshotJson);
 
 it("orders provider snapshots canonically and keeps custom instances stable", () => {
   const antigravity = ProviderDriverKind.make("antigravity");
@@ -150,22 +155,31 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
-  it.effect("never persists transient connection or managed-runtime operations", () =>
+  it.effect("does not persist process-local provider operations", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-volatile-" });
-      const cachePath = `${tempDir}/provider.json`;
-      const provider = makeProvider(CODEX_DRIVER, {
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-provider-cache-transient-",
+      });
+      const cachePath = `${tempDir}/cursor.json`;
+      const cursorProvider = makeProvider(ProviderDriverKind.make("cursor"), {
+        updateState: {
+          status: "running",
+          startedAt: "2026-08-23T13:34:28.000Z",
+          finishedAt: null,
+          message: "Updating Cursor.",
+          output: null,
+        },
         connection: {
-          methods: ["codex_browser"],
-          canDisconnect: false,
+          methods: ["cursor_browser"],
+          canDisconnect: true,
           operation: {
-            operationId: "connect-active",
-            method: "codex_browser",
+            operationId: "connection-current-process",
+            method: "cursor_browser",
             status: "waiting_for_browser",
-            startedAt: "2026-08-23T10:00:00.000Z",
+            startedAt: "2026-08-23T13:34:28.000Z",
             finishedAt: null,
-            message: "Finish sign in.",
+            message: "Waiting for browser sign in.",
             authorizationUrl: "https://example.invalid/secret-flow",
           },
           runtime: {
@@ -173,29 +187,42 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
             supportTier: "fully_assisted",
             target: "darwin-arm64",
             actions: ["repair", "remove"],
-            managedVersion: "1.0.0",
+            managedVersion: "2026.08.11-e8db854",
             previousManagedVersion: null,
             operation: {
-              operationId: "runtime-active",
-              action: "repair",
-              status: "downloading",
-              startedAt: "2026-08-23T10:00:00.000Z",
+              operationId: "runtime-current-process",
+              action: "remove",
+              status: "removing",
+              startedAt: "2026-08-23T13:34:28.000Z",
               finishedAt: null,
-              message: "Downloading provider.",
+              message: "Removing Scient's private Cursor runtime.",
             },
-            message: "Managed by Scient.",
+            message: "Managed Cursor is ready.",
           },
         },
       });
 
-      yield* writeProviderStatusCache({ filePath: cachePath, provider });
+      yield* writeProviderStatusCache({ filePath: cachePath, provider: cursorProvider });
 
-      const cached = yield* readProviderStatusCache(cachePath);
-      assert.strictEqual(cached?.connection?.operation, null);
-      assert.strictEqual(cached?.connection?.runtime?.operation, null);
       const raw = yield* fs.readFileString(cachePath);
+      const persisted = yield* decodeProviderSnapshotJson(raw);
+      assert.strictEqual(persisted.updateState, undefined);
+      assert.strictEqual(persisted.connection?.operation, null);
+      assert.strictEqual(persisted.connection?.runtime?.operation, null);
+      assert.strictEqual(persisted.connection?.runtime?.source, "scient_managed");
+      assert.deepStrictEqual(persisted.connection?.runtime?.actions, ["repair", "remove"]);
       assert.ok(!raw.includes("secret-flow"));
-      assert.ok(!raw.includes("runtime-active"));
+      assert.ok(!raw.includes("connection-current-process"));
+      assert.ok(!raw.includes("runtime-current-process"));
+
+      // Simulate a cache written by an older build and verify recovery does
+      // not revive operations whose owning process no longer exists.
+      yield* fs.writeFileString(cachePath, yield* encodeProviderSnapshotJson(cursorProvider));
+      const recovered = yield* readProviderStatusCache(cachePath);
+      assert.exists(recovered);
+      assert.strictEqual(recovered.updateState, undefined);
+      assert.strictEqual(recovered.connection?.operation, null);
+      assert.strictEqual(recovered.connection?.runtime?.operation, null);
     }),
   );
 
