@@ -357,6 +357,81 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("exports the live guest with print media without borrowing the debugger", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, (...args: never[]) => void>();
+        const sendCommand = vi.fn(async () => undefined);
+        const executeJavaScript = vi.fn(async () => ({
+          settled: true,
+          sourceUrl: "https://example.com/report.html",
+          title: "Report",
+          sourceSignals: {
+            bodyTextLength: 120,
+            imageCount: 1,
+            brokenImageCount: 0,
+            canvasCount: 0,
+            videoCount: 0,
+            iframeCount: 0,
+            scrollWidth: 900,
+            scrollHeight: 2_400,
+          },
+        }));
+        const printToPDF = vi.fn(async () => Buffer.from("%PDF-1.7\nsynthetic"));
+        const webContents = {
+          id: 42,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => true,
+          getType: () => "webview",
+          getURL: () => "https://example.com/report.html",
+          getTitle: () => "Report",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn((event: string, listener: (...args: never[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          executeJavaScript,
+          insertCSS: vi.fn(async () => "pagination-css"),
+          removeInsertedCSS: vi.fn(async () => undefined),
+          printToPDF,
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never;
+        fromId.mockReturnValue(webContents);
+
+        yield* manager.createTab("tab_export_pdf");
+        yield* manager.registerWebview("tab_export_pdf", 42);
+        yield* Effect.yieldNow;
+        sendCommand.mockClear();
+
+        const artifact = yield* manager.exportPdf("tab_export_pdf");
+
+        expect(executeJavaScript).toHaveBeenCalledOnce();
+        expect(printToPDF).toHaveBeenCalledOnce();
+        expect(artifact).toMatchObject({
+          sourceUrl: "https://example.com/report.html",
+          title: "Report",
+          profile: "document-layout",
+          media: "print",
+        });
+        expect(sendCommand).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("rejects a destroyed webview during registration", () =>
     withManager((manager) =>
       Effect.gen(function* () {

@@ -29,6 +29,11 @@ import {
 } from "./fileOpening.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
+  BrowserPdfExportError,
+  BrowserPdfExportInput,
+  BrowserPdfExportResult,
+} from "./browserPdfExport.ts";
+import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
@@ -269,6 +274,7 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   filesystemPrepareFileOpen: "filesystem.prepareFileOpen",
   assetsCreateUrl: "assets.createUrl",
+  documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -873,6 +879,15 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+export const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
+  WS_METHODS.documentsPublishBrowserPdfExport,
+  {
+    payload: BrowserPdfExportInput,
+    success: BrowserPdfExportResult,
+    error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1273,6 +1288,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsFilesystemPrepareFileOpenRpc,
   WsAssetsCreateUrlRpc,
+  WsDocumentsPublishBrowserPdfExportRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

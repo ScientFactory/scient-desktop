@@ -59,6 +59,10 @@
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"
     },
+    "./state/browserPdfExport": {
+      "types": "./src/state/browserPdfExport.ts",
+      "default": "./src/state/browserPdfExport.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"

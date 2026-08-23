@@ -2,6 +2,17 @@ import {
   isPreviewStaticImageSurfaceDescriptor,
   type PreviewStaticImageSurfaceDescriptor,
 } from "~/previewStaticImageSurface";
+import {
+  PdfSourceDescriptor,
+  type PdfSourceDescriptor as PdfSourceDescriptorType,
+} from "@scientfactory/document-artifacts";
+import * as Schema from "effect/Schema";
+
+type GeneratedPdfSourceDescriptor = Extract<
+  PdfSourceDescriptorType,
+  { readonly _tag: "generated-pdf" }
+>;
+const isPdfSourceDescriptor = Schema.is(PdfSourceDescriptor);
 
 export type ScientRightPanelSurface =
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
@@ -18,6 +29,12 @@ export type ScientRightPanelSurface =
       readonly kind: "scient";
       readonly module: "artifact";
       readonly artifact: PreviewStaticImageSurfaceDescriptor;
+    }
+  | {
+      readonly id: `scient:generated-pdf:${string}`;
+      readonly kind: "scient";
+      readonly module: "generated-pdf";
+      readonly source: GeneratedPdfSourceDescriptor;
     }
   | {
       readonly id: `scient:file:${string}`;
@@ -63,6 +80,17 @@ export function scientArtifactSurface(
   };
 }
 
+export function scientGeneratedPdfSurface(
+  source: GeneratedPdfSourceDescriptor,
+): Extract<ScientRightPanelSurface, { module: "generated-pdf" }> {
+  return {
+    id: `scient:generated-pdf:${encodeURIComponent(source.authority)}:${encodeURIComponent(source.artifactId)}:${encodeURIComponent(source.revisionId)}`,
+    kind: "scient",
+    module: "generated-pdf",
+    source,
+  };
+}
+
 export function scientEnvironmentFileSurface(input: {
   readonly path: string;
   readonly line?: number | null;
@@ -104,6 +132,10 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   if (surface.module === "artifact" && isPreviewStaticImageSurfaceDescriptor(surface.artifact)) {
     return scientArtifactSurface(surface.artifact);
   }
+  if (surface.module === "generated-pdf" && isPdfSourceDescriptor(surface.source)) {
+    const source = surface.source as PdfSourceDescriptorType;
+    if (source._tag === "generated-pdf") return scientGeneratedPdfSurface(source);
+  }
   if (
     surface.module === "file" &&
     typeof surface.path === "string" &&
@@ -127,6 +159,8 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
       return surface.fileName;
     case "artifact":
       return surface.artifact.label;
+    case "generated-pdf":
+      return surface.source.title;
     case "file": {
       const normalized = surface.path.replaceAll("\\", "/");
       return normalized.slice(normalized.lastIndexOf("/") + 1) || surface.path;

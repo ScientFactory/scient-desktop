@@ -12,6 +12,19 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("PdfSourceResolver");
   });
 
+  it("routes Save Copy through the typed host capability instead of navigation", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+    const sourceActions = NodeFS.readFileSync(new URL("./pdfSource.ts", import.meta.url), "utf8");
+
+    expect(sourceActions).toContain("documents.saveAssetCopy({");
+    expect(sourceActions).not.toContain('document.createElement("a")');
+    expect(readerSource).toContain("await props.actions.saveCopy(");
+    expect(readerSource).toContain("disabled={savingCopy}");
+  });
+
   it("keeps the persisted viewport lifecycle wired to PDF.js view events", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
     expect(source).toContain('eventBus.on("pagesinit"');

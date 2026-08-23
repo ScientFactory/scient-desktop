@@ -1,6 +1,12 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  ArtifactProducerId,
+  LogicalDocumentKey,
+  ProducingOperationId,
+} from "@scientfactory/document-artifacts";
+import * as Encoding from "effect/Encoding";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
@@ -29,6 +35,7 @@ import {
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { browserPdfExportEnvironment } from "~/state/browserPdfExport";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -60,6 +67,12 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { scientGeneratedPdfSurface } from "~/scient/rightPanel/surfaces";
+import {
+  browserExportLogicalDocumentKey,
+  browserExportReceiptUrl,
+} from "~/scient/pdf/browserPdfExportModel";
+import { randomUUID } from "~/lib/utils";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -112,6 +125,11 @@ export function PreviewView({
     : null;
   const open = useAtomCommand(previewEnvironment.open);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
+  const publishBrowserPdfExport = useAtomCommand(
+    browserPdfExportEnvironment.publish,
+    "publish browser PDF export",
+  );
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   usePreviewSession(threadRef);
 
@@ -301,6 +319,57 @@ export function PreviewView({
       });
     });
   }, [desktopOverlay?.pictureInPicture, runtimeTabId]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!previewBridge || !runtimeTabId || !tabId || !url || exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      const artifact = await previewBridge.exportPdf(runtimeTabId);
+      const result = await publishBrowserPdfExport({
+        environmentId: threadRef.environmentId,
+        input: {
+          logicalDocumentKey: LogicalDocumentKey.make(
+            browserExportLogicalDocumentKey(artifact.sourceUrl),
+          ),
+          operationId: ProducingOperationId.make(`browser-export-${randomUUID()}`),
+          producerId: ArtifactProducerId.make("browser.export"),
+          title: artifact.title || "Browser export",
+          sourceUrl: browserExportReceiptUrl(artifact.sourceUrl),
+          profile: artifact.profile,
+          media: artifact.media,
+          warnings: artifact.warnings,
+          sourceSignals: artifact.sourceSignals,
+          bytesBase64: Encoding.encodeBase64Url(artifact.data),
+        },
+      });
+      if (result._tag === "Failure") {
+        throw squashAtomCommandFailure(result);
+      }
+      if (result.value.source._tag !== "generated-pdf") {
+        throw new Error("The PDF export server returned a non-generated source.");
+      }
+      useRightPanelStore
+        .getState()
+        .openScient(threadRef, scientGeneratedPdfSurface(result.value.source));
+      if (result.value.receipt.warnings.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "PDF exported with warnings",
+          description: result.value.receipt.warnings.join(" · "),
+        });
+      } else {
+        toastManager.add({ type: "success", title: "PDF exported" });
+      }
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to export PDF",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    } finally {
+      if (isMountedRef.current) setExportingPdf(false);
+    }
+  }, [exportingPdf, publishBrowserPdfExport, runtimeTabId, tabId, threadRef, url]);
 
   const handleCapture = useCallback(
     (record: boolean) => {
@@ -673,6 +742,9 @@ export function PreviewView({
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
+        onExportPdf={previewBridge && tabId ? () => void handleExportPdf() : undefined}
+        exportPdfDisabled={!desktopOverlay?.hasWebContents || isUnreachable || loading}
+        exportingPdf={exportingPdf}
         onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
         pictureInPicture={miniPlayerBrowserTabId === tabId}
         pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}

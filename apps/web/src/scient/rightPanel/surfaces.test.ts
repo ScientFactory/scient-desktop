@@ -8,6 +8,14 @@ import {
   scientSourcePdfSurface,
   scientSourcesSurface,
 } from "./surfaces";
+import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactRevisionId,
+  BindingGeneration,
+  LogicalDocumentKey,
+  PdfSourceDescriptor,
+} from "@scientfactory/document-artifacts";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
 
 const artifact: PreviewStaticImageSurfaceDescriptor = {
@@ -26,6 +34,22 @@ const artifact: PreviewStaticImageSurfaceDescriptor = {
 };
 
 describe("Scient right-panel surfaces", () => {
+  const generatedPdf = PdfSourceDescriptor.make({
+    _tag: "generated-pdf",
+    authority: ArtifactAuthority.make("environment-1"),
+    logicalDocumentKey: LogicalDocumentKey.make("browser-export:fixture"),
+    title: "Fixture export",
+    fileName: "Fixture export.pdf",
+    capabilities: { canSaveCopy: true, canRevealSource: false },
+    artifactId: ArtifactId.make("artifact-1"),
+    revisionId: ArtifactRevisionId.make("revision-1"),
+    bindingGeneration: BindingGeneration.make(1),
+    bindingStatus: "current",
+    staleReason: null,
+    pageCount: 1,
+  });
+  if (generatedPdf._tag !== "generated-pdf") throw new Error("expected generated PDF fixture");
+
   it("builds stable Sources and source-PDF descriptors", () => {
     expect(scientSourcesSurface()).toEqual({
       id: "scient:sources",
@@ -76,6 +100,14 @@ describe("Scient right-panel surfaces", () => {
       normalizeScientRightPanelSurface({
         id: "stale-id",
         kind: "scient",
+        module: "generated-pdf",
+        source: generatedPdf,
+      }),
+    ).toMatchObject({ module: "generated-pdf", source: generatedPdf });
+    expect(
+      normalizeScientRightPanelSurface({
+        id: "stale-id",
+        kind: "scient",
         module: "file",
         path: "/tmp/figure.svg",
         line: 0,
@@ -119,6 +151,14 @@ describe("Scient right-panel surfaces", () => {
       ),
     ).toBe("Paper.pdf");
     expect(scientRightPanelSurfaceTitle(scientArtifactSurface(artifact))).toBe("Figure 1");
+    expect(
+      scientRightPanelSurfaceTitle({
+        id: "scient:generated-pdf:environment-1:artifact-1:revision-1",
+        kind: "scient",
+        module: "generated-pdf",
+        source: generatedPdf,
+      }),
+    ).toBe("Fixture export");
     expect(
       scientRightPanelSurfaceTitle(
         scientEnvironmentFileSurface({ path: "C:\\Research\\figures\\result.svg" }),

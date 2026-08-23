@@ -1,4 +1,10 @@
-import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ConfirmDialogOptions,
+  ContextMenuItem,
+  DesktopAssetCopyRequest,
+  DesktopAssetCopyResult,
+  LocalApi,
+} from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
@@ -6,6 +12,41 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
 let cachedApi: LocalApi | undefined;
+
+async function saveAssetCopyInBrowser(
+  request: DesktopAssetCopyRequest,
+): Promise<DesktopAssetCopyResult> {
+  let response: Response;
+  try {
+    response = await fetch(request.url, { cache: "no-store" });
+  } catch {
+    return { _tag: "failed", reason: "network-failed" };
+  }
+  if (response.status === 409) return { _tag: "failed", reason: "source-changed" };
+  if (response.status === 404 || response.status === 410) {
+    return { _tag: "failed", reason: "source-unavailable" };
+  }
+  if (!response.ok) return { _tag: "failed", reason: "network-failed" };
+
+  let objectUrl: string | undefined;
+  try {
+    objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.hidden = true;
+    anchor.href = objectUrl;
+    anchor.download = request.suggestedFileName;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    const completedObjectUrl = objectUrl;
+    window.setTimeout(() => URL.revokeObjectURL(completedObjectUrl), 1_000);
+    objectUrl = undefined;
+    return { _tag: "download-started" };
+  } catch {
+    if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl);
+    return { _tag: "failed", reason: "write-failed" };
+  }
+}
 
 function createBrowserLocalApi(): LocalApi {
   return {
@@ -29,6 +70,12 @@ function createBrowserLocalApi(): LocalApi {
         }
 
         window.open(url, "_blank", "noopener,noreferrer");
+      },
+    },
+    documents: {
+      saveAssetCopy: async (request) => {
+        if (window.desktopBridge) return window.desktopBridge.saveAssetCopy(request);
+        return saveAssetCopyInBrowser(request);
       },
     },
     contextMenu: {

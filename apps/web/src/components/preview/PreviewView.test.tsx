@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
   closeRightPanel: vi.fn(),
   openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  exportPdf: vi.fn(),
+  publishBrowserPdfExport: vi.fn(),
+  exportPdfAction: null as (() => void) | null,
+  openScient: vi.fn(),
+  toastAdd: vi.fn(),
   pickElement: vi.fn(),
   previewAnnotationScreenshotFile: vi.fn(),
   addPreviewAnnotation: vi.fn(),
@@ -143,8 +148,13 @@ vi.mock("~/state/preview", () => ({
   previewEnvironment: { open: {}, resize: {} },
 }));
 
+vi.mock("~/state/browserPdfExport", () => ({
+  browserPdfExportEnvironment: { publish: "browser-pdf-export-publish" },
+}));
+
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => vi.fn(),
+  useAtomCommand: (command: unknown) =>
+    command === "browser-pdf-export-publish" ? mocks.publishBrowserPdfExport : vi.fn(),
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
@@ -202,19 +212,20 @@ vi.mock("~/previewMiniPlayerStore", () => {
 
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
-    getState: () => ({ close: mocks.closeRightPanel }),
+    getState: () => ({ close: mocks.closeRightPanel, openScient: mocks.openScient }),
   },
 }));
 
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: vi.fn(),
-  toastManager: { add: vi.fn() },
+  toastManager: { add: mocks.toastAdd },
 }));
 
 vi.mock("./previewBridge", () => ({
   previewBridge: {
     navigate: mocks.navigate,
     pickElement: mocks.pickElement,
+    exportPdf: mocks.exportPdf,
     pictureInPicture: {
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
@@ -227,6 +238,7 @@ vi.mock("./PreviewChromeRow", () => ({
     onSubmit: (url: string) => void;
     onPickElement?: () => void;
     onPictureInPicture?: () => void;
+    onExportPdf?: () => void;
     pictureInPicture?: boolean;
     trailingActions?: {
       props: { onNativePictureInPicture?: () => void };
@@ -235,6 +247,7 @@ vi.mock("./PreviewChromeRow", () => ({
     mocks.submittedUrl = props.onSubmit;
     mocks.toggleAnnotation = props.onPickElement ?? null;
     mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
+    mocks.exportPdfAction = props.onExportPdf ?? null;
     mocks.toggleNativePictureInPicture =
       props.trailingActions?.props.onNativePictureInPicture ?? null;
     mocks.pictureInPicturePressed = props.pictureInPicture ?? false;
@@ -347,6 +360,11 @@ describe("PreviewView navigation", () => {
     mocks.closeRightPanel.mockClear();
     mocks.openPictureInPicture.mockClear();
     mocks.closePictureInPicture.mockClear();
+    mocks.exportPdf.mockReset();
+    mocks.publishBrowserPdfExport.mockReset();
+    mocks.exportPdfAction = null;
+    mocks.openScient.mockClear();
+    mocks.toastAdd.mockClear();
     mocks.pickElement.mockReset();
     mocks.previewAnnotationScreenshotFile.mockReset();
     mocks.addPreviewAnnotation.mockClear();
@@ -522,6 +540,66 @@ describe("PreviewView navigation", () => {
     await vi.waitFor(() =>
       expect(mocks.closePictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
     );
+  });
+
+  it("publishes the exact exported page and opens its generated PDF", async () => {
+    const source = {
+      _tag: "generated-pdf" as const,
+      authority: "environment-1",
+      logicalDocumentKey: "browser-export:published",
+      title: "Live report",
+      fileName: "Live report.pdf",
+      capabilities: { canSaveCopy: true, canRevealSource: false },
+      artifactId: "artifact-1",
+      revisionId: "revision-1",
+      bindingGeneration: 1,
+      bindingStatus: "current" as const,
+      staleReason: null,
+      pageCount: 2,
+    };
+    mocks.exportPdf.mockResolvedValue({
+      data: new Uint8Array([37, 80, 68, 70]),
+      sourceUrl:
+        "http://127.0.0.1:16491/api/assets/renewable-token/live-report.html?secret=value#page",
+      title: "Live report",
+      profile: "document-layout",
+      media: "print",
+      warnings: [],
+      sourceSignals: {
+        bodyTextLength: 120,
+        imageCount: 0,
+        brokenImageCount: 0,
+        canvasCount: 0,
+        videoCount: 0,
+        iframeCount: 0,
+        scrollWidth: 800,
+        scrollHeight: 1_200,
+      },
+    });
+    mocks.publishBrowserPdfExport.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        source,
+        receipt: { warnings: [] },
+      },
+    });
+
+    renderToStaticMarkup(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+    mocks.exportPdfAction?.();
+
+    await vi.waitFor(() => expect(mocks.publishBrowserPdfExport).toHaveBeenCalledOnce());
+    expect(mocks.publishBrowserPdfExport).toHaveBeenCalledWith({
+      environmentId: "environment-1",
+      input: expect.objectContaining({
+        sourceUrl: "http://127.0.0.1:16491/api/assets/%3Csigned%3E/live-report.html",
+        title: "Live report",
+      }),
+    });
+    expect(mocks.openScient).toHaveBeenCalledWith(
+      TEST_THREAD_REF,
+      expect.objectContaining({ module: "generated-pdf", source }),
+    );
+    expect(mocks.toastAdd).toHaveBeenCalledWith({ type: "success", title: "PDF exported" });
   });
 
   it("forwards Cmd/Ctrl+Enter annotations to the composer send path", async () => {

@@ -13,6 +13,7 @@ import {
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
+  DesktopPreviewPdfExportArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewCreateTabInputSchema,
@@ -259,6 +260,16 @@ export const captureScreenshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const exportPdf = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: DesktopPreviewPdfExportArtifactSchema,
+  handler: Effect.fn("desktop.ipc.preview.exportPdf")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.exportPdf(tabId);
+  }),
+});
+
 export const revealArtifact = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
   payload: DesktopPreviewArtifactInputSchema,
@@ -391,6 +402,7 @@ export const methods = [
   pickElement,
   cancelPickElement,
   captureScreenshot,
+  exportPdf,
   revealArtifact,
   copyArtifactToClipboard,
   openPictureInPicture,

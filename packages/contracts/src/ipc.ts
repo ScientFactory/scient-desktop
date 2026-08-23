@@ -108,6 +108,12 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import {
+  AssetCopyRequest,
+  AssetCopyResult,
+  type AssetCopyRequest as AssetCopyRequestType,
+  type AssetCopyResult as AssetCopyResultType,
+} from "@scientfactory/document-artifacts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -452,6 +458,11 @@ export const PickFolderOptionsSchema = Schema.Struct({
   targetEnvironmentId: Schema.optionalKey(Schema.String),
 });
 
+export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
+export type DesktopAssetCopyRequest = AssetCopyRequestType;
+export const DesktopAssetCopyResultSchema = AssetCopyResult;
+export type DesktopAssetCopyResult = AssetCopyResultType;
+
 /**
  * A file returned by the desktop theme-file picker. Oversized files carry an
  * empty text so the renderer can reject them by size without the main
@@ -773,6 +784,51 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
     createdAt: Schema.String,
   });
 
+export interface DesktopPreviewPdfExportSourceSignals {
+  bodyTextLength: number;
+  imageCount: number;
+  brokenImageCount: number;
+  canvasCount: number;
+  videoCount: number;
+  iframeCount: number;
+  scrollWidth: number;
+  scrollHeight: number;
+}
+
+export const DesktopPreviewPdfExportSourceSignalsSchema = Schema.Struct({
+  bodyTextLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  imageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  brokenImageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  canvasCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  videoCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  iframeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  scrollWidth: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  scrollHeight: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+
+export interface DesktopPreviewPdfExportArtifact {
+  data: Uint8Array;
+  sourceUrl: string;
+  title: string;
+  profile: "document-layout";
+  media: "print";
+  warnings: ReadonlyArray<string>;
+  sourceSignals: DesktopPreviewPdfExportSourceSignals;
+}
+
+export const DesktopPreviewPdfExportArtifactSchema: Schema.Codec<DesktopPreviewPdfExportArtifact> =
+  Schema.Struct({
+    data: Schema.Uint8Array,
+    sourceUrl: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32_768)),
+    title: Schema.String.check(Schema.isMaxLength(512)),
+    profile: Schema.Literal("document-layout"),
+    media: Schema.Literal("print"),
+    warnings: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
+      Schema.isMaxLength(32),
+    ),
+    sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
+  });
+
 /**
  * Single stack frame captured by react-grab's `getElementContext`. We surface
  * the source file/line so coding agents can jump straight to the JSX that
@@ -982,6 +1038,8 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
+export const DesktopPreviewPdfExportInputSchema = DesktopPreviewTabInputSchema;
+
 /**
  * Tab creation carries the client's configured browser defaults so the guest
  * is born already zoomed and color-scheme-emulated. Applying them after
@@ -1119,6 +1177,7 @@ export interface DesktopBridge {
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
+  saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
@@ -1242,6 +1301,8 @@ export interface DesktopPreviewBridge {
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
+  /** Print the current live guest state without navigating or reloading it. */
+  exportPdf: (tabId: string) => Promise<DesktopPreviewPdfExportArtifact>;
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {
@@ -1295,6 +1356,9 @@ export interface LocalApi {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+  };
+  documents: {
+    saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
   };
   contextMenu: {
     show: <T extends string>(

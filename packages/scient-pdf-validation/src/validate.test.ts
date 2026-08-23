@@ -40,6 +40,14 @@ describe("PDF structural validation", () => {
     });
   });
 
+  it("accepts browser-export output through the browser profile", async () => {
+    await expect(validatePdfBytes(minimalPdf(), "browser-export")).resolves.toMatchObject({
+      accepted: true,
+      profile: "browser-export",
+      pageCount: 1,
+    });
+  });
+
   it("rejects empty, corrupt, and truncated output", async () => {
     await expect(
       validatePdfBytes(new Uint8Array(), "producer-registration"),

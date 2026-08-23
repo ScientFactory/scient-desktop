@@ -1,5 +1,8 @@
 export {
   ArtifactAuthority,
+  AssetCopyFailureReason,
+  AssetCopyRequest,
+  AssetCopyResult,
   ArtifactId,
   ArtifactProducerId,
   ArtifactProvenance,

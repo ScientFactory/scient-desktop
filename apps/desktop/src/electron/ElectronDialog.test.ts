@@ -3,20 +3,24 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { BrowserWindow } from "electron";
-import { beforeEach, vi } from "vite-plus/test";
+import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ElectronDialog from "./ElectronDialog.ts";
 
-const { showMessageBoxMock, showOpenDialogMock, showErrorBoxMock } = vi.hoisted(() => ({
-  showMessageBoxMock: vi.fn(),
-  showOpenDialogMock: vi.fn(),
-  showErrorBoxMock: vi.fn(),
-}));
+const { showMessageBoxMock, showOpenDialogMock, showSaveDialogMock, showErrorBoxMock } = vi.hoisted(
+  () => ({
+    showMessageBoxMock: vi.fn(),
+    showOpenDialogMock: vi.fn(),
+    showSaveDialogMock: vi.fn(),
+    showErrorBoxMock: vi.fn(),
+  }),
+);
 
 vi.mock("electron", () => ({
   dialog: {
     showMessageBox: showMessageBoxMock,
     showOpenDialog: showOpenDialogMock,
+    showSaveDialog: showSaveDialogMock,
     showErrorBox: showErrorBoxMock,
   },
 }));
@@ -25,6 +29,7 @@ describe("ElectronDialog", () => {
   beforeEach(() => {
     showMessageBoxMock.mockReset();
     showOpenDialogMock.mockReset();
+    showSaveDialogMock.mockReset();
     showErrorBoxMock.mockReset();
   });
 
@@ -78,6 +83,66 @@ describe("ElectronDialog", () => {
           },
         ],
       ]);
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("attaches the save dialog to its owner and preserves cancellation", () =>
+    Effect.gen(function* () {
+      const owner = { id: 11 } as BrowserWindow;
+      showSaveDialogMock.mockResolvedValue({ canceled: true, filePath: "" });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      const selected = yield* dialog.saveFile({
+        owner: Option.some(owner),
+        defaultPath: Option.some("report.pdf"),
+        filters: [{ name: "PDF document", extensions: ["pdf"] }],
+      });
+
+      assert.isTrue(Option.isNone(selected));
+      expect(showSaveDialogMock).toHaveBeenCalledWith(owner, {
+        defaultPath: "report.pdf",
+        filters: [{ name: "PDF document", extensions: ["pdf"] }],
+        properties: ["showOverwriteConfirmation", "createDirectory"],
+      });
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("returns the selected save path", () =>
+    Effect.gen(function* () {
+      showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: "/tmp/report.pdf" });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      const selected = yield* dialog.saveFile({
+        owner: Option.none(),
+        defaultPath: Option.some("report.pdf"),
+        filters: [{ name: "PDF document", extensions: ["pdf"] }],
+      });
+
+      assert.deepStrictEqual(selected, Option.some("/tmp/report.pdf"));
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("preserves save dialog request context and cause", () =>
+    Effect.gen(function* () {
+      const cause = new Error("save dialog failed");
+      const owner = { id: 13 } as BrowserWindow;
+      showSaveDialogMock.mockRejectedValue(cause);
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      const error = yield* Effect.flip(
+        dialog.saveFile({
+          owner: Option.some(owner),
+          defaultPath: Option.some("report.pdf"),
+          filters: [{ name: "PDF document", extensions: ["pdf"] }],
+        }),
+      );
+
+      assert.instanceOf(error, ElectronDialog.ElectronDialogSaveFileError);
+      assert.isTrue(ElectronDialog.isElectronDialogError(error));
+      assert.strictEqual(error.ownerWindowId, 13);
+      assert.strictEqual(error.defaultPath, "report.pdf");
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, cause.message);
     }).pipe(Effect.provide(ElectronDialog.layer)),
   );
 

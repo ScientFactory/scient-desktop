@@ -1,7 +1,7 @@
 export const PDF_VALIDATION_MAX_BYTES = 256 * 1024 * 1024;
 export const PDF_VALIDATION_TIMEOUT_MS = 30_000;
 
-export type PdfValidationProfile = "existing-load" | "producer-registration";
+export type PdfValidationProfile = "existing-load" | "producer-registration" | "browser-export";
 
 export type PdfValidationFailureReason =
   | "empty"

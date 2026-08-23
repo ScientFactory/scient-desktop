@@ -1,12 +1,15 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Encoding from "effect/Encoding";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -54,6 +57,8 @@ import {
   AssetGeneratedDocumentAuthorityMismatchError,
   AssetGeneratedDocumentNotFoundError,
   AssetGeneratedDocumentResolutionError,
+  BROWSER_PDF_EXPORT_MAX_BYTES,
+  BrowserPdfExportError,
   AssetAnalysisArtifactNotFoundError,
   AssetAnalysisArtifactResolutionError,
   RpcClientId,
@@ -2142,6 +2147,82 @@ const makeWsRpcLayer = (
             WS_METHODS.filesystemPrepareFileOpen,
             prepareEnvironmentFileOpen(input),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.documentsPublishBrowserPdfExport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsPublishBrowserPdfExport,
+            Effect.gen(function* () {
+              const bytes = yield* Effect.try({
+                try: () => Result.getOrThrow(Encoding.decodeBase64Url(input.bytesBase64)),
+                catch: () =>
+                  new BrowserPdfExportError({
+                    reason: "failed",
+                    detail: "The browser PDF export bytes were not valid Base64.",
+                  }),
+              });
+              if (bytes.byteLength > BROWSER_PDF_EXPORT_MAX_BYTES) {
+                return yield* new BrowserPdfExportError({
+                  reason: "too-large",
+                  detail: `The browser PDF export exceeds the ${BROWSER_PDF_EXPORT_MAX_BYTES} byte limit.`,
+                });
+              }
+              const handle = yield* generatedDocuments.beginProduction({
+                logicalDocumentKey: input.logicalDocumentKey,
+                operationId: input.operationId,
+                producerId: input.producerId,
+              });
+              const source = yield* generatedDocuments
+                .publishPdf({
+                  ...handle,
+                  bytes,
+                  title: input.title,
+                  provenanceKind: "browser-export",
+                  validationProfile: "browser-export",
+                })
+                .pipe(
+                  Effect.catchTag("GeneratedDocumentStoreError", (cause) =>
+                    generatedDocuments
+                      .failProduction({
+                        ...handle,
+                        reason: cause.detail,
+                      })
+                      .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
+                  ),
+                );
+              return {
+                source,
+                receipt: {
+                  operationId: input.operationId,
+                  producerId: input.producerId,
+                  logicalDocumentKey: input.logicalDocumentKey,
+                  sourceUrl: input.sourceUrl,
+                  title: input.title,
+                  profile: input.profile,
+                  media: input.media,
+                  warnings: input.warnings,
+                  sourceSignals: input.sourceSignals,
+                  pageCount: source.pageCount ?? 1,
+                  byteLength: bytes.byteLength,
+                  exportedAtEpochMs: yield* Clock.currentTimeMillis,
+                },
+              };
+            }).pipe(
+              Effect.mapError((cause) => {
+                if (cause._tag === "BrowserPdfExportError") return cause;
+                const reason =
+                  cause.reason === "validation-rejected"
+                    ? cause.detail.includes("exceeds")
+                      ? "too-large"
+                      : "invalid-pdf"
+                    : cause.reason === "superseded"
+                      ? "superseded"
+                      : cause.reason === "filesystem"
+                        ? "storage"
+                        : "failed";
+                return new BrowserPdfExportError({ reason, detail: cause.detail });
+              }),
+            ),
+            { "rpc.aggregate": "documents" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
           observeRpcEffect(

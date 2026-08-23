@@ -17,6 +17,7 @@ import { isWorkspacePdfPreviewPath } from "@t3tools/shared/filePreview";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 import { useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
+import { ensureLocalApi } from "~/localApi";
 
 function sha256Hex(value: string): string {
   return [...sha256(new TextEncoder().encode(value))]
@@ -167,10 +168,9 @@ export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetRe
 }
 
 export const webPdfSourceActions: PdfSourceActions = {
-  saveCopy: (source, resolved) => {
-    const anchor = document.createElement("a");
-    anchor.href = resolved.url;
-    anchor.download = source.fileName;
-    anchor.click();
-  },
+  saveCopy: (source, resolved) =>
+    ensureLocalApi().documents.saveAssetCopy({
+      url: resolved.url,
+      suggestedFileName: source.fileName,
+    }),
 };

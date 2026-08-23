@@ -35,11 +35,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
+import { toastManager } from "~/components/ui/toast";
 import { ensureLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
+import { presentPdfSaveCopyResult } from "./pdfSaveCopyModel";
 import { PdfThumbnail } from "./PdfThumbnail";
 import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
 import {
@@ -199,6 +201,8 @@ function LoadedScientPdfReader(props: {
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [savingCopy, setSavingCopy] = useState(false);
+  const saveCopyPendingRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const sourceSyncHintShowTimerRef = useRef<number | null>(null);
@@ -247,6 +251,39 @@ function LoadedScientPdfReader(props: {
     setSearchQuery("");
     reader.closeSearch();
   }, [reader.closeSearch]);
+
+  const saveCopy = useCallback(async () => {
+    if (saveCopyPendingRef.current) return;
+    saveCopyPendingRef.current = true;
+    setSavingCopy(true);
+    try {
+      const result = await props.actions.saveCopy(props.source, {
+        url: props.sourceUrl,
+        expiresAt: props.sourceExpiresAt,
+        refresh: props.refreshSource,
+      });
+      const presentation = presentPdfSaveCopyResult(result);
+      if (presentation.refreshSource) props.refreshSource();
+      if (presentation._tag === "notice") {
+        toastManager.add({
+          type: presentation.type,
+          title: presentation.title,
+          ...(presentation.description === undefined
+            ? {}
+            : { description: presentation.description }),
+        });
+      }
+    } catch {
+      toastManager.add({
+        type: "error",
+        title: "The PDF could not be saved",
+        description: "Try again or choose another location.",
+      });
+    } finally {
+      saveCopyPendingRef.current = false;
+      setSavingCopy(false);
+    }
+  }, [props.actions, props.refreshSource, props.source, props.sourceExpiresAt, props.sourceUrl]);
 
   const clearSourceSyncHintTimers = useCallback(() => {
     if (sourceSyncHintShowTimerRef.current !== null) {
@@ -496,16 +533,9 @@ function LoadedScientPdfReader(props: {
             </DropdownMenuItem>
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
             {props.source.capabilities.canSaveCopy ? (
-              <DropdownMenuItem
-                onClick={() => {
-                  props.actions.saveCopy(props.source, {
-                    url: props.sourceUrl,
-                    expiresAt: props.sourceExpiresAt,
-                    refresh: props.refreshSource,
-                  });
-                }}
-              >
-                <Download /> Save a copy…
+              <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
+                {savingCopy ? <LoaderCircle className="animate-spin" /> : <Download />}
+                {savingCopy ? "Saving copy…" : "Save a copy…"}
               </DropdownMenuItem>
             ) : null}
             {canRevealSource ? (
