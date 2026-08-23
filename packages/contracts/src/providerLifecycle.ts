@@ -18,6 +18,7 @@ export const ProviderConnectionMethod = Schema.Literals([
   "grok_account",
   "grok_device_code",
   "droid_device_pairing",
+  "cursor_browser",
 ]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
 

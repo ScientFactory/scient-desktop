@@ -11,7 +11,12 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  CursorSettings,
+  type ProviderConnectionMethod,
+  ProviderDriverKind,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,9 +28,18 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  makeCursorConnectionActions,
+  withCursorSessionShutdown,
+} from "../../scient/providerLifecycle/CursorConnectionActions.ts";
+import { makeCursorManagedRuntimeResolution } from "../../scient/providerLifecycle/CursorManagedRuntimeActions.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
+import {
+  cursorRuntimeEnvironment,
+  hasExternalCursorAccountConfiguration,
+} from "../Layers/CursorCli.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -41,6 +55,7 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -64,6 +79,13 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
     }),
 };
 
+export function assistedCursorConnectionMethods(
+  settings: Pick<CursorSettings, "apiEndpoint">,
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<ProviderConnectionMethod> {
+  return hasExternalCursorAccountConfiguration(settings, environment) ? [] : ["cursor_browser"];
+}
+
 export type CursorDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
@@ -81,6 +103,8 @@ const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
+    readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
+    readonly connectionMethods: ReadonlyArray<ProviderConnectionMethod>;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
@@ -89,6 +113,15 @@ const withInstanceIdentity =
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
+    connection: {
+      methods: snapshot.auth.required === false ? [] : input.connectionMethods,
+      canDisconnect:
+        snapshot.auth.required !== false &&
+        input.connectionMethods.length > 0 &&
+        snapshot.auth.status === "authenticated",
+      operation: null,
+      runtime: input.runtime,
+    },
   });
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
@@ -106,6 +139,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -113,26 +147,56 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
+      const managedRuntime = yield* makeCursorManagedRuntimeResolution({
+        settings: config,
+        baseDir: serverConfig.baseDir,
+        environment: processEnv,
+        spawner,
+        managedInstallationAllowed: serverConfig.mode === "desktop",
+      });
+      const effectiveConfig = {
+        ...config,
+        enabled,
+        binaryPath: managedRuntime.effectiveBinaryPath,
+      } satisfies CursorSettings;
+      const effectiveProcessEnv = cursorRuntimeEnvironment(
+        processEnv,
+        managedRuntime.usesManagedPath,
+      );
+      const connectionMethods = assistedCursorConnectionMethods(config, processEnv);
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        runtime: managedRuntime.summary,
+        connectionMethods,
       });
-      const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
-      });
+      const maintenanceCapabilities = managedRuntime.usesManagedPath
+        ? makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          })
+        : yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+            binaryPath: effectiveConfig.binaryPath,
+            env: effectiveProcessEnv,
+          });
 
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
-        environment: processEnv,
+        environment: effectiveProcessEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
-      const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, effectiveProcessEnv);
+      const providerConnectionActions =
+        connectionMethods.length > 0
+          ? yield* makeCursorConnectionActions(effectiveConfig, effectiveProcessEnv, spawner)
+          : undefined;
+      const connectionActions = providerConnectionActions
+        ? withCursorSessionShutdown(providerConnectionActions, adapter.stopAll())
+        : undefined;
 
-      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkCursorProviderStatus(effectiveConfig, effectiveProcessEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -183,6 +247,8 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        ...(connectionActions ? { connectionActions } : {}),
+        managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
 };

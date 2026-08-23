@@ -46,6 +46,7 @@ import {
 } from "../providerMaintenance.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
+import { cursorCliArgs } from "./CursorCli.ts";
 
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
   CursorListAvailableModelsResponse,
@@ -756,10 +757,14 @@ function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
   );
 }
 
-const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* () {
+const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* (
+  environment?: NodeJS.ProcessEnv,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configPath = path.join(NodeOS.homedir(), ".cursor", "cli-config.json");
+  const homeDirectory =
+    environment?.HOME?.trim() || environment?.USERPROFILE?.trim() || NodeOS.homedir();
+  const configPath = path.join(homeDirectory, ".cursor", "cli-config.json");
   const raw = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
   return parseCursorCliConfigChannel(raw);
 });
@@ -950,11 +955,11 @@ const runCursorCommand = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const spawnCommand = yield* resolveSpawnCommand(
       cursorSettings.binaryPath,
-      args,
+      cursorCliArgs(args, environment),
       environment ? { env: environment } : {},
     );
     const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      ...(environment ? { env: environment } : { extendEnv: true }),
+      ...(environment ? { env: environment, extendEnv: false } : { extendEnv: true }),
       shell: spawnCommand.shell,
     });
 
@@ -971,7 +976,10 @@ const runCursorCommand = (
     return { stdout, stderr, code: exitCode } satisfies CommandResult;
   }).pipe(Effect.scoped);
 
-const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: NodeJS.ProcessEnv) =>
+export const runCursorAboutCommand = (
+  cursorSettings: CursorSettings,
+  environment?: NodeJS.ProcessEnv,
+) =>
   Effect.gen(function* () {
     const jsonResult = yield* runCursorCommand(
       cursorSettings,
@@ -1056,7 +1064,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   const parsed = parseCursorAboutOutput(aboutProbe.success.value);
-  const cursorCliConfigChannel = yield* readCursorCliConfigChannel();
+  const cursorCliConfigChannel = yield* readCursorCliConfigChannel(environment);
   const parameterizedModelPickerUnsupportedMessage =
     getCursorParameterizedModelPickerUnsupportedMessage({
       version: parsed.version,

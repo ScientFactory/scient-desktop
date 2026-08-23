@@ -2,14 +2,55 @@ import { type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { providerConnectionPresentation } from "../../scient/providerConnection/providerConnectionPresentation";
 import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+function isExpectedAssistedLifecycleState(status: ServerProvider): boolean {
+  const runtimeOperation = status.connection?.runtime?.operation;
+  const connectionOperation = status.connection?.operation;
+  if (runtimeOperation?.status === "failed" || connectionOperation?.status === "failed") {
+    return false;
+  }
+
+  const presentation = providerConnectionPresentation(status);
+  if (presentation.kind === "not-installed") {
+    return status.connection?.runtime?.actions.includes("install") ?? false;
+  }
+  return (
+    presentation.kind === "setting-up" ||
+    presentation.kind === "connecting" ||
+    (presentation.kind === "not-connected" && status.auth.status === "unauthenticated")
+  );
+}
+
+function shouldRenderProviderStatus(status: ServerProvider | null): status is ServerProvider {
+  return (
+    status !== null &&
+    status.status !== "ready" &&
+    status.status !== "disabled" &&
+    !isExpectedAssistedLifecycleState(status)
+  );
+}
+
+function providerLifecycleFailureMessage(status: ServerProvider): string | null {
+  const runtimeOperation = status.connection?.runtime?.operation;
+  if (runtimeOperation?.status === "failed") return runtimeOperation.message;
+  const connectionOperation = status.connection?.operation;
+  return connectionOperation?.status === "failed" ? connectionOperation.message : null;
+}
+
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
-  return !status || status.status === "ready" || status.status === "disabled"
+  return !shouldRenderProviderStatus(status)
     ? null
-    : [status.instanceId, status.status, status.auth.status, status.message ?? ""].join("\u0000");
+    : [
+        status.instanceId,
+        status.status,
+        status.auth.status,
+        status.message ?? "",
+        providerLifecycleFailureMessage(status) ?? "",
+      ].join("\u0000");
 }
 
 export function shouldShowProviderStatusBanner(
@@ -27,21 +68,33 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss: () => void;
   status: ServerProvider | null;
 }) {
-  if (!status || status.status === "ready" || status.status === "disabled") {
+  if (!shouldRenderProviderStatus(status)) {
     return null;
   }
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
-  const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
-  const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
-    : `${providerName} provider status`;
-  const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
-    : (status.message ??
-      (status.status === "error"
-        ? `${providerName} provider is unavailable.`
-        : `${providerName} provider has limited availability.`));
+  const runtimeFailed = status.connection?.runtime?.operation?.status === "failed";
+  const connectionFailed = status.connection?.operation?.status === "failed";
+  const lifecycleFailureMessage = providerLifecycleFailureMessage(status);
+  const isUnauthenticated =
+    !lifecycleFailureMessage &&
+    status.status === "error" &&
+    status.auth.status === "unauthenticated";
+  const title = runtimeFailed
+    ? `${providerName} setup failed`
+    : connectionFailed
+      ? `${providerName} sign-in failed`
+      : isUnauthenticated
+        ? `${providerName} is unauthenticated`
+        : `${providerName} provider status`;
+  const message =
+    lifecycleFailureMessage ??
+    (isUnauthenticated
+      ? "Sign in via the CLI to authenticate again."
+      : (status.message ??
+        (status.status === "error"
+          ? `${providerName} provider is unavailable.`
+          : `${providerName} provider has limited availability.`)));
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">

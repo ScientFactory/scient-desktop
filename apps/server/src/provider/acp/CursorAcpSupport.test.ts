@@ -74,6 +74,21 @@ describe("buildCursorAcpSpawnInput", () => {
       cwd: "/tmp/project",
     });
   });
+
+  it("disables in-place updates only for Scient-managed Cursor runtimes", () => {
+    expect(
+      buildCursorAcpSpawnInput(
+        { binaryPath: "/private/cursor-agent", apiEndpoint: "" },
+        "/tmp/project",
+        { SCIENT_MANAGED_CURSOR_RUNTIME: "1" },
+      ),
+    ).toEqual({
+      command: "/private/cursor-agent",
+      args: ["--disable-auto-update", "acp"],
+      cwd: "/tmp/project",
+      env: { SCIENT_MANAGED_CURSOR_RUNTIME: "1" },
+    });
+  });
 });
 
 describe("applyCursorAcpModelSelection", () => {

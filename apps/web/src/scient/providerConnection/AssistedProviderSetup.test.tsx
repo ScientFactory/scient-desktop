@@ -26,10 +26,18 @@ describe("AssistedProviderSetup", () => {
     expect(markup).toContain("in-[[data-model-picker-content=true]]:items-center");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:justify-center");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:w-full");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:size-8");
+    expect(markup).toContain(":size-7");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:text-center");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
     expect(markup).toContain("in-[[data-slot=dialog-panel]]:p-0");
     expect(markup).toContain(">Repair<");
+    const installButtonIndex = markup.indexOf(">Install<");
+    const actionStart = markup.lastIndexOf("<div", installButtonIndex);
+    const actionMarkup = markup.slice(actionStart, markup.indexOf("</div>", actionStart));
+    expect(actionMarkup).toContain("in-[[data-model-picker-content=true]]:w-full");
+    expect(actionMarkup).toContain("in-[[data-model-picker-content=true]]:justify-center");
+    expect(actionMarkup).toContain("in-[[data-model-picker-content=true]]:pt-0");
   });
 
   it("nudges only the Grok composer surface slightly left and up", () => {

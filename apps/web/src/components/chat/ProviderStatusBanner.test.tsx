@@ -26,6 +26,33 @@ function warningProvider(): ServerProvider {
   };
 }
 
+function assistedCursorProvider(): ServerProvider {
+  return {
+    ...warningProvider(),
+    instanceId: ProviderInstanceId.make("cursor"),
+    driver: ProviderDriverKind.make("cursor"),
+    displayName: "Cursor",
+    status: "error",
+    auth: { status: "unauthenticated", required: true },
+    message: "Cursor Agent is not authenticated.",
+    connection: {
+      methods: ["cursor_browser"],
+      canDisconnect: false,
+      operation: null,
+      runtime: {
+        source: "scient_managed",
+        supportTier: "fully_assisted",
+        target: "darwin-arm64",
+        actions: ["repair", "remove"],
+        managedVersion: "2026.08.11-e8db854",
+        previousManagedVersion: null,
+        operation: null,
+        message: "Scient is using an app-private, verified Cursor runtime.",
+      },
+    },
+  };
+}
+
 describe("ProviderStatusBanner", () => {
   it("stays hidden after its current warning is dismissed", () => {
     const status = warningProvider();
@@ -62,5 +89,89 @@ describe("ProviderStatusBanner", () => {
     );
 
     expect(markup).toContain('aria-label="Dismiss Codex provider error"');
+  });
+
+  it("does not duplicate expected assisted installation and sign-in states", () => {
+    const installed = assistedCursorProvider();
+    const missing: ServerProvider = {
+      ...installed,
+      installed: false,
+      message: "Cursor CLI command /private/cursor-agent was not found.",
+      connection: {
+        ...installed.connection!,
+        runtime: {
+          ...installed.connection!.runtime!,
+          source: "missing",
+          actions: ["install"],
+          managedVersion: null,
+        },
+      },
+    };
+    const installing: ServerProvider = {
+      ...missing,
+      connection: {
+        ...missing.connection!,
+        runtime: {
+          ...missing.connection!.runtime!,
+          operation: {
+            operationId: "cursor-install",
+            action: "install",
+            status: "activating",
+            startedAt: "2026-08-23T08:00:00.000Z",
+            finishedAt: null,
+            message: "Finishing setup.",
+          },
+        },
+      },
+    };
+
+    expect(getProviderStatusBannerKey(missing)).toBeNull();
+    expect(getProviderStatusBannerKey(installing)).toBeNull();
+    expect(getProviderStatusBannerKey(installed)).toBeNull();
+    expect(
+      renderToStaticMarkup(<ProviderStatusBanner status={missing} onDismiss={() => {}} />),
+    ).toBe("");
+  });
+
+  it("keeps genuine assisted lifecycle failures visible", () => {
+    const installed = assistedCursorProvider();
+    const failed: ServerProvider = {
+      ...installed,
+      connection: {
+        ...installed.connection!,
+        runtime: {
+          ...installed.connection!.runtime!,
+          operation: {
+            operationId: "cursor-install",
+            action: "install",
+            status: "failed",
+            startedAt: "2026-08-23T08:00:00.000Z",
+            finishedAt: "2026-08-23T08:00:05.000Z",
+            message: "Cursor verification failed.",
+          },
+        },
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner status={failed} onDismiss={() => {}} />,
+    );
+    expect(getProviderStatusBannerKey(failed)).not.toBeNull();
+    expect(markup).toContain("Cursor setup failed");
+    expect(markup).toContain("Cursor verification failed.");
+  });
+
+  it("keeps an unexplained provider failure visible when assisted sign-in is available", () => {
+    const failed: ServerProvider = {
+      ...assistedCursorProvider(),
+      auth: { status: "unknown", required: true },
+      message: "Cursor provider failed its health check.",
+    };
+
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner status={failed} onDismiss={() => {}} />,
+    );
+    expect(getProviderStatusBannerKey(failed)).not.toBeNull();
+    expect(markup).toContain("Cursor provider failed its health check.");
   });
 });

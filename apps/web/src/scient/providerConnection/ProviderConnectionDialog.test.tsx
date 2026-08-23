@@ -73,6 +73,18 @@ vi.mock("./GrokInlineSetup", () => ({
     </div>
   ),
 }));
+vi.mock("./CursorInlineSetup", () => ({
+  CursorInlineSetup: (props: {
+    accountAction?: ReactNode;
+    managedRuntimePresentedExternally?: boolean;
+  }) => (
+    <div>
+      Cursor lifecycle surface
+      {props.managedRuntimePresentedExternally ? " · Shared runtime management" : null}
+      {props.accountAction}
+    </div>
+  ),
+}));
 vi.mock("../../components/chat/ProviderInstanceIcon", () => ({
   ProviderInstanceIcon: (props: { displayName: string }) => (
     <span data-provider-title-icon>{props.displayName} icon</span>
@@ -183,6 +195,7 @@ describe("ProviderConnectionDialog", () => {
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
     ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
+    ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps the assisted %s dialog compact and fully manageable",
@@ -312,6 +325,128 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).not.toContain("install confirmation requested");
   });
 
+  it("keeps Cursor installation visible when opened from the settings Install action", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Cursor"
+        environmentId={EnvironmentId.make("local")}
+        initialRuntimeAction="install"
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("cursor"),
+          driver: ProviderDriverKind.make("cursor"),
+          displayName: "Cursor",
+          installed: false,
+          status: "error",
+          auth: { status: "unauthenticated", required: true },
+          models: [],
+          connection: {
+            methods: ["cursor_browser"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              ...provider.connection!.runtime!,
+              source: "missing",
+              actions: ["install"],
+              managedVersion: null,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Cursor lifecycle surface");
+    expect(markup).not.toContain("Compact managed runtime actions");
+  });
+
+  it("keeps the Cursor install surface mounted when the runtime operation begins", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Cursor"
+        environmentId={EnvironmentId.make("local")}
+        initialRuntimeAction="install"
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("cursor"),
+          driver: ProviderDriverKind.make("cursor"),
+          displayName: "Cursor",
+          installed: false,
+          status: "warning",
+          auth: {
+            status: "authenticated",
+            required: true,
+            email: "cursor@example.com",
+            label: "Cursor Pro Subscription",
+          },
+          models: [],
+          connection: {
+            methods: ["cursor_browser"],
+            canDisconnect: true,
+            operation: null,
+            runtime: {
+              ...provider.connection!.runtime!,
+              source: "missing",
+              actions: ["install"],
+              managedVersion: null,
+              operation: {
+                operationId: "cursor-install",
+                action: "install",
+                status: "preparing",
+                startedAt: "2026-08-23T08:00:00.000Z",
+                finishedAt: null,
+                message: "Preparing the provider runtime operation.",
+              },
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Cursor lifecycle surface");
+    expect(markup).not.toContain("Compact managed runtime actions");
+  });
+
+  it("drops the stale Cursor install intent after managed installation finishes", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Cursor"
+        environmentId={EnvironmentId.make("local")}
+        initialRuntimeAction="install"
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("cursor"),
+          driver: ProviderDriverKind.make("cursor"),
+          displayName: "Cursor",
+          auth: {
+            status: "authenticated",
+            required: true,
+            email: "cursor@example.com",
+            label: "Cursor Pro Subscription",
+          },
+          connection: {
+            methods: ["cursor_browser"],
+            canDisconnect: true,
+            operation: null,
+            runtime: {
+              ...provider.connection!.runtime!,
+              actions: ["repair", "remove"],
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Compact managed runtime actions");
+    expect(markup).toContain("Cursor lifecycle surface");
+    expect(markup).not.toContain("install confirmation requested");
+  });
+
   it("omits a read-only system-runtime row when an older server provides no diagnostics", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
@@ -350,6 +485,7 @@ describe("ProviderConnectionDialog", () => {
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
     ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
+    ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps managed runtime actions visible while assisted %s is signed out",

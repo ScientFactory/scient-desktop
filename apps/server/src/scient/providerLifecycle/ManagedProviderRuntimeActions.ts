@@ -151,6 +151,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   readonly targetLabel: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly configuredRuntimeProbeAllowed?: boolean | undefined;
   readonly managedInstallationAllowed: boolean;
   readonly sourceLabel: string;
   readonly managedInstallationLimitation: string;
@@ -175,11 +176,12 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   }).pipe(Effect.ignore);
 
   const hasCustomRuntime = input.configuredBinaryPath !== defaultBinary;
-  const configuredRuntimeHealthy = yield* hasHealthyConfiguredRuntime(
-    input.configuredBinaryPath,
-    environment,
-    spawner,
-  ).pipe(Effect.catchCause(() => Effect.succeed(false)));
+  const configuredRuntimeHealthy =
+    input.configuredRuntimeProbeAllowed === false
+      ? false
+      : yield* hasHealthyConfiguredRuntime(input.configuredBinaryPath, environment, spawner).pipe(
+          Effect.catchCause(() => Effect.succeed(false)),
+        );
   const configuredExecutable = configuredRuntimeHealthy
     ? yield* resolveCommandPath(input.configuredBinaryPath, {
         env: environment,
