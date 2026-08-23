@@ -7,16 +7,17 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with seven entries:
 
-| Driver kind   | Driver source                           |
-| ------------- | --------------------------------------- |
-| `codex`       | [`Drivers/CodexDriver.ts`][codex]       |
-| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]     |
-| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
-| `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
-| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
-| `droid`       | [`Drivers/DroidDriver.ts`][droid]       |
+| Driver kind   | Driver source                                 |
+| ------------- | --------------------------------------------- |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]             |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]           |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]           |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]               |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]       |
+| `droid`       | [`Drivers/DroidDriver.ts`][droid]             |
+| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -39,6 +40,29 @@ directory to route session and turn operations for a thread, so callers name a t
 
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
+
+## Scient awareness
+
+Interactive agents receive one compact, Scient-owned awareness contract from
+[`ScientAwareness.ts`][awareness]. The always-on block identifies Scient as a project workspace,
+states what the user can inspect, and names the rich Markdown representations the chat actually
+renders. A separate browser block is composed only when the exact MCP credential for that session
+grants `preview`; the same capability decision drives both authorization and awareness. Sources
+mechanics remain in tool descriptions rather than consuming every turn's instruction context.
+
+Each built-in driver has an explicit native delivery decision, guarded against `BUILT_IN_DRIVERS`:
+
+- Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
+  per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`.
+- Cursor 2026.08.11 accepts a documented `--plugin-dir`, but live CLI and ACP verification found
+  that session-local plugin rules were not applied. Antigravity 1.1.19 likewise has no verified
+  application-private system extension. Both integrations are therefore marked unsupported for
+  Scient awareness instead of rewriting the user's first message, writing rules into the project,
+  or modifying global configuration.
+
+Adding a provider requires adding a tested delivery decision. System awareness never comes from
+hidden user-message prefixes, project instruction files, credentials copied into a synthetic home,
+or undocumented ACP metadata.
 
 ### Droid (Factory) driver
 
@@ -90,7 +114,7 @@ Scient adds an optional lifecycle seam to the existing T3 provider instance. It 
 second provider registry, model catalog, session router, or credential store. A driver without the
 optional seam keeps its inherited setup and provider behavior.
 
-The current vertical implementations are Codex and Claude:
+The current vertical implementations are Codex, Claude, and Antigravity:
 
 - [`ProviderDriver.ts`][driver] exposes optional provider-owned connection and managed-runtime
   actions on a materialized provider instance;
@@ -165,13 +189,37 @@ Claude Code also owns the initial browser launch. Scient captures and validates 
 authorization URL only to provide a **Reopen browser** recovery action; it does not open the same
 page a second time and create duplicate tabs.
 
+### Antigravity architecture and authentication
+
+Antigravity is a native integration, not an ACP compatibility bridge:
+
+- **Session transport (`AgySession.ts`)**: Starts one official `agy` process per Scient thread with
+  documented `stream-json` input and output. The process stays warm for multiple turns and emits
+  typed init, delta, tool, result, usage, and conversation-ID data. Cancellation terminates the
+  process; the next turn starts a fresh process with the last completed conversation ID.
+- **Adapter (`AntigravityAdapter.ts`)**: Maps native events into canonical provider events, owns
+  process/session scopes, stages attachments in a private directory, and rejects unsupported
+  interactive approvals, model switching, and rollback honestly.
+- **Authentication (`AntigravityConnectionActions.ts`)**: Launches the official interactive client
+  in a PTY, lets Antigravity open Google sign-in, and verifies completion with `agy models`.
+  Disconnect sends `/logout`. If the CLI blocks that command behind first-run screens, Scient
+  removes only Antigravity's provider-owned local consumer credential entries and then verifies that
+  `agy models` is unauthenticated. Scient never reads or copies token contents. The process
+  environment is allowlisted, disables Antigravity's in-place updater, and omits API-key and
+  custom-endpoint variables, preserving the Google-account subscription boundary.
+- **Structured text generation (`AntigravityTextGeneration.ts`)**: Uses the same native transport
+  with `--json-schema` and validates `structured_output`; it does not scrape JSON from prose.
+- **Assisted onboarding (`AntigravityInlineSetup.tsx`)**: Surfaces reviewed managed install,
+  cancellation/recovery, Google sign-in, model readiness, updates, and sign-out in the
+  composer and Settings surfaces.
+
 ### Managed runtime trust boundary
 
 The reviewed runtime catalogs currently include OpenAI Codex `0.147.0`, release tag
-`rust-v0.147.0`, and Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version
-already used by T3. Each known artifact has an exact HTTPS URL, allowlisted redirect hosts, byte
-size, SHA-256 digest, archive shape, executable path, and smoke command compiled into the signed
-application source.
+`rust-v0.147.0`; Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version already
+used by T3; and Google Antigravity CLI `1.1.19`. Each known artifact has an exact HTTPS URL,
+allowlisted redirect hosts, byte size, SHA-256 or SHA-512 digest, archive shape, executable path,
+and smoke command compiled into the signed application source.
 
 That paired Claude runtime satisfies the current Fable 5 capability threshold, but it does not
 claim Opus 5 support: Opus 5 remains hidden until a healthy Claude Code `2.1.219` or newer is
@@ -242,6 +290,18 @@ build enables or advertises a target, that exact operating-system and architectu
 clean-machine installation, cancellation, authentication, update, interruption, and recovery
 qualification. Passing those checks on one target does not certify another.
 
+### Antigravity platform capability matrix
+
+The reviewed Antigravity `1.1.19` catalog covers Apple-silicon and Intel macOS, Windows ARM64 and
+x64, and glibc Linux ARM64 and x64. Google's macOS and Linux archives contain one native
+`antigravity` executable; the Windows release is a reviewed raw `agy.exe`. Musl Linux is not
+advertised because Google does not publish a matching artifact in this release.
+
+Known local-desktop targets receive managed install, repair, update, and removal. Remote/server
+hosts may use an externally administered runtime but cannot mutate it through Scient. As with the
+other provider catalogs, each operating-system and architecture row still requires packaged-app
+qualification before release; catalog metadata and unit tests alone are not cross-platform proof.
+
 ### Upstream-maintenance boundary
 
 Most lifecycle behavior is under `apps/server/src/scient`, `apps/web/src/scient`, and
@@ -305,7 +365,9 @@ when a request opens (approval) or user input is requested, via
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
+[antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
+[awareness]: ../../apps/server/src/provider/ScientAwareness.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts
@@ -315,6 +377,7 @@ when a request opens (approval) or user input is requested, via
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
 [codex-connection]: ../../apps/server/src/scient/providerLifecycle/CodexConnectionActions.ts
 [claude-connection]: ../../apps/server/src/scient/providerLifecycle/ClaudeConnectionActions.ts
+[antigravity-connection]: ../../apps/server/src/scient/providerLifecycle/AntigravityConnectionActions.ts
 [runtime-package]: ../../packages/scient-provider-runtime/
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts

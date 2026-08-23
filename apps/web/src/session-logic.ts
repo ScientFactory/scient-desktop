@@ -3,6 +3,7 @@ import * as Arr from "effect/Array";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   ApprovalRequestId,
+  compareProviderDriverKinds,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
@@ -25,7 +26,7 @@ import type {
 
 export type ProviderPickerKind = ProviderDriverKind;
 
-export const PROVIDER_OPTIONS: Array<{
+const PROVIDER_OPTIONS_UNORDERED: Array<{
   value: ProviderPickerKind;
   label: string;
   available: boolean;
@@ -58,7 +59,17 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  {
+    value: ProviderDriverKind.make("antigravity"),
+    label: "Antigravity",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
+
+export const PROVIDER_OPTIONS = PROVIDER_OPTIONS_UNORDERED.toSorted((left, right) =>
+  compareProviderDriverKinds(left.value, right.value),
+);
 
 export type WorkLogToolLifecycleStatus =
   | "inProgress"

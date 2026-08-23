@@ -1,11 +1,11 @@
 # Upstream maintenance
 
-This is the private ScientFactory-owned T3-derived desktop candidate. Official
-T3 supplies the maintained generic host platform; ScientFactory owns candidate
+This is the public ScientFactory-owned T3-derived desktop application. Official
+T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
 divergence.
 
-- Owned repository: `ScientFactory/scient-desktop-next`, default branch `main`
+- Owned repository: `ScientFactory/scient-desktop`, default branch `main`
 - Official upstream: `pingdotgg/t3code`, default branch `main`
 - Writable remote: `origin`
 - Fetch-only remote: `upstream`, push URL `DISABLED`
@@ -279,6 +279,15 @@ workflow rejects new non-official merge parents, while
 `scient-quick-chat-seams.json` keeps raw projectless decisions and inherited
 mounts explicit for future upstream reconciliation.
 
+Scient's first-run Getting Started flow is isolated under
+`apps/web/src/scient/onboarding`. It reuses canonical provider, project,
+permission, and Quick Chat state and owns only local presentation and optional
+preference records. The inherited-host seams are limited to the empty chat
+route, one General settings row, and the generated route entry. Preserve those
+mounts through upstream reconciliation;
+`scient-onboarding-seams.json` is the machine-readable inventory. See
+[Scient getting started](docs/internals/scient-onboarding.md).
+
 Local voice dictation is isolated under `packages/scient-voice`,
 `apps/web/src/scient/voice`, and `apps/desktop/src/app/DesktopVoice.ts`. The
 inherited-host seams are limited to typed IPC/preload registration, one
@@ -332,8 +341,7 @@ exact source-commit handoff before publication. Signing credentials are scoped
 to their operating-system jobs, and release-owned actions are commit-pinned;
 these guards must survive future T3 workflow refreshes.
 
-Production identity is a conscious cutover divergence: the package uses the
-canonical Scient bundle ID and protocol so the legacy updater can replace the
-old app, while keeping `scient-next` user data isolated. Future upstream merges
-must not restore T3 publication authority or a dependency on
-`t3@<Scient version>`.
+Production identity is a conscious Scient divergence: the package uses the
+canonical Scient bundle ID and protocol while retaining the established
+`scient-next` user-data location for compatibility. Future upstream merges must
+not restore T3 publication authority or a dependency on `t3@<Scient version>`.

@@ -22,7 +22,7 @@ const METADATA_TIMEOUT_MS = 5_000;
 const ENRICHMENT_DEADLINE_MS = 6_500;
 const MAX_METADATA_RESPONSE_BYTES = 2 * 1024 * 1024;
 const USER_AGENT =
-  "Scient/0.0 (https://github.com/ScientFactory/scient-desktop-next; source metadata resolution)";
+  "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; source metadata resolution)";
 
 const CrossrefResponse = Schema.Struct({
   message: Schema.Struct({

@@ -13,11 +13,11 @@ describe("Scient release distribution", () => {
     assert.equal(scientServerAssetName("0.6.0"), "scient-server-0.6.0.tgz");
     assert.equal(
       scientServerPackageSpec("0.6.0"),
-      "https://github.com/ScientFactory/scient-desktop-next/releases/download/v0.6.0/scient-server-0.6.0.tgz",
+      "https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz",
     );
     assert.equal(
       scientServerNpxCommand("0.6.0"),
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop-next/releases/download/v0.6.0/scient-server-0.6.0.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz t3",
     );
   });
 

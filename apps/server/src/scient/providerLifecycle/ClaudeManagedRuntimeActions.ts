@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import {
   makeManagedProviderRuntimeResolution,
+  nativeProviderRuntimeBackendLabel,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
 
@@ -54,6 +55,9 @@ export const makeClaudeManagedRuntimeResolution = Effect.fn("ClaudeManagedRuntim
       sourceLabel: "Official Anthropic Claude Code release",
       managedInstallationLimitation:
         "Scient can use a healthy Claude runtime here, but managed installation is only enabled in the local desktop app.",
+      diagnosticsHomePath:
+        input.settings.homePath.trim() || input.environment.CLAUDE_CONFIG_DIR?.trim() || null,
+      diagnosticsBackend: nativeProviderRuntimeBackendLabel(platform),
     });
   },
 );

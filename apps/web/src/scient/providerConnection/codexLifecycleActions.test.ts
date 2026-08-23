@@ -6,7 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { startCodexBrowserSignIn, updateCodexRuntime } from "./codexLifecycleActions";
+import {
+  startCodexBrowserSignIn,
+  startCodexDeviceSignIn,
+  updateCodexRuntime,
+} from "./codexLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 const INSTANCE_ID = ProviderInstanceId.make("codex");
@@ -125,5 +129,33 @@ describe("Codex lifecycle actions", () => {
     await startCodexBrowserSignIn(lifecycle);
 
     expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/");
+  });
+
+  it("starts and opens Codex's official device-code flow", async () => {
+    const lifecycle = controller({
+      startConnection: vi.fn(async () =>
+        provider({
+          connection: {
+            methods: ["codex_browser", "codex_device_code"],
+            canDisconnect: false,
+            operation: {
+              operationId: "connection-device",
+              method: "codex_device_code",
+              status: "waiting_for_device_code",
+              startedAt: "2026-08-09T08:00:00.000Z",
+              finishedAt: null,
+              message: "Enter the device code.",
+              authorizationUrl: "https://auth.openai.com/device",
+              userCode: "ABCD-EFGH",
+            },
+          },
+        }),
+      ),
+    });
+
+    await startCodexDeviceSignIn(lifecycle);
+
+    expect(lifecycle.startConnection).toHaveBeenCalledWith("codex_device_code");
+    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/device");
   });
 });

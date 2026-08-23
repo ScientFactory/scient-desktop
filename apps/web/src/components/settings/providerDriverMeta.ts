@@ -4,11 +4,14 @@ import {
   CursorSettings,
   DroidSettings,
   GrokSettings,
+  AntigravitySettings,
   OpenCodeSettings,
+  compareProviderDriverKinds,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import {
+  AntigravityIcon,
   ClaudeAI,
   CursorIcon,
   DroidIcon,
@@ -43,7 +46,7 @@ export interface ProviderClientDefinition {
   readonly badgeLabel?: string;
 }
 
-export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[] = [
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",
@@ -83,7 +86,18 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
   },
+  {
+    value: ProviderDriverKind.make("antigravity"),
+    label: "Antigravity",
+    icon: AntigravityIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: AntigravitySettings,
+  },
 ];
+
+export const PROVIDER_CLIENT_DEFINITIONS = PROVIDER_CLIENT_DEFINITIONS_UNORDERED.toSorted(
+  (left, right) => compareProviderDriverKinds(left.value, right.value),
+);
 
 export const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
   Record<ProviderDriverKind, ProviderClientDefinition>

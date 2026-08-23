@@ -6,7 +6,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath } from "@t3tools/shared/devHome";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -336,11 +336,11 @@ export function createDevRunnerEnv({
     };
 
     // T3CODE_HOME is retained only as the server's internal compatibility
-    // input. It is always set to the candidate-specific path, never inherited
+    // input. It is always set to the worktree-specific path, never inherited
     // from an installed T3 Code process.
     output.SCIENT_NEXT_HOME = resolvedBaseDir;
     output.T3CODE_HOME = resolvedBaseDir;
-    output.SCIENT_NEXT_SAFETY_ENVELOPE = SCIENT_NEXT_IDENTITY.safetyEnvelopeMarker;
+    output.SCIENT_NEXT_SAFETY_ENVELOPE = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker;
 
     // A dev-runner server is never launcher-managed. When the shell that runs
     // this script was itself spawned by the machine's managed t3 service (an
@@ -860,7 +860,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   t3Home: Flag.string("home-dir").pipe(
     Flag.withDescription(
-      "Explicit Scient candidate data directory; runtime state is stored under candidate userdata. Inside a git worktree this defaults to that worktree's own .scient-next so dev state stays off the shared home.",
+      "Explicit Scient development data directory; runtime state is stored under isolated userdata. Inside a git worktree this defaults to that worktree's own .scient-next so dev state stays off the shared home.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),

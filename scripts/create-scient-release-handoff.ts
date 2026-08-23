@@ -19,6 +19,14 @@ function value(args: ReadonlyArray<string>, flag: string): string {
   return result;
 }
 
+function repository(args: ReadonlyArray<string>): string {
+  const result = value(args, "--repository");
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(result)) {
+    throw new Error(`Invalid release repository: '${result}'.`);
+  }
+  return result;
+}
+
 function sha256(path: string): string {
   return NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(path)).digest("hex");
 }
@@ -26,6 +34,7 @@ function sha256(path: string): string {
 export function createScientReleaseHandoff(args: ReadonlyArray<string>): string {
   const assetsDir = NodePath.resolve(value(args, "--assets-dir"));
   const version = value(args, "--version").replace(/^v/u, "");
+  const sourceRepository = repository(args);
   const sourceSha = value(args, "--source-sha");
   const sourceTree = value(args, "--source-tree");
   const output = NodePath.resolve(value(args, "--output"));
@@ -54,7 +63,7 @@ export function createScientReleaseHandoff(args: ReadonlyArray<string>): string 
         version,
         tag: `v${version}`,
         source: {
-          repository: "ScientFactory/scient-desktop-next",
+          repository: sourceRepository,
           commit: sourceSha,
           tree: sourceTree,
         },

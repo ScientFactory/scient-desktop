@@ -1,13 +1,12 @@
 /**
- * Scient's product label plus its production and development runtime identity.
+ * Scient Desktop's product label plus its production and development runtime identity.
  *
  * Keep this small, explicit, and separate from T3's internal package names.
- * Production deliberately keeps the canonical Scient install identity so the
- * existing updater can replace the legacy desktop app. Development and data
- * storage remain isolated: a production update must never silently open or
- * mutate the legacy app's user-data directory.
+ * Production uses the canonical Scient install identity. Development and data
+ * storage retain their established `scient-next` compatibility values: a
+ * repository rename must never relocate or silently reset existing user data.
  */
-export const SCIENT_NEXT_IDENTITY = {
+export const SCIENT_DESKTOP_IDENTITY = {
   baseName: "Scient",
   developmentName: "Scient (Dev)",
   appId: "com.scientfactory.scient",
@@ -32,4 +31,4 @@ export const SCIENT_NEXT_IDENTITY = {
   outboundTelemetryEnabled: false,
 } as const;
 
-export type ScientNextIdentity = typeof SCIENT_NEXT_IDENTITY;
+export type ScientDesktopIdentity = typeof SCIENT_DESKTOP_IDENTITY;

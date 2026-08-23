@@ -18,6 +18,7 @@ import {
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
@@ -268,7 +269,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const sidebarInstanceEntries = useMemo(() => {
     const enabledEntries = instanceEntries.filter(isProviderInstancePickerVisible);
     if (!isLocked) {
-      return enabledEntries;
+      return prioritizeActiveProviderInstance(enabledEntries, props.activeInstanceId);
     }
     const available: ProviderInstanceEntry[] = [];
     const disabled: ProviderInstanceEntry[] = [];
@@ -280,7 +281,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return [...available, ...disabled];
-  }, [instanceEntries, isLocked, matchesLockedProvider]);
+  }, [instanceEntries, isLocked, matchesLockedProvider, props.activeInstanceId]);
   const setupAvailableInstanceIds = useMemo(() => {
     if (!props.isProviderSetupAvailable || !props.renderProviderSetup || isLocked) {
       return undefined;

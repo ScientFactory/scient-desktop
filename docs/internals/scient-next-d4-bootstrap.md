@@ -85,8 +85,8 @@ desktop:
 | Preview partition prefix        | `persist:scient-next-preview-`                                                        |
 | Web client persistence key      | `scient-next:client-settings:v1`                                                      |
 
-The identity values have one shared source in
-`packages/shared/src/scientNextIdentity.ts`. The early Electron launcher and
+The identity values have one shared source, now named
+`packages/shared/src/scientDesktopIdentity.ts`. The early Electron launcher and
 the TypeScript runtime intentionally repeat only the values needed before the
 bundle can load, with tests guarding the boundary.
 
@@ -162,7 +162,7 @@ them before the merge can be considered safe:
 
 | Protected boundary                                            | Owning source seams                                                                                                  | Preservation evidence                                                                                                    |
 | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Central candidate identity                                    | `packages/shared/src/scientNextIdentity.ts`; early Electron launcher constants; desktop identity adapters            | `scientNextIdentity.test.ts`, `DesktopAppIdentity.test.ts`, `DesktopEarlyElectronStartup.test.ts`                        |
+| Central candidate identity                                    | `packages/shared/src/scientDesktopIdentity.ts`; early Electron launcher constants; desktop identity adapters         | `scientDesktopIdentity.test.ts`, `DesktopAppIdentity.test.ts`, `DesktopEarlyElectronStartup.test.ts`                     |
 | State roots and legacy-fallback refusal                       | `packages/shared/src/devHome.ts`; desktop environment/backend configuration; server CLI/config and pairing           | `devHome.test.ts`, `DesktopEnvironment.test.ts`, `DesktopBackendConfiguration.test.ts`, `config.test.ts`, `pair.test.ts` |
 | Protocols, preview partitions, and browser/client persistence | desktop protocol, Linux URL handling, preview browser session, web client/theme storage                              | protocol, Linux URL, browser-session, client-persistence, and theme focused tests                                        |
 | Provider identity, analytics, and outbound observability      | `DesktopClerk.ts`, `DesktopObservability.ts`, server `AnalyticsService.ts`, server/web relay and build configuration | desktop Clerk/observability tests, analytics tests, cloud public-config tests, build inspection                          |

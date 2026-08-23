@@ -44,7 +44,8 @@ env:
 jobs:
   ios:
     name: iPhone 6.9, iPhone 6.5, and iPad 13
-    # D4 candidate: visual/mobile capture is not part of this phase.
+    # Mobile showcase capture remains disabled until its product and release
+    # owners explicitly enable it.
     if: ${{ false }}
     runs-on: blacksmith-12vcpu-macos-26
     # Capturing every palette multiplies the device matrix by six, and only the
@@ -94,7 +95,8 @@ jobs:
 
   android:
     name: Android phone, 7-inch tablet, and 10-inch tablet
-    # D4 candidate: visual/mobile capture is not part of this phase.
+    # Mobile showcase capture remains disabled until its product and release
+    # owners explicitly enable it.
     if: ${{ false }}
     runs-on: blacksmith-16vcpu-ubuntu-2404
     # Capturing every palette multiplies the device matrix by six, and only the

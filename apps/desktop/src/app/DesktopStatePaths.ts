@@ -1,5 +1,5 @@
 import * as Option from "effect/Option";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
 
@@ -17,7 +17,7 @@ export function resolveDesktopBaseDir(input: {
   readonly scientNextHome: Option.Option<string>;
 }): string {
   return Option.getOrElse(normalizeConfiguredBaseDir(input.scientNextHome), () =>
-    input.joinPath(input.homeDirectory, SCIENT_NEXT_IDENTITY.baseDirName),
+    input.joinPath(input.homeDirectory, SCIENT_DESKTOP_IDENTITY.baseDirName),
   );
 }
 
@@ -32,6 +32,6 @@ export function resolveDesktopStateDir(input: {
   const useDevSubdir = input.isDevelopment;
   return input.joinPath(
     input.baseDir,
-    useDevSubdir ? SCIENT_NEXT_IDENTITY.developmentUserDataDirName : "userdata",
+    useDevSubdir ? SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName : "userdata",
   );
 }

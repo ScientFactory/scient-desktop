@@ -25,8 +25,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AntigravitySettings,
+  CodexSettings,
   type ClaudeSettings,
-  type CodexSettings,
   type CursorSettings,
   type DroidSettings,
   type GrokSettings,
@@ -38,6 +39,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -51,8 +53,16 @@ import { DroidDriver } from "../Drivers/DroidDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import {
+  defaultProviderContinuationIdentity,
+  type AnyProviderDriver,
+  type ProviderDriverCreateInput,
+  type ProviderInstance,
+} from "../ProviderDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+
+const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -509,5 +519,132 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+/**
+ * Enabled-resolution truth table for the registry.
+ *
+ * `resolveEntryEnabled` (private in ProviderInstanceRegistryLive) decides
+ * the `enabled` value handed to a driver's `create`. Its contract is
+ * most-restrictive-wins: an explicit `false` on the settings envelope or
+ * inside the raw config blob must always win — old settings files can
+ * carry both flags with conflicting values and a user's disable must
+ * never be silently undone. Otherwise precedence runs envelope flag →
+ * decoded-config flag (which carries the driver schema's decoding
+ * default, e.g. Antigravity's `enabled: true`) → enabled by default.
+ *
+ * A recording stub driver observes exactly what the registry resolved,
+ * so this suite pins the full truth table without booting any real
+ * provider runtime. It also pins the Antigravity default: an envelope
+ * with no flags at all resolves to `true` because the decoded
+ * `AntigravitySettings` supports first-run onboarding by default.
+ */
+describe("ProviderInstanceRegistryLive — enabled resolution", () => {
+  const antigravityDriverKind = ProviderDriverKind.make("antigravity");
+
+  /**
+   * Envelope `config` payloads are *raw* blobs — the registry decodes them
+   * through `driver.configSchema` itself. Fixtures must therefore stay raw:
+   * pre-decoding would inject Antigravity's `enabled:true` decoding
+   * default into cases that are supposed to carry no flag at all.
+   */
+  const makeAntigravityConfig = (enabled?: boolean): unknown => ({
+    binaryPath: "agy",
+    customModels: [],
+    ...(enabled === undefined ? {} : { enabled }),
+  });
+
+  const makeRecordingDriver = (
+    created: Array<{ readonly instanceId: string; readonly enabled: boolean }>,
+  ): AnyProviderDriver => ({
+    driverKind: antigravityDriverKind,
+    metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
+    configSchema: AntigravitySettings,
+    defaultConfig: (): AntigravitySettings =>
+      decodeAntigravitySettingsForTest({}) as AntigravitySettings,
+    create: ({ instanceId, enabled }: ProviderDriverCreateInput<AntigravitySettings>) =>
+      Effect.sync(() => {
+        created.push({ instanceId, enabled });
+        return {
+          instanceId,
+          driverKind: antigravityDriverKind,
+          continuationIdentity: defaultProviderContinuationIdentity({
+            driverKind: antigravityDriverKind,
+            instanceId,
+          }),
+          displayName: undefined,
+          enabled,
+          snapshot: {} as ProviderInstance["snapshot"],
+          adapter: {} as ProviderInstance["adapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+      }),
+  });
+
+  it.effect("resolves every envelope/config flag combination per most-restrictive-wins", () =>
+    Effect.gen(function* () {
+      const created: Array<{ readonly instanceId: string; readonly enabled: boolean }> = [];
+      // Cases keyed by expected resolution:
+      //   envelope-only true            -> true
+      //   envelope-only false           -> false
+      //   config-only true              -> true
+      //   config-only false             -> false
+      //   both true                     -> true
+      //   both false                    -> false
+      //   conflicting (envelope T/cfg F) -> false (user disable wins)
+      //   conflicting (envelope F/cfg T) -> false
+      //   no flags anywhere              -> true via Antigravity's
+      //                                     decoded default (enabled:true)
+      const cases: ReadonlyArray<{
+        readonly id: string;
+        readonly envelope: boolean | undefined;
+        readonly configFlag: boolean | undefined;
+        readonly expected: boolean;
+      }> = [
+        { id: "ag_env_true", envelope: true, configFlag: undefined, expected: true },
+        { id: "ag_env_false", envelope: false, configFlag: undefined, expected: false },
+        { id: "ag_cfg_true", envelope: undefined, configFlag: true, expected: true },
+        { id: "ag_cfg_false", envelope: undefined, configFlag: false, expected: false },
+        { id: "ag_both_true", envelope: true, configFlag: true, expected: true },
+        { id: "ag_both_false", envelope: false, configFlag: false, expected: false },
+        { id: "ag_env_true_cfg_false", envelope: true, configFlag: false, expected: false },
+        { id: "ag_env_false_cfg_true", envelope: false, configFlag: true, expected: false },
+        { id: "ag_no_flags", envelope: undefined, configFlag: undefined, expected: true },
+      ];
+
+      const configMap: ProviderInstanceConfigMap = Object.fromEntries(
+        cases.map((testCase) => [
+          testCase.id,
+          {
+            driver: antigravityDriverKind,
+            ...(testCase.envelope === undefined ? {} : { enabled: testCase.envelope }),
+            config: makeAntigravityConfig(testCase.configFlag),
+          },
+        ]),
+      );
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [makeRecordingDriver(created)],
+        configMap,
+      });
+
+      const instances = yield* registry.listInstances;
+      expect(instances).toHaveLength(cases.length);
+      expect(created.map((entry) => entry.instanceId).toSorted()).toEqual(
+        cases.map((testCase) => testCase.id).toSorted(),
+      );
+      for (const testCase of cases) {
+        const recorded = created.find((entry) => entry.instanceId === testCase.id);
+        expect(recorded?.enabled).toBe(testCase.expected);
+        const instance = yield* registry.getInstance(ProviderInstanceId.make(testCase.id));
+        expect(instance?.enabled).toBe(testCase.expected);
+      }
+
+      // No entry may leak into the unavailable bucket — every case decodes
+      // cleanly through the real schema.
+      const unavailable = yield* registry.listUnavailable;
+      expect(unavailable).toEqual([]);
+    }).pipe(Effect.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers))),
   );
 });

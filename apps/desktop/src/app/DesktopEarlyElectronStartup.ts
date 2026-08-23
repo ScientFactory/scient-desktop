@@ -14,7 +14,7 @@ import {
   resolveDesktopStateDir,
   type JoinPath,
 } from "./DesktopStatePaths.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
@@ -82,8 +82,8 @@ export function resolveEarlyLinuxElectronOptions(
   const preference = resolveEarlyLinuxPasswordStorePreference(input);
   return {
     linuxWmClass: isDevelopmentEnvironment(input.env)
-      ? SCIENT_NEXT_IDENTITY.linuxDevelopmentWmClass
-      : SCIENT_NEXT_IDENTITY.linuxWmClass,
+      ? SCIENT_DESKTOP_IDENTITY.linuxDevelopmentWmClass
+      : SCIENT_DESKTOP_IDENTITY.linuxWmClass,
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,

@@ -659,6 +659,7 @@ const buildAppUnderTest = (options?: {
             ),
           getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
           getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+          stopProviderSessions: () => Effect.void,
           setProviderManagedRuntimeSummary: () => Effect.succeed([]),
           setProviderMaintenanceActionState: () => Effect.succeed([]),
           setProviderConnectionOperation: () => Effect.succeed([]),

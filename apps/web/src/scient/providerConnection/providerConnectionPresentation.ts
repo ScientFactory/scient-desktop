@@ -10,19 +10,28 @@ export type ProviderConnectionPresentation =
   | { readonly kind: "not-connected"; readonly label: "Not connected" }
   | { readonly kind: "unsupported"; readonly label: "Manual setup" };
 
+export function hasActiveProviderRuntimeOperation(provider: ServerProvider | undefined): boolean {
+  const operation = provider?.connection?.runtime?.operation;
+  return (
+    operation !== null &&
+    operation !== undefined &&
+    operation.status !== "succeeded" &&
+    operation.status !== "failed" &&
+    operation.status !== "cancelled"
+  );
+}
+
+export function isProviderAccountConnected(provider: ServerProvider | undefined): boolean {
+  return provider?.auth.status === "authenticated";
+}
+
 export function providerConnectionPresentation(
   provider: ServerProvider | undefined,
 ): ProviderConnectionPresentation {
   if (!provider || !provider.enabled || provider.availability === "unavailable") {
     return { kind: "unavailable", label: "Unavailable" };
   }
-  const runtimeOperation = provider.connection?.runtime?.operation;
-  if (
-    runtimeOperation &&
-    runtimeOperation.status !== "succeeded" &&
-    runtimeOperation.status !== "failed" &&
-    runtimeOperation.status !== "cancelled"
-  ) {
+  if (hasActiveProviderRuntimeOperation(provider)) {
     return { kind: "setting-up", label: "Setting up" };
   }
   if (!provider.installed) {
@@ -83,11 +92,13 @@ export function preferredProviderConnectionMethod(
     ? "codex_browser"
     : methods.includes("claude_subscription")
       ? "claude_subscription"
-      : methods.includes("codex_device_code")
-        ? "codex_device_code"
-        : methods.includes("claude_console")
-          ? "claude_console"
-          : undefined;
+      : methods.includes("antigravity_google")
+        ? "antigravity_google"
+        : methods.includes("codex_device_code")
+          ? "codex_device_code"
+          : methods.includes("claude_console")
+            ? "claude_console"
+            : undefined;
 }
 
 export function isSafeProviderAuthorizationUrl(value: string): boolean {

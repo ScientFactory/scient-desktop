@@ -203,7 +203,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
   );
 
-  it.effect("does not expose the inherited service lifecycle in the D4 candidate", () =>
+  it.effect("does not expose the inherited service lifecycle in Scient", () =>
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCli(["--help"], noConnectCli));
 

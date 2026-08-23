@@ -91,7 +91,7 @@ export function resolveReviewedCodexArtifact(
     artifactName: artifact.name,
     url: `${RELEASE_BASE}/${artifact.name}`,
     allowedHosts: ALLOWED_HOSTS,
-    sha256: artifact.sha256,
+    checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: artifact.archiveFormat,
     executablePath: artifact.executablePath,

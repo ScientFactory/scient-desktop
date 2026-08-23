@@ -27,22 +27,21 @@ separate states and must be reported separately.
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
 
-The first intended migrated release is `v0.6.0`. Selecting that version does
-not imply proximity to `v1.0.0`; semantic versions permit any number of patch
-and minor releases before the product earns the `1.0.0` contract.
+Release versions follow the current stable line. A version does not imply
+proximity to `v1.0.0`; semantic versions permit any number of patch and minor
+releases before the product earns the `1.0.0` contract.
 
 ## Production identity and data safety
 
 Production artifacts use product name `Scient`, bundle/application ID
 `com.scientfactory.scient`, protocol `scient://`, and the `Scient` artifact
-prefix. Those values preserve the legacy updater's ability to replace the
-installed application.
+prefix. Those values are the current supported installation identity.
 
-The T3-derived app intentionally continues to use its separate `scient-next`
-application data directory. Cutover must therefore include an explicit
-import/archive/rollback decision; sharing the old directory is not an
-acceptable shortcut. `Scient (Dev)` retains its separate identity, protocol,
-state, ports, and lifecycle and is never a publication source.
+The app intentionally continues to use its established `scient-next`
+application data directory. That name is a compatibility value rather than
+product branding; changing it requires a separate versioned data migration.
+`Scient (Dev)` retains its separate identity, protocol, state, ports, and
+lifecycle and is never a publication source.
 
 ## Release graph
 
@@ -110,13 +109,10 @@ tag or release already exists.
    verifies every uploaded byte, and only then makes the release public and
    Latest. Existing tags or releases are never rebuilt, overwritten, or
    repurposed.
-7. In the legacy repository, run **Mirror new Scient release for legacy
-   updaters** first with `publish_mirror=false`, inspect the byte-identical
-   proof, then explicitly publish it. The old repository never rebuilds the new
-   app.
-8. Verify the release, fresh downloads, signatures, updater manifests, an
-   installed legacy-to-new update, a new-to-new update, and rollback before
-   describing the release as accepted.
+7. Verify the release, fresh downloads, signatures, updater manifests, an
+   installed current-to-new update, a clean install, and rollback before
+   describing the release as accepted. Automatic migration from the retired
+   Synara-derived application is intentionally unsupported.
 
 ## Signing configuration
 
@@ -147,9 +143,9 @@ tooling are pinned to reviewed revisions.
 
 ## Updater and remote-server distribution
 
-Electron Builder embeds `ScientFactory/scient-desktop-next`. Stable releases
-publish `latest*.yml` and their installers/blockmaps. The old compatibility
-mirror adds byte-identical `scient*.yml` aliases for installed legacy clients.
+Electron Builder derives the active GitHub repository from the release run.
+Stable releases publish `latest*.yml` and their installers/blockmaps from
+`ScientFactory/scient-desktop`.
 
 Scient does not publish T3's npm package. Each release instead contains
 `scient-server-<version>.tgz`. SSH launches and background-service updates use
@@ -166,19 +162,19 @@ than generating a noisy changelog from inherited T3 history.
 `allow_note_free=true` is an explicit product decision, not a missing-work
 fallback.
 
-## Required manual acceptance before first cutover
+## Required manual acceptance
 
-The exact non-destructive old-app-to-new-app rehearsal is documented in the
-[v0.6.0 migration rehearsal](./v060-migration-rehearsal.md). It must be run
-with temporary homes before publication; it does not authorize copying the
-old SQLite database.
+The historical non-destructive old-app-to-new-app rehearsal is documented in
+the [v0.6.0 migration rehearsal](./v060-migration-rehearsal.md). Current
+releases require current-to-new update and clean-install evidence; they do not
+authorize copying or deleting an old SQLite database.
 
 - macOS Apple Silicon and Intel install, launch, sign, notarize, and update;
 - Windows x64 install, SmartScreen/signature, launch, and update;
 - Linux AppImage launch and update behavior;
 - provider setup and a real Codex/Claude turn on every claimed platform;
-- legacy app remains reinstallable and its old data remains intact;
-- new-app import behavior is intentional and understood;
+- current installed app updates without relocating its data;
+- retired-app data remains intact unless separately archived or deleted;
 - website downloads target the new release and retain a rollback path.
 
 No workflow run substitutes for these product acceptance gates.

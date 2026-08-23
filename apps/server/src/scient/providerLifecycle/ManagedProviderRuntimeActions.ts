@@ -5,8 +5,13 @@ import {
   ManagedRuntimeFileError,
   type ManagedRuntimeArtifact,
 } from "@scientfactory/provider-runtime";
-import type { ProviderManagedRuntimeAction, ProviderRuntimeSummary } from "@t3tools/contracts";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import type {
+  ProviderManagedRuntimeAction,
+  ProviderRuntimeDiagnostics,
+  ProviderRuntimeSummary,
+} from "@t3tools/contracts";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
@@ -106,6 +111,27 @@ export function resolveManagedRuntimePolicy(input: {
   };
 }
 
+export function nativeProviderRuntimeBackendLabel(platform: NodeJS.Platform): string {
+  if (platform === "win32") return "Windows native";
+  if (platform === "darwin") return "macOS native";
+  return "Linux native";
+}
+
+export function makeManagedProviderRuntimeDiagnostics(input: {
+  readonly executable: string;
+  readonly source: ProviderRuntimeSummary["source"];
+  readonly managedVersion: string | null;
+  readonly homePath: string | null;
+  readonly backend: string;
+}): ProviderRuntimeDiagnostics {
+  return {
+    executable: input.executable,
+    version: input.source === "scient_managed" ? input.managedVersion : null,
+    homePath: input.homePath,
+    backend: input.backend,
+  };
+}
+
 export interface ManagedProviderRuntimeResolution {
   readonly effectiveBinaryPath: string;
   readonly usesManagedPath: boolean;
@@ -128,6 +154,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   readonly managedInstallationAllowed: boolean;
   readonly sourceLabel: string;
   readonly managedInstallationLimitation: string;
+  readonly diagnosticsHomePath: string | null;
+  readonly diagnosticsBackend: string;
 }): Effect.fn.Return<ManagedProviderRuntimeResolution, never> {
   const {
     artifact,
@@ -152,6 +180,15 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     environment,
     spawner,
   ).pipe(Effect.catchCause(() => Effect.succeed(false)));
+  const configuredExecutable = configuredRuntimeHealthy
+    ? yield* resolveCommandPath(input.configuredBinaryPath, {
+        env: environment,
+        extendEnv: true,
+      }).pipe(
+        Effect.provide(NodeServices.layer),
+        Effect.orElseSucceed(() => input.configuredBinaryPath),
+      )
+    : input.configuredBinaryPath;
   const managedStatus = artifact
     ? yield* Effect.tryPromise({
         try: () => runtime.status(artifact),
@@ -213,6 +250,13 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
                   ? artifact.supportMessage
                   : input.managedInstallationLimitation
                 : `Scient does not have a reviewed managed ${providerName} artifact for this computer.`;
+    const executable = policy.useManagedPath
+      ? latestManagedInstalled && latest
+        ? latest.launchPath
+        : artifact
+          ? runtime.launchPath(artifact)
+          : configuredExecutable
+      : configuredExecutable;
     return {
       source: latestSource,
       supportTier: policy.supportTier,
@@ -224,6 +268,15 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       previousManagedVersion: latest?.previousVersion ?? null,
       operation: null,
       message,
+      diagnostics: makeManagedProviderRuntimeDiagnostics({
+        executable,
+        source: latestSource,
+        managedVersion: latestManagedInstalled
+          ? (latest?.activeVersion ?? artifact?.version ?? null)
+          : null,
+        homePath: input.diagnosticsHomePath,
+        backend: input.diagnosticsBackend,
+      }),
     } satisfies ProviderRuntimeSummary;
   });
 

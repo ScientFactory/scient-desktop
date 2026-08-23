@@ -28,8 +28,9 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -228,6 +229,7 @@ interface OpenCodeSessionContext {
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
   readonly openCodeSessionId: string;
+  readonly scientAwarenessCapabilities?: ReadonlySet<McpCapability>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
@@ -1339,6 +1341,9 @@ export function makeOpenCodeAdapter(
                 client,
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
+                ...(mcpSession && !server.external
+                  ? { scientAwarenessCapabilities: mcpSession.capabilities }
+                  : {}),
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1393,6 +1398,9 @@ export function makeOpenCodeAdapter(
           server: started.server,
           directory,
           openCodeSessionId: started.openCodeSession.id,
+          ...(started.scientAwarenessCapabilities
+            ? { scientAwarenessCapabilities: started.scientAwarenessCapabilities }
+            : {}),
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
           partById: new Map(),
@@ -1504,7 +1512,7 @@ export function makeOpenCodeAdapter(
         context.client.session.promptAsync({
           sessionID: context.openCodeSessionId,
           model: parsedModel,
-          system: SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+          system: buildScientAwareness(context.scientAwarenessCapabilities),
           ...(context.activeAgent ? { agent: context.activeAgent } : {}),
           ...(context.activeVariant ? { variant: context.activeVariant } : {}),
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],

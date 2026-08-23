@@ -17,7 +17,7 @@ import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { triageCommand } from "./cli/triage.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -47,7 +47,7 @@ const connectUnavailableCommand = Command.make("connect", {
 
 export const makeCli = ({
   cloudEnabled = hasCloudPublicConfig(),
-  serviceEnabled = !SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled,
+  serviceEnabled = !SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled,
 } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the Scient server."),

@@ -34,6 +34,23 @@ describe("Scient brand guard", () => {
     ]);
   });
 
+  it("rejects the retired repository slug from active application surfaces", () => {
+    expect(
+      findPublicBrandViolations([
+        {
+          path: "apps/server/src/support.ts",
+          contents: 'export const source = "ScientFactory/scient-desktop-next";',
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "apps/server/src/support.ts",
+        line: 1,
+        text: 'export const source = "ScientFactory/scient-desktop-next";',
+      },
+    ]);
+  });
+
   it("permits technical commentary and donor-only surfaces", () => {
     expect(
       findPublicBrandViolations([
@@ -45,7 +62,7 @@ describe("Scient brand guard", () => {
   });
 
   it("keeps internal package namespaces outside product-brand enforcement", () => {
-    expect(isProductSurface("packages/shared/src/scientNextIdentity.ts")).toBe(false);
+    expect(isProductSurface("packages/shared/src/scientDesktopIdentity.ts")).toBe(false);
     expect(isProductSurface("packages/contracts/src/settings.ts")).toBe(true);
   });
 });

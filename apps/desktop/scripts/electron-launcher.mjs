@@ -1,5 +1,5 @@
 // Keep these launcher values synchronized with
-// packages/shared/src/scientNextIdentity.ts. This file runs before the TS
+// packages/shared/src/scientDesktopIdentity.ts. This file runs before the TS
 // bundle exists, so it intentionally has no TypeScript import.
 
 import * as NodeChildProcess from "node:child_process";

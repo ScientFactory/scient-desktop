@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
@@ -40,15 +40,10 @@ describe("buildGrokAcpSpawnInput", () => {
       { binaryPath: "/usr/local/bin/grok" },
       "/tmp/project",
       undefined,
-      SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+      buildScientAwareness(),
     );
 
-    expect(spawn.args).toEqual([
-      "--rules",
-      SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
-      "agent",
-      "stdio",
-    ]);
+    expect(spawn.args).toEqual(["--rules", buildScientAwareness(), "agent", "stdio"]);
   });
 });
 

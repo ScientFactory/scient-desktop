@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { cli } from "../bin.ts";
 import {
@@ -181,7 +181,7 @@ describe("t3 pair", () => {
         const port = Number(new URL(origin).port);
         const statePath = NodePath.join(
           baseDir,
-          SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
+          SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName,
           "server-runtime.json",
         );
         yield* persistServerRuntimeState({

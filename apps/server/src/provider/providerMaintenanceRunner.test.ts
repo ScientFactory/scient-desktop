@@ -195,6 +195,7 @@ function makeRegistry(
         Effect.succeed(lifecycleFor(provider)),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      stopProviderSessions: () => Effect.void,
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState,
       setProviderConnectionOperation: () => Ref.get(providersRef),

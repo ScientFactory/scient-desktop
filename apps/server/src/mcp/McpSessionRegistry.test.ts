@@ -8,6 +8,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
+const allCapabilities = new Set(["preview", "sources:read", "sources:write"] as const);
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
   HttpServer.HttpServer.of({
     address: { _tag: "TcpAddress", hostname, port },
@@ -39,19 +40,45 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: allCapabilities,
     });
     expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     expect(token.length).toBeGreaterThan(20);
+    expect(issued.config.capabilities).toEqual(allCapabilities);
 
     const resolved = yield* registry.resolve(token);
     expect(resolved?.threadId).toBe(threadId);
     expect(resolved?.capabilities).toEqual(new Set(["preview", "sources:read", "sources:write"]));
 
+    // Provider awareness receives a separate snapshot; mutating it cannot
+    // widen or narrow the authorization attached to the bearer token.
+    (issued.config.capabilities as Set<string>).clear();
+    expect((yield* registry.resolve(token))?.capabilities).toEqual(
+      new Set(["preview", "sources:read", "sources:write"]),
+    );
+
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
 
     timestamp += 2_000;
+  }),
+);
+
+it.effect("binds exactly the requested capabilities without ambient defaults", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const requested = new Set(["sources:read"] as const);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-narrow-capabilities"),
+      providerInstanceId: ProviderInstanceId.make("opencode"),
+      capabilities: requested,
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    requested.clear();
+    expect(issued.config.capabilities).toEqual(new Set(["sources:read"]));
+    expect((yield* registry.resolve(token))?.capabilities).toEqual(new Set(["sources:read"]));
   }),
 );
 
@@ -69,6 +96,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
       const issued = yield* registry.issue({
         threadId: ThreadId.make(`thread-${hostname}`),
         providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: allCapabilities,
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }
@@ -82,6 +110,7 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-2"),
       providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: allCapabilities,
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
@@ -97,6 +126,7 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: allCapabilities,
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
@@ -118,6 +148,7 @@ it.effect("does not keep credentials of other threads alive", () =>
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-4"),
       providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: allCapabilities,
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 

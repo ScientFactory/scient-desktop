@@ -90,6 +90,7 @@ import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
 const customId = ProviderInstanceId.make("codex_work");
+const antigravityId = ProviderInstanceId.make("antigravity");
 
 function provider(): ServerProvider {
   return {
@@ -112,6 +113,37 @@ function provider(): ServerProvider {
       canUpdate: true,
       checkedAt: "2026-07-24T12:00:00.000Z",
       message: "Update available.",
+    },
+  };
+}
+
+function missingAntigravityProvider(): ServerProvider {
+  return {
+    instanceId: antigravityId,
+    driver: ProviderDriverKind.make("antigravity"),
+    enabled: true,
+    installed: false,
+    version: null,
+    status: "error",
+    auth: { status: "unknown", required: true },
+    checkedAt: "2026-08-22T12:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    connection: {
+      methods: ["antigravity_google"],
+      canDisconnect: false,
+      operation: null,
+      runtime: {
+        source: "missing",
+        supportTier: "fully_assisted",
+        target: "darwin-arm64",
+        actions: ["install"],
+        managedVersion: null,
+        previousManagedVersion: null,
+        operation: null,
+        message: "Scient can install Antigravity.",
+      },
     },
   };
 }
@@ -176,6 +208,30 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
     });
+  });
+
+  it("opens a missing provider directly on its reviewed installation plan", () => {
+    atoms.providers = [missingAntigravityProvider()];
+    const panel = renderPanel();
+    const providerCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === antigravityId &&
+        typeof element.props.onManageConnection === "function",
+    );
+    expect(providerCard).not.toBeNull();
+
+    (providerCard?.props.onManageConnection as (() => void) | undefined)?.();
+
+    const updatedPanel = renderPanel();
+    const connectionDialog = visitElements(updatedPanel, (element) => {
+      const dialogProvider = element.props.provider as ServerProvider | undefined;
+      return (
+        dialogProvider?.instanceId === antigravityId &&
+        element.props.initialRuntimeAction === "install"
+      );
+    });
+    expect(connectionDialog).not.toBeNull();
   });
 
   it("renders the provider layout inert with a limited-permissions notice when read only", () => {

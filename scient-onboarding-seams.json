@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "ownedRoots": ["apps/web/src/scient/onboarding"],
+  "ownedFiles": ["apps/web/src/routes/_chat.getting-started.tsx"],
+  "onboardingDiffSignals": [
+    "scient/onboarding",
+    "ScientGettingStarted",
+    "getting-started",
+    "SCIENT_ONBOARDING",
+    "SCIENT_PERSONALIZATION"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/web/src/routes/_chat.index.tsx",
+      "anchor": "ScientGettingStartedGate",
+      "purpose": "Offer the first-run flow only after the existing hosted environment gate."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsPanels.tsx",
+      "anchor": "ScientGettingStartedSettingsRow",
+      "purpose": "Expose manual replay through the existing General settings surface."
+    },
+    {
+      "path": "apps/web/src/routeTree.gen.ts",
+      "anchor": "/_chat/getting-started",
+      "purpose": "Register the additive generated route entry."
+    }
+  ]
+}
