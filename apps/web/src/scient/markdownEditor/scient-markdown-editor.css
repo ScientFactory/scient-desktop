@@ -89,6 +89,17 @@
   outline: none;
 }
 
+.scient-markdown-command-button:disabled {
+  opacity: 0.38;
+}
+
+.scient-markdown-command-divider {
+  width: 1px;
+  height: 1.1rem;
+  margin-inline: 0.12rem;
+  background: var(--border);
+}
+
 summary.scient-markdown-command-button {
   list-style: none;
 }
@@ -98,7 +109,8 @@ summary.scient-markdown-command-button::-webkit-details-marker {
 }
 
 .scient-markdown-insert-control,
-.scient-markdown-link-control {
+.scient-markdown-link-control,
+.scient-markdown-outline-control {
   position: relative;
 }
 
@@ -159,6 +171,93 @@ summary.scient-markdown-command-button::-webkit-details-marker {
   display: flex;
   justify-content: flex-end;
   gap: 0.25rem;
+}
+
+.scient-markdown-outline-popover {
+  position: absolute;
+  z-index: 30;
+  inset-block-start: calc(100% + 0.4rem);
+  inset-inline-start: 0;
+  display: flex;
+  width: min(19rem, calc(100vw - 2rem));
+  max-height: min(28rem, 65vh);
+  flex-direction: column;
+  gap: 0.35rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--popover);
+  padding: 0.55rem;
+  color: var(--popover-foreground);
+  box-shadow: 0 0.6rem 2rem color-mix(in oklab, black 16%, transparent);
+}
+
+.scient-markdown-outline-popover > strong {
+  padding-inline: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.scient-markdown-outline-popover > p {
+  margin: 0;
+  padding: 0.5rem 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.scient-markdown-outline-popover ol {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scient-markdown-outline-popover button {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 0.35rem;
+  padding-block: 0.35rem;
+  padding-inline-end: 0.45rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scient-markdown-outline-popover button:hover,
+.scient-markdown-outline-popover button:focus-visible,
+.scient-markdown-outline-popover button[aria-current="location"] {
+  background: var(--accent);
+  color: var(--foreground);
+  outline: none;
+}
+
+.scient-markdown-outline-popover button.is-level-1 {
+  padding-inline-start: 0.4rem;
+  font-weight: 600;
+}
+
+.scient-markdown-outline-popover button.is-level-2 {
+  padding-inline-start: 1rem;
+}
+
+.scient-markdown-outline-popover button.is-level-3 {
+  padding-inline-start: 1.6rem;
+}
+
+.scient-markdown-outline-popover button.is-level-4 {
+  padding-inline-start: 2.2rem;
+}
+
+.scient-markdown-outline-popover button.is-level-5 {
+  padding-inline-start: 2.8rem;
+}
+
+.scient-markdown-outline-popover button.is-level-6 {
+  padding-inline-start: 3.4rem;
 }
 
 .scient-markdown-slash-menu {

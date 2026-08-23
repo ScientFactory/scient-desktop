@@ -12,6 +12,7 @@ import { tableNodes } from "prosemirror-tables";
 import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
 
 const SOURCE_ID_ATTR = { default: null } as const;
+const SOURCE_COPY_ID_ATTR = { default: null } as const;
 const TOP_LEVEL_SOURCE_NODE_NAMES = [
   "paragraph",
   "blockquote",
@@ -272,7 +273,11 @@ for (const name of TOP_LEVEL_SOURCE_NODE_NAMES) {
   if (!spec) throw new Error(`Missing ProseMirror node spec '${name}'.`);
   nodes = nodes.update(name, {
     ...spec,
-    attrs: { ...spec.attrs, sourceId: SOURCE_ID_ATTR },
+    attrs: {
+      ...spec.attrs,
+      sourceId: SOURCE_ID_ATTR,
+      sourceCopyId: SOURCE_COPY_ID_ATTR,
+    },
   });
 }
 

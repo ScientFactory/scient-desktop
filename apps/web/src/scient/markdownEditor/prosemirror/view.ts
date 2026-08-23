@@ -29,6 +29,12 @@ import {
   navigateScientMarkdownSearch,
   scientMarkdownSearchState,
 } from "./search";
+import {
+  runScientMarkdownBlockAction,
+  selectedTopLevelBlock,
+  type ScientMarkdownBlockAction,
+} from "./blocks";
+import { scientMarkdownOutlineState, type ScientMarkdownOutlineItem } from "./outline";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -52,6 +58,10 @@ export interface ScientMarkdownEditorViewOptions {
 export interface ScientMarkdownEditorSnapshot {
   readonly activeMarks: ReadonlyArray<string>;
   readonly blockType: string;
+  readonly canDeleteBlock: boolean;
+  readonly canDuplicateBlock: boolean;
+  readonly canMoveBlockDown: boolean;
+  readonly canMoveBlockUp: boolean;
   readonly editable: boolean;
   readonly headingLevel: number | null;
   readonly findActiveIndex: number;
@@ -62,6 +72,8 @@ export interface ScientMarkdownEditorSnapshot {
   readonly findQuery: string;
   readonly findWholeWord: boolean;
   readonly inTable: boolean;
+  readonly outlineActiveIndex: number;
+  readonly outlineItems: ReadonlyArray<ScientMarkdownOutlineItem>;
   readonly selectionEmpty: boolean;
   readonly slashActiveIndex: number;
   readonly slashQuery: string | null;
@@ -218,6 +230,37 @@ export class ScientMarkdownEditorView {
     );
     if (!transaction.docChanged) return false;
     view.dispatch(transaction);
+    view.focus();
+    return true;
+  }
+
+  executeBlock(action: ScientMarkdownBlockAction): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const handled = runScientMarkdownBlockAction(action, view.state, view.dispatch);
+    if (handled) view.focus();
+    return handled;
+  }
+
+  navigateToOutline(position: number): boolean {
+    const view = this.editorView;
+    const node = view?.state.doc.nodeAt(position);
+    if (!view || node?.type.name !== "heading") return false;
+    view.dispatch(
+      view.state.tr
+        .setSelection(
+          TextSelection.create(
+            view.state.doc,
+            Math.min(position + 1, position + node.nodeSize - 1),
+          ),
+        )
+        .setMeta(scientMarkdownTransactionOriginKey, "system")
+        .setMeta("addToHistory", false),
+    );
+    const dom = view.nodeDOM(position);
+    if (dom instanceof HTMLElement && typeof dom.scrollIntoView === "function") {
+      dom.scrollIntoView({ block: "start" });
+    }
     view.focus();
     return true;
   }
@@ -436,10 +479,20 @@ export class ScientMarkdownEditorView {
     }
     const slashQuery = this.slashQuery();
     const find = scientMarkdownSearchState(state);
+    const block = selectedTopLevelBlock(state);
+    const outlineItems = scientMarkdownOutlineState(state).items;
+    let outlineActiveIndex = -1;
+    outlineItems.forEach((item, index) => {
+      if (item.position <= selection.from) outlineActiveIndex = index;
+    });
     const slashItems = slashQuery === null ? [] : filterScientMarkdownSlashCommands(slashQuery);
     return {
       activeMarks,
       blockType,
+      canDeleteBlock: block?.canDelete ?? false,
+      canDuplicateBlock: block?.canDuplicate ?? false,
+      canMoveBlockDown: block?.canMoveDown ?? false,
+      canMoveBlockUp: block?.canMoveUp ?? false,
       editable: modeIsEditable(this.mode),
       findActiveIndex: find.activeIndex,
       findCaseSensitive: find.caseSensitive,
@@ -450,6 +503,8 @@ export class ScientMarkdownEditorView {
       findWholeWord: find.wholeWord,
       headingLevel,
       inTable,
+      outlineActiveIndex,
+      outlineItems,
       selectionEmpty: selection.empty,
       slashActiveIndex: Math.min(this.slashActiveIndex, Math.max(0, slashItems.length - 1)),
       slashQuery,
@@ -492,10 +547,38 @@ export class ScientMarkdownEditorView {
   }
 
   private handleEditorKeyDown(event: KeyboardEvent): boolean {
+    if (event.isComposing) return false;
     if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "f") {
       event.preventDefault();
       this.requestFind();
       return true;
+    }
+    if (event.altKey && event.shiftKey && event.key === "ArrowDown") {
+      const handled = this.executeBlock("duplicate");
+      if (handled) event.preventDefault();
+      return handled;
+    }
+    if (
+      event.altKey &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      event.key === "ArrowUp"
+    ) {
+      const handled = this.executeBlock("move-up");
+      if (handled) event.preventDefault();
+      return handled;
+    }
+    if (
+      event.altKey &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      event.key === "ArrowDown"
+    ) {
+      const handled = this.executeBlock("move-down");
+      if (handled) event.preventDefault();
+      return handled;
     }
     if (event.key === "Escape" && this.findOpen) {
       event.preventDefault();

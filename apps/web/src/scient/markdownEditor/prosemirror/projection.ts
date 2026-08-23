@@ -78,6 +78,11 @@ function sourceIdOf(node: ProseMirrorNode): string | null {
   return typeof sourceId === "string" && sourceId.length > 0 ? sourceId : null;
 }
 
+function sourceCopyIdOf(node: ProseMirrorNode): string | null {
+  const sourceCopyId = node.attrs.sourceCopyId;
+  return typeof sourceCopyId === "string" && sourceCopyId.length > 0 ? sourceCopyId : null;
+}
+
 function topLevelNodesBySourceId(document: ProseMirrorNode): ReadonlyMap<string, ProseMirrorNode> {
   const nodes = new Map<string, ProseMirrorNode>();
   document.forEach((node) => {
@@ -96,9 +101,13 @@ function serializeNode(node: ProseMirrorNode): string {
 
 function comparableAttrs(node: ProseMirrorNode): string {
   const attrs = Object.fromEntries(
-    Object.entries(node.attrs).filter(([name]) => name !== "sourceId"),
+    Object.entries(node.attrs).filter(([name]) => name !== "sourceId" && name !== "sourceCopyId"),
   );
   return JSON.stringify(attrs);
+}
+
+function hasSameProjectedContent(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
+  return before.textContent === after.textContent && textStructure(before) === textStructure(after);
 }
 
 function textStructure(node: ProseMirrorNode): string {
@@ -199,21 +208,24 @@ export function serializeScientMarkdownProjection(
 
   nodes.forEach((node, index) => {
     const sourceId = sourceIdOf(node);
-    const original =
+    const directOriginal =
       sourceId === null || consumedIds.has(sourceId) ? undefined : blockById.get(sourceId);
-    const baseline = sourceId === null ? undefined : baselineById.get(sourceId);
-    if (sourceId !== null) consumedIds.add(sourceId);
+    const copyId = directOriginal ? null : sourceCopyIdOf(node);
+    const original = directOriginal ?? (copyId === null ? undefined : blockById.get(copyId));
+    const baselineId = directOriginal ? sourceId : copyId;
+    const baseline = baselineId === null ? undefined : baselineById.get(baselineId);
+    if (directOriginal && sourceId !== null) consumedIds.add(sourceId);
 
     output +=
-      original && baseline?.eq(node)
+      original && baseline && hasSameProjectedContent(baseline, node)
         ? original.source
         : ((original && baseline ? minimallyPatchedTextBlock(original, baseline, node) : null) ??
           serializeNode(node));
     const nextSourceId = nodes[index + 1] ? sourceIdOf(nodes[index + 1]!) : null;
     const originalSequenceContinues =
-      original !== undefined && originalSuccessorById.get(original.id) === nextSourceId;
+      directOriginal !== undefined && originalSuccessorById.get(directOriginal.id) === nextSourceId;
     output += originalSequenceContinues
-      ? original.trailing
+      ? directOriginal.trailing
       : inferredSeparator(projection.ledger, index, nodes.length);
   });
   return output;

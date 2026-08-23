@@ -333,6 +333,121 @@ describe("ScientMarkdownEditorView", () => {
     expect(controller.getSnapshot().findMatchCount).toBe(0);
   });
 
+  it("builds a nested document outline and navigates without saving", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "# Intro\n\nText\n\n> ## Nested methods\n> Body\n\n### Results\n",
+      revision: "sha256:before",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(controller.getSnapshot().outlineItems).toEqual([
+      expect.objectContaining({ level: 1, text: "Intro" }),
+      expect.objectContaining({ level: 2, text: "Nested methods" }),
+      expect.objectContaining({ level: 3, text: "Results" }),
+    ]);
+    const nested = controller.getSnapshot().outlineItems[1];
+    expect(nested).toBeDefined();
+    expect(controller.navigateToOutline(nested!.position)).toBe(true);
+    expect(view.state.selection.$from.parent.type.name).toBe("heading");
+    expect(view.state.selection.$from.parent.textContent).toBe("Nested methods");
+    expect(controller.getSnapshot().outlineActiveIndex).toBe(1);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("moves, duplicates, deletes, and undoes source-faithful top-level blocks", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "# One\n\n__two__\n\n-   three\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const secondBlockPosition = view.state.doc.child(0).nodeSize + 1;
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, secondBlockPosition)),
+    );
+
+    expect(controller.getSnapshot()).toMatchObject({
+      canDeleteBlock: true,
+      canDuplicateBlock: true,
+      canMoveBlockDown: true,
+      canMoveBlockUp: true,
+    });
+    expect(controller.executeBlock("move-up")).toBe(true);
+    expect(controller.session.session.draftSource).toBe("__two__\n\n# One\n\n-   three\n");
+
+    expect(controller.executeBlock("duplicate")).toBe(true);
+    expect(controller.session.session.draftSource).toBe(
+      "__two__\n\n__two__\n\n# One\n\n-   three\n",
+    );
+
+    expect(controller.executeBlock("delete")).toBe(true);
+    expect(controller.session.session.draftSource).toBe("__two__\n\n# One\n\n-   three\n");
+    expect(controller.execute("undo")).toBe(true);
+    expect(controller.session.session.draftSource).toBe(
+      "__two__\n\n__two__\n\n# One\n\n-   three\n",
+    );
+    expect(onUserSourceChange).toHaveBeenCalledTimes(4);
+  });
+
+  it("moves a multi-block selection as one structural edit", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "One\n\n__Two__\n\n-   Three\n\nFour\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const secondStart = view.state.doc.child(0).nodeSize;
+    const thirdStart = secondStart + view.state.doc.child(1).nodeSize;
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, secondStart + 1, thirdStart + 2),
+      ),
+    );
+
+    expect(controller.executeBlock("move-down")).toBe(true);
+    expect(controller.session.session.draftSource).toBe("One\n\nFour\n\n__Two__\n\n-   Three\n");
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+  });
+
+  it("deletes the only block into an editable empty paragraph", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Only block\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(controller.executeBlock("delete")).toBe(true);
+    expect(view.state.doc.childCount).toBe(1);
+    expect(view.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(controller.session.session.draftSource).toBe("\n");
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+  });
+
   it("runs formatting and slash commands through user transactions", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

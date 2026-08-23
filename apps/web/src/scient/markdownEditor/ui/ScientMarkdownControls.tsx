@@ -7,6 +7,7 @@ import {
   SCIENT_MARKDOWN_SLASH_COMMANDS,
   type ScientMarkdownCommand,
 } from "../prosemirror/commands";
+import type { ScientMarkdownBlockAction } from "../prosemirror/blocks";
 import type { ScientMarkdownEditorView } from "../prosemirror/view";
 
 function CommandButton(props: {
@@ -27,6 +28,34 @@ function CommandButton(props: {
             aria-pressed={props.active}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.controller.execute(props.command)}
+          />
+        }
+      >
+        {props.text}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function BlockCommandButton(props: {
+  readonly action: ScientMarkdownBlockAction;
+  readonly controller: ScientMarkdownEditorView;
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly text: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="scient-markdown-command-button"
+            aria-label={props.label}
+            disabled={props.disabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => props.controller.executeBlock(props.action)}
           />
         }
       >
@@ -97,6 +126,48 @@ function InsertMenu({ controller }: { readonly controller: ScientMarkdownEditorV
           </button>
         ))}
       </div>
+    </details>
+  );
+}
+
+function OutlineControl({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ReturnType<ScientMarkdownEditorView["getSnapshot"]>;
+}) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  return (
+    <details ref={detailsRef} className="scient-markdown-outline-control">
+      <summary className="scient-markdown-command-button" aria-label="Document outline">
+        ☷
+      </summary>
+      <nav className="scient-markdown-outline-popover" aria-label="Document outline">
+        <strong>Outline</strong>
+        {snapshot.outlineItems.length === 0 ? (
+          <p>No headings yet</p>
+        ) : (
+          <ol>
+            {snapshot.outlineItems.map((item, index) => (
+              <li key={`${item.position}-${item.level}-${item.text}`}>
+                <button
+                  type="button"
+                  className={`is-level-${Math.min(6, Math.max(1, item.level))}`}
+                  aria-current={index === snapshot.outlineActiveIndex ? "location" : undefined}
+                  aria-label={`Heading level ${item.level}: ${item.text || "Untitled heading"}`}
+                  onClick={() => {
+                    controller.navigateToOutline(item.position);
+                    detailsRef.current?.removeAttribute("open");
+                  }}
+                >
+                  {item.text || "Untitled heading"}
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+      </nav>
     </details>
   );
 }
@@ -256,7 +327,45 @@ export function ScientMarkdownControls({
         {snapshot.editable ? (
           <CommandButton controller={controller} command="redo" label="Redo" text="↷" />
         ) : null}
+        <OutlineControl controller={controller} snapshot={snapshot} />
         <FindControl controller={controller} snapshot={snapshot} />
+        {snapshot.editable ? <span className="scient-markdown-command-divider" /> : null}
+        {snapshot.editable ? (
+          <BlockCommandButton
+            controller={controller}
+            action="move-up"
+            label="Move block up (Option+Up)"
+            text="↑"
+            disabled={!snapshot.canMoveBlockUp}
+          />
+        ) : null}
+        {snapshot.editable ? (
+          <BlockCommandButton
+            controller={controller}
+            action="move-down"
+            label="Move block down (Option+Down)"
+            text="↓"
+            disabled={!snapshot.canMoveBlockDown}
+          />
+        ) : null}
+        {snapshot.editable ? (
+          <BlockCommandButton
+            controller={controller}
+            action="duplicate"
+            label="Duplicate block (Shift+Option+Down)"
+            text="⧉"
+            disabled={!snapshot.canDuplicateBlock}
+          />
+        ) : null}
+        {snapshot.editable ? (
+          <BlockCommandButton
+            controller={controller}
+            action="delete"
+            label="Delete block"
+            text="×"
+            disabled={!snapshot.canDeleteBlock}
+          />
+        ) : null}
       </div>
       {snapshot.editable && !snapshot.selectionEmpty ? (
         <div
