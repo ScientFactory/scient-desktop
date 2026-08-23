@@ -17,15 +17,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  Code2,
-  Columns2,
-  Eye,
-  FolderTree,
-  Globe2,
-  LoaderCircle,
-  PencilLine,
-} from "lucide-react";
+import { Code2, Columns2, Eye, FolderTree, Globe2, LoaderCircle, PencilLine } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
