@@ -66,11 +66,25 @@ describe("ChatMarkdown workspace images", () => {
     expect(testState.resources).toEqual([
       {
         _tag: "workspace-file",
+        cwd: "C:\\Users\\shawn\\project",
+        relativePath: ".t3/workspace-image.svg",
         threadId: threadRef.threadId,
         path: "C:\\Users\\shawn\\project\\.t3\\workspace-image.svg",
       },
-      { _tag: "workspace-file", threadId: threadRef.threadId, path: imagePath },
-      { _tag: "workspace-file", threadId: threadRef.threadId, path: imagePath },
+      {
+        _tag: "workspace-file",
+        cwd: "C:\\Users\\shawn\\project",
+        relativePath: ".t3/workspace-image.svg",
+        threadId: threadRef.threadId,
+        path: "C:\\Users\\shawn\\project\\.t3\\workspace-image.svg",
+      },
+      {
+        _tag: "workspace-file",
+        cwd: "C:\\Users\\shawn\\project",
+        relativePath: ".t3/workspace-image.svg",
+        threadId: threadRef.threadId,
+        path: "C:\\Users\\shawn\\project\\.t3\\workspace-image.svg",
+      },
       {
         _tag: "workspace-file",
         threadId: threadRef.threadId,
@@ -78,8 +92,9 @@ describe("ChatMarkdown workspace images", () => {
       },
     ]);
     expect(html.match(/https:\/\/signed\.test\/workspace-image\.svg/g)).toHaveLength(4);
-    expect(html.match(/max-w-\[min\(100%,30rem\)\]/g)).toHaveLength(4);
-    expect(html.match(/max-h-\[30rem\]/g)).toHaveLength(4);
+    expect(html.match(/data-scient-inline-workspace-image="true"/g)).toHaveLength(3);
+    expect(html).toContain("max-w-[min(100%,30rem)]");
+    expect(html).toContain("max-h-[30rem]");
     expect(html).not.toContain("Image unavailable");
   });
 
@@ -101,7 +116,8 @@ describe("ChatMarkdown workspace images", () => {
 
     const html = render("![loading](.t3/workspace-image.svg)");
 
-    expect(html).toContain('aria-label="Loading image"');
+    expect(html).toContain("Loading image…");
+    expect(html).toContain('data-scient-inline-workspace-image="true"');
     expect(html).not.toContain("animate-pulse");
   });
 
@@ -111,7 +127,8 @@ describe("ChatMarkdown workspace images", () => {
     );
 
     expect(testState.resources).toEqual([]);
-    expect(html).toContain("Image unavailable");
+    expect(html).toContain("Image preview is unavailable without an active workspace.");
+    expect(html).toContain('data-scient-inline-workspace-image-pending="unavailable"');
     expect(html).not.toContain("file://");
   });
 

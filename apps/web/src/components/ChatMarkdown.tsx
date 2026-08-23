@@ -1778,6 +1778,9 @@ function ChatMarkdown({
 
     return {
       img({ node: _node, alt, src, title: _title, ...props }) {
+        const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
+        const altText = alt ?? "";
+        const imageSource = classifyMarkdownImageSource(srcString, cwd);
         const image = resolveInlineWorkspaceImage({ alt, cwd, src });
         const markdownSource = image
           ? inlineWorkspaceImageMarkdownSource(alt ?? image.alt, src ?? image.source, _title)
@@ -1800,7 +1803,28 @@ function ChatMarkdown({
             />
           );
         }
-        return <img {...props} alt={alt} decoding="async" loading="lazy" src={src} />;
+        if (imageSource._tag === "Direct") {
+          return (
+            <img
+              {...props}
+              src={imageSource.uri}
+              alt={altText}
+              decoding="async"
+              loading="lazy"
+              className={cn(props.className, CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME)}
+            />
+          );
+        }
+        if (imageSource._tag === "WorkspaceFile" && threadRef) {
+          return (
+            <ChatMarkdownWorkspaceImage
+              threadRef={threadRef}
+              path={imageSource.path}
+              alt={altText}
+            />
+          );
+        }
+        return <ChatMarkdownImageFallback alt={altText} />;
       },
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
@@ -1979,32 +2003,6 @@ function ChatMarkdown({
             {children}
           </code>
         );
-      },
-      img({ node: _node, title: _title, src, alt, ...props }) {
-        const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
-        const altText = alt ?? "";
-        const imageSource = classifyMarkdownImageSource(srcString, cwd);
-        if (imageSource._tag === "Direct") {
-          return (
-            <img
-              {...props}
-              src={imageSource.uri}
-              alt={altText}
-              loading="lazy"
-              className={cn(props.className, CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME)}
-            />
-          );
-        }
-        if (imageSource._tag === "WorkspaceFile" && threadRef) {
-          return (
-            <ChatMarkdownWorkspaceImage
-              threadRef={threadRef}
-              path={imageSource.path}
-              alt={altText}
-            />
-          );
-        }
-        return <ChatMarkdownImageFallback alt={altText} />;
       },
       table({ node: _node, ...props }) {
         const tableDirection =

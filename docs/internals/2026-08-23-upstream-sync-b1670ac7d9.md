@@ -5,7 +5,7 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
 
 ## Exact boundaries
 
-- Owned base: `2bb6d79b0c0c2a0bc515ac4583918613b991ca5e`
+- Owned base: `446f04183285186874bdddef40e433fe1bfd204d`
 - Previous literal T3 boundary:
   `dedcd99a9d16240327ce763b885b326aff607bdb`
 - Integrated T3 target:
@@ -13,7 +13,7 @@ a release, enable cloud or mobile publication, or modify `release/stable`.
 - Official tag at the target: `v0.0.34-nightly.20260823.1169`
 - Exact donor range: `dedcd99a9d..b1670ac7d9`, 16 commits
 - History-preserving merge:
-  `b2d121b205dcb0eff115d27015235fb5033f94bd`
+  `e813bc042de5a431f48fef87f211c16cd0563a2c`
 - Integration branch: `agent/t3-sync-b1670ac7d9-20260823`
 - Donor write boundary: the `upstream` push URL remains `DISABLED`
 

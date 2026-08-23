@@ -16,14 +16,14 @@
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "2bb6d79b0c0c2a0bc515ac4583918613b991ca5e",
+  "lastRefreshBase": "446f04183285186874bdddef40e433fe1bfd204d",
   "lastRefreshPreviousOfficialTip": "dedcd99a9d16240327ce763b885b326aff607bdb",
   "lastRefreshOfficialTip": "b1670ac7d9b5b7bb9d7ebd969f27384daee22813",
   "lastRefreshOfficialTag": "v0.0.34-nightly.20260823.1169",
   "lastRefreshRangeCount": 16,
-  "lastRefreshMerge": "b2d121b205dcb0eff115d27015235fb5033f94bd",
+  "lastRefreshMerge": "e813bc042de5a431f48fef87f211c16cd0563a2c",
   "lastRefreshBranch": "agent/t3-sync-b1670ac7d9-20260823",
-  "lastRefreshVerifiedAt": "2026-08-23T15:47:23Z",
+  "lastRefreshVerifiedAt": "2026-08-23T16:09:59Z",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
