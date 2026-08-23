@@ -205,12 +205,14 @@ export function makeCodexConnectionActionsFromOpen(
           ? {
               authorizationUrl: response.authUrl,
               authorizationUrlKind: "primary" as const,
+              initialStatus: "waiting_for_browser" as const,
               waitForCompletion,
               cancel,
             }
           : {
               authorizationUrl: response.verificationUrl,
               authorizationUrlKind: "primary" as const,
+              initialStatus: "waiting_for_device_code" as const,
               userCode: response.userCode,
               waitForCompletion,
               cancel,

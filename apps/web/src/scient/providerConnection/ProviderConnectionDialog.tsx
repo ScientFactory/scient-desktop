@@ -48,6 +48,7 @@ import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
+import { DroidInlineSetup } from "./DroidInlineSetup";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
@@ -95,7 +96,8 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   };
   return props.provider.driver === "codex" ||
     props.provider.driver === "claudeAgent" ||
-    props.provider.driver === "grok" ? (
+    props.provider.driver === "grok" ||
+    props.provider.driver === "droid" ? (
     <AssistedProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
@@ -152,6 +154,14 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
     (isRuntimeWorking && isProviderAccountConnected(props.provider));
   const isClaude = props.provider.driver === "claudeAgent";
   const isGrok = props.provider.driver === "grok";
+  const isDroid = props.provider.driver === "droid";
+  const providerName = isClaude
+    ? "Claude"
+    : isGrok
+      ? "Grok"
+      : isDroid
+        ? props.displayName
+        : "Codex";
   const runtime = props.provider.connection?.runtime;
   const hasActionableManagedRuntime =
     runtime?.source === "scient_managed" &&
@@ -198,7 +208,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
         <DialogHeader>
           <DialogTitle ref={titleRef} className="flex flex-wrap items-center gap-2.5">
             <ProviderConnectionDialogTitle
-              displayName={isClaude ? "Claude" : isGrok ? "Grok" : "Codex"}
+              displayName={providerName}
               driver={props.provider.driver}
               repairSucceededRecently={props.repairSucceededRecently}
             />
@@ -208,7 +218,9 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
               ? "Connect and manage your Claude account."
               : isGrok
                 ? "Install Grok and connect your existing subscription."
-                : "Connect and manage your existing ChatGPT subscription."}
+                : isDroid
+                  ? "Install Droid and connect your Factory account."
+                  : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">
@@ -216,7 +228,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             <ProviderRuntimeSection
               compact
               disabled={disconnecting}
-              displayName={isClaude ? "Claude" : isGrok ? "Grok" : "Codex"}
+              displayName={providerName}
               environmentId={props.environmentId}
               initialAction={props.initialRuntimeAction}
               onActionSucceeded={props.onRuntimeActionSucceeded}
@@ -224,7 +236,16 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
               provider={props.provider}
             />
           ) : null}
-          {isManagedRuntimeFocused ? null : isClaude ? (
+          {isManagedRuntimeFocused ? null : isDroid ? (
+            <DroidInlineSetup
+              accountAction={accountAction}
+              controller={controller}
+              displayName={props.displayName}
+              managedRuntimePresentedExternally={showManagedRuntime}
+              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
+              provider={props.provider}
+            />
+          ) : isClaude ? (
             <ClaudeInlineSetup
               accountAction={accountAction}
               controller={controller}

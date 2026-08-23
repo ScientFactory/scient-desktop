@@ -6,6 +6,7 @@ import {
   buildDroidAcpSpawnInput,
   buildDroidCapabilitiesFromEfforts,
   buildDroidModelsFromConfigOptions,
+  droidAccountCapabilitiesFromInitializeResult,
   droidCostMultiplierLabel,
   findDroidAutonomyOption,
   findSelectDroidConfigOption,
@@ -96,6 +97,23 @@ describe("buildDroidAcpSpawnInput", () => {
 });
 
 describe("auth resolution", () => {
+  it("derives account actions only from advertised ACP capabilities", () => {
+    expect(
+      droidAccountCapabilitiesFromInitializeResult({
+        protocolVersion: 1,
+        authMethods: [{ id: "device-pairing", name: "Factory device pairing" }],
+        agentCapabilities: { auth: { logout: {} } },
+      }),
+    ).toEqual({ devicePairing: true, logout: true });
+    expect(
+      droidAccountCapabilitiesFromInitializeResult({
+        protocolVersion: 1,
+        authMethods: [],
+        agentCapabilities: { auth: { logout: null } },
+      }),
+    ).toEqual({ devicePairing: false, logout: false });
+  });
+
   it("selects api-key only when the environment carries one", () => {
     expect(hasDroidApiKeyEnvironment({ FACTORY_API_KEY: "k" })).toBe(true);
     expect(hasDroidApiKeyEnvironment({ FACTORY_API_KEY: "  " })).toBe(false);
@@ -195,7 +213,7 @@ describe("config-option parsing", () => {
     expect(models[0]?.capabilitiesObserved).toBe(true);
     expect(models[0]?.currentEffortValue).toBe("none");
     expect(models[0]?.efforts).toEqual([
-      { value: "none", label: "None", isDefault: true },
+      { value: "none", label: "None" },
       { value: "high", label: "High" },
     ]);
   });

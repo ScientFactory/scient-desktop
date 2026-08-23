@@ -36,6 +36,21 @@ describe("ProviderConnectionSubmitAuthorizationCodeInput", () => {
 });
 
 describe("ProviderConnectionOperation", () => {
+  it("accepts Droid's provider-opened browser state without an invented URL", () => {
+    const decoded = decodeConnectionOperation({
+      operationId: "droid-connection-1",
+      method: "droid_device_pairing",
+      status: "waiting_for_browser",
+      startedAt: "2026-08-23T08:00:00.000Z",
+      finishedAt: null,
+      message: "Finish signing in securely in your browser.",
+    });
+
+    expect(decoded.method).toBe("droid_device_pairing");
+    expect(decoded).not.toHaveProperty("authorizationUrl");
+    expect(decoded).not.toHaveProperty("userCode");
+  });
+
   it("preserves an explicit provider-owned manual fallback URL", () => {
     const decoded = decodeConnectionOperation({
       operationId: "connection-1",

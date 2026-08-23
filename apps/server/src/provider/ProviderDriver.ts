@@ -89,10 +89,12 @@ export interface ProviderConnectionActionFailure {
 }
 
 export interface ProviderConnectionAttempt {
-  /** Absent when the provider completes authentication before publishing a page. */
+  /** Present only when the provider exposes a browser URL to Scient. */
   readonly authorizationUrl?: string | undefined;
   /** Explicitly declares whether the client should open this URL automatically. */
   readonly authorizationUrlKind?: ProviderAuthorizationUrlKind | undefined;
+  /** Explicit initial state; never inferred from method names, URLs, or codes. */
+  readonly initialStatus: "waiting_for_browser" | "waiting_for_device_code" | "verifying";
   readonly userCode?: string | undefined;
   /**
    * Some official browser flows return a one-time code that must be handed

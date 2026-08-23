@@ -39,6 +39,22 @@ export const DROID_AGENT_INFO_NAME = "@factory/cli";
 export const DROID_AUTH_METHOD_API_KEY = "factory-api-key";
 export const DROID_AUTH_METHOD_DEVICE_PAIRING = "device-pairing";
 
+export interface DroidAccountCapabilities {
+  readonly devicePairing: boolean;
+  readonly logout: boolean;
+}
+
+export function droidAccountCapabilitiesFromInitializeResult(
+  result: EffectAcpSchema.InitializeResponse,
+): DroidAccountCapabilities {
+  return {
+    devicePairing: (result.authMethods ?? []).some(
+      (method) => method.id === DROID_AUTH_METHOD_DEVICE_PAIRING,
+    ),
+    logout: result.agentCapabilities?.auth?.logout != null,
+  };
+}
+
 export const DROID_EFFORT_CONFIG_ID = "reasoning_effort";
 const DROID_AUTONOMY_CONFIG_ID = "autonomy_level";
 
@@ -58,6 +74,8 @@ export interface DroidAcpRuntimeInput extends Omit<
   readonly systemPrompt?: string;
   /** Extra client capabilities (e.g. the probe's parameterized-model-picker). */
   readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
+  /** Passive status probes skip authentication and classify `session/new`. */
+  readonly authenticationMode?: "active" | "passive";
 }
 
 /** One command authority for health probes, ACP sessions, and text generation. */
@@ -117,7 +135,7 @@ export function resolveAdvertisedDroidAuthMethodId(input: {
   if (advertised.has(DROID_AUTH_METHOD_DEVICE_PAIRING)) {
     return DROID_AUTH_METHOD_DEVICE_PAIRING;
   }
-  return advertised.values().next().value;
+  return undefined;
 }
 
 /**
@@ -134,20 +152,26 @@ export const makeDroidAcpRuntime = (
   Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const { authenticationMode = "active", ...runtimeInput } = input;
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
-        ...input,
+        ...runtimeInput,
         spawn: buildDroidAcpSpawnInput(
           input.droidSettings,
           input.cwd,
           input.environment,
           input.systemPrompt,
         ),
-        authMethodId: (initializeResult) =>
-          resolveAdvertisedDroidAuthMethodId({
-            environment: input.environment,
-            advertisedAuthMethods: (initializeResult.authMethods ?? []).map((method) => method.id),
-          }) ?? resolveDroidAuthMethodId(input.environment),
+        authMethodId:
+          authenticationMode === "passive"
+            ? undefined
+            : (initializeResult) =>
+                resolveAdvertisedDroidAuthMethodId({
+                  environment: input.environment,
+                  advertisedAuthMethods: (initializeResult.authMethods ?? []).map(
+                    (method) => method.id,
+                  ),
+                }),
         authenticateMeta: DROID_HEADLESS_AUTH_META,
         // Factory Droid 0.200.0 applies model writes and emits an authoritative
         // config_option_update, but never completes that ACP request. Its
@@ -247,14 +271,12 @@ function effortLevelsFromOption(
   option: EffectAcpSchema.SessionConfigOption,
 ): ReadonlyArray<DroidDiscoveredEffortLevel> {
   if (option.type !== "select") return [];
-  const current = typeof option.currentValue === "string" ? option.currentValue.trim() : undefined;
   return flattenSelectOptions(option).flatMap((entry) =>
     entry.value
       ? [
           {
             value: entry.value,
             label: entry.label || entry.value,
-            ...(current === entry.value ? { isDefault: true as const } : {}),
           } satisfies DroidDiscoveredEffortLevel,
         ]
       : [],

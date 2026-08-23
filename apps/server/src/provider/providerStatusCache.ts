@@ -167,8 +167,25 @@ export const writeProviderStatusCache = (input: {
   readonly provider: ServerProvider;
 }) => {
   const { updateState: _updateState, ...cacheableProvider } = input.provider;
+  const durableProvider: ServerProvider = cacheableProvider.connection
+    ? {
+        ...cacheableProvider,
+        connection: {
+          ...cacheableProvider.connection,
+          operation: null,
+          ...(cacheableProvider.connection.runtime
+            ? {
+                runtime: {
+                  ...cacheableProvider.connection.runtime,
+                  operation: null,
+                },
+              }
+            : {}),
+        },
+      }
+    : cacheableProvider;
   return writeFileStringAtomically({
     filePath: input.filePath,
-    contents: `${JSON.stringify(cacheableProvider, null, 2)}\n`,
+    contents: `${JSON.stringify(durableProvider, null, 2)}\n`,
   });
 };

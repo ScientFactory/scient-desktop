@@ -72,7 +72,8 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId:
     | string
-    | ((initializeResult: EffectAcpSchema.InitializeResponse) => string);
+    | undefined
+    | ((initializeResult: EffectAcpSchema.InitializeResponse) => string | undefined);
   /**
    * Extra `_meta` merged into the `authenticate` request. Agents use it to
    * gate interactivity (e.g. Droid's `_meta.headless` keeps background
@@ -739,15 +740,18 @@ export const make = (
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* initialize;
 
-      const authenticatePayload = {
-        methodId:
-          typeof options.authMethodId === "function"
-            ? options.authMethodId(initializeResult)
-            : options.authMethodId,
-        ...(options.authenticateMeta ? { _meta: options.authenticateMeta } : {}),
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      const authMethodId =
+        typeof options.authMethodId === "function"
+          ? options.authMethodId(initializeResult)
+          : options.authMethodId;
+      if (authMethodId !== undefined) {
+        const authenticatePayload = {
+          methodId: authMethodId,
+          ...(options.authenticateMeta ? { _meta: options.authenticateMeta } : {}),
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* authenticate(authenticatePayload);
+        yield* authenticate(authenticatePayload);
+      }
 
       let sessionId: string;
       let sessionSetupResult:

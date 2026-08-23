@@ -136,7 +136,11 @@ export function providerSettingsLifecyclePresentation(
       kind: "sign-in-required",
       statusLabel: "Sign-in required",
       detail:
-        provider.driver === "codex" ? "Connect your ChatGPT account." : "Connect your account.",
+        provider.driver === "codex"
+          ? "Connect your ChatGPT account."
+          : provider.driver === "droid"
+            ? "Sign in with your existing Factory subscription."
+            : "Connect your account.",
       actionLabel: "Sign in",
       busy: false,
     };

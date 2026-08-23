@@ -49,6 +49,18 @@ vi.mock("./CodexInlineSetup", () => ({
     </div>
   ),
 }));
+vi.mock("./DroidInlineSetup", () => ({
+  DroidInlineSetup: (props: {
+    accountAction?: ReactNode;
+    managedRuntimePresentedExternally?: boolean;
+  }) => (
+    <div>
+      Droid lifecycle surface
+      {props.managedRuntimePresentedExternally ? " · Shared runtime management" : null}
+      {props.accountAction}
+    </div>
+  ),
+}));
 vi.mock("./GrokInlineSetup", () => ({
   GrokInlineSetup: (props: {
     accountAction?: ReactNode;
@@ -170,6 +182,7 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps the assisted %s dialog compact and fully manageable",
@@ -219,6 +232,7 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "opens the reviewed install flow directly for missing assisted %s runtimes",
@@ -335,6 +349,7 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps managed runtime actions visible while assisted %s is signed out",

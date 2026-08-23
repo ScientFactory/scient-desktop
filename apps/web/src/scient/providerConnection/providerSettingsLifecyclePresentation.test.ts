@@ -63,6 +63,28 @@ describe("provider settings lifecycle presentation", () => {
     ).toMatchObject({ kind: "sign-in-required", actionLabel: "Sign in" });
   });
 
+  it("uses concise Factory subscription guidance for Droid pairing", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          driver: ProviderDriverKind.make("droid"),
+          displayName: "Droid",
+          installed: true,
+          connection: {
+            methods: ["droid_device_pairing"],
+            canDisconnect: false,
+            operation: null,
+          },
+        }),
+        "Droid",
+      ),
+    ).toMatchObject({
+      kind: "sign-in-required",
+      detail: "Sign in with your existing Factory subscription.",
+      actionLabel: "Sign in",
+    });
+  });
+
   it("reports managed installation progress without claiming readiness", () => {
     expect(
       providerSettingsLifecyclePresentation(

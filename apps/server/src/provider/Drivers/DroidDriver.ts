@@ -15,7 +15,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
 import {
   buildInitialDroidProviderSnapshot,
-  checkDroidProviderStatus,
+  checkDroidProviderStatusWithCapabilities,
   enrichDroidSnapshot,
 } from "../Layers/DroidProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -37,6 +37,16 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import {
+  hasDroidApiKeyEnvironment,
+  type DroidAccountCapabilities,
+} from "../acp/DroidAcpSupport.ts";
+import {
+  droidProcessEnvironment,
+  makeDroidConnectionActions,
+  withDroidSessionShutdown,
+} from "../../scient/providerLifecycle/DroidConnectionActions.ts";
+import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 
@@ -65,15 +75,38 @@ const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
+    readonly runtime: NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
+    readonly assistedAccountActionsAllowed: boolean;
   }) =>
-  (snapshot: ServerProviderDraft): ServerProvider => ({
-    ...snapshot,
-    instanceId: input.instanceId,
-    driver: DRIVER_KIND,
-    ...(input.displayName ? { displayName: input.displayName } : {}),
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    continuation: { groupKey: input.continuationGroupKey },
-  });
+  (
+    snapshot: ServerProviderDraft,
+    accountCapabilities: DroidAccountCapabilities = { devicePairing: false, logout: false },
+  ): ServerProvider => {
+    const connectionMethods =
+      input.assistedAccountActionsAllowed &&
+      accountCapabilities.devicePairing &&
+      snapshot.auth.required !== false
+        ? (["droid_device_pairing"] as const)
+        : [];
+    return {
+      ...snapshot,
+      instanceId: input.instanceId,
+      driver: DRIVER_KIND,
+      ...(input.displayName ? { displayName: input.displayName } : {}),
+      ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+      continuation: { groupKey: input.continuationGroupKey },
+      connection: {
+        methods: connectionMethods,
+        canDisconnect:
+          input.assistedAccountActionsAllowed &&
+          accountCapabilities.logout &&
+          snapshot.auth.required !== false &&
+          snapshot.auth.status === "authenticated",
+        operation: null,
+        runtime: input.runtime,
+      },
+    };
+  };
 
 export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -88,24 +121,44 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
+      const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = droidProcessEnvironment(mergeProviderInstanceEnvironment(environment));
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
       });
+      const managedRuntime = yield* makeDroidManagedRuntimeResolution({
+        settings: config,
+        baseDir: serverConfig.baseDir,
+        environment: processEnv,
+        spawner,
+        managedInstallationAllowed: serverConfig.mode === "desktop",
+      });
+      const effectiveConfig = {
+        ...config,
+        enabled,
+        binaryPath: managedRuntime.effectiveBinaryPath,
+      } satisfies DroidSettings;
+      const assistedAccountActionsAllowed = !hasDroidApiKeyEnvironment(processEnv);
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        runtime: managedRuntime.summary,
+        assistedAccountActionsAllowed,
       });
-      const effectiveConfig = { ...config, enabled } satisfies DroidSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
-      });
+      const maintenanceCapabilities = managedRuntime.usesManagedPath
+        ? makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          })
+        : yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+            binaryPath: effectiveConfig.binaryPath,
+            env: processEnv,
+          });
 
       const adapter = yield* makeDroidAdapter(effectiveConfig, {
         environment: processEnv,
@@ -113,9 +166,24 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         instanceId,
       });
       const textGeneration = yield* makeDroidTextGeneration(effectiveConfig, processEnv);
+      const connectionActions = !assistedAccountActionsAllowed
+        ? undefined
+        : withDroidSessionShutdown(
+            makeDroidConnectionActions({
+              settings: effectiveConfig,
+              environment: processEnv,
+              spawner,
+            }),
+            adapter.stopAll(),
+          );
 
-      const checkProvider = checkDroidProviderStatus(effectiveConfig, processEnv).pipe(
-        Effect.map(stampIdentity),
+      const checkProvider = checkDroidProviderStatusWithCapabilities(
+        effectiveConfig,
+        processEnv,
+      ).pipe(
+        Effect.map(({ snapshot: checkedSnapshot, accountCapabilities }) =>
+          stampIdentity(checkedSnapshot, accountCapabilities),
+        ),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -159,6 +227,8 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        ...(connectionActions ? { connectionActions } : {}),
+        managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
 };
