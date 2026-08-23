@@ -44,7 +44,8 @@ describe("officialAntigravityAccountEnvironment", () => {
     expect(environment.USERPROFILE).toBe("C:\\Users\\scientist");
     expect(environment.HTTPS_PROXY).toBe("https://proxy.example");
     expect(environment.BROWSER).toBe("open");
-    expect(environment.DISABLE_UPDATES).toBe("1");
+    expect(environment.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("true");
+    expect(environment.DISABLE_UPDATES).toBeUndefined();
     expect(environment.GOOGLE_API_KEY).toBeUndefined();
     expect(environment.GEMINI_API_KEY).toBeUndefined();
     expect(environment.GOOGLE_GEMINI_BASE_URL).toBeUndefined();
@@ -340,7 +341,11 @@ describe("Antigravity connection actions", () => {
         );
         const writes: string[] = [];
         let kills = 0;
-        const spawnInputs: Array<{ readonly shell: string; readonly args?: string[] }> = [];
+        const spawnInputs: Array<{
+          readonly shell: string;
+          readonly args?: string[];
+          readonly cols?: number;
+        }> = [];
         const makeProcess = (dataChunks: ReadonlyArray<string>): PtyProcess => {
           let exited = false;
           return {
@@ -362,7 +367,11 @@ describe("Antigravity connection actions", () => {
           };
         };
         const pty = {
-          spawn: (input: { readonly shell: string; readonly args?: string[] }) =>
+          spawn: (input: {
+            readonly shell: string;
+            readonly args?: string[];
+            readonly cols?: number;
+          }) =>
             Effect.sync(() => {
               spawnInputs.push(input);
               return makeProcess(
@@ -397,6 +406,7 @@ describe("Antigravity connection actions", () => {
 
         expect(spawnInputs).toHaveLength(2);
         expect(spawnInputs[0]?.shell).toBe("/usr/local/bin/agy");
+        expect(spawnInputs[0]?.cols).toBe(2_000);
         expect(spawnInputs[1]?.args).toEqual(["--prompt-interactive", "/logout"]);
         expect(writes).toEqual([
           "\u001b[?2026;2$y",

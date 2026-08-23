@@ -156,9 +156,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         enabled,
         binaryPath: managedRuntime.effectiveBinaryPath,
       } satisfies AntigravitySettings;
-      const effectiveProcessEnv = managedRuntime.usesManagedPath
-        ? { ...processEnv, DISABLE_UPDATES: "1" }
-        : processEnv;
       const connectionMethods = ["antigravity_google"] as const;
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -175,38 +172,26 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           })
         : yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
             binaryPath: effectiveConfig.binaryPath,
-            env: effectiveProcessEnv,
+            env: processEnv,
           });
 
       const adapter = yield* makeAntigravityAdapter(effectiveConfig, {
-        environment: effectiveProcessEnv,
+        environment: processEnv,
         attachmentsDir: serverConfig.attachmentsDir,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
-      const textGeneration = yield* makeAntigravityTextGeneration(
-        effectiveConfig,
-        effectiveProcessEnv,
-      );
+      const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
 
       // Connection actions for the antigravity_google auth method.
       const connectionActions = yield* makeAntigravityConnectionActions(
         effectiveConfig,
-        effectiveProcessEnv,
+        processEnv,
         spawner,
         ptyAdapter,
-        makeAntigravityLocalCredentialStore(
-          effectiveProcessEnv,
-          fileSystem,
-          path,
-          spawner,
-          platform,
-        ),
+        makeAntigravityLocalCredentialStore(processEnv, fileSystem, path, spawner, platform),
       ).pipe(Effect.map((actions) => withAntigravitySessionShutdown(actions, adapter.stopAll())));
-      const checkProvider = checkAntigravityProviderStatus(
-        effectiveConfig,
-        effectiveProcessEnv,
-      ).pipe(
+      const checkProvider = checkAntigravityProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

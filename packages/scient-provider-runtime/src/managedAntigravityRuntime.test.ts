@@ -25,7 +25,7 @@ describe("ManagedAntigravityRuntime", () => {
     const launchPath = new ManagedAntigravityRuntime("/scient-data").launchPath(artifact!);
 
     expect(launchPath.replaceAll("\\", "/")).toMatch(
-      /\/provider-runtimes\/antigravity\/versions\/1\.1\.17\/darwin-arm64\/antigravity$/u,
+      /\/provider-runtimes\/antigravity\/versions\/1\.1\.19\/darwin-arm64\/antigravity$/u,
     );
   });
 
@@ -65,8 +65,14 @@ describe("ManagedAntigravityRuntime", () => {
         events.push(`materialize:${executablePath}`);
         return executable;
       },
-      smoke: async (executable: string) => {
+      smoke: async (
+        executable: string,
+        _args: ReadonlyArray<string>,
+        _displayName: string,
+        environment?: Readonly<Record<string, string>>,
+      ) => {
         expect(await NodeFSP.readFile(executable, "utf8")).toBe("antigravity-executable");
+        expect(environment).toEqual({ AGY_CLI_DISABLE_AUTO_UPDATE: "true" });
         events.push(`smoke:${NodePath.basename(executable)}`);
       },
     };
@@ -76,7 +82,7 @@ describe("ManagedAntigravityRuntime", () => {
       artifact: artifact!,
       signal: new AbortController().signal,
     });
-    expect(installed).toMatchObject({ installed: true, activeVersion: "1.1.17" });
+    expect(installed).toMatchObject({ installed: true, activeVersion: "1.1.19" });
     expect(events).toEqual([
       `download:${artifact!.url}`,
       "verify:sha512",

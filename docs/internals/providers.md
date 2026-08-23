@@ -179,20 +179,22 @@ Antigravity is a native integration, not an ACP compatibility bridge:
   interactive approvals, model switching, and rollback honestly.
 - **Authentication (`AntigravityConnectionActions.ts`)**: Launches the official interactive client
   in a PTY, lets Antigravity open Google sign-in, and verifies completion with `agy models`.
-  Disconnect sends `/logout`. Scient never reads, copies, or deletes credentials. The process
-  environment is allowlisted and omits API-key and custom-endpoint variables, preserving the
-  Google-account subscription boundary.
+  Disconnect sends `/logout`. If the CLI blocks that command behind first-run screens, Scient
+  removes only Antigravity's provider-owned local consumer credential entries and then verifies that
+  `agy models` is unauthenticated. Scient never reads or copies token contents. The process
+  environment is allowlisted, disables Antigravity's in-place updater, and omits API-key and
+  custom-endpoint variables, preserving the Google-account subscription boundary.
 - **Structured text generation (`AntigravityTextGeneration.ts`)**: Uses the same native transport
   with `--json-schema` and validates `structured_output`; it does not scrape JSON from prose.
 - **Assisted onboarding (`AntigravityInlineSetup.tsx`)**: Surfaces reviewed managed install,
-  progress/cancellation/recovery, Google sign-in, model readiness, updates, and sign-out in the
+  cancellation/recovery, Google sign-in, model readiness, updates, and sign-out in the
   composer and Settings surfaces.
 
 ### Managed runtime trust boundary
 
 The reviewed runtime catalogs currently include OpenAI Codex `0.147.0`, release tag
 `rust-v0.147.0`; Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version already
-used by T3; and Google Antigravity CLI `1.1.17`. Each known artifact has an exact HTTPS URL,
+used by T3; and Google Antigravity CLI `1.1.19`. Each known artifact has an exact HTTPS URL,
 allowlisted redirect hosts, byte size, SHA-256 or SHA-512 digest, archive shape, executable path,
 and smoke command compiled into the signed application source.
 
@@ -267,7 +269,7 @@ qualification. Passing those checks on one target does not certify another.
 
 ### Antigravity platform capability matrix
 
-The reviewed Antigravity `1.1.17` catalog covers Apple-silicon and Intel macOS, Windows ARM64 and
+The reviewed Antigravity `1.1.19` catalog covers Apple-silicon and Intel macOS, Windows ARM64 and
 x64, and glibc Linux ARM64 and x64. Google's macOS and Linux archives contain one native
 `antigravity` executable; the Windows release is a reviewed raw `agy.exe`. Musl Linux is not
 advertised because Google does not publish a matching artifact in this release.

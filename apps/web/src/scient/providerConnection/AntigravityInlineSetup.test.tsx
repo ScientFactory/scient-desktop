@@ -107,6 +107,42 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).toContain("text-destructive/80");
   });
 
+  it("keeps managed installation compact without synthetic progress", () => {
+    const markup = render(
+      provider({
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: false,
+          operation: null,
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "1.1.19",
+            previousManagedVersion: null,
+            operation: {
+              operationId: "runtime-install-1",
+              action: "install",
+              status: "downloading",
+              startedAt: "2026-08-22T08:00:00.000Z",
+              finishedAt: null,
+              message: "Downloading Antigravity.",
+              downloadedBytes: 10,
+              totalBytes: 100,
+            },
+            message: "Installing Antigravity.",
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("Downloading Antigravity from Google");
+    expect(markup).toContain(" Cancel</button>");
+    expect(markup).not.toContain("progressbar");
+    expect(markup).not.toContain('style="width:');
+  });
+
   it("shows a paste-code field for the live Google authorization flow", () => {
     const markup = render(
       provider({

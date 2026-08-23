@@ -16,6 +16,7 @@ export const makeProviderRegistryMock = (
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
   getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+  stopProviderSessions: () => Effect.void,
   setProviderManagedRuntimeSummary: () => Effect.succeed([]),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),
   setProviderConnectionOperation: () => Effect.succeed(providers),

@@ -30,6 +30,7 @@ export interface ManagedRuntimeArtifact {
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
   readonly executablePath: string;
   readonly smokeArgs: ReadonlyArray<string>;
+  readonly smokeEnvironment?: Readonly<Record<string, string>>;
   readonly catalogRevision: string;
   readonly supportTier: ManagedRuntimeSupportTier;
   readonly supportMessage: string;

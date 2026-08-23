@@ -51,36 +51,24 @@ function failureMessage(value: unknown, fallback: string): string {
   return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
 }
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): {
-  readonly label: string;
-  readonly progress: number;
-} {
+function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
     case "preparing":
-      return { label: "Preparing the reviewed download…", progress: 8 };
+      return "Preparing the reviewed download…";
     case "downloading":
-      return {
-        label: "Downloading Antigravity from Google…",
-        progress:
-          operation.downloadedBytes !== undefined && operation.totalBytes !== undefined
-            ? Math.min(
-                42,
-                Math.max(12, Math.round((operation.downloadedBytes / operation.totalBytes) * 42)),
-              )
-            : 24,
-      };
+      return "Downloading Antigravity from Google…";
     case "verifying":
-      return { label: "Verifying the Google release…", progress: 48 };
+      return "Verifying the Google release…";
     case "installing":
-      return { label: "Installing Antigravity privately…", progress: 66 };
+      return "Installing Antigravity privately…";
     case "testing":
-      return { label: "Checking the installation…", progress: 83 };
+      return "Checking the installation…";
     case "activating":
-      return { label: "Finishing setup…", progress: 94 };
+      return "Finishing setup…";
     case "removing":
-      return { label: "Removing Scient’s private Antigravity copy…", progress: 70 };
+      return "Removing Scient’s private Antigravity copy…";
     default:
-      return { label: "Preparing Antigravity…", progress: 6 };
+      return "Preparing Antigravity…";
   }
 }
 
@@ -195,10 +183,7 @@ export function AntigravityInlineSetup(props: {
                 ? "Removing Antigravity"
                 : "Installing Antigravity"}
         </h2>
-        <p className="text-muted-foreground text-xs">{stage.label}</p>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/8">
-          <div className="h-full rounded-full bg-primary" style={{ width: `${stage.progress}%` }} />
-        </div>
+        <p className="text-muted-foreground text-xs">{stage}</p>
         {activeRuntimeOperation ? (
           <Button
             className={DESTRUCTIVE_GHOST_ACTION_CLASS}

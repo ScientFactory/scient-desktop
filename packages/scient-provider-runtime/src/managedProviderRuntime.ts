@@ -89,10 +89,11 @@ async function smokeExecutable(
   executable: string,
   args: ReadonlyArray<string>,
   displayName: string,
+  environment: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.spawn(executable, [...args], {
-      env: managedRuntimeSmokeEnvironment(process.env),
+      env: { ...managedRuntimeSmokeEnvironment(process.env), ...environment },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -150,6 +151,7 @@ export interface ManagedProviderRuntimeDependencies {
     executable: string,
     args: ReadonlyArray<string>,
     displayName: string,
+    environment?: Readonly<Record<string, string>>,
   ) => Promise<void>;
   readonly commitState: (
     statePath: string,
@@ -326,7 +328,12 @@ export class ManagedProviderRuntime {
         signal,
       });
       onProgress?.({ stage: "testing" });
-      await this.#dependencies.smoke(stagedExecutable, artifact.smokeArgs, this.#displayName);
+      await this.#dependencies.smoke(
+        stagedExecutable,
+        artifact.smokeArgs,
+        this.#displayName,
+        artifact.smokeEnvironment,
+      );
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       onProgress?.({ stage: "activating" });
       await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true, mode: 0o700 });

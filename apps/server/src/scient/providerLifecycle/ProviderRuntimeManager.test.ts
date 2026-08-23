@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
+import { ProviderAdapterProcessError } from "../../provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
 import {
   ProviderRegistry,
@@ -74,10 +75,12 @@ const yieldUntil = <A>(
 function makeHarness(
   actions: ProviderManagedRuntimeActions,
   initialProviders: ReadonlyArray<ServerProvider> = [provider],
+  stopProviderSessions: ProviderRegistryShape["stopProviderSessions"] = () => Effect.void,
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
     const reloadCountRef = yield* Ref.make(0);
+    const stopCountRef = yield* Ref.make(0);
     const reloadOperationsRef = yield* Ref.make<ReadonlyArray<string | null>>([]);
     const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
       Ref.updateAndGet(providersRef, (providers) =>
@@ -110,6 +113,10 @@ function makeHarness(
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
+      stopProviderSessions: (provider) =>
+        Ref.update(stopCountRef, (count) => count + 1).pipe(
+          Effect.andThen(stopProviderSessions(provider)),
+        ),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation: () => Ref.get(providersRef),
       setProviderManagedRuntimeSummary: setRuntime,
@@ -121,7 +128,7 @@ function makeHarness(
       Effect.provideService(ProviderLifecycleCoordinator, coordinator),
       Effect.provide(NodeServices.layer),
     );
-    return { manager, providersRef, reloadCountRef, reloadOperationsRef };
+    return { manager, providersRef, reloadCountRef, reloadOperationsRef, stopCountRef };
   });
 }
 
@@ -168,10 +175,8 @@ describe("ProviderRuntimeManager", () => {
         ...provider,
         instanceId: SECOND_INSTANCE,
       };
-      const { manager, providersRef, reloadCountRef, reloadOperationsRef } = yield* makeHarness(
-        actions,
-        [provider, secondProvider],
-      );
+      const { manager, providersRef, reloadCountRef, reloadOperationsRef, stopCountRef } =
+        yield* makeHarness(actions, [provider, secondProvider]);
       const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
       assert.strictEqual(planned.catalogRevision, "reviewed:1");
       yield* manager.start({
@@ -190,6 +195,7 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(completed[1]?.connection?.runtime?.source, "scient_managed");
       assert.strictEqual(completed[1]?.connection?.runtime?.managedVersion, "0.147.0");
       assert.strictEqual(yield* Ref.get(reloadCountRef), 2);
+      assert.strictEqual(yield* Ref.get(stopCountRef), 1);
       assert.deepStrictEqual(yield* Ref.get(reloadOperationsRef), ["downloading", "downloading"]);
     }),
   );
@@ -252,6 +258,41 @@ describe("ProviderRuntimeManager", () => {
       if (result._tag === "Failure")
         assert.strictEqual(result.failure.reason, "runtime_plan_stale");
       assert.strictEqual(yield* Ref.get(runCount), 0);
+    }),
+  );
+
+  it.effect("does not mutate a shared runtime when active sessions cannot stop", () =>
+    Effect.gen(function* () {
+      const runCount = yield* Ref.make(0);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(missingRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Ref.update(runCount, (count) => count + 1),
+      };
+      const { manager, providersRef } = yield* makeHarness(actions, [provider], () =>
+        Effect.fail(
+          new ProviderAdapterProcessError({
+            provider: "codex",
+            threadId: "active-thread",
+            detail: "session still running",
+          }),
+        ),
+      );
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+
+      const completed = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "failed",
+      );
+      assert.strictEqual(yield* Ref.get(runCount), 0);
+      assert.match(
+        completed[0]?.connection?.runtime?.operation?.message ?? "",
+        /could not stop active codex sessions/u,
+      );
     }),
   );
 

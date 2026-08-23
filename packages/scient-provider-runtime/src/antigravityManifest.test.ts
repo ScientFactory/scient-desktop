@@ -14,12 +14,13 @@ describe("reviewed Antigravity runtime manifest", () => {
     const artifact = resolveReviewedAntigravityArtifact(target);
 
     expect(artifact?.provider).toBe("antigravity");
-    expect(artifact?.version).toBe("1.1.17");
+    expect(artifact?.version).toBe("1.1.19");
     expect(artifact?.supportTier).toBe("fully_assisted");
     expect(artifact?.checksum).toEqual({
       algorithm: "sha512",
       digest: expect.stringMatching(/^[a-f0-9]{128}$/u),
     });
+    expect(artifact?.smokeEnvironment).toEqual({ AGY_CLI_DISABLE_AUTO_UPDATE: "true" });
     expect(artifact?.url).toMatch(
       /^https:\/\/storage\.googleapis\.com\/antigravity-public\/antigravity-cli\//u,
     );

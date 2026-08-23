@@ -40,6 +40,9 @@ const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_VERIFY_TIMEOUT = "15 seconds";
 const AUTH_VERIFY_POLL = "1 second";
 const AUTH_URL_GRACE = "3 seconds";
+// OAuth URLs are long enough to wrap in an ordinary terminal. This PTY is
+// hidden, so give the provider enough width to emit one complete, copyable URL.
+const AUTH_TERMINAL_COLUMNS = 2_000;
 const AUTHORIZATION_CODE_MAX_LENGTH = 8_192;
 const LOGOUT_TIMEOUT = "15 seconds";
 const LOCAL_LOGOUT_VERIFY_TIMEOUT = "5 seconds";
@@ -140,7 +143,9 @@ export function officialAntigravityAccountEnvironment(
   for (const [key, value] of Object.entries(environment)) {
     if (value !== undefined && allowedKeyNames.has(key.toLowerCase())) result[key] = value;
   }
-  result.DISABLE_UPDATES = "1";
+  // Scient owns updates for its reviewed app-private runtime. Google documents
+  // this exact variable for disabling Antigravity's in-place auto-updater.
+  result.AGY_CLI_DISABLE_AUTO_UPDATE = "true";
   return result;
 }
 
@@ -445,7 +450,7 @@ export const makeAntigravityConnectionActions = Effect.fn("AntigravityConnection
             shell: ptyCommand.shell,
             args: [...ptyCommand.args],
             cwd: agyEnvironment.HOME ?? agyEnvironment.USERPROFILE ?? NodeOS.homedir(),
-            cols: 100,
+            cols: AUTH_TERMINAL_COLUMNS,
             rows: 30,
             env: agyEnvironment,
           })

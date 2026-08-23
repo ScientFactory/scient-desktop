@@ -22,6 +22,7 @@ import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
 } from "../ProviderDriver.ts";
+import type { ProviderAdapterError } from "../Errors.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -81,6 +82,11 @@ export interface ProviderRegistryShape {
   readonly getProviderManagedRuntimeActionsForInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderManagedRuntimeActions | undefined>;
+
+  /** Stop every live session using one shared provider runtime before mutating it. */
+  readonly stopProviderSessions: (
+    provider: ProviderDriverKind,
+  ) => Effect.Effect<void, ProviderAdapterError>;
 
   /**
    * Apply volatile maintenance-action state to one configured instance.

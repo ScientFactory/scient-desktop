@@ -1,9 +1,9 @@
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import type { ManagedRuntimeTarget } from "./target.ts";
 
-const VERSION = "1.1.17";
+const VERSION = "1.1.19";
 const RELEASE_BASE =
-  "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.17-5084709148033024";
+  "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.19-4894004681244672";
 const ALLOWED_HOSTS = ["storage.googleapis.com"] as const;
 
 interface ArtifactRecord {
@@ -20,8 +20,8 @@ const ARTIFACTS = {
     releaseDirectory: "darwin-arm",
     artifactName: "cli_mac_arm64.tar.gz",
     sha512:
-      "eda17e9f3649df12bcd614e226983922cd5e4c22a9153e9f9a5ecc5557addcda0f03147db8a2c6c19daeb8e1dc8062a9a1bcf86284315c2b1aae73f2d8236b1e",
-    size: 49_401_949,
+      "54b6b0e2e2fed5d5e270c6353f8097bd2a0e966f07946ded8065a6293b79ec7be5993f5d3de5c12d0683b33822a5cb887795094ffa2c6f77bb7183816c92ae96",
+    size: 49_549_052,
     archiveFormat: "tar.gz",
     executablePath: "antigravity",
   },
@@ -29,8 +29,8 @@ const ARTIFACTS = {
     releaseDirectory: "darwin-x64",
     artifactName: "cli_mac_x64.tar.gz",
     sha512:
-      "38c23febf677c93ba62cccc979ceee0348e733e2d1d827c9d0751422e5d4462b5df1030ff97f07d78a30194cc1386a6b428ba3f85141a65f572e804a9978bda5",
-    size: 54_128_714,
+      "e6f9e0c3e0d32509937cb6aa5f6e00096aed2a78ab3e21ffdcf05ddbbf0e2b4772388196d9dbbc356400b16adc3ba6d2ecb8d8fdafa9489604ed3b3bbd775f95",
+    size: 54_278_163,
     archiveFormat: "tar.gz",
     executablePath: "antigravity",
   },
@@ -38,8 +38,8 @@ const ARTIFACTS = {
     releaseDirectory: "linux-arm",
     artifactName: "cli_linux_arm64.tar.gz",
     sha512:
-      "ad871538fc8bbd0cf96e11b85e388dadde5cd02164c2921cf7cd30646e343c90a63ef5224f6420612ad6f91fe06f260e332e307968082f3a1f54e53933be847f",
-    size: 52_175_139,
+      "488c3dac1c7ca866a9da990f9a88648bfb7176992a0a2d27605e3bc10143e5b17af552ed99f0bf4250e2d69fed6d0d5f50684c729bf03f269f2b52b44503558d",
+    size: 52_317_463,
     archiveFormat: "tar.gz",
     executablePath: "antigravity",
   },
@@ -47,8 +47,8 @@ const ARTIFACTS = {
     releaseDirectory: "linux-x64",
     artifactName: "cli_linux_x64.tar.gz",
     sha512:
-      "5c6047a19e80025ea7cecc8152fb263a7f14e80591ee75bdf1ca10191cc0cd1639b5b5ebdce4d1c9d43b14bd2446f038a457821694579f4392b6ca9736512936",
-    size: 55_607_296,
+      "7c3b310c80685adcba714994207eb870fb4817403975da46555b7d9fade446487da3d8f897aa220dfbc30f602ab461a0147a6f7b3c8228fdebd35951e3f250fd",
+    size: 55_763_391,
     archiveFormat: "tar.gz",
     executablePath: "antigravity",
   },
@@ -56,8 +56,8 @@ const ARTIFACTS = {
     releaseDirectory: "windows-arm",
     artifactName: "cli_windows_arm64.exe",
     sha512:
-      "476cb921d8dffec9bafd6404e586aaf297b805ac70f9373373d943a7836d24c8ec5778e24f243368d1e96135629b4a8014ef40e9de1ea349eecb7da0006f12a4",
-    size: 174_058_648,
+      "2ea35aa877892b1c40482ff748bac90958998bfe15e81f49ebb1f3880550ecbdf50786b057f6b95923236b48ab589a678cad5a9ecf150e4ff4cf6e9eac582edd",
+    size: 174_601_880,
     archiveFormat: "raw",
     executablePath: "agy.exe",
   },
@@ -65,8 +65,8 @@ const ARTIFACTS = {
     releaseDirectory: "windows-x64",
     artifactName: "cli_windows_x64.exe",
     sha512:
-      "354def717fe717f31d03ec5a359041b368a98d856cd544bed1bb8bfde071c8012a7592e7d8840fcb182e083f9ab587dc1c6585f4c830c26131a22ef7b998799b",
-    size: 184_027_288,
+      "5b7c6c93d90244b8db44bd6e3d6cef2d7092947ca7870e77df8e626f6a58e2322f3623cc0d239e90cb698d1f072168a797362a51e25b22338aa6a3e2666df31e",
+    size: 184_617_112,
     archiveFormat: "raw",
     executablePath: "agy.exe",
   },
@@ -96,6 +96,7 @@ export function resolveReviewedAntigravityArtifact(
     archiveFormat: artifact.archiveFormat,
     executablePath: artifact.executablePath,
     smokeArgs: ["--version"],
+    smokeEnvironment: { AGY_CLI_DISABLE_AUTO_UPDATE: "true" },
     catalogRevision: `google-antigravity-cli:${VERSION}:${key}:${artifact.sha512}`,
     supportTier: "fully_assisted",
     supportMessage:

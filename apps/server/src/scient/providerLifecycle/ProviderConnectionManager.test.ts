@@ -115,6 +115,7 @@ function makeHarness(options?: {
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      stopProviderSessions: () => Effect.void,
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation,
