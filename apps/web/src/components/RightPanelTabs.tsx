@@ -44,6 +44,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import type { FilePathCopyFormat } from "./files/filePathClipboard";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -70,7 +71,7 @@ interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
-  onCopyFilePath: (relativePath: string) => void;
+  onCopyFilePath: (relativePath: string, format: FilePathCopyFormat) => void;
   onAddBrowser: () => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
@@ -132,7 +133,8 @@ const SURFACE_UNAVAILABLE_HINTS = {
 } as const;
 
 type TabContextMenuAction =
-  | "copy-path"
+  | "copy-relative-path"
+  | "copy-full-path"
   | "toggle-mute"
   | "close"
   | "close-others"
@@ -211,6 +213,43 @@ export function surfaceShortcutTargetsTypingContext(
     target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !=
     null
   );
+}
+
+export function buildTabContextMenuItems(input: {
+  readonly file: boolean;
+  readonly mute: { readonly label: string; readonly disabled: boolean } | null;
+  readonly surfaceIndex: number;
+  readonly surfaceCount: number;
+}): readonly ContextMenuItem<TabContextMenuAction>[] {
+  const items: ContextMenuItem<TabContextMenuAction>[] = [];
+  if (input.file) {
+    items.push(
+      { id: "copy-relative-path", label: "Copy relative path" },
+      { id: "copy-full-path", label: "Copy full path" },
+    );
+  }
+  if (input.mute) {
+    items.push({ id: "toggle-mute", ...input.mute });
+  }
+  items.push(
+    { id: "close", label: "Close" },
+    {
+      id: "close-others",
+      label: "Close others",
+      disabled: input.surfaceCount <= 1,
+    },
+    {
+      id: "close-to-right",
+      label: "Close to the right",
+      disabled: input.surfaceIndex >= input.surfaceCount - 1,
+    },
+    {
+      id: "close-all",
+      label: "Close all",
+      disabled: input.surfaceCount === 0,
+    },
+  );
+  return items;
 }
 
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
@@ -703,10 +742,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
       if (surfaceIndex < 0) return;
 
-      const items: ContextMenuItem<TabContextMenuAction>[] = [];
-      if (surface.kind === "file") {
-        items.push({ id: "copy-path", label: "Copy path" });
-      }
       const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
       // Desktop overlay state only arrives once the preview manager has created
       // the tab. A server session id alone can still be ahead of that, and
@@ -715,40 +750,28 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ? (props.desktopByTabId[menuPreviewTabId] ?? null)
         : null;
       const menuMuted = menuOverlay?.audioMuted ?? false;
-      if (surface.kind === "preview") {
+      const items = buildTabContextMenuItems({
+        file: surface.kind === "file",
         // Not gated on audibility: silencing a quiet tab ahead of time is the
         // point, so the item is offered whenever the tab is mutable at all.
-        items.push({
-          id: "toggle-mute",
-          ...tabMuteMenuItem({
-            overlay: menuOverlay,
-            canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
-          }),
-        });
-      }
-      items.push(
-        { id: "close", label: "Close" },
-        {
-          id: "close-others",
-          label: "Close others",
-          disabled: props.surfaces.length <= 1,
-        },
-        {
-          id: "close-to-right",
-          label: "Close to the right",
-          disabled: surfaceIndex >= props.surfaces.length - 1,
-        },
-        {
-          id: "close-all",
-          label: "Close all",
-          disabled: props.surfaces.length === 0,
-        },
-      );
+        mute:
+          surface.kind === "preview"
+            ? tabMuteMenuItem({
+                overlay: menuOverlay,
+                canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
+              })
+            : null,
+        surfaceIndex,
+        surfaceCount: props.surfaces.length,
+      });
 
       const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
       switch (action) {
-        case "copy-path":
-          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
+        case "copy-relative-path":
+          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath, "relative");
+          break;
+        case "copy-full-path":
+          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath, "full");
           break;
         case "toggle-mute": {
           // menuOverlay repeats the disabled gate above: the desktop tab must
