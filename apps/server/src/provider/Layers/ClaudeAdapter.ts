@@ -77,7 +77,7 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -4159,7 +4159,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+          append: buildScientAwareness(mcpSession?.capabilities),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is

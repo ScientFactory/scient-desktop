@@ -42,7 +42,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
-import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -586,7 +586,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // Grok ACP has no per-session system field. `--rules` is its
             // supported interactive-agent capability seam; probes and
             // structured text generation deliberately retain plain argv.
-            rules: SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+            rules: buildScientAwareness(mcpSession?.capabilities),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession

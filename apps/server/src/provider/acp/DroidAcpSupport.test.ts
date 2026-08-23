@@ -83,6 +83,16 @@ describe("buildDroidAcpSpawnInput", () => {
     expect(JSON.stringify(spawn.args)).not.toContain("-m");
     expect(JSON.stringify(spawn.args)).not.toContain("-r");
   });
+
+  it("uses Droid's native system-prompt append seam when awareness is supplied", () => {
+    expect(
+      buildDroidAcpSpawnInput(undefined, "/tmp/project", undefined, "exact awareness"),
+    ).toEqual({
+      command: "droid",
+      args: ["exec", "--output-format", "acp", "--append-system-prompt", "exact awareness"],
+      cwd: "/tmp/project",
+    });
+  });
 });
 
 describe("auth resolution", () => {

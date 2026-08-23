@@ -54,6 +54,8 @@ export interface DroidAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly droidSettings: DroidAcpRuntimeDroidSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
+  /** Passed through Droid's argv; keep this bounded and free of secrets. */
+  readonly systemPrompt?: string;
   /** Extra client capabilities (e.g. the probe's parameterized-model-picker). */
   readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
 }
@@ -68,10 +70,16 @@ export function buildDroidAcpSpawnInput(
   droidSettings: DroidAcpRuntimeDroidSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  systemPrompt?: string,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: resolveDroidCliBinaryPath(droidSettings?.binaryPath),
-    args: ["exec", "--output-format", "acp"],
+    args: [
+      "exec",
+      "--output-format",
+      "acp",
+      ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
+    ],
     cwd,
     ...(environment ? { env: environment } : {}),
   };
@@ -129,7 +137,12 @@ export const makeDroidAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildDroidAcpSpawnInput(input.droidSettings, input.cwd, input.environment),
+        spawn: buildDroidAcpSpawnInput(
+          input.droidSettings,
+          input.cwd,
+          input.environment,
+          input.systemPrompt,
+        ),
         authMethodId: (initializeResult) =>
           resolveAdvertisedDroidAuthMethodId({
             environment: input.environment,

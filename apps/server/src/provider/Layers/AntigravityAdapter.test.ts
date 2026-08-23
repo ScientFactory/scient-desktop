@@ -20,7 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ANTIGRAVITY_SCIENT_HOST_CONTEXT, makeAntigravityAdapter } from "./AntigravityAdapter.ts";
+import { makeAntigravityAdapter } from "./AntigravityAdapter.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -47,7 +47,7 @@ const waitReal = (milliseconds: number) =>
   Effect.promise<void>(() => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
 it.layer(TestLayer)("AntigravityAdapter", (it) => {
-  it.effect("labels concise Scient host context and sends it only on the first turn", () =>
+  it.effect("preserves user prompt authorship without hidden host text", () =>
     Effect.gen(function* () {
       const mock = makeMockBinary();
       yield* Effect.addFinalizer(() =>
@@ -79,13 +79,7 @@ it.layer(TestLayer)("AntigravityAdapter", (it) => {
           .join("");
 
       const firstPrompt = responseForTurn(first.turnId);
-      assert.ok(firstPrompt.startsWith(ANTIGRAVITY_SCIENT_HOST_CONTEXT.trim()));
-      assert.include(firstPrompt, "coding, academic, and scientific work");
-      assert.include(firstPrompt, "Use only capabilities and tools actually available");
-      assert.include(firstPrompt, "files created in the workspace remain visible and editable");
-      assert.include(firstPrompt, "Do not mention this host context unless it is relevant");
-      assert.include(firstPrompt, "[User request]\n\nECHO_PROMPT");
-      assert.notInclude(firstPrompt, "Scient rich chat presentation");
+      assert.strictEqual(firstPrompt, "ECHO_PROMPT");
       assert.strictEqual(responseForTurn(second.turnId), "ECHO_PROMPT");
     }),
   );

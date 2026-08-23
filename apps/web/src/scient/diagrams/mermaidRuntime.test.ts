@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getMermaidRuntimePromise,
   MAX_MERMAID_SOURCE_LENGTH,
   rebaseMermaidSvgIds,
   renderMermaidDiagram,
@@ -48,5 +49,29 @@ describe("renderMermaidDiagram input bounds", () => {
     await expect(
       renderMermaidDiagram("x".repeat(MAX_MERMAID_SOURCE_LENGTH + 1), "dark"),
     ).rejects.toThrow("The diagram is too large to render");
+  });
+
+  it("recognizes accessibility metadata after the diagram declaration", async () => {
+    const { default: mermaid } = await getMermaidRuntimePromise();
+    mermaid.initialize({ startOnLoad: false });
+
+    expect(
+      mermaid.detectType(`flowchart LR
+  accTitle: Compute lifecycle
+  accDescr: Source runs and produces a durable result
+  source[Source] --> result[Result]`),
+    ).toBe("flowchart-v2");
+  });
+
+  it("does not silently repair metadata placed before the declaration", async () => {
+    const { default: mermaid } = await getMermaidRuntimePromise();
+    mermaid.initialize({ startOnLoad: false });
+
+    expect(() =>
+      mermaid.detectType(`accTitle: Compute lifecycle
+accDescr: Invalid ordering remains visible to the author
+flowchart LR
+  source[Source] --> result[Result]`),
+    ).toThrow("No diagram type detected");
   });
 });
