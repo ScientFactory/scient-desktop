@@ -31,26 +31,32 @@ implementation phase, operating system, packaged application, user experience,
 or release has passed its own acceptance gate. Later evidence may amend an ADR;
 "accepted" is not a claim that the design can never change.
 
-### Qualification status (2026-08-22)
+### Qualification status (2026-08-23)
 
-Phases 1-4 are committed at the rebased feature baseline `3dc3a85035`, whose
-history contains the current `origin/main` snapshot `74bca4d52a`. The
-language-neutral figure-following, direct static-image actions, and dual-layout
-extension continues through `10bad98fbf`. The settings, authorization, RPC
-gateway, client recovery/folding, project Compute surface, editor actions,
-output viewing, and workspace refresh path are implemented, including explicit
-caret-aware `# %%` cells and bounded transient live-variable inspection.
+Phases 1-4 and the figure-viewing extension have been replayed without conflict
+onto `origin/main` snapshot `73300377a3`; the resulting implementation and
+documentation checkpoint before this closeout is `da69491fb8`. The settings,
+authorization, RPC gateway, client recovery/folding, project Compute surface,
+editor actions, output viewing, and workspace refresh path are implemented,
+including explicit caret-aware `# %%` cells and bounded transient live-variable
+inspection.
 
-On this exact rebased source candidate, affected compute, contracts,
-client-runtime, web, server, Python-bridge, and real-kernel/product suites pass,
-as do affected typechecks, format, lint, seam and brand checks, production web
-and desktop/server builds, exact bridge staging, release smoke, and Electron
-smoke. The owner manually tested and accepted the core file-first workflow and
-the figure-viewing, floating-card, layout, and direct-action extension on macOS.
-Hosted macOS and Linux real-kernel jobs pass for Python 3.10 and 3.12 on draft
-PR #129. Windows real-kernel evidence, installed packaged-app evidence, and
-release approval remain separate pending gates. Passing hosted checks do not
-imply those gates.
+The rebased candidate has passed the complete local repository suite on macOS,
+including 415 web test files with 3,637 tests and 335 passing server test files
+with 3,710 passing tests and 7 files/32 tests skipped by their explicit gates.
+All 26 typecheck boundaries, formatting, lint, seam and brand checks, 83 Python
+bridge tests, and 8 explicitly enabled real-kernel/product tests passed. The
+production web, server, and desktop builds, byte-identical bridge staging,
+release smoke, and Electron smoke also passed. The local lint gate reports only
+pre-existing warnings outside the compute diff.
+
+The prior exact head `fef3188bf3` additionally has hosted macOS and Linux
+real-kernel evidence for Python 3.10 and 3.12. The owner manually tested and
+accepted the core file-first workflow and the figure-viewing, floating-card,
+layout, and direct-action extension on macOS. Those hosted results remain
+historical evidence for that exact head until the rebased PR head reruns them.
+Windows real-kernel evidence, installed packaged-app evidence, and release
+approval remain separate pending gates.
 
 It coordinates with, but does not duplicate:
 
@@ -63,6 +69,13 @@ It coordinates with, but does not duplicate:
   multi-representation figures, and composition; and
 - the Scientific Python Environment Roadmap in the `Scient` planning repo,
   which owns Python-specific use-case scope.
+
+The proposed Scientific Computing and Data Analysis Roadmap and Scientific
+Python Environment Roadmap in the `Scient` repository are product capability
+catalogs. This ADR owns the implemented `scient-desktop-next` compute
+architecture, delivered Phase 0-4 sequence, and post-baseline dependency gates.
+An older staged order in either planning note does not override this record or
+reclassify planned behavior as implemented.
 
 ### Update Policy
 
@@ -131,16 +144,19 @@ be an explicit product capability rather than an always-present empty editor.
 
 ### 1.2 Stateful exploration and isolated reproducibility
 
-Scient deliberately offers two execution actions:
+Scient deliberately distinguishes two execution modes:
 
-- **Run in session** is incremental and stateful. It may depend on variables
-  created by earlier executions in the same generation.
-- **Run isolated** uses the existing `AnalysisRun` domain and starts from a clean
-  process for stronger reproducibility.
+- **Run in session** is implemented in Phase 4. It is incremental and stateful
+  and may depend on variables created by earlier executions in the same
+  generation.
+- **Run isolated** is an accepted follow-on integration with the existing
+  `AnalysisRun` domain. It starts from a clean process for stronger
+  reproducibility, but PR #129 does not expose this action for Python files.
 
-Neither action replaces the other. The UI must state which one will run, and a
-receipt must not present one stateful submission as independently reproducible
-when it depended on prior in-memory work.
+Neither mode replaces the other. Once the isolated action is implemented, the
+UI must state which one will run. Until then, the product must not imply that
+the action exists. A receipt must never present one stateful submission as
+independently reproducible when it depended on prior in-memory work.
 
 ### 1.3 Polyglot and optional-runtime principle
 
@@ -418,6 +434,8 @@ decisions, not a list of low-priority extras:
 
 - Managed Python installation.
 - Agent execution (requires operation envelope).
+- Python-file **Run isolated** UI integration with the existing `AnalysisRun`
+  domain.
 - Rich variable drill-down, editing, array slicing, and table browsing.
 - A complete representation pipeline, including Plotly, Vega/Vega-Lite,
   document formats, structured data, supported media, and safe HTML.
@@ -1317,6 +1335,29 @@ This keeps SQLite off the critical proof path without abandoning the
 scalable storage model. Follow the existing `AnalysisRunIndex` pattern:
 rebuildable projection, not canonical truth.
 
+### 13.6 Durable Phase 3 decisions
+
+The completed Phase 3 implementation established several decisions that remain
+part of the architecture after its disposable plan is removed:
+
+- An absent or unusable optional Python runtime degrades compute readiness; it
+  never prevents the Scient server from starting.
+- Execution requests are write-once identities. Reusing an execution ID is
+  idempotent only when the session, generation, submitted code and hash, and
+  source provenance match exactly; any different reuse is a conflict.
+- Per-session retained-output accounting spans the complete session lifetime
+  and does not reset on kernel restart. Diagnostics and refused or invalid
+  image output pass through the same bounded retention path.
+- Live subscription events are bounded notifications over canonical durable
+  state. A slow subscriber may observe a sequence gap and must reread durable
+  state; it cannot apply uncertain deltas or make the kernel wait.
+- Storage reclamation remains an unwired primitive until a product retention
+  policy is accepted. When invoked, it preserves execution metadata and
+  journals what was removed before deleting disposable bytes.
+- Development resolves the checked-in bridge before any staged copy; packaged
+  server assembly must stage the same bridge and fail before publication if it
+  is absent.
+
 ---
 
 ## 14. RPC and Authorization
@@ -1440,14 +1481,16 @@ Provide:
 - Run selection in Python session.
 - Run current cell in Python session.
 - Run file in Python session.
-- Run file isolated through the existing analysis system.
 - Record whether selection/cell/file bytes match the saved revision or came from
   a dirty buffer; never autosave merely to make an execution easier to describe.
 
-The UI should explain the difference:
+The delivered UI explains only the stateful action it actually provides:
 
 - **Run in session:** fast and stateful, uses existing variables.
-- **Run isolated:** fresh process, more reproducible.
+
+A later Python-file **Run isolated** action may use the existing analysis
+system. When implemented, it must be presented as a separate, fresh-process,
+more-reproducible action and must not reuse `ComputeSession` receipts.
 
 Code executed in a session may create, modify, rename, or delete project files.
 The Phase 4 acceptance flow must verify that those changes use the ordinary
@@ -2852,17 +2895,17 @@ The focused suite covers:
 Keep evidence here, or in a later dedicated qualification record, rather than
 encoding it into the architecture status.
 
-| Gate                                           | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Status                                        |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Architecture                                   | Product principles and domain/dependency boundaries accepted by the owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Accepted                                      |
-| Phase 1-3 implementation baseline              | Rebased feature-branch commit `171d2f0a1b`; focused compute/server/Python suites, real Python kernel, typechecks, format/lint, seam check, and production server build passed during foundation qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Locally qualified on macOS                    |
-| Phase 4 implementation candidate               | Commit `3dc3a85035` contains Scientific Computing settings, RPC/authorization, server-derived project identity, saved-source validation, bounded client folding/gap recovery, Code/Split/Results with explicit caret-aware `# %%` cells, focused run history, bounded transient live variables, inline signed PNG/SVG viewing, secondary project history, and workspace refresh                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Committed locally                             |
-| Combined backend and client qualification      | On the rebased candidate through `10bad98fbf`, 100 compute, 310 contracts, 639 client-runtime, 178 changed-surface web, 425 affected server, and 83 bridge tests pass. Eight explicitly gated real-kernel/product tests cover state and safe variables after success/failure/restart, ordinary `plt.show()` PNG, explicit SVG display, interruption, restart, loss, output flood, rapid execution, restart storms, durable history, bounded generated-project-image capture, and immutable retained bytes. All affected typechecks, format/lint, seam and brand checks pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Passed on macOS                               |
-| Phase 4 visual product acceptance              | The owner rejected the initial composer/history-first surface, then manually tested and accepted the replacement file-first Code/Split/Results workflow. The owner subsequently tested and accepted figure following, floating presentation, direct figure actions, and side-by-side/stacked layouts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Accepted locally                              |
-| Stable rebased candidate                       | Commit `3dc3a85035` is the Phase 4 checkpoint. The complete source candidate through `10bad98fbf` contains `origin/main` snapshot `74bca4d52a` in its ancestry. Current-main integration is proven for that snapshot; later-main integration remains a moving release gate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Stable local checkpoint                       |
-| Post-Phase 4 UI extension candidate            | Figure-follow and interaction hardening through `ecaacf8d87` provide stable project-file and saved full-file runtime references, immutable historical snapshots, explicit full and floating presentation destinations, passive no-resurrection updates, deterministic cross-session revision ordering, gap recovery, same-content zoom continuity, decode-before-swap image transitions, and bounded keyboard move/resize/Escape controls. Commit `910e95c406` adds producer-neutral static-image actions, `6744a06a1b` adds persisted side-by-side/stacked Results layouts through a shared axis-neutral split hook, and `ec53d727d2` exposes direct open, float, copy, and download actions consistently across result, viewer, and floating surfaces. Commit `10bad98fbf` keeps the implementation in the generic preview layer while restoring the inherited viewer's existing compatibility seam; exact-diff seam checks, 14 focused image tests, and web typecheck pass after that correction. Production web and desktop/server builds, exact bridge staging, release smoke, and Electron smoke pass on the combined rebased candidate. | Locally qualified and owner-accepted on macOS |
-| Phase 2 real-kernel portability                | ADR requires macOS, Windows, and Linux. Draft PR #129 passes hosted macOS 15 and Ubuntu 24.04 real-kernel jobs on Python 3.10 and 3.12; Windows evidence remains incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | macOS/Linux passed; Windows pending           |
-| Packaged cross-platform and release acceptance | Local production web and desktop/server builds, exact bridge staging, release smoke, and Electron smoke pass; the release-qualification track's installed-app tests on supported platforms, future-main integration, hosted required checks, and explicit release approval remain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Pending                                       |
+| Gate                                           | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Status                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Architecture                                   | Product principles and domain/dependency boundaries accepted by the owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Accepted                                                |
+| Phase 1-3 implementation baseline              | Rebased feature-branch commit `391df6cdde`; focused foundation qualification before replay plus the complete rebased repository suite, real Python kernel, typechecks, format/lint, seam check, and production server build after replay                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Locally requalified on macOS                            |
+| Phase 4 implementation candidate               | Rebased commit `1103c52588` contains Scientific Computing settings, RPC/authorization, server-derived project identity, saved-source validation, bounded client folding/gap recovery, Code/Split/Results with explicit caret-aware `# %%` cells, focused run history, bounded transient live variables, inline signed PNG/SVG viewing, secondary project history, and workspace refresh                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Committed locally                                       |
+| Combined backend and client qualification      | The rebased candidate passed the complete repository suite, including 415 web files/3,637 tests and 335 passing server files/3,710 passing tests with 7 files/32 tests explicitly skipped. It also passed 83 bridge tests and 8 explicitly enabled real-kernel/product tests covering state and safe variables after success/failure/restart, ordinary `plt.show()` PNG, explicit SVG display, interruption, restart, loss, output flood, 40 rapid executions, restart storms, durable history, bounded generated-project-image capture, and immutable retained bytes. All 26 typecheck boundaries, formatting, lint, seam, and brand gates passed; lint emitted only pre-existing warnings outside the compute diff.                                                                                                                                                                                                                                                                                                                                                                                                                      | Passed locally on rebased macOS tree                    |
+| Phase 4 visual product acceptance              | The owner rejected the initial composer/history-first surface, then manually tested and accepted the replacement file-first Code/Split/Results workflow. The owner subsequently tested and accepted figure following, floating presentation, direct figure actions, and side-by-side/stacked layouts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Accepted locally                                        |
+| Stable rebased candidate                       | The complete candidate through rebase checkpoint `da69491fb8` contains `origin/main` snapshot `73300377a3` in its ancestry. Current-main integration and local qualification are proven for that snapshot; later-main integration remains a moving release gate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Stable and locally qualified                            |
+| Post-Phase 4 UI extension candidate            | Rebased figure-follow and interaction hardening through `c52fbc57a9` provides stable project-file and saved full-file runtime references, immutable historical snapshots, explicit full and floating presentation destinations, passive no-resurrection updates, deterministic cross-session revision ordering, gap recovery, same-content zoom continuity, decode-before-swap image transitions, and bounded keyboard move/resize/Escape controls. Commit `42a6746efb` adds producer-neutral static-image actions, `b491cee022` adds persisted side-by-side/stacked Results layouts through a shared axis-neutral split hook, and `a5e17d29b1` exposes direct open, float, copy, and download actions consistently across result, viewer, and floating surfaces. Commit `0a7317a28d` keeps the implementation in the generic preview layer while restoring the inherited viewer's existing compatibility seam. The rebased source passed exact-diff seam checks, focused image coverage through the complete web suite, web typecheck, production web and desktop/server builds, exact bridge staging, release smoke, and Electron smoke. | Owner-accepted and locally qualified                    |
+| Phase 2 real-kernel portability                | ADR requires macOS, Windows, and Linux. The pre-rebase PR #129 head passed hosted macOS 15 and Ubuntu 24.04 real-kernel jobs on Python 3.10 and 3.12. The rebased candidate must rerun those jobs, and Windows evidence remains incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Prior macOS/Linux evidence; rebased and Windows pending |
+| Packaged cross-platform and release acceptance | The rebased tree passes local production web, desktop, and server builds, exact bridge staging, release smoke, and Electron smoke. The release-qualification track's installed-app tests on supported platforms, future-main integration, hosted required checks, and explicit release approval remain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Local assembly passed; release pending                  |
 
 Local test counts are evidence for one exact snapshot, not a substitute for a
 gate above. Phase 2 real-kernel portability and packaged-app release acceptance
@@ -2880,7 +2923,8 @@ Implement and qualify the following architectural direction:
    editors, one compute history, existing typed viewers, and explicit portable
    project results.
 3. Stateful session execution and isolated analysis execution as complementary,
-   visibly distinct actions.
+   visibly distinct modes; Phase 4 ships the stateful action, while Python-file
+   isolated-action integration remains a later bounded slice.
 4. A polyglot core with independently optional language runtimes, transport
    dependencies, managed downloads, and proprietary licenses.
 5. Python first; Jupyter through a framed bridge for compatible kernels, not
