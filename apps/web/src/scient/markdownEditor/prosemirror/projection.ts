@@ -30,6 +30,14 @@ export interface ScientMarkdownProjection {
   readonly document: ProseMirrorNode;
 }
 
+export interface ScientMarkdownProjectedSource {
+  readonly source: string;
+  readonly blockRanges: ReadonlyArray<{
+    readonly from: number;
+    readonly to: number;
+  }>;
+}
+
 function rawBlock(block: MarkdownSourceBlock): ProseMirrorNode {
   const nodeType = scientMarkdownSchema.nodes.raw_block;
   if (!nodeType) throw new Error("Scient Markdown schema is missing raw_block.");
@@ -191,10 +199,10 @@ function inferredSeparator(
  * equal their parsed baseline reuse exact source and trivia. Only nodes
  * changed by a user transaction enter a serializer.
  */
-export function serializeScientMarkdownProjection(
+export function projectScientMarkdownSource(
   projection: ScientMarkdownProjection,
   document: ProseMirrorNode,
-): string {
+): ScientMarkdownProjectedSource {
   const blockById = new Map(projection.ledger.blocks.map((block) => [block.id, block]));
   const originalSuccessorById = new Map<string, string | null>();
   projection.ledger.blocks.forEach((block, index) => {
@@ -205,6 +213,7 @@ export function serializeScientMarkdownProjection(
   const nodes: ProseMirrorNode[] = [];
   document.forEach((node) => nodes.push(node));
   let output = projection.ledger.prefix;
+  const blockRanges: Array<{ readonly from: number; readonly to: number }> = [];
 
   nodes.forEach((node, index) => {
     const sourceId = sourceIdOf(node);
@@ -222,11 +231,14 @@ export function serializeScientMarkdownProjection(
         : original && baseline
           ? hasSameProjectedContent(baseline, node)
           : false;
-    output +=
+    const source =
       sourceUnchanged && original
         ? original.source
         : ((original && baseline ? minimallyPatchedTextBlock(original, baseline, node) : null) ??
           serializeNode(node));
+    const from = output.length;
+    output += source;
+    blockRanges.push({ from, to: from + source.length });
     const nextSourceId = nodes[index + 1] ? sourceIdOf(nodes[index + 1]!) : null;
     const originalSequenceContinues =
       directOriginal !== undefined && originalSuccessorById.get(directOriginal.id) === nextSourceId;
@@ -234,7 +246,14 @@ export function serializeScientMarkdownProjection(
       ? directOriginal.trailing
       : inferredSeparator(projection.ledger, index, nodes.length);
   });
-  return output;
+  return { source: output, blockRanges };
+}
+
+export function serializeScientMarkdownProjection(
+  projection: ScientMarkdownProjection,
+  document: ProseMirrorNode,
+): string {
+  return projectScientMarkdownSource(projection, document).source;
 }
 
 export function withProjectedDocument(

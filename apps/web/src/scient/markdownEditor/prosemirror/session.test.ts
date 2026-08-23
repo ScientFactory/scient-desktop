@@ -169,4 +169,56 @@ describe("ScientProseMirrorSession", () => {
       editVersion: 2,
     });
   });
+
+  it("maps rich blocks to their current source ranges after preceding edits", () => {
+    const session = new ScientProseMirrorSession({
+      source: "# First\n\n## Second\n",
+      revision: "r0",
+      mode: "write",
+    });
+    session.applyTransaction(session.state.tr.insertText("Expanded ", 1, 1), "user");
+    let secondHeadingPosition = -1;
+    session.state.doc.descendants((node, position) => {
+      if (node.type.name === "heading" && node.textContent === "Second") {
+        secondHeadingPosition = position;
+        return false;
+      }
+      return true;
+    });
+
+    const expectedSourceOffset = session.session.draftSource.indexOf("## Second");
+    expect(session.sourceOffsetForDocumentPosition(secondHeadingPosition + 1)).toBe(
+      expectedSourceOffset,
+    );
+    const mappedDocumentPosition = session.documentPositionForSourceOffset(
+      expectedSourceOffset + 3,
+    );
+    expect(mappedDocumentPosition).toBe(secondHeadingPosition);
+    expect(session.state.doc.nodeAt(mappedDocumentPosition!)?.textContent).toBe("Second");
+  });
+
+  it("keeps current block ranges when an older save is confirmed", () => {
+    const intents: MarkdownSaveIntent[] = [];
+    const session = new ScientProseMirrorSession({
+      source: "First\n\nSecond\n",
+      revision: "r0",
+      mode: "write",
+      onUserSourceChange: (_source, intent) => intents.push(intent),
+    });
+    session.applyTransaction(session.state.tr.insertText("One ", 1, 1), "user");
+    session.applyTransaction(session.state.tr.insertText("Two ", 1, 1), "user");
+    session.confirmSave(intents[0]!, "r1");
+    let secondParagraphPosition = -1;
+    session.state.doc.descendants((node, position) => {
+      if (node.type.name === "paragraph" && node.textContent === "Second") {
+        secondParagraphPosition = position;
+        return false;
+      }
+      return true;
+    });
+
+    expect(session.sourceOffsetForDocumentPosition(secondParagraphPosition + 1)).toBe(
+      session.session.draftSource.indexOf("Second"),
+    );
+  });
 });

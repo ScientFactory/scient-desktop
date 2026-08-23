@@ -90,6 +90,33 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
+  it("synchronizes rich selection by source block without creating a save", () => {
+    const onUserSourceChange = vi.fn();
+    const onSelectionSourceOffsetChange = vi.fn();
+    const source = "# First\n\n## Second\n";
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "sha256:before",
+      mode: "split",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+      onSelectionSourceOffsetChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const secondSourceOffset = source.indexOf("## Second");
+
+    expect(controller.navigateToSourceOffset(secondSourceOffset + 4)).toBe(true);
+    expect(view.state.selection.$from.parent.textContent).toBe("Second");
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2)));
+    expect(onSelectionSourceOffsetChange).toHaveBeenLastCalledWith(0);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("keeps rendered math visible while the rich document is editable", async () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

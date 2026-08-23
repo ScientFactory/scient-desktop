@@ -50,6 +50,7 @@ export interface ScientMarkdownEditorViewOptions {
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent) => void;
   readonly onOpenLink?: (target: string) => void;
   readonly onOpenWikiLink?: (target: string) => void;
+  readonly onSelectionSourceOffsetChange?: (sourceOffset: number) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
@@ -117,6 +118,8 @@ export class ScientMarkdownEditorView {
   private findOpen = false;
   private findFocusRequest = 0;
   private imageUploadSequence = 0;
+  private lastPublishedSelectionSourceOffset: number | null = null;
+  private selectionSyncSuppressed = false;
   private snapshotVersion = 0;
   private snapshot: ScientMarkdownEditorSnapshot;
 
@@ -169,7 +172,7 @@ export class ScientMarkdownEditorView {
     const state = this.session.replaceUserSource(source);
     this.editorView?.updateState(state);
     this.slashActiveIndex = 0;
-    this.publishSnapshot();
+    this.publishSnapshot(false);
   }
 
   confirmSave(intent: MarkdownSaveIntent, revision: string): void {
@@ -184,7 +187,7 @@ export class ScientMarkdownEditorView {
     if (result === "adopted") {
       this.editorView?.updateState(this.session.state);
       this.slashActiveIndex = 0;
-      this.publishSnapshot();
+      this.publishSnapshot(false);
     }
     return result;
   }
@@ -192,7 +195,7 @@ export class ScientMarkdownEditorView {
   resolveExternalConflict(resolution: ScientExternalConflictResolution): void {
     const state = this.session.resolveExternalConflict(resolution);
     this.editorView?.updateState(state);
-    this.publishSnapshot();
+    this.publishSnapshot(false);
   }
 
   execute(command: ScientMarkdownCommand): boolean {
@@ -267,6 +270,29 @@ export class ScientMarkdownEditorView {
       dom.scrollIntoView({ block: "start" });
     }
     view.focus();
+    return true;
+  }
+
+  navigateToSourceOffset(sourceOffset: number): boolean {
+    const view = this.editorView;
+    const nodePosition = this.session.documentPositionForSourceOffset(sourceOffset);
+    if (!view || nodePosition === null) return false;
+    const selectionPosition = Math.min(nodePosition + 1, view.state.doc.content.size);
+    this.selectionSyncSuppressed = true;
+    try {
+      view.dispatch(
+        view.state.tr
+          .setSelection(Selection.near(view.state.doc.resolve(selectionPosition), 1))
+          .setMeta(scientMarkdownTransactionOriginKey, "system")
+          .setMeta("addToHistory", false),
+      );
+    } finally {
+      this.selectionSyncSuppressed = false;
+    }
+    const dom = view.nodeDOM(nodePosition);
+    if (dom instanceof HTMLElement && typeof dom.scrollIntoView === "function") {
+      dom.scrollIntoView({ block: "center" });
+    }
     return true;
   }
 
@@ -575,10 +601,16 @@ export class ScientMarkdownEditorView {
     };
   }
 
-  private publishSnapshot(): void {
+  private publishSnapshot(syncSelection = true): void {
     this.snapshotVersion += 1;
     this.snapshot = this.createSnapshot();
     this.listeners.forEach((listener) => listener());
+    if (!syncSelection || this.selectionSyncSuppressed) return;
+    const state = this.editorView?.state ?? this.session.state;
+    const sourceOffset = this.session.sourceOffsetForDocumentPosition(state.selection.head);
+    if (sourceOffset === null || sourceOffset === this.lastPublishedSelectionSourceOffset) return;
+    this.lastPublishedSelectionSourceOffset = sourceOffset;
+    this.options.onSelectionSourceOffsetChange?.(sourceOffset);
   }
 
   private slashQuery(): string | null {

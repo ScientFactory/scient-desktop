@@ -66,6 +66,10 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   const [sourceActivated, setSourceActivated] = useState(
     props.mode === "source" || props.mode === "split",
   );
+  const [sourceSelectionReveal, setSourceSelectionReveal] = useState<{
+    readonly offset: number;
+    readonly requestId: number;
+  } | null>(null);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
   const [saveQueue] = useState(
     () =>
@@ -89,6 +93,12 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         ariaLabel: props.ariaLabel,
         ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
         ...(props.onOpenLink ? { onOpenLink: props.onOpenLink } : {}),
+        onSelectionSourceOffsetChange: (offset) =>
+          setSourceSelectionReveal((current) =>
+            current?.offset === offset
+              ? current
+              : { offset, requestId: (current?.requestId ?? 0) + 1 },
+          ),
         ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
         ...(props.uploadImage
           ? {
@@ -190,6 +200,16 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
               editable={sourceVisible}
               ariaLabel={`${props.ariaLabel} source`}
               onUserSourceChange={(source) => controller.replaceUserSource(source)}
+              onSelectionOffsetChange={(sourceOffset) =>
+                controller.navigateToSourceOffset(sourceOffset)
+              }
+              {...((props.revealLine === null || props.revealLine === undefined) &&
+              sourceSelectionReveal
+                ? {
+                    revealOffset: sourceSelectionReveal.offset,
+                    revealOffsetRequestId: sourceSelectionReveal.requestId,
+                  }
+                : {})}
               {...(props.revealLine === undefined ? {} : { revealLine: props.revealLine })}
               {...(props.revealRequestId === undefined
                 ? {}

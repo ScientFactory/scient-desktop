@@ -14,17 +14,19 @@ describe("ScientMarkdownSourceView", () => {
 
   function mountSource(source = "# Source\n") {
     const onUserSourceChange = vi.fn();
+    const onSelectionOffsetChange = vi.fn();
     const controller = new ScientMarkdownSourceView({
       source,
       editable: true,
       ariaLabel: "Markdown source",
       onUserSourceChange,
+      onSelectionOffsetChange,
     });
     const host = document.createElement("div");
     document.body.append(host);
     mounted.push(controller);
     const view = controller.mount(host);
-    return { controller, host, onUserSourceChange, view };
+    return { controller, host, onSelectionOffsetChange, onUserSourceChange, view };
   }
 
   it("keeps one CodeMirror view while editability changes", () => {
@@ -48,6 +50,24 @@ describe("ScientMarkdownSourceView", () => {
 
     expect(view.state.selection.main.head).toBe(view.state.doc.line(3).from);
     expect(controller.source).toBe("one\ntwo\nthree\n");
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("synchronizes a requested source offset without reporting user selection", () => {
+    const { controller, onSelectionOffsetChange, onUserSourceChange, view } =
+      mountSource("one\ntwo\nthree\n");
+    controller.revealOffset(5);
+
+    expect(view.state.selection.main.head).toBe(5);
+    expect(onSelectionOffsetChange).not.toHaveBeenCalled();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("reports a user source selection offset without changing the document", () => {
+    const { onSelectionOffsetChange, onUserSourceChange, view } = mountSource("one\ntwo\n");
+    view.dispatch({ selection: { anchor: 5 } });
+
+    expect(onSelectionOffsetChange).toHaveBeenCalledWith(5);
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 

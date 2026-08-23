@@ -18,12 +18,14 @@ import {
 } from "@codemirror/view";
 
 const externalSourceAnnotation = Annotation.define<boolean>();
+const synchronizedSelectionAnnotation = Annotation.define<boolean>();
 
 export interface ScientMarkdownSourceViewOptions {
   readonly source: string;
   readonly editable: boolean;
   readonly ariaLabel: string;
   readonly onUserSourceChange: (source: string) => void;
+  readonly onSelectionOffsetChange?: (sourceOffset: number) => void;
 }
 
 /** Persistent CodeMirror source view used by Source and Split modes. */
@@ -80,15 +82,18 @@ export class ScientMarkdownSourceView {
           this.editableCompartment.of(EditorView.editable.of(this.editable)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(!this.editable)),
           EditorView.updateListener.of((update) => {
-            if (!update.docChanged) return;
-            if (
-              update.transactions.some(
-                (transaction) => transaction.annotation(externalSourceAnnotation) === true,
-              )
-            ) {
-              return;
+            const external = update.transactions.some(
+              (transaction) => transaction.annotation(externalSourceAnnotation) === true,
+            );
+            const synchronized = update.transactions.some(
+              (transaction) => transaction.annotation(synchronizedSelectionAnnotation) === true,
+            );
+            if (update.docChanged && !external) {
+              this.options.onUserSourceChange(update.state.doc.toString());
             }
-            this.options.onUserSourceChange(update.state.doc.toString());
+            if (update.selectionSet && !external && !synchronized) {
+              this.options.onSelectionOffsetChange?.(update.state.selection.main.head);
+            }
           }),
         ],
       }),
@@ -126,6 +131,17 @@ export class ScientMarkdownSourceView {
     view.dispatch({
       selection: { anchor: position },
       effects: EditorView.scrollIntoView(position, { y: "center" }),
+    });
+  }
+
+  revealOffset(sourceOffset: number): void {
+    const view = this.editorView;
+    if (!view) return;
+    const position = Math.min(Math.max(0, sourceOffset), view.state.doc.length);
+    view.dispatch({
+      selection: { anchor: position },
+      effects: EditorView.scrollIntoView(position, { y: "center" }),
+      annotations: [synchronizedSelectionAnnotation.of(true), Transaction.addToHistory.of(false)],
     });
   }
 

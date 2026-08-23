@@ -7,14 +7,19 @@ export interface ScientMarkdownSourceDocumentProps {
   readonly editable: boolean;
   readonly ariaLabel: string;
   readonly onUserSourceChange: (source: string) => void;
+  readonly onSelectionOffsetChange?: (sourceOffset: number) => void;
   readonly revealLine?: number | null;
   readonly revealRequestId?: number;
+  readonly revealOffset?: number | null;
+  readonly revealOffsetRequestId?: number;
 }
 
 export function ScientMarkdownSourceDocument(props: ScientMarkdownSourceDocumentProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const onUserSourceChangeRef = useRef(props.onUserSourceChange);
+  const onSelectionOffsetChangeRef = useRef(props.onSelectionOffsetChange);
   onUserSourceChangeRef.current = props.onUserSourceChange;
+  onSelectionOffsetChangeRef.current = props.onSelectionOffsetChange;
   const [controller] = useState(
     () =>
       new ScientMarkdownSourceView({
@@ -22,6 +27,8 @@ export function ScientMarkdownSourceDocument(props: ScientMarkdownSourceDocument
         editable: props.editable,
         ariaLabel: props.ariaLabel,
         onUserSourceChange: (source) => onUserSourceChangeRef.current(source),
+        onSelectionOffsetChange: (sourceOffset) =>
+          onSelectionOffsetChangeRef.current?.(sourceOffset),
       }),
   );
 
@@ -39,6 +46,11 @@ export function ScientMarkdownSourceDocument(props: ScientMarkdownSourceDocument
       controller.revealLine(props.revealLine);
     }
   }, [controller, props.revealLine, props.revealRequestId]);
+  useEffect(() => {
+    if (props.revealOffset !== null && props.revealOffset !== undefined) {
+      controller.revealOffset(props.revealOffset);
+    }
+  }, [controller, props.revealOffset, props.revealOffsetRequestId]);
 
   return <div ref={hostRef} className="scient-markdown-source-document" />;
 }

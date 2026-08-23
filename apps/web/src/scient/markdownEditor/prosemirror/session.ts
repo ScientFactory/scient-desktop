@@ -16,7 +16,7 @@ import { EditorState, PluginKey } from "prosemirror-state";
 
 import {
   createScientMarkdownProjection,
-  serializeScientMarkdownProjection,
+  projectScientMarkdownSource,
   withProjectedDocument,
   type ScientMarkdownProjection,
 } from "./projection";
@@ -38,6 +38,13 @@ export interface ScientProseMirrorSessionOptions {
 export type ScientExternalSourceResult = "adopted" | "conflict" | "unchanged";
 export type ScientExternalConflictResolution = "disk" | "local";
 
+function blockRanges(projection: ScientMarkdownProjection) {
+  return projection.ledger.blocks.map((block) => ({
+    from: block.start,
+    to: block.end,
+  }));
+}
+
 /**
  * Framework-neutral ProseMirror session. A later React adapter owns one
  * persistent EditorView and delegates every transaction here.
@@ -46,9 +53,11 @@ export class ScientProseMirrorSession {
   private projection: ScientMarkdownProjection;
   private documentSession: MarkdownDocumentSession;
   private editorState: EditorState;
+  private projectedBlockRanges: ReadonlyArray<{ readonly from: number; readonly to: number }>;
 
   constructor(private readonly options: ScientProseMirrorSessionOptions) {
     this.projection = createScientMarkdownProjection(options.source);
+    this.projectedBlockRanges = blockRanges(this.projection);
     this.documentSession = createMarkdownDocumentSession({
       source: options.source,
       revision: options.revision,
@@ -68,6 +77,34 @@ export class ScientProseMirrorSession {
     return this.documentSession;
   }
 
+  sourceOffsetForDocumentPosition(position: number): number | null {
+    let matchedIndex = -1;
+    this.editorState.doc.forEach((node, offset, index) => {
+      if (matchedIndex < 0 && position >= offset && position <= offset + node.nodeSize) {
+        matchedIndex = index;
+      }
+    });
+    return matchedIndex < 0 ? null : (this.projectedBlockRanges[matchedIndex]?.from ?? null);
+  }
+
+  documentPositionForSourceOffset(sourceOffset: number): number | null {
+    if (this.projectedBlockRanges.length === 0) return null;
+    const clamped = Math.min(Math.max(0, sourceOffset), this.documentSession.draftSource.length);
+    let matchedIndex = this.projectedBlockRanges.findIndex(
+      (range) => clamped >= range.from && clamped <= range.to,
+    );
+    if (matchedIndex < 0) {
+      matchedIndex = this.projectedBlockRanges.findIndex((range) => clamped < range.from);
+      if (matchedIndex < 0) matchedIndex = this.projectedBlockRanges.length - 1;
+    }
+    let documentPosition = 0;
+    for (let index = 0; index < matchedIndex; index += 1) {
+      const child = this.editorState.doc.child(index);
+      documentPosition += child.nodeSize;
+    }
+    return documentPosition;
+  }
+
   setMode(mode: MarkdownDocumentMode): void {
     this.documentSession = setMarkdownDocumentMode(this.documentSession, mode);
   }
@@ -77,6 +114,7 @@ export class ScientProseMirrorSession {
     if (nextSession === this.documentSession) return this.editorState;
     this.documentSession = nextSession;
     this.projection = createScientMarkdownProjection(source);
+    this.projectedBlockRanges = blockRanges(this.projection);
     this.editorState = EditorState.create({
       doc: this.projection.document,
       plugins: this.editorState.plugins,
@@ -95,6 +133,9 @@ export class ScientProseMirrorSession {
       ...confirmedProjection,
       document: this.editorState.doc,
     };
+    if (intent.source === nextSession.draftSource) {
+      this.projectedBlockRanges = blockRanges(confirmedProjection);
+    }
   }
 
   receiveExternalSource(input: {
@@ -113,6 +154,7 @@ export class ScientProseMirrorSession {
     if (nextSession.draftSource === this.projection.ledger.source) return "unchanged";
 
     this.projection = createScientMarkdownProjection(nextSession.draftSource);
+    this.projectedBlockRanges = blockRanges(this.projection);
     this.editorState = EditorState.create({
       doc: this.projection.document,
       plugins: this.editorState.plugins,
@@ -128,6 +170,7 @@ export class ScientProseMirrorSession {
         : resolveMarkdownConflictWithLocal(this.documentSession);
     if (resolution === "local") return this.editorState;
     this.projection = createScientMarkdownProjection(this.documentSession.draftSource);
+    this.projectedBlockRanges = blockRanges(this.projection);
     this.editorState = EditorState.create({
       doc: this.projection.document,
       plugins: this.editorState.plugins,
@@ -148,7 +191,9 @@ export class ScientProseMirrorSession {
     ) {
       return nextState;
     }
-    const source = serializeScientMarkdownProjection(this.projection, nextState.doc);
+    const projected = projectScientMarkdownSource(this.projection, nextState.doc);
+    const source = projected.source;
+    this.projectedBlockRanges = projected.blockRanges;
     const nextSession = applyUserMarkdownSource(this.documentSession, source);
     if (nextSession === this.documentSession) return nextState;
     this.documentSession = nextSession;
