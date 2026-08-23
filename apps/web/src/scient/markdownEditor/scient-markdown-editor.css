@@ -825,6 +825,18 @@ sup.scient-markdown-reference {
   outline-offset: 2px;
 }
 
+.scient-markdown-math-retained {
+  border-radius: 0.3rem;
+  background: color-mix(in oklab, var(--warning) 9%, var(--background));
+  padding: 0.2rem 0.4rem;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+.scient-markdown-math-retained[hidden] {
+  display: none;
+}
+
 .scient-markdown-math-source {
   min-width: 8rem;
   border: 1px solid var(--border);

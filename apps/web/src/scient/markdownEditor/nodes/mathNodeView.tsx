@@ -2,14 +2,24 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
 
-import { ScientDisplayMath, ScientInlineMath } from "~/scient/math/ScientMath";
+import {
+  getScientKatexRuntimePromise,
+  ScientDisplayMath,
+  ScientInlineMath,
+} from "~/scient/math/ScientMath";
 
 class ScientMathNodeView implements NodeView {
   readonly dom: HTMLElement;
   private readonly renderHost: HTMLSpanElement;
   private readonly sourceEditor: HTMLInputElement | HTMLTextAreaElement;
+  private readonly retainedNotice: HTMLSpanElement;
   private readonly reactRoot: Root;
   private node: ProseMirrorNode;
+  private destroyed = false;
+  private validationVersion = 0;
+  private lastValidVersion = 0;
+  private lastValidTex: string | null = null;
+  private currentValidity: boolean | null = null;
 
   constructor(
     node: ProseMirrorNode,
@@ -39,6 +49,12 @@ class ScientMathNodeView implements NodeView {
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
     this.dom.append(this.sourceEditor);
+    this.retainedNotice = document.createElement("span");
+    this.retainedNotice.className = "scient-markdown-math-retained";
+    this.retainedNotice.textContent = "Preview kept at the last valid equation.";
+    this.retainedNotice.setAttribute("role", "status");
+    this.retainedNotice.hidden = true;
+    this.dom.append(this.retainedNotice);
     this.reactRoot = createRoot(this.renderHost);
     this.render();
   }
@@ -73,6 +89,8 @@ class ScientMathNodeView implements NodeView {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    this.validationVersion += 1;
     this.sourceEditor.removeEventListener("input", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
     this.reactRoot.unmount();
@@ -99,6 +117,47 @@ class ScientMathNodeView implements NodeView {
   private render(): void {
     const tex = String(this.node.attrs.tex);
     this.sourceEditor.value = tex;
+    const version = ++this.validationVersion;
+    this.currentValidity = null;
+    this.dom.setAttribute("data-scient-markdown-math-validity", "pending");
+    this.renderPreview(
+      this.lastValidTex ?? tex,
+      this.lastValidTex !== null && this.lastValidTex !== tex,
+    );
+    const display = this.node.type.name === "display_math";
+    void getScientKatexRuntimePromise()
+      .then(({ renderScientTexToHtml }) => renderScientTexToHtml(tex, display))
+      .then((html) => {
+        if (this.destroyed) return;
+        if (html !== null) {
+          if (version >= this.lastValidVersion) {
+            this.lastValidVersion = version;
+            this.lastValidTex = tex;
+          }
+          if (version === this.validationVersion) {
+            this.currentValidity = true;
+            this.dom.setAttribute("data-scient-markdown-math-validity", "valid");
+            this.renderPreview(tex, false);
+          } else if (this.currentValidity === false && this.lastValidTex !== null) {
+            this.renderPreview(this.lastValidTex, true);
+          }
+          return;
+        }
+        if (version !== this.validationVersion) return;
+        this.currentValidity = false;
+        this.dom.setAttribute("data-scient-markdown-math-validity", "invalid");
+        this.renderPreview(this.lastValidTex ?? tex, this.lastValidTex !== null);
+      })
+      .catch(() => undefined);
+  }
+
+  private renderPreview(tex: string, retained: boolean): void {
+    if (this.destroyed) return;
+    this.retainedNotice.hidden = !retained;
+    this.dom.setAttribute(
+      "data-scient-markdown-math-source-state",
+      retained ? "retained" : "current",
+    );
     this.reactRoot.render(
       this.node.type.name === "display_math" ? (
         <ScientDisplayMath tex={tex} />

@@ -117,6 +117,51 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
+  it("retains the last valid rendered equation during invalid TeX edits", async () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "$$\nE=mc^2\n$$\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Scientific Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("[data-scient-markdown-math-validity='valid']")).not.toBeNull();
+    });
+    const renderedBefore = view.dom.querySelector(".scient-markdown-math-render")?.textContent;
+    const equation = view.state.doc.firstChild;
+    expect(equation?.type.name).toBe("display_math");
+    view.dispatch(
+      view.state.tr.setNodeMarkup(0, undefined, {
+        ...equation!.attrs,
+        tex: "\\frac{",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        view.dom.querySelector("[data-scient-markdown-math-source-state='retained']"),
+      ).not.toBeNull();
+      expect(
+        view.dom.querySelector("[data-scient-markdown-math-validity='invalid']"),
+      ).not.toBeNull();
+    });
+    expect(view.dom.querySelector(".scient-markdown-math-render")?.textContent).toBe(
+      renderedBefore,
+    );
+    expect(view.dom.querySelector(".scient-markdown-math-retained")?.textContent).toContain(
+      "last valid equation",
+    );
+    expect(controller.session.session.draftSource).toContain("\\frac{");
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+  });
+
   it("renders task, wiki, and raw-source nodes and gates task changes by mode", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
