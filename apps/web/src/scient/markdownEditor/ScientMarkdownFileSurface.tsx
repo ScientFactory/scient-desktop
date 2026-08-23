@@ -1,0 +1,134 @@
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useCallback } from "react";
+
+import { resolveAssetUrl } from "~/assets/assetUrls";
+import { confirmProjectFileQueryData } from "~/components/files/projectFilesQueryState";
+import { resolvePathLinkTarget } from "~/terminal-links";
+import { assetEnvironment } from "~/state/assets";
+import { useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+
+import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
+import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import { resolveMarkdownSiblingPath, resolveWikiLinkPath } from "./workspacePaths";
+
+export interface ScientMarkdownFileSurfaceProps {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly relativePath: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly contents: string;
+  readonly revision: string;
+  readonly mode: MarkdownDocumentMode;
+  readonly onOpenFile: (relativePath: string) => void;
+  readonly onPendingChange: (relativePath: string, pending: boolean) => void;
+  readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
+  readonly onSaveFailure: (relativePath: string, error: unknown) => void;
+  readonly onExternalConflict: (input: {
+    readonly source: string;
+    readonly revision: string;
+  }) => void;
+  readonly saveResolution?: {
+    readonly action: "discard" | "retry";
+    readonly revision: string;
+  } | null;
+  readonly onSaveResolutionApplied?: () => void;
+  readonly revealLine?: number | null;
+  readonly revealRequestId?: number;
+}
+
+export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
+  const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
+  const persist = useCallback(
+    async (intent: MarkdownSaveIntent) => {
+      const result = await writeFile({
+        environmentId: props.environmentId,
+        input: {
+          cwd: props.cwd,
+          relativePath: props.relativePath,
+          contents: intent.source,
+          expectedRevision: intent.expectedRevision,
+        },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return { revision: result.value.revision };
+    },
+    [props.cwd, props.environmentId, props.relativePath, writeFile],
+  );
+  const resolveImageSource = useCallback(
+    async (authoredSource: string): Promise<string | null> => {
+      if (/^https:\/\//iu.test(authoredSource) || authoredSource.startsWith("data:image/")) {
+        return authoredSource;
+      }
+      if (!httpBaseUrl) return null;
+      const relativeWithSuffix = resolveMarkdownSiblingPath(props.relativePath, authoredSource);
+      if (!relativeWithSuffix) return null;
+      const suffixStart = relativeWithSuffix.search(/[?#]/u);
+      const relativePath =
+        suffixStart < 0 ? relativeWithSuffix : relativeWithSuffix.slice(0, suffixStart);
+      const suffix = suffixStart < 0 ? "" : relativeWithSuffix.slice(suffixStart);
+      const absolutePath = resolvePathLinkTarget(relativePath, props.cwd);
+      const result = await createAssetUrl({
+        environmentId: props.environmentId,
+        input: {
+          resource: {
+            _tag: "workspace-file",
+            cwd: props.cwd,
+            relativePath,
+            threadId: props.threadRef.threadId,
+            path: absolutePath,
+          },
+        },
+      });
+      if (result._tag === "Failure") return null;
+      const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+      return url === null ? null : `${url}${suffix}`;
+    },
+    [
+      createAssetUrl,
+      httpBaseUrl,
+      props.cwd,
+      props.environmentId,
+      props.relativePath,
+      props.threadRef.threadId,
+    ],
+  );
+  return (
+    <ScientMarkdownWorkspaceSurface
+      source={props.contents}
+      revision={props.revision}
+      mode={props.mode}
+      ariaLabel={`${props.relativePath} Markdown document`}
+      persist={persist}
+      onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
+      onSaveConfirmed={(source, revision) => {
+        confirmProjectFileQueryData(
+          props.environmentId,
+          props.cwd,
+          props.relativePath,
+          source,
+          revision,
+        );
+        props.onSaveConfirmed(props.relativePath, source, revision);
+      }}
+      onSaveFailure={(error) => props.onSaveFailure(props.relativePath, error)}
+      onExternalConflict={props.onExternalConflict}
+      onOpenWikiLink={(target) => {
+        const path = resolveWikiLinkPath(props.relativePath, target);
+        if (path) props.onOpenFile(path);
+      }}
+      resolveImageSource={resolveImageSource}
+      {...(props.saveResolution === undefined ? {} : { saveResolution: props.saveResolution })}
+      {...(props.onSaveResolutionApplied
+        ? { onSaveResolutionApplied: props.onSaveResolutionApplied }
+        : {})}
+      {...(props.revealLine === undefined ? {} : { revealLine: props.revealLine })}
+      {...(props.revealRequestId === undefined ? {} : { revealRequestId: props.revealRequestId })}
+    />
+  );
+}

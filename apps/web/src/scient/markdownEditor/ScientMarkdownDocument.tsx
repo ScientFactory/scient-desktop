@@ -1,6 +1,7 @@
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { useEffect, useRef, useState } from "react";
 
+import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
 import "./scient-markdown-editor.css";
 
@@ -14,6 +15,8 @@ export interface ScientMarkdownDocumentProps {
     readonly source: string;
     readonly revision: string;
   }) => void;
+  readonly onOpenWikiLink?: (target: string) => void;
+  readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   /** Supplied by the owning workspace surface so rich and source share one session. */
   readonly controller?: ScientMarkdownEditorView;
 }
@@ -36,6 +39,8 @@ export function ScientMarkdownDocument(props: ScientMarkdownDocumentProps) {
         revision: props.revision,
         mode: props.mode,
         ariaLabel: props.ariaLabel,
+        ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
+        ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
         onUserSourceChange: (source, intent) => onUserSourceChangeRef.current(source, intent),
       }),
   );

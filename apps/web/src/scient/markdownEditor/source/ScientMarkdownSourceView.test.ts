@@ -12,10 +12,10 @@ describe("ScientMarkdownSourceView", () => {
     document.body.replaceChildren();
   });
 
-  function mountSource() {
+  function mountSource(source = "# Source\n") {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownSourceView({
-      source: "# Source\n",
+      source,
       editable: true,
       ariaLabel: "Markdown source",
       onUserSourceChange,
@@ -39,6 +39,15 @@ describe("ScientMarkdownSourceView", () => {
     const { controller, onUserSourceChange, view } = mountSource();
     controller.replaceExternalSource("# Agent source\n");
     expect(view.state.doc.toString()).toBe("# Agent source\n");
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("reveals a requested source line without changing the document", () => {
+    const { controller, onUserSourceChange, view } = mountSource("one\ntwo\nthree\n");
+    controller.revealLine(3);
+
+    expect(view.state.selection.main.head).toBe(view.state.doc.line(3).from);
+    expect(controller.source).toBe("one\ntwo\nthree\n");
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 

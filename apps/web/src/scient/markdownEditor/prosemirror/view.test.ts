@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { NodeSelection } from "prosemirror-state";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 
 import { ScientMarkdownEditorView } from "./view";
 
@@ -28,8 +28,14 @@ describe("ScientMarkdownEditorView", () => {
   }
 
   it("keeps one mounted view and document through 100 read/write cycles", () => {
-    const { controller, onUserSourceChange, view } = mountEditor();
+    const { controller, host, onUserSourceChange, view } = mountEditor();
     const documentNode = view.state.doc;
+    const renderedHeading = view.dom.querySelector("h1");
+    const sourceBefore = controller.session.session.draftSource;
+    const revisionBefore = controller.session.session.baselineRevision;
+    const geometryBefore = view.dom.getBoundingClientRect().toJSON();
+    host.scrollTop = 147;
+    const transactionSpy = vi.spyOn(controller.session, "applyTransaction");
 
     for (let index = 0; index < 100; index += 1) {
       controller.setMode("write");
@@ -40,6 +46,12 @@ describe("ScientMarkdownEditorView", () => {
 
     expect(controller.view).toBe(view);
     expect(view.state.doc).toBe(documentNode);
+    expect(view.dom.querySelector("h1")).toBe(renderedHeading);
+    expect(view.dom.getBoundingClientRect().toJSON()).toEqual(geometryBefore);
+    expect(host.scrollTop).toBe(147);
+    expect(controller.session.session.draftSource).toBe(sourceBefore);
+    expect(controller.session.session.baselineRevision).toBe(revisionBefore);
+    expect(transactionSpy).not.toHaveBeenCalled();
     expect(view.dom.getAttribute("role")).toBe("document");
     expect(view.dom.hasAttribute("aria-readonly")).toBe(false);
     expect(onUserSourceChange).not.toHaveBeenCalled();
@@ -157,6 +169,61 @@ describe("ScientMarkdownEditorView", () => {
       expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).not.toBeNull();
     });
     expect(rendered?.hidden).toBe(false);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("runs formatting and slash commands through user transactions", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Text\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+    expect(controller.execute("bold")).toBe(true);
+    expect(onUserSourceChange.mock.lastCall?.[0]).toBe("**Text**\n");
+    expect(controller.getSnapshot().activeMarks).toContain("strong");
+
+    controller.replaceUserSource("/tab\n");
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 5)));
+    expect(controller.getSnapshot().slashQuery).toBe("tab");
+    expect(controller.executeSlashCommand("table")).toBe(true);
+    expect(view.dom.querySelector("table")).not.toBeNull();
+    expect(onUserSourceChange.mock.lastCall?.[0]).toContain("|  |  |  |");
+  });
+
+  it("keeps a workspace image rendered while its portable source fields are edited", async () => {
+    const onUserSourceChange = vi.fn();
+    const resolveImageSource = vi.fn(async (source: string) => `https://asset.test/${source}`);
+    const controller = new ScientMarkdownEditorView({
+      source: "![Microscopy image](figures/cell.png)\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+      resolveImageSource,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const image = view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render");
+
+    await vi.waitFor(() => expect(image?.src).toContain("figures/cell.png"));
+    expect(image?.alt).toBe("Microscopy image");
+    expect(resolveImageSource).toHaveBeenCalledWith("figures/cell.png");
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
+    expect(view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']")?.value).toBe(
+      "figures/cell.png",
+    );
+    expect(image?.hidden).toBe(false);
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 });

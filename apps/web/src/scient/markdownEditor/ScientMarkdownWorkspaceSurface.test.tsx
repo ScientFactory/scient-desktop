@@ -64,6 +64,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
 
     expect(host.querySelector(".ProseMirror")).toBe(richDocument);
     expect(host.querySelector(".cm-editor")).not.toBeNull();
+    expect(host.querySelector("[aria-label='Document actions']")).not.toBeNull();
     expect(persist).not.toHaveBeenCalled();
   });
 });

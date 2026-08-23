@@ -7,6 +7,8 @@ export interface ScientMarkdownSourceDocumentProps {
   readonly editable: boolean;
   readonly ariaLabel: string;
   readonly onUserSourceChange: (source: string) => void;
+  readonly revealLine?: number | null;
+  readonly revealRequestId?: number;
 }
 
 export function ScientMarkdownSourceDocument(props: ScientMarkdownSourceDocumentProps) {
@@ -32,6 +34,11 @@ export function ScientMarkdownSourceDocument(props: ScientMarkdownSourceDocument
 
   useEffect(() => controller.setEditable(props.editable), [controller, props.editable]);
   useEffect(() => controller.replaceExternalSource(props.source), [controller, props.source]);
+  useEffect(() => {
+    if (props.revealLine !== null && props.revealLine !== undefined) {
+      controller.revealLine(props.revealLine);
+    }
+  }, [controller, props.revealLine, props.revealRequestId]);
 
   return <div ref={hostRef} className="scient-markdown-source-document" />;
 }

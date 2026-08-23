@@ -4,6 +4,8 @@ import {
   confirmMarkdownSave,
   createMarkdownDocumentSession,
   receiveExternalMarkdownSource,
+  resolveMarkdownConflictWithDisk,
+  resolveMarkdownConflictWithLocal,
   setMarkdownDocumentMode,
   type MarkdownDocumentMode,
   type MarkdownDocumentSession,
@@ -34,6 +36,7 @@ export interface ScientProseMirrorSessionOptions {
 }
 
 export type ScientExternalSourceResult = "adopted" | "conflict" | "unchanged";
+export type ScientExternalConflictResolution = "disk" | "local";
 
 /**
  * Framework-neutral ProseMirror session. A later React adapter owns one
@@ -115,6 +118,21 @@ export class ScientProseMirrorSession {
       plugins: this.editorState.plugins,
     });
     return "adopted";
+  }
+
+  resolveExternalConflict(resolution: ScientExternalConflictResolution): EditorState {
+    if (this.documentSession.conflict === null) return this.editorState;
+    this.documentSession =
+      resolution === "disk"
+        ? resolveMarkdownConflictWithDisk(this.documentSession)
+        : resolveMarkdownConflictWithLocal(this.documentSession);
+    if (resolution === "local") return this.editorState;
+    this.projection = createScientMarkdownProjection(this.documentSession.draftSource);
+    this.editorState = EditorState.create({
+      doc: this.projection.document,
+      plugins: this.editorState.plugins,
+    });
+    return this.editorState;
   }
 
   applyTransaction(transaction: Transaction, origin: ScientMarkdownTransactionOrigin): EditorState {

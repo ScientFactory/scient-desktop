@@ -118,6 +118,17 @@ export class ScientMarkdownSourceView {
     });
   }
 
+  revealLine(line: number): void {
+    const view = this.editorView;
+    if (!view) return;
+    const clamped = Math.min(Math.max(1, line), view.state.doc.lines);
+    const position = view.state.doc.line(clamped).from;
+    view.dispatch({
+      selection: { anchor: position },
+      effects: EditorView.scrollIntoView(position, { y: "center" }),
+    });
+  }
+
   destroy(): void {
     this.editorView?.destroy();
     this.editorView = null;

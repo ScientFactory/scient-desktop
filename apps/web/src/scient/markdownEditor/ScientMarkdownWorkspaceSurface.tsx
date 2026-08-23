@@ -6,8 +6,10 @@ import {
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
+import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
 import { LazyScientMarkdownSourceDocument } from "./source/ScientMarkdownSourceDocumentLazy";
+import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -24,6 +26,15 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
     readonly source: string;
     readonly revision: string;
   }) => void;
+  readonly onOpenWikiLink?: (target: string) => void;
+  readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly saveResolution?: {
+    readonly action: "discard" | "retry";
+    readonly revision: string;
+  } | null;
+  readonly onSaveResolutionApplied?: () => void;
+  readonly revealLine?: number | null;
+  readonly revealRequestId?: number;
 }
 
 /** Coordinates one rich view, optional source view, and one serial save lane. */
@@ -33,11 +44,13 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   const onSaveConfirmedRef = useRef(props.onSaveConfirmed);
   const onSaveFailureRef = useRef(props.onSaveFailure);
   const onExternalConflictRef = useRef(props.onExternalConflict);
+  const onSaveResolutionAppliedRef = useRef(props.onSaveResolutionApplied);
   persistRef.current = props.persist;
   onPendingChangeRef.current = props.onPendingChange;
   onSaveConfirmedRef.current = props.onSaveConfirmed;
   onSaveFailureRef.current = props.onSaveFailure;
   onExternalConflictRef.current = props.onExternalConflict;
+  onSaveResolutionAppliedRef.current = props.onSaveResolutionApplied;
 
   const [draftSource, setDraftSource] = useState(props.source);
   const [sourceActivated, setSourceActivated] = useState(
@@ -64,6 +77,8 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         revision: props.revision,
         mode: props.mode,
         ariaLabel: props.ariaLabel,
+        ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
+        ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
         onUserSourceChange: (source, intent) => {
           setDraftSource(source);
           saveQueue.enqueue(intent);
@@ -89,6 +104,19 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     }
   }, [controller, props.revision, props.source, saveQueue]);
 
+  useEffect(() => {
+    if (!props.saveResolution) return;
+    if (props.saveResolution.action === "discard") {
+      saveQueue.discard();
+      controller.resolveExternalConflict("disk");
+      setDraftSource(controller.session.session.draftSource);
+    } else {
+      controller.resolveExternalConflict("local");
+      saveQueue.retry(props.saveResolution.revision);
+    }
+    onSaveResolutionAppliedRef.current?.();
+  }, [controller, props.saveResolution, saveQueue]);
+
   useEffect(
     () => () => {
       void saveQueue.dispose({ flush: true });
@@ -101,6 +129,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   return (
     <div className="scient-markdown-workspace" data-markdown-workspace-mode={props.mode}>
       <div className="scient-markdown-rich-pane" hidden={!richVisible}>
+        <ScientMarkdownControls controller={controller} />
         <ScientMarkdownDocument
           source={draftSource}
           revision={props.revision}
@@ -125,6 +154,10 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
               editable={sourceVisible}
               ariaLabel={`${props.ariaLabel} source`}
               onUserSourceChange={(source) => controller.replaceUserSource(source)}
+              {...(props.revealLine === undefined ? {} : { revealLine: props.revealLine })}
+              {...(props.revealRequestId === undefined
+                ? {}
+                : { revealRequestId: props.revealRequestId })}
             />
           </Suspense>
         </div>

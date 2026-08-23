@@ -1,0 +1,140 @@
+import type { Node as ProseMirrorNode } from "prosemirror-model";
+import type { EditorView, NodeView } from "prosemirror-view";
+
+export type ScientMarkdownImageSourceResolver = (
+  source: string,
+) => string | null | Promise<string | null>;
+
+class ScientImageNodeView implements NodeView {
+  readonly dom = document.createElement("span");
+  private readonly image = document.createElement("img");
+  private readonly placeholder = document.createElement("span");
+  private readonly editor = document.createElement("span");
+  private readonly sourceInput = document.createElement("input");
+  private readonly altInput = document.createElement("input");
+  private node: ProseMirrorNode;
+  private resolveVersion = 0;
+  private destroyed = false;
+
+  constructor(
+    node: ProseMirrorNode,
+    private readonly view: EditorView,
+    private readonly getPos: () => number | undefined,
+    private readonly resolveSource: ScientMarkdownImageSourceResolver | undefined,
+  ) {
+    this.node = node;
+    this.dom.className = "scient-markdown-image";
+    this.dom.contentEditable = "false";
+    this.dom.setAttribute("data-scient-markdown-image", "true");
+    this.image.className = "scient-markdown-image-render";
+    this.dom.append(this.image);
+    this.placeholder.className = "scient-markdown-image-placeholder";
+    this.placeholder.textContent = "Choose an image path";
+    this.dom.append(this.placeholder);
+    this.editor.className = "scient-markdown-image-editor";
+    this.editor.hidden = true;
+    this.sourceInput.type = "text";
+    this.sourceInput.dir = "auto";
+    this.sourceInput.placeholder = "Relative image path";
+    this.sourceInput.setAttribute("aria-label", "Image path");
+    this.altInput.type = "text";
+    this.altInput.dir = "auto";
+    this.altInput.placeholder = "Describe the image";
+    this.altInput.setAttribute("aria-label", "Image alternative text");
+    this.sourceInput.addEventListener("input", this.handleInput);
+    this.altInput.addEventListener("input", this.handleInput);
+    this.editor.append(this.sourceInput, this.altInput);
+    this.dom.append(this.editor);
+    this.render();
+  }
+
+  update(node: ProseMirrorNode): boolean {
+    if (node.type !== this.node.type) return false;
+    this.node = node;
+    this.render();
+    return true;
+  }
+
+  selectNode(): void {
+    this.dom.classList.add("is-selected");
+    this.editor.hidden = false;
+  }
+
+  deselectNode(): void {
+    this.dom.classList.remove("is-selected");
+    this.editor.hidden = true;
+  }
+
+  stopEvent(event: Event): boolean {
+    return this.editor.contains(event.target as globalThis.Node);
+  }
+
+  ignoreMutation(): boolean {
+    return true;
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.resolveVersion += 1;
+    this.sourceInput.removeEventListener("input", this.handleInput);
+    this.altInput.removeEventListener("input", this.handleInput);
+  }
+
+  private readonly handleInput = () => {
+    const position = this.getPos();
+    if (position === undefined) return;
+    this.view.dispatch(
+      this.view.state.tr.setNodeMarkup(position, undefined, {
+        ...this.node.attrs,
+        alt: this.altInput.value,
+        src: this.sourceInput.value,
+      }),
+    );
+  };
+
+  private render(): void {
+    const source = String(this.node.attrs.src);
+    const alt = String(this.node.attrs.alt ?? "");
+    this.sourceInput.value = source;
+    this.altInput.value = alt;
+    this.image.alt = alt;
+    this.image.title = typeof this.node.attrs.title === "string" ? this.node.attrs.title : "";
+    this.placeholder.hidden = source.length > 0;
+    this.image.hidden = source.length === 0;
+    if (source.length === 0) {
+      this.image.removeAttribute("src");
+      return;
+    }
+    const version = ++this.resolveVersion;
+    void Promise.resolve(this.resolveSource ? this.resolveSource(source) : source)
+      .then((resolved) => {
+        if (this.destroyed || version !== this.resolveVersion) return;
+        if (resolved) {
+          this.image.src = resolved;
+          this.image.hidden = false;
+          this.placeholder.hidden = true;
+        } else {
+          this.image.removeAttribute("src");
+          this.image.hidden = true;
+          this.placeholder.hidden = false;
+          this.placeholder.textContent = `Unable to resolve ${source}`;
+        }
+      })
+      .catch(() => {
+        if (this.destroyed || version !== this.resolveVersion) return;
+        this.image.removeAttribute("src");
+        this.image.hidden = true;
+        this.placeholder.hidden = false;
+        this.placeholder.textContent = `Unable to resolve ${source}`;
+      });
+  }
+}
+
+export function createScientImageNodeView(
+  node: ProseMirrorNode,
+  view: EditorView,
+  getPos: () => number | undefined,
+  resolveSource?: ScientMarkdownImageSourceResolver,
+): NodeView {
+  return new ScientImageNodeView(node, view, getPos, resolveSource);
+}

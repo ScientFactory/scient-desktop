@@ -21,6 +21,153 @@
   flex: 1 1 0;
 }
 
+.scient-markdown-rich-pane {
+  position: relative;
+}
+
+.scient-markdown-editor-dock,
+.scient-markdown-selection-toolbar,
+.scient-markdown-table-toolbar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--background) 94%, transparent);
+  padding: 0.2rem;
+  box-shadow: 0 0.25rem 1rem color-mix(in oklab, black 10%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.scient-markdown-editor-dock {
+  inset-block-start: 0.55rem;
+  inset-inline-start: 0.65rem;
+}
+
+.scient-markdown-selection-toolbar {
+  inset-block-start: 0.55rem;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+}
+
+.scient-markdown-table-toolbar {
+  inset-block-end: 0.75rem;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+}
+
+.scient-markdown-command-button,
+.scient-markdown-link-actions button,
+.scient-markdown-insert-menu button,
+.scient-markdown-slash-menu button {
+  display: inline-flex;
+  min-width: 1.65rem;
+  min-height: 1.65rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  padding: 0.2rem 0.42rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: default;
+}
+
+.scient-markdown-command-button:hover,
+.scient-markdown-command-button:focus-visible,
+.scient-markdown-command-button[aria-pressed="true"],
+.scient-markdown-insert-menu button:hover,
+.scient-markdown-insert-menu button:focus-visible,
+.scient-markdown-slash-menu button:hover,
+.scient-markdown-slash-menu button:focus-visible,
+.scient-markdown-slash-menu button[aria-selected="true"] {
+  background: var(--muted);
+  outline: none;
+}
+
+summary.scient-markdown-command-button {
+  list-style: none;
+}
+
+summary.scient-markdown-command-button::-webkit-details-marker {
+  display: none;
+}
+
+.scient-markdown-insert-control,
+.scient-markdown-link-control {
+  position: relative;
+}
+
+.scient-markdown-insert-menu,
+.scient-markdown-link-popover,
+.scient-markdown-slash-menu {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  min-width: 12rem;
+  flex-direction: column;
+  gap: 0.1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--popover);
+  padding: 0.35rem;
+  color: var(--popover-foreground);
+  box-shadow: 0 0.6rem 2rem color-mix(in oklab, black 16%, transparent);
+}
+
+.scient-markdown-insert-menu {
+  inset-block-start: calc(100% + 0.4rem);
+  inset-inline-start: 0;
+}
+
+.scient-markdown-insert-menu button,
+.scient-markdown-slash-menu button {
+  justify-content: flex-start;
+  padding-inline: 0.55rem;
+}
+
+.scient-markdown-link-popover {
+  inset-block-start: calc(100% + 0.4rem);
+  inset-inline-end: 0;
+  width: 18rem;
+  padding: 0.65rem;
+}
+
+.scient-markdown-link-popover label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
+.scient-markdown-link-popover input {
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--background);
+  padding: 0.45rem 0.55rem;
+  color: var(--foreground);
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.scient-markdown-link-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.scient-markdown-slash-menu {
+  inset-block-start: 3rem;
+  inset-inline-start: max(1rem, calc((100% - 56rem) / 2 + 1.5rem));
+  max-height: min(22rem, 55vh);
+  overflow-y: auto;
+}
+
 .scient-markdown-workspace[data-markdown-workspace-mode="split"] .scient-markdown-source-pane {
   border-inline-start: 1px solid var(--border);
 }
@@ -287,6 +434,60 @@
   padding-inline: 0.4rem;
   color: var(--foreground);
   font: inherit;
+  outline: none;
+}
+
+.scient-markdown-image {
+  display: inline-flex;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-block: 0.4rem;
+  border-radius: 0.45rem;
+  vertical-align: middle;
+}
+
+.scient-markdown-image.is-selected {
+  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
+  outline-offset: 3px;
+}
+
+.scient-markdown-image-render {
+  display: block;
+  max-width: 100%;
+  max-height: min(34rem, 70vh);
+  border-radius: 0.4rem;
+  object-fit: contain;
+}
+
+.scient-markdown-image-placeholder {
+  display: inline-flex;
+  min-width: 12rem;
+  min-height: 5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: 0.4rem;
+  background: var(--muted);
+  padding: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.scient-markdown-image-editor {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(10rem, 1fr);
+  gap: 0.4rem;
+}
+
+.scient-markdown-image-editor input {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--background);
+  padding: 0.4rem 0.5rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
   outline: none;
 }
 

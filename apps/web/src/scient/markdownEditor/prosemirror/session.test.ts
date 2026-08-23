@@ -91,6 +91,24 @@ describe("ScientProseMirrorSession", () => {
     });
   });
 
+  it("resolves an external conflict explicitly with disk or local source", () => {
+    const disk = new ScientProseMirrorSession({ source: "Before\n", revision: "r0" });
+    disk.applyTransaction(disk.state.tr.insertText("Local ", 1, 1), "user");
+    disk.receiveExternalSource({ source: "Agent\n", revision: "r-agent" });
+    disk.resolveExternalConflict("disk");
+    expect(disk.state.doc.textContent).toBe("Agent");
+    expect(disk.session.draftSource).toBe("Agent\n");
+    expect(disk.session.baselineRevision).toBe("r-agent");
+
+    const local = new ScientProseMirrorSession({ source: "Before\n", revision: "r0" });
+    local.applyTransaction(local.state.tr.insertText("Local ", 1, 1), "user");
+    local.receiveExternalSource({ source: "Agent\n", revision: "r-agent" });
+    local.resolveExternalConflict("local");
+    expect(local.state.doc.textContent).toBe("Local Before");
+    expect(local.session.draftSource).toBe("Local Before\n");
+    expect(local.session.baselineRevision).toBe("r-agent");
+  });
+
   it("assigns distinct source identities when a user splits one source block", () => {
     const session = new ScientProseMirrorSession({
       source: "Beforeafter\n",

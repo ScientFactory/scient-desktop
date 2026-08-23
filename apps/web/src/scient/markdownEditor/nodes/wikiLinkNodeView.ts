@@ -11,6 +11,7 @@ class ScientWikiLinkNodeView implements NodeView {
     node: ProseMirrorNode,
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
+    private readonly onOpen: ((target: string) => void) | undefined,
   ) {
     this.node = node;
     this.dom.className = "scient-markdown-wiki-link";
@@ -24,6 +25,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.sourceEditor.setAttribute("aria-label", "Wiki link target and label");
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
+    this.dom.addEventListener("click", this.handleClick);
     this.dom.append(this.sourceEditor);
     this.render();
   }
@@ -57,6 +59,7 @@ class ScientWikiLinkNodeView implements NodeView {
   destroy(): void {
     this.sourceEditor.removeEventListener("input", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
+    this.dom.removeEventListener("click", this.handleClick);
   }
 
   private readonly handleInput = () => {
@@ -73,6 +76,12 @@ class ScientWikiLinkNodeView implements NodeView {
         target,
       }),
     );
+  };
+
+  private readonly handleClick = (event: MouseEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || !this.onOpen) return;
+    event.preventDefault();
+    this.onOpen(String(this.node.attrs.target));
   };
 
   private readonly handleKeyDown = (event: Event) => {
@@ -103,6 +112,7 @@ export function createScientWikiLinkNodeView(
   node: ProseMirrorNode,
   view: EditorView,
   getPos: () => number | undefined,
+  onOpen?: (target: string) => void,
 ): NodeView {
-  return new ScientWikiLinkNodeView(node, view, getPos);
+  return new ScientWikiLinkNodeView(node, view, getPos, onOpen);
 }
