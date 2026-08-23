@@ -26,6 +26,10 @@ separate states and must be reported separately.
 - Never rerun the full source test suite merely to reproduce evidence already
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
+- Desktop builds cache the Windows dependency store and compiled resource
+  monitor, omit unused Claude SDK platform executables, and package only the
+  target Windows `node-pty` architecture. These optimizations do not relax the
+  exact-source CI, signing, assembly, or publication gates.
 
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor

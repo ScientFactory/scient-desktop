@@ -622,14 +622,9 @@ function mapCollabAgentEvent(
           },
         ];
       }
-      // interacted → the child is (again) actively driven.
-      return [
-        {
-          ...base,
-          type: "task.updated",
-          payload: { taskId, status: "running", ...statusLinkage },
-        },
-      ];
+      // Reading a child's result also emits "interacted" after its turn is idle.
+      // Only the child's turn or thread lifecycle can prove it resumed work.
+      return [];
     }
     case "collabAgent/turnStarted":
       return [
@@ -1936,6 +1931,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   };
 
+  const uploadFeedback: CodexAdapterShape["uploadFeedback"] = (input) =>
+    requireSession(input.threadId).pipe(
+      Effect.flatMap((session) => session.runtime.uploadFeedback(input.reason)),
+      Effect.map(({ threadId }) => ({ feedbackId: threadId })),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(input.threadId, "feedback/upload", cause),
+      ),
+    );
+
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -2027,6 +2033,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    uploadFeedback,
     respondToRequest,
     respondToUserInput,
     stopSession,
