@@ -8,6 +8,7 @@ import {
   refreshProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
+import { readLocalApi } from "~/localApi";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -141,6 +142,22 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       onOpenWikiLink={(target) => {
         const path = resolveWikiLinkPath(props.relativePath, target);
         if (path) props.onOpenFile(path);
+      }}
+      onOpenLink={(target) => {
+        if (/^(?:https?:|mailto:)/iu.test(target)) {
+          void readLocalApi()
+            ?.shell.openExternal(target)
+            .catch((error: unknown) => {
+              toastManager.add({
+                type: "error",
+                title: "Unable to open link",
+                description: error instanceof Error ? error.message : "The link could not open.",
+              });
+            });
+          return;
+        }
+        const path = resolveMarkdownSiblingPath(props.relativePath, target);
+        if (path) props.onOpenFile(path.replace(/[?#].*$/u, ""));
       }}
       resolveImageSource={resolveImageSource}
       uploadImage={uploadImage}

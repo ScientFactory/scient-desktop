@@ -27,6 +27,7 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
     readonly revision: string;
   }) => void;
   readonly onOpenWikiLink?: (target: string) => void;
+  readonly onOpenLink?: (target: string) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
@@ -85,6 +86,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         mode: props.mode,
         ariaLabel: props.ariaLabel,
         ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
+        ...(props.onOpenLink ? { onOpenLink: props.onOpenLink } : {}),
         ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
         ...(props.uploadImage
           ? {

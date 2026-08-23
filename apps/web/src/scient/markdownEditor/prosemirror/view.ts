@@ -48,6 +48,7 @@ export interface ScientMarkdownEditorViewOptions {
   readonly mode?: MarkdownDocumentMode;
   readonly ariaLabel: string;
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent) => void;
+  readonly onOpenLink?: (target: string) => void;
   readonly onOpenWikiLink?: (target: string) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
@@ -438,6 +439,9 @@ export class ScientMarkdownEditorView {
         const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
         return this.handleImageTransfer(event.dataTransfer, position);
       },
+      handleDOMEvents: {
+        click: (_view, event) => this.handleLinkClick(event),
+      },
     };
   }
 
@@ -450,6 +454,46 @@ export class ScientMarkdownEditorView {
     if (files.length === 0) return false;
     files.forEach((file) => this.uploadImageFile(file, position));
     return true;
+  }
+
+  private handleLinkClick(event: MouseEvent): boolean {
+    if (event.button !== 0 || !(event.target instanceof Element)) return false;
+    const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+    if (!anchor || !this.editorView?.dom.contains(anchor)) return false;
+    if (modeIsEditable(this.mode) && !(event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      return false;
+    }
+    event.preventDefault();
+    const target = anchor.getAttribute("href")?.trim() ?? "";
+    if (target.startsWith("#") && this.navigateToHeadingFragment(target.slice(1))) return true;
+    if (target.length > 0) this.options.onOpenLink?.(target);
+    return true;
+  }
+
+  private navigateToHeadingFragment(fragment: string): boolean {
+    let decoded = fragment;
+    try {
+      decoded = decodeURIComponent(fragment);
+    } catch {
+      return false;
+    }
+    const requested = decoded.trim().toLocaleLowerCase();
+    if (requested.length === 0) return false;
+    const occurrences = new Map<string, number>();
+    for (const item of scientMarkdownOutlineState(this.editorView?.state ?? this.session.state)
+      .items) {
+      const base = item.text
+        .trim()
+        .toLocaleLowerCase()
+        .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+        .replace(/\s+/gu, "-");
+      const occurrence = occurrences.get(base) ?? 0;
+      occurrences.set(base, occurrence + 1);
+      const slug = occurrence === 0 ? base : `${base}-${occurrence}`;
+      if (slug === requested) return this.navigateToOutline(item.position);
+    }
+    return false;
   }
 
   private syncNodeViewEditability(): void {

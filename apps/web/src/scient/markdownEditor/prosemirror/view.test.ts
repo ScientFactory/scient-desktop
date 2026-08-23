@@ -235,6 +235,65 @@ describe("ScientMarkdownEditorView", () => {
     expect(controller.session.session.draftSource).toContain("[[שיטה]]");
   });
 
+  it("opens wiki links directly in Read and only with a modifier in Write", () => {
+    const onOpenWikiLink = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "See [[Methods|protocol]].\n",
+      revision: "sha256:before",
+      ariaLabel: "Markdown document",
+      onOpenWikiLink,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    controller.mount(host);
+    const link = host.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]");
+    expect(link?.getAttribute("role")).toBe("link");
+    expect(link?.tabIndex).toBe(0);
+
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    expect(onOpenWikiLink).toHaveBeenCalledExactlyOnceWith("Methods");
+    controller.setMode("write");
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    expect(onOpenWikiLink).toHaveBeenCalledTimes(1);
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, metaKey: true }));
+    expect(onOpenWikiLink).toHaveBeenCalledTimes(2);
+
+    controller.setMode("read");
+    link!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    expect(onOpenWikiLink).toHaveBeenCalledTimes(3);
+  });
+
+  it("opens safe document links by mode and resolves local heading fragments", () => {
+    const onOpenLink = vi.fn();
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "# Results\n\n[external](https://example.com) and [jump](#results).\n",
+      revision: "sha256:before",
+      ariaLabel: "Markdown document",
+      onOpenLink,
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const links = [...host.querySelectorAll<HTMLAnchorElement>("a[href]")];
+    expect(links).toHaveLength(2);
+
+    links[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    expect(onOpenLink).toHaveBeenCalledExactlyOnceWith("https://example.com");
+    links[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    expect(view.state.selection.$from.parent.type.name).toBe("heading");
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    controller.setMode("write");
+    links[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    expect(onOpenLink).toHaveBeenCalledTimes(1);
+    links[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true }));
+    expect(onOpenLink).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a rendered code block visible when its nested editor activates", async () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

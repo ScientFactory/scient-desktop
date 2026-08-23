@@ -16,6 +16,8 @@ class ScientWikiLinkNodeView implements NodeView {
     this.node = node;
     this.dom.className = "scient-markdown-wiki-link";
     this.dom.contentEditable = "false";
+    this.dom.tabIndex = 0;
+    this.dom.setAttribute("role", "link");
     this.dom.setAttribute("data-scient-markdown-wiki-link", "true");
     this.label.className = "scient-markdown-wiki-link-label";
     this.dom.append(this.label);
@@ -26,6 +28,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
     this.dom.addEventListener("click", this.handleClick);
+    this.dom.addEventListener("keydown", this.handleLinkKeyDown);
     this.dom.append(this.sourceEditor);
     this.render();
   }
@@ -60,6 +63,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.sourceEditor.removeEventListener("input", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
     this.dom.removeEventListener("click", this.handleClick);
+    this.dom.removeEventListener("keydown", this.handleLinkKeyDown);
   }
 
   private readonly handleInput = (event: Event) => {
@@ -80,7 +84,14 @@ class ScientWikiLinkNodeView implements NodeView {
   };
 
   private readonly handleClick = (event: MouseEvent) => {
-    if (!(event.metaKey || event.ctrlKey) || !this.onOpen) return;
+    if (!this.onOpen || (this.view.editable && !(event.metaKey || event.ctrlKey))) return;
+    event.preventDefault();
+    this.onOpen(String(this.node.attrs.target));
+  };
+
+  private readonly handleLinkKeyDown = (event: KeyboardEvent) => {
+    if (event.target === this.sourceEditor || event.key !== "Enter" || !this.onOpen) return;
+    if (this.view.editable && !(event.metaKey || event.ctrlKey)) return;
     event.preventDefault();
     this.onOpen(String(this.node.attrs.target));
   };
@@ -102,6 +113,7 @@ class ScientWikiLinkNodeView implements NodeView {
     const target = String(this.node.attrs.target);
     this.label.textContent = String(this.node.attrs.label ?? target);
     this.dom.setAttribute("data-target", target);
+    this.dom.setAttribute("aria-label", `Open wiki link ${target}`);
     this.dom.title = target;
     if (this.sourceEditor !== document.activeElement) {
       this.sourceEditor.value = this.sourceValue();
