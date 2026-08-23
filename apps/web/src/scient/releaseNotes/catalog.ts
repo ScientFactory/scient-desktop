@@ -11,34 +11,40 @@ export const SCIENT_RELEASE_NOTES = [
   {
     version: "0.6.6",
     publishedAt: "2026-08-23",
-    kicker: "Antigravity, clearer provider recovery, and smoother threads",
-    headline: "Connect Antigravity and stay in flow",
+    kicker: "Antigravity, assisted Grok setup, and browser-to-PDF export",
+    headline: "Connect Antigravity, set up Grok, and export PDFs",
     summary:
-      "Scient adds first-class Google Antigravity support, makes provider setup and recovery clearer, and brings focused reliability improvements to chats, projects, remote work, and terminals.",
+      "Scient adds Google Antigravity support, assisted setup for the Early Access Grok provider, a short optional Getting Started flow, PDF export from integrated-browser HTML, and focused improvements across files, chats, remotes, and terminals.",
     highlights: [
       {
         id: "antigravity-provider",
         title: "Connect Google Antigravity",
         description:
-          "Install a reviewed private copy or use your existing Antigravity CLI, sign in with your Google account, discover the models available to it, and keep native multi-turn conversations streaming inside Scient.",
+          "On supported desktops, install Scient's reviewed app-private Antigravity runtime or use an existing CLI, sign in with your Google account, discover the models available to it, and keep native multi-turn conversations streaming inside Scient.",
+      },
+      {
+        id: "grok-assisted-setup",
+        title: "Set up Grok inside Scient",
+        description:
+          "Enable the Early Access Grok provider, install or repair Scient's reviewed app-private Grok Build runtime, and complete sign-in in your browser or by device code from Settings or the composer.",
+      },
+      {
+        id: "browser-pdf-export",
+        title: "Export browser documents to PDF",
+        description:
+          "Export HTML open in Scient's integrated browser as an immutable PDF snapshot, then open it in Scient's PDF reader or save a copy. The export preserves selectable text, embedded fonts, RTL layout, outlines, and supported links where Chromium can retain them.",
       },
       {
         id: "provider-setup-recovery",
-        title: "Recover provider setup with less guesswork",
+        title: "Start and recover setup more clearly",
         description:
-          "Codex, Claude, and Antigravity setup now distinguish installation, sign-in, repair, removal, and account actions more clearly, with direct recovery when a browser or authorization-code step needs attention.",
+          "A short, skippable flow helps a new empty workspace connect an AI, save optional local preferences, and start with a project or Quick Chat. Provider screens also distinguish installation, sign-in, repair, removal, and account actions more clearly.",
       },
       {
         id: "thread-workflow-refinements",
-        title: "Keep everyday thread work moving",
+        title: "Move faster through files, chats, and remotes",
         description:
-          "Follow-up messages keep their order, background thread creation is more reliable, chat titles can be renamed directly, and project icons can use an image outside the project folder.",
-      },
-      {
-        id: "remote-terminal-reliability",
-        title: "Work more reliably across remotes and terminals",
-        description:
-          "Remote servers restore the expected user PATH, advertised endpoints survive Tailscale launch defects, and terminal rendering and high-frequency mouse input are more resilient.",
+          "Use clickable file breadcrumbs and copy relative or full paths. Follow-up messages keep their order, chats can be renamed directly, Mod+Enter can create a thread in the background, and remotes and terminals receive focused reliability fixes.",
       },
     ],
   },
