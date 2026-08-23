@@ -502,7 +502,7 @@ export function CodexInlineSetup(props: {
       <AssistedSetupStatus
         body={
           signInError ??
-          "Sign in with your existing ChatGPT account. The secure flow opens in your browser, and Scient never sees your password."
+          "Sign in with your existing ChatGPT subscription. Scient never sees your password."
         }
         icon={
           signInError ? (

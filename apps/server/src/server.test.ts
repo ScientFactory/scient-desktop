@@ -29,6 +29,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  type ServerProvider,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -4737,6 +4738,111 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "providerStatuses",
         payload: { providers: nextProviders },
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("redacts provider authorization material from read-only clients", () =>
+    Effect.gen(function* () {
+      const providers = [
+        {
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          enabled: true,
+          installed: true,
+          version: "1.0.5",
+          status: "warning" as const,
+          auth: { status: "unauthenticated" as const },
+          checkedAt: "2026-08-23T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          connection: {
+            methods: ["grok_account" as const, "grok_device_code" as const],
+            canDisconnect: false,
+            operation: {
+              operationId: "grok-operation",
+              method: "grok_device_code" as const,
+              status: "waiting_for_device_code" as const,
+              startedAt: "2026-08-23T00:00:00.000Z",
+              finishedAt: null,
+              message: "Finish signing in.",
+              authorizationUrl: "https://accounts.x.ai/device?user_code=GROK-1234",
+              authorizationUrlKind: "manual_fallback" as const,
+              acceptsAuthorizationCode: true,
+              userCode: "GROK-1234",
+            },
+          },
+        },
+      ] as const;
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({ keybindings: [], issues: [] }),
+            streamChanges: Stream.empty,
+          },
+          providerRegistry: {
+            getProviders: Effect.succeed(providers),
+            streamChanges: Stream.succeed(providers),
+          },
+        },
+      });
+
+      const { body: tokenBody } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.isDefined(tokenBody.access_token);
+      const wsTicketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
+      const wsTicketResponse = yield* fetchEffect(wsTicketUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const wsTicketBody = yield* responseJsonEffect<{ readonly ticket: string }>(wsTicketResponse);
+      const readOnlyWsUrl = `${yield* getWsServerUrl("/ws", {
+        authenticated: false,
+      })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const readOnlyResult = yield* Effect.scoped(
+        withWsRpcClient(readOnlyWsUrl, (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            const events = yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(
+              Stream.take(2),
+              Stream.runCollect,
+            );
+            return { config, events };
+          }),
+        ),
+      );
+
+      const assertAuthorizationMaterialRedacted = (provider: ServerProvider | undefined) => {
+        assert.isDefined(provider);
+        assert.equal(provider?.connection?.operation?.status, "waiting_for_device_code");
+        assert.equal(provider?.connection?.operation?.acceptsAuthorizationCode, true);
+        assert.isUndefined(provider?.connection?.operation?.authorizationUrl);
+        assert.isUndefined(provider?.connection?.operation?.authorizationUrlKind);
+        assert.isUndefined(provider?.connection?.operation?.userCode);
+      };
+
+      assertAuthorizationMaterialRedacted(readOnlyResult.config.providers[0]);
+      const providerUpdate = Array.from(readOnlyResult.events).find(
+        (event) => event.type === "providerStatuses",
+      );
+      assert.equal(providerUpdate?.type, "providerStatuses");
+      if (providerUpdate?.type === "providerStatuses") {
+        assertAuthorizationMaterialRedacted(providerUpdate.payload.providers[0]);
+      }
+
+      const operatorWsUrl = yield* getWsServerUrl("/ws");
+      const operatorConfig = yield* Effect.scoped(
+        withWsRpcClient(operatorWsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+      );
+      assert.equal(
+        operatorConfig.providers[0]?.connection?.operation?.authorizationUrl,
+        "https://accounts.x.ai/device?user_code=GROK-1234",
+      );
+      assert.equal(operatorConfig.providers[0]?.connection?.operation?.userCode, "GROK-1234");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

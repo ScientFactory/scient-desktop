@@ -49,6 +49,18 @@ vi.mock("./CodexInlineSetup", () => ({
     </div>
   ),
 }));
+vi.mock("./GrokInlineSetup", () => ({
+  GrokInlineSetup: (props: {
+    accountAction?: ReactNode;
+    managedRuntimePresentedExternally?: boolean;
+  }) => (
+    <div>
+      Grok lifecycle surface
+      {props.managedRuntimePresentedExternally ? " · Shared runtime management" : null}
+      {props.accountAction}
+    </div>
+  ),
+}));
 vi.mock("../../components/chat/ProviderInstanceIcon", () => ({
   ProviderInstanceIcon: (props: { displayName: string }) => (
     <span data-provider-title-icon>{props.displayName} icon</span>
@@ -156,11 +168,12 @@ describe("ProviderConnectionDialog", () => {
   });
 
   it.each([
-    ["codex", "Codex", "Codex lifecycle surface"],
-    ["claudeAgent", "Claude", "Claude lifecycle surface"],
+    ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
+    ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps the assisted %s dialog compact and fully manageable",
-    (driver, name, surface) => {
+    (driver, name, surface, method) => {
       const markup = renderToStaticMarkup(
         <ProviderConnectionDialog
           displayName={name}
@@ -172,9 +185,14 @@ describe("ProviderConnectionDialog", () => {
             instanceId: ProviderInstanceId.make(driver),
             driver: ProviderDriverKind.make(driver),
             displayName: name,
-            auth: { status: "authenticated", required: true, label: `${name} account` },
+            auth: {
+              status: "authenticated",
+              required: true,
+              label: `${name} account`,
+              ...(driver === "grok" ? { type: "grok_account" } : {}),
+            },
             connection: {
-              methods: driver === "codex" ? ["codex_browser"] : ["claude_subscription"],
+              methods: [method],
               canDisconnect: true,
               operation: null,
               runtime: provider.connection!.runtime!,
@@ -197,6 +215,88 @@ describe("ProviderConnectionDialog", () => {
       expect(markup).not.toContain("<footer>");
     },
   );
+
+  it.each([
+    ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
+    ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
+  ] as const)(
+    "opens the reviewed install flow directly for missing assisted %s runtimes",
+    (driver, name, surface, method) => {
+      const markup = renderToStaticMarkup(
+        <ProviderConnectionDialog
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          initialRuntimeAction="install"
+          onOpenChange={vi.fn()}
+          open
+          provider={{
+            ...provider,
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+            displayName: name,
+            installed: false,
+            version: null,
+            status: "error",
+            auth: {
+              status: "unauthenticated",
+              required: true,
+              ...(driver === "grok" ? { type: "grok_account" as const } : {}),
+            },
+            connection: {
+              methods: [method],
+              canDisconnect: false,
+              operation: null,
+              runtime: {
+                ...provider.connection!.runtime!,
+                source: "missing",
+                actions: ["install"],
+                managedVersion: null,
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(markup).toContain("Compact managed runtime actions");
+      expect(markup).toContain("install confirmation requested");
+      expect(markup).not.toContain(surface);
+    },
+  );
+
+  it("falls back to the Grok lifecycle surface when an install request lacks runtime data", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Grok"
+        environmentId={EnvironmentId.make("local")}
+        initialRuntimeAction="install"
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          displayName: "Grok",
+          installed: false,
+          version: null,
+          status: "error",
+          auth: {
+            status: "unauthenticated",
+            required: true,
+            type: "grok_account",
+          },
+          connection: {
+            methods: ["grok_account"],
+            canDisconnect: false,
+            operation: null,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Grok lifecycle surface");
+    expect(markup).not.toContain("install confirmation requested");
+  });
 
   it("omits a read-only system-runtime row when an older server provides no diagnostics", () => {
     const markup = renderToStaticMarkup(
@@ -231,6 +331,47 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).toContain("Claude lifecycle surface");
     expect(markup).toContain(">Sign out<");
   });
+
+  it.each([
+    ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
+    ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
+  ] as const)(
+    "keeps managed runtime actions visible while assisted %s is signed out",
+    (driver, name, surface, method) => {
+      const markup = renderToStaticMarkup(
+        <ProviderConnectionDialog
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          onOpenChange={vi.fn()}
+          open
+          provider={{
+            ...provider,
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+            displayName: name,
+            status: "warning",
+            auth: {
+              status: "unauthenticated",
+              required: true,
+              ...(driver === "grok" ? { type: "grok_account" as const } : {}),
+            },
+            connection: {
+              methods: [method],
+              canDisconnect: false,
+              operation: null,
+              runtime: provider.connection!.runtime!,
+            },
+          }}
+        />,
+      );
+
+      expect(markup).toContain("Compact managed runtime actions");
+      expect(markup).toContain("Shared runtime management");
+      expect(markup).toContain(surface);
+      expect(markup).not.toContain(">Sign out<");
+    },
+  );
 
   it.each([
     ["codex", "Codex"],

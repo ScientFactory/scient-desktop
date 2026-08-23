@@ -2,9 +2,10 @@ import {
   type GrokSettings,
   type ModelCapabilities,
   type ServerProvider,
+  type ServerProviderAuth,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -12,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -29,7 +31,13 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  GROK_API_KEY_ENV,
+  GROK_AUTH_EXTENSION_METHOD,
+  GROK_AUTH_METHOD_CACHED_TOKEN,
+  makeGrokAcpRuntime,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -42,7 +50,32 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
-const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const GROK_ACP_PROBE_TIMEOUT_MS = 15_000;
+const GROK_ACCOUNT_METADATA_TIMEOUT_MS = 5_000;
+
+const GrokInitializeMeta = Schema.Struct({
+  modelState: Schema.optional(EffectAcpSchema.SessionModelState),
+});
+const decodeGrokInitializeMeta = Schema.decodeUnknownOption(GrokInitializeMeta);
+
+const GrokAuthInfo = Schema.Struct({
+  methodId: Schema.optional(Schema.NullOr(Schema.String)),
+  email: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const decodeGrokAuthInfo = Schema.decodeUnknownOption(GrokAuthInfo);
+
+const GrokSubscriptionInfo = Schema.Struct({
+  authenticated: Schema.Boolean,
+  meta: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        email: Schema.optional(Schema.NullOr(Schema.String)),
+        subscription_tier: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
+const decodeGrokSubscriptionInfo = Schema.decodeUnknownOption(GrokSubscriptionInfo);
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -99,7 +132,7 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
@@ -123,7 +156,17 @@ function buildGrokDiscoveredModelsFromSessionModelState(
     .filter((model): model is ServerProviderModel => model !== undefined);
 }
 
-const discoverGrokModelsViaAcp = (
+function nonEmpty(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+interface GrokAcpProbeResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly auth: ServerProviderAuth;
+}
+
+const probeGrokViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) =>
@@ -136,8 +179,59 @@ const discoverGrokModelsViaAcp = (
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
-    const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    // Initialization refreshes Grok's advertised auth/model state but does not
+    // authenticate, create a session, or launch a browser.
+    const initialized = yield* acp.initialize();
+    const initializeMeta = decodeGrokInitializeMeta(initialized._meta);
+    const models = Option.match(initializeMeta, {
+      onNone: () => [],
+      onSome: (meta) => buildGrokDiscoveredModelsFromSessionModelState(meta.modelState),
+    });
+    const methodIds = new Set(initialized.authMethods?.map((method) => method.id) ?? []);
+    const hasAccount = methodIds.has(GROK_AUTH_METHOD_CACHED_TOKEN);
+    if (!hasAccount) {
+      const hasApiKey = Boolean(environment[GROK_API_KEY_ENV]?.trim());
+      return {
+        models,
+        auth: hasApiKey
+          ? {
+              status: "authenticated",
+              required: true,
+              type: "api_key",
+              label: "xAI API key",
+            }
+          : { status: "unauthenticated", required: true, type: "grok_account" },
+      } satisfies GrokAcpProbeResult;
+    }
+
+    const [authInfo, subscriptionInfo] = yield* Effect.all([
+      acp
+        .request(GROK_AUTH_EXTENSION_METHOD.info, {})
+        .pipe(Effect.timeoutOption(GROK_ACCOUNT_METADATA_TIMEOUT_MS), Effect.option),
+      acp
+        .request(GROK_AUTH_EXTENSION_METHOD.checkSubscription, {})
+        .pipe(Effect.timeoutOption(GROK_ACCOUNT_METADATA_TIMEOUT_MS), Effect.option),
+    ]);
+    const decodedAuthInfo = Option.flatMap(authInfo, (value) =>
+      Option.flatMap(value, decodeGrokAuthInfo),
+    );
+    const decodedSubscription = Option.flatMap(subscriptionInfo, (value) =>
+      Option.flatMap(value, decodeGrokSubscriptionInfo),
+    );
+    const subscription = Option.getOrUndefined(decodedSubscription);
+    const subscriptionMeta = subscription?.authenticated ? subscription.meta : undefined;
+    const email = subscriptionMeta?.email ?? Option.getOrUndefined(decodedAuthInfo)?.email;
+    const tier = subscriptionMeta?.subscription_tier;
+    return {
+      models,
+      auth: {
+        status: "authenticated",
+        required: true,
+        type: "grok_account",
+        label: nonEmpty(tier) ?? "Grok subscription",
+        ...(nonEmpty(email) ? { email: nonEmpty(email) } : {}),
+      },
+    } satisfies GrokAcpProbeResult;
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
@@ -251,13 +345,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
-    Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
+  const probeExit = yield* probeGrokViaAcp(grokSettings, environment).pipe(
+    Effect.timeoutOption(GROK_ACP_PROBE_TIMEOUT_MS),
     Effect.exit,
   );
-  if (Exit.isFailure(discoveryExit)) {
-    yield* Effect.logWarning("Grok ACP model discovery failed", {
-      errorTag: causeErrorTag(discoveryExit.cause),
+  if (Exit.isFailure(probeExit)) {
+    yield* Effect.logWarning("Grok ACP readiness probe failed", {
+      errorTag: causeErrorTag(probeExit.cause),
     });
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
@@ -269,13 +363,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
+        message: "Grok is installed but its local agent did not start correctly.",
       },
     });
   }
-  if (Option.isNone(discoveryExit.value)) {
+  if (Option.isNone(probeExit.value)) {
     yield* Effect.logWarning(
-      `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+      `Grok ACP readiness probe timed out after ${GROK_ACP_PROBE_TIMEOUT_MS}ms.`,
     );
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
@@ -287,11 +381,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: `Grok CLI is installed but ACP startup timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+        message: "Grok is installed but its local agent took too long to respond.",
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
+  const probe = probeExit.value.value;
+  const discoveredModels = probe.models;
   const models =
     discoveredModels.length > 0
       ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
@@ -305,8 +400,11 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     probe: {
       installed: true,
       version,
-      status: "ready",
-      auth: { status: "unknown" },
+      status: probe.auth.status === "authenticated" ? "ready" : "warning",
+      auth: probe.auth,
+      ...(probe.auth.status === "unauthenticated"
+        ? { message: "Sign in to Grok with the account that has your subscription." }
+        : {}),
     },
   });
 });

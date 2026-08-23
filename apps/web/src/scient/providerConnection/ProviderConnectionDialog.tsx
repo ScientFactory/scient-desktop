@@ -48,6 +48,7 @@ import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
+import { GrokInlineSetup } from "./GrokInlineSetup";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
 
@@ -92,7 +93,9 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     onRuntimeActionSucceeded: reportRuntimeActionSucceeded,
     repairSucceededRecently,
   };
-  return props.provider.driver === "codex" || props.provider.driver === "claudeAgent" ? (
+  return props.provider.driver === "codex" ||
+    props.provider.driver === "claudeAgent" ||
+    props.provider.driver === "grok" ? (
     <AssistedProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
@@ -148,11 +151,17 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
     providerConnectionPresentation(props.provider).kind === "connected" ||
     (isRuntimeWorking && isProviderAccountConnected(props.provider));
   const isClaude = props.provider.driver === "claudeAgent";
+  const isGrok = props.provider.driver === "grok";
   const runtime = props.provider.connection?.runtime;
+  const hasActionableManagedRuntime =
+    runtime?.source === "scient_managed" &&
+    (runtime.actions.length > 0 || runtime.operation !== null);
   const showManagedRuntime =
-    isConnected &&
     runtime !== undefined &&
+    (isConnected || props.initialRuntimeAction !== undefined || hasActionableManagedRuntime) &&
     (runtime.actions.length > 0 || runtime.diagnostics !== undefined || runtime.operation !== null);
+  const isManagedRuntimeFocused =
+    showManagedRuntime && (isRuntimePlanOpen || isRuntimeWorking || !props.provider.installed);
 
   const disconnect = async () => {
     setDisconnecting(true);
@@ -189,7 +198,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
         <DialogHeader>
           <DialogTitle ref={titleRef} className="flex flex-wrap items-center gap-2.5">
             <ProviderConnectionDialogTitle
-              displayName={isClaude ? "Claude" : "Codex"}
+              displayName={isClaude ? "Claude" : isGrok ? "Grok" : "Codex"}
               driver={props.provider.driver}
               repairSucceededRecently={props.repairSucceededRecently}
             />
@@ -197,7 +206,9 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
           <DialogDescription className="sr-only">
             {isClaude
               ? "Connect and manage your Claude account."
-              : "Connect and manage your existing ChatGPT subscription."}
+              : isGrok
+                ? "Install Grok and connect your existing subscription."
+                : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">
@@ -205,7 +216,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             <ProviderRuntimeSection
               compact
               disabled={disconnecting}
-              displayName={isClaude ? "Claude" : "Codex"}
+              displayName={isClaude ? "Claude" : isGrok ? "Grok" : "Codex"}
               environmentId={props.environmentId}
               initialAction={props.initialRuntimeAction}
               onActionSucceeded={props.onRuntimeActionSucceeded}
@@ -213,8 +224,17 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
               provider={props.provider}
             />
           ) : null}
-          {isRuntimePlanOpen || (showManagedRuntime && isRuntimeWorking) ? null : isClaude ? (
+          {isManagedRuntimeFocused ? null : isClaude ? (
             <ClaudeInlineSetup
+              accountAction={accountAction}
+              controller={controller}
+              displayName={props.displayName}
+              managedRuntimePresentedExternally={showManagedRuntime}
+              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
+              provider={props.provider}
+            />
+          ) : isGrok ? (
+            <GrokInlineSetup
               accountAction={accountAction}
               controller={controller}
               displayName={props.displayName}

@@ -13,6 +13,7 @@ import { cn } from "~/lib/utils";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
+import { GrokInlineSetup } from "./GrokInlineSetup";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
@@ -50,6 +51,16 @@ export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefin
     entry.models.find((model) => !model.isCustom)?.slug ??
     entry.models[0]?.slug ??
     null
+  );
+}
+
+/** Providers whose complete readiness flow can stay inside the composer. */
+export function hasInlineProviderLifecycleSurface(driverKind: ProviderDriverKind): boolean {
+  return (
+    driverKind === "codex" ||
+    driverKind === "claudeAgent" ||
+    driverKind === "antigravity" ||
+    driverKind === "grok"
   );
 }
 
@@ -270,23 +281,10 @@ export function ProviderOnboardingPicker(props: {
                   </div>
                 )
               ) : selectedDefinition && selectedEntry ? (
-                selectedDefinition.value === "codex" ? (
-                  <CodexSetupWithController
-                    displayName={selectedEntry.displayName}
+                hasInlineProviderLifecycleSurface(selectedEntry.driverKind) ? (
+                  <ProviderLifecycleSetupSurface
+                    entry={selectedEntry}
                     environmentId={props.environmentId}
-                    provider={selectedEntry.snapshot}
-                  />
-                ) : selectedDefinition.value === "claudeAgent" ? (
-                  <ClaudeSetupWithController
-                    displayName={selectedEntry.displayName}
-                    environmentId={props.environmentId}
-                    provider={selectedEntry.snapshot}
-                  />
-                ) : selectedDefinition.value === "antigravity" ? (
-                  <AntigravitySetupWithController
-                    displayName={selectedEntry.displayName}
-                    environmentId={props.environmentId}
-                    provider={selectedEntry.snapshot}
                   />
                 ) : (
                   <ProviderSetupDetail
@@ -365,6 +363,18 @@ function AntigravitySetupWithController(props: {
   return <AntigravityInlineSetup {...props} controller={controller} />;
 }
 
+function GrokSetupWithController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ProviderInstanceEntry["snapshot"];
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  return <GrokInlineSetup {...props} controller={controller} />;
+}
+
 /**
  * Inline setup surface used by the regular model picker after another provider
  * is already ready. Keeping this in Scient-owned code lets T3 continue to own
@@ -396,6 +406,15 @@ export function ProviderLifecycleSetupSurface(props: {
   if (props.entry.driverKind === "antigravity") {
     return (
       <AntigravitySetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  if (props.entry.driverKind === "grok") {
+    return (
+      <GrokSetupWithController
         displayName={props.entry.displayName}
         environmentId={props.environmentId}
         provider={props.entry.snapshot}

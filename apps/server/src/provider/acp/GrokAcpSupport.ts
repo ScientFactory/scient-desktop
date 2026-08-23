@@ -11,11 +11,24 @@ import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
-const GROK_API_KEY_ENV = "XAI_API_KEY";
+export const GROK_API_KEY_ENV = "XAI_API_KEY";
+export const GROK_DEVICE_FLOW_ENV = "GROK_LOGIN_DEVICE_FLOW";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
 const T3_CODE_OAUTH_REFERRER = "t3code";
-const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
-const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
+export const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
+export const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
+export const GROK_AUTH_METHOD_ACCOUNT = "grok.com";
+export const GROK_AUTH_METHOD_OIDC = "oidc";
+// ACP extension methods use a leading underscore on the JSON-RPC wire. The
+// upstream ACP SDK strips it before Grok's internal `x.ai/auth/*` dispatcher.
+export const GROK_AUTH_EXTENSION_METHOD = {
+  getUrl: "_x.ai/auth/get_url",
+  submitCode: "_x.ai/auth/submit_code",
+  cancel: "_x.ai/auth/cancel",
+  logout: "_x.ai/auth/logout",
+  info: "_x.ai/auth/info",
+  checkSubscription: "_x.ai/auth/check_subscription",
+} as const;
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
@@ -38,7 +51,9 @@ export function buildGrokAcpSpawnInput(
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: grokSettings?.binaryPath || "grok",
-    args: rules ? ["--rules", rules, "agent", "stdio"] : ["agent", "stdio"],
+    args: rules
+      ? ["--rules", rules, "agent", "--no-leader", "stdio"]
+      : ["agent", "--no-leader", "stdio"],
     cwd,
     env: {
       ...environment,
@@ -47,7 +62,7 @@ export function buildGrokAcpSpawnInput(
   };
 }
 
-function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
+export function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
   return environment?.[GROK_API_KEY_ENV]?.trim()
     ? GROK_AUTH_METHOD_API_KEY
     : GROK_AUTH_METHOD_CACHED_TOKEN;

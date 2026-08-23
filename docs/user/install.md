@@ -38,9 +38,9 @@ brew install --cask t3-code
 ## Providers
 
 Scient drives provider-owned tools. In the local desktop app, **Choose your AI** can privately
-install reviewed Codex and Claude runtimes and start their official sign-in flows. A healthy system
-or custom installation remains supported and is never silently replaced. Other providers still use
-their externally installed tools.
+install reviewed Codex, Claude, Antigravity, and Grok runtimes and start their official sign-in
+flows. A healthy system or custom installation remains supported and is never silently replaced.
+Other providers still use their externally installed tools.
 
 | Provider   | CLI                                                   | Default binary | Manual recovery command        |
 | ---------- | ----------------------------------------------------- | -------------- | ------------------------------ |
@@ -72,7 +72,8 @@ Provider auth is required before you start a session with that provider, not bef
 Scient. You can open Scient and connect providers afterwards. The composer and **Settings >
 Providers** show whether the tool is missing, sign-in is required, or a usable model is ready.
 
-For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
+For provider-specific setup, see [Codex](./providers-codex.md), [Claude](./providers-claude.md),
+[Antigravity](./providers-antigravity.md), and [Grok](./providers-grok.md).
 
 ## Next Steps
 

@@ -198,6 +198,19 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
     /**
+     * Initializes the ACP connection without authenticating or creating a session.
+     * Safe provider probes use this to inspect advertised capabilities without
+     * triggering an interactive provider flow.
+     */
+    readonly initialize: () => Effect.Effect<
+      EffectAcpSchema.InitializeResponse,
+      EffectAcpErrors.AcpError
+    >;
+    /** Authenticates an initialized ACP connection without creating a session. */
+    readonly authenticate: (
+      payload: EffectAcpSchema.AuthenticateRequest,
+    ) => Effect.Effect<EffectAcpSchema.AuthenticateResponse, EffectAcpErrors.AcpError>;
+    /**
      * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
      * Concurrent calls share the same in-flight startup and a failed startup may be retried.
      */
@@ -282,6 +295,17 @@ type AcpStartState =
     }
   | { readonly _tag: "Started"; readonly result: AcpStartedState };
 
+type AcpInitializeState =
+  | { readonly _tag: "NotInitialized" }
+  | {
+      readonly _tag: "Initializing";
+      readonly deferred: Deferred.Deferred<
+        EffectAcpSchema.InitializeResponse,
+        EffectAcpErrors.AcpError
+      >;
+    }
+  | { readonly _tag: "Initialized"; readonly result: EffectAcpSchema.InitializeResponse };
+
 interface AcpAssistantSegmentState {
   readonly nextSegmentIndex: number;
   readonly activeItemId?: string;
@@ -317,6 +341,9 @@ export const make = (
     );
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* SubscriptionRef.make(sessionConfigOptionsFromSetup(undefined));
+    const initializeStateRef = yield* Ref.make<AcpInitializeState>({
+      _tag: "NotInitialized",
+    });
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
@@ -662,18 +689,55 @@ export const make = (
         ),
       );
 
-    const startOnce = Effect.gen(function* () {
-      const initializePayload = {
-        protocolVersion: 1,
-        clientCapabilities: initializeClientCapabilities,
-        clientInfo: options.clientInfo,
-      } satisfies EffectAcpSchema.InitializeRequest;
+    const initializePayload = {
+      protocolVersion: 1,
+      clientCapabilities: initializeClientCapabilities,
+      clientInfo: options.clientInfo,
+    } satisfies EffectAcpSchema.InitializeRequest;
 
-      const initializeResult = yield* runLoggedRequest(
-        "initialize",
-        initializePayload,
-        acp.agent.initialize(initializePayload),
-      );
+    const initializeOnce = runLoggedRequest(
+      "initialize",
+      initializePayload,
+      acp.agent.initialize(initializePayload),
+    );
+
+    const initialize = Effect.gen(function* () {
+      const deferred = yield* Deferred.make<
+        EffectAcpSchema.InitializeResponse,
+        EffectAcpErrors.AcpError
+      >();
+      const effect = yield* Ref.modify(initializeStateRef, (state) => {
+        switch (state._tag) {
+          case "Initialized":
+            return [Effect.succeed(state.result), state] as const;
+          case "Initializing":
+            return [Deferred.await(state.deferred), state] as const;
+          case "NotInitialized":
+            return [
+              initializeOnce.pipe(
+                Effect.tap((result) =>
+                  Ref.set(initializeStateRef, { _tag: "Initialized", result }).pipe(
+                    Effect.andThen(Deferred.succeed(deferred, result)),
+                  ),
+                ),
+                Effect.onError((cause) =>
+                  Deferred.failCause(deferred, cause).pipe(
+                    Effect.andThen(Ref.set(initializeStateRef, { _tag: "NotInitialized" })),
+                  ),
+                ),
+              ),
+              { _tag: "Initializing", deferred } satisfies AcpInitializeState,
+            ] as const;
+        }
+      });
+      return yield* effect;
+    });
+
+    const authenticate = (payload: EffectAcpSchema.AuthenticateRequest) =>
+      runLoggedRequest("authenticate", payload, acp.agent.authenticate(payload));
+
+    const startOnce = Effect.gen(function* () {
+      const initializeResult = yield* initialize;
 
       const authenticatePayload = {
         methodId:
@@ -683,11 +747,7 @@ export const make = (
         ...(options.authenticateMeta ? { _meta: options.authenticateMeta } : {}),
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+      yield* authenticate(authenticatePayload);
 
       let sessionId: string;
       let sessionSetupResult:
@@ -845,6 +905,8 @@ export const make = (
       handleUnknownExtNotification: acp.handleUnknownExtNotification,
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
+      initialize: () => initialize,
+      authenticate,
       start: () => start,
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents: Effect.gen(function* () {

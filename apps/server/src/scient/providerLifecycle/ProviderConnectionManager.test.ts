@@ -184,6 +184,80 @@ describe("ProviderConnectionManager", () => {
       }),
   );
 
+  it.effect("publishes Grok device-code state and the provider-owned user code", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const grokProvider: ServerProvider = {
+        ...disconnectedProvider,
+        driver: ProviderDriverKind.make("grok"),
+        connection: {
+          methods: ["grok_account", "grok_device_code"],
+          canDisconnect: false,
+          operation: null,
+        },
+      };
+      const actions: ProviderConnectionActions = {
+        methods: ["grok_account", "grok_device_code"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://accounts.x.ai/device?user_code=GROK-1234",
+            authorizationUrlKind: "manual_fallback",
+            userCode: "GROK-1234",
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions,
+        provider: grokProvider,
+      });
+
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "grok_device_code",
+      });
+      assert.strictEqual(
+        started.providers[0]?.connection?.operation?.status,
+        "waiting_for_device_code",
+      );
+      assert.strictEqual(started.providers[0]?.connection?.operation?.userCode, "GROK-1234");
+
+      yield* Deferred.succeed(completed, undefined);
+      yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "connected"),
+      );
+    }),
+  );
+
+  it.effect("verifies an account that connects before the provider publishes a page", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const actions: ProviderConnectionActions = {
+        methods: ["grok_account"],
+        start: () =>
+          Effect.succeed({
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({ actions });
+
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "grok_account",
+      });
+      assert.strictEqual(started.providers[0]?.connection?.operation?.status, "verifying");
+      assert.strictEqual(started.providers[0]?.connection?.operation?.authorizationUrl, undefined);
+
+      yield* Deferred.succeed(completed, undefined);
+      yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "connected"),
+      );
+    }),
+  );
+
   it.effect("forwards an optional authorization code only to the matching live attempt", () =>
     Effect.gen(function* () {
       const completed = yield* Deferred.make<void, ProviderConnectionActionError>();

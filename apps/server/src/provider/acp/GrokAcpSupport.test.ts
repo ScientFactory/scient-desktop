@@ -26,7 +26,7 @@ describe("buildGrokAcpSpawnInput", () => {
 
     expect(spawn).toEqual({
       command: "/usr/local/bin/grok",
-      args: ["agent", "stdio"],
+      args: ["agent", "--no-leader", "stdio"],
       cwd: "/tmp/project",
       env: {
         XAI_API_KEY: "secret",
@@ -43,7 +43,13 @@ describe("buildGrokAcpSpawnInput", () => {
       buildScientAwareness(),
     );
 
-    expect(spawn.args).toEqual(["--rules", buildScientAwareness(), "agent", "stdio"]);
+    expect(spawn.args).toEqual([
+      "--rules",
+      buildScientAwareness(),
+      "agent",
+      "--no-leader",
+      "stdio",
+    ]);
   });
 });
 

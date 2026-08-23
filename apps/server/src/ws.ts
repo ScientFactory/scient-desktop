@@ -15,6 +15,7 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
+  AuthOrchestrationOperateScope,
   AuthSessionId,
   ClientSurface,
   CommandId,
@@ -47,6 +48,7 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
+  type ServerProvider,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -166,6 +168,34 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
     Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
     Effect.map(Option.getOrElse(() => [])),
   );
+
+export const redactProviderAuthorizationForReadOnlyClient = (
+  provider: ServerProvider,
+): ServerProvider => {
+  const connection = provider.connection;
+  const operation = connection?.operation;
+  if (
+    connection === undefined ||
+    operation === null ||
+    operation === undefined ||
+    (operation.authorizationUrl === undefined && operation.userCode === undefined)
+  ) {
+    return provider;
+  }
+
+  const redactedOperation = { ...operation };
+  delete redactedOperation.authorizationUrl;
+  delete redactedOperation.authorizationUrlKind;
+  delete redactedOperation.userCode;
+
+  return {
+    ...provider,
+    connection: {
+      ...connection,
+      operation: redactedOperation,
+    },
+  };
+};
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -541,6 +571,12 @@ const makeWsRpcLayer = (
         currentSession.scopes.includes(requiredScope)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
+      const projectProvidersForCurrentSession = currentSession.scopes.includes(
+        AuthOrchestrationOperateScope,
+      )
+        ? (providers: ReadonlyArray<ServerProvider>) => providers
+        : (providers: ReadonlyArray<ServerProvider>) =>
+            providers.map(redactProviderAuthorizationForReadOnlyClient);
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
@@ -1116,7 +1152,7 @@ const makeWsRpcLayer = (
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const providers = yield* providerRegistry.getProviders;
+        const providers = projectProvidersForCurrentSession(yield* providerRegistry.getProviders);
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
         );
@@ -2573,6 +2609,7 @@ const makeWsRpcLayer = (
                 })),
               );
               const providerStatuses = providerRegistry.streamChanges.pipe(
+                Stream.map(projectProvidersForCurrentSession),
                 Stream.map((providers) => ({
                   version: 1 as const,
                   type: "providerStatuses" as const,

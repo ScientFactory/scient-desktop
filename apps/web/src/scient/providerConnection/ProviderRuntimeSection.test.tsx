@@ -54,7 +54,10 @@ vi.mock("../../state/use-atom-command", () => ({
     atom === atoms.plan ? commands.plan : atom === atoms.start ? commands.start : commands.cancel,
 }));
 
-import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
+import {
+  ProviderRuntimeSection,
+  resolveProviderRuntimeForPresentation,
+} from "./ProviderRuntimeSection";
 
 const environmentId = EnvironmentId.make("local");
 const instanceId = ProviderInstanceId.make("antigravity");
@@ -152,7 +155,7 @@ describe("ProviderRuntimeSection", () => {
 
     expect(markup).toContain("Install Antigravity");
     expect(markup).toContain("Version 1.1.17 · macOS · Apple silicon · about 1 MB");
-    expect(markup).toContain("Official Google release, installed privately by Scient");
+    expect(markup).not.toContain("Official Google release");
     expect(markup).toContain(">Install<");
     expect(markup).not.toContain("download, verify, stage, test, and activate");
     expect(markup).not.toContain("Computer");
@@ -267,6 +270,50 @@ describe("ProviderRuntimeSection", () => {
     expect(cancelButton).toContain("border-transparent");
     expect(cancelButton).toContain("text-destructive/80");
     expect(cancelButton).not.toContain("border-input");
+  });
+
+  it("drops stale local removal progress once the server reports the runtime missing", () => {
+    const localRuntime = {
+      ...provider.connection!.runtime!,
+      source: "scient_managed" as const,
+      actions: ["repair", "remove"] as const,
+      managedVersion: "1.1.17",
+      operation: {
+        operationId: "remove-active",
+        action: "remove" as const,
+        status: "removing" as const,
+        startedAt: "2026-08-23T12:00:00.000Z",
+        finishedAt: null,
+        message: "Removing Scient's private provider runtime.",
+      },
+    };
+    const serverRuntime = {
+      ...provider.connection!.runtime!,
+      source: "missing" as const,
+      actions: ["install"] as const,
+      managedVersion: null,
+      operation: null,
+    };
+
+    expect(resolveProviderRuntimeForPresentation(serverRuntime, localRuntime)).toBe(serverRuntime);
+  });
+
+  it("keeps optimistic install progress while the streamed server snapshot catches up", () => {
+    const localRuntime = {
+      ...provider.connection!.runtime!,
+      operation: {
+        operationId: "install-active",
+        action: "install" as const,
+        status: "preparing" as const,
+        startedAt: "2026-08-23T12:00:00.000Z",
+        finishedAt: null,
+        message: "Preparing the provider runtime operation.",
+      },
+    };
+
+    expect(resolveProviderRuntimeForPresentation(provider.connection!.runtime, localRuntime)).toBe(
+      localRuntime,
+    );
   });
 
   it("starts repair immediately without opening a review step", async () => {

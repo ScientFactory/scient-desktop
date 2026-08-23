@@ -18,7 +18,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation";
 
 export interface ProviderLifecycleController {
-  readonly startConnection: (method: ProviderConnectionMethod) => Promise<ServerProvider>;
+  readonly startConnection: (
+    method: ProviderConnectionMethod,
+    mode?: "connect" | "reauthenticate",
+  ) => Promise<ServerProvider>;
   readonly cancelConnection: (operationId: string) => Promise<ServerProvider>;
   readonly submitAuthorizationCode: (
     operationId: string,
@@ -87,10 +90,10 @@ export function useProviderLifecycleController(input: {
   const providerDriver = input.provider.driver;
 
   const startConnection = useCallback(
-    async (method: ProviderConnectionMethod) => {
+    async (method: ProviderConnectionMethod, mode?: "connect" | "reauthenticate") => {
       const result = await startProviderConnection({
         environmentId: input.environmentId,
-        input: { instanceId, method },
+        input: { instanceId, method, ...(mode ? { mode } : {}) },
       });
       const value = resultValue(result, "Scient could not start provider sign in.");
       return providerFromResult(value.providers, instanceId);

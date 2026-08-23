@@ -89,9 +89,10 @@ export interface ProviderConnectionActionFailure {
 }
 
 export interface ProviderConnectionAttempt {
-  readonly authorizationUrl: string;
+  /** Absent when the provider completes authentication before publishing a page. */
+  readonly authorizationUrl?: string | undefined;
   /** Explicitly declares whether the client should open this URL automatically. */
-  readonly authorizationUrlKind: ProviderAuthorizationUrlKind;
+  readonly authorizationUrlKind?: ProviderAuthorizationUrlKind | undefined;
   readonly userCode?: string | undefined;
   /**
    * Some official browser flows return a one-time code that must be handed

@@ -19,7 +19,7 @@ export interface ManagedRuntimeChecksum {
  * verification, staging, smoke testing, and atomic activation are shared.
  */
 export interface ManagedRuntimeArtifact {
-  readonly provider: "codex" | "claudeAgent" | "antigravity";
+  readonly provider: "codex" | "claudeAgent" | "antigravity" | "grok";
   readonly version: string;
   readonly target: ManagedRuntimeTarget;
   readonly artifactName: string;

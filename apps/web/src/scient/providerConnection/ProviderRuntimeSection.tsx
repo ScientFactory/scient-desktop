@@ -61,6 +61,28 @@ function runtimeFromResult(
   return providers.find((provider) => provider.instanceId === instanceId)?.connection?.runtime;
 }
 
+export function resolveProviderRuntimeForPresentation(
+  serverRuntime: ProviderRuntimeSummary | undefined,
+  localRuntime: ProviderRuntimeSummary | null,
+): ProviderRuntimeSummary | null | undefined {
+  if (!serverRuntime) return localRuntime;
+  if (!localRuntime) return serverRuntime;
+  if (serverRuntime.operation?.operationId === localRuntime.operation?.operationId) {
+    return serverRuntime;
+  }
+  const localOperation = localRuntime.operation;
+  if (!localOperation || !ACTIVE_RUNTIME_STATUSES.has(localOperation.status)) {
+    return serverRuntime;
+  }
+  // A remove operation finishes by changing the durable runtime source. That
+  // is stronger evidence than an optimistic local progress snapshot, even if
+  // the terminal operation event was coalesced out of the streamed update.
+  if (localOperation.action === "remove" && serverRuntime.source !== "scient_managed") {
+    return serverRuntime;
+  }
+  return localRuntime;
+}
+
 function formatDownloadSize(bytes: number | null): string | null {
   if (bytes === null) return null;
   return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
@@ -131,16 +153,10 @@ export function ProviderRuntimeSection(props: {
   }, [props.provider.instanceId]);
 
   const serverRuntime = props.provider.connection?.runtime;
-  const runtime = useMemo(() => {
-    if (!serverRuntime) return localRuntime;
-    if (!localRuntime) return serverRuntime;
-    if (serverRuntime.operation?.operationId === localRuntime.operation?.operationId) {
-      return serverRuntime;
-    }
-    return localRuntime.operation && ACTIVE_RUNTIME_STATUSES.has(localRuntime.operation.status)
-      ? localRuntime
-      : serverRuntime;
-  }, [localRuntime, serverRuntime]);
+  const runtime = useMemo(
+    () => resolveProviderRuntimeForPresentation(serverRuntime, localRuntime),
+    [localRuntime, serverRuntime],
+  );
 
   if (!runtime) return null;
 
@@ -170,8 +186,8 @@ export function ProviderRuntimeSection(props: {
           catalogRevision: nextPlan.catalogRevision,
         },
       });
-      setPendingAction(null);
       if (result._tag === "Failure") {
+        setPendingAction(null);
         if (!isAtomCommandInterrupted(result)) {
           setLocalError(
             failureMessage(
@@ -182,10 +198,11 @@ export function ProviderRuntimeSection(props: {
         }
         return;
       }
-      setPlan(null);
-      props.onPlanOpenChange?.(false);
       const nextRuntime = runtimeFromResult(result.value.providers, props.provider.instanceId);
       setLocalRuntime(nextRuntime ?? null);
+      setPlan(null);
+      props.onPlanOpenChange?.(false);
+      setPendingAction(null);
       if (
         nextRuntime?.operation?.action === nextPlan.action &&
         nextRuntime.operation.status === "succeeded"
@@ -414,12 +431,6 @@ export function ProviderRuntimeSection(props: {
               custom installation.
             </p>
           </>
-        ) : null}
-        {isCompactInstallPlan ? (
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Official Google release, installed privately by Scient. Other installations are
-            untouched.
-          </p>
         ) : null}
         {localError ? (
           <p role="alert" className="text-xs leading-relaxed text-destructive">

@@ -22,6 +22,68 @@ const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
 
 describe("AcpSessionRuntime", () => {
+  it.effect("initializes without authenticating or creating a session", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const [first, second] = yield* Effect.all([runtime.initialize(), runtime.initialize()], {
+        concurrency: "unbounded",
+      });
+
+      expect(first).toMatchObject({ protocolVersion: 1 });
+      expect(second).toEqual(first);
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: { command: mockAgentCommand, args: mockAgentArgs },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-probe-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => requestEvents.push(event)).pipe(Effect.asVoid),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("shares initialize across a concurrent probe and full session startup", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const [initialized, started] = yield* Effect.all([runtime.initialize(), runtime.start()], {
+        concurrency: "unbounded",
+      });
+
+      expect(started.initializeResult).toEqual(initialized);
+      expect(
+        requestEvents.filter(
+          (event) => event.status === "started" && event.method === "initialize",
+        ),
+      ).toHaveLength(1);
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize", "authenticate", "session/new"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: { command: mockAgentCommand, args: mockAgentArgs },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-probe-start-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => requestEvents.push(event)).pipe(Effect.asVoid),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
