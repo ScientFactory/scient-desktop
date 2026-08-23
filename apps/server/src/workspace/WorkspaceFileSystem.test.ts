@@ -440,6 +440,47 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("allows only one concurrent exclusive create for the same path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+
+        const results = yield* Effect.all(
+          [
+            workspaceFileSystem
+              .writeFile({
+                cwd,
+                relativePath: "notes/race.md",
+                contents: "# First\n",
+                createOnly: true,
+              })
+              .pipe(Effect.result),
+            workspaceFileSystem
+              .writeFile({
+                cwd,
+                relativePath: "notes/race.md",
+                contents: "# Second\n",
+                createOnly: true,
+              })
+              .pipe(Effect.result),
+          ],
+          { concurrency: 2 },
+        );
+
+        expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+        const failure = results.find((result) => result._tag === "Failure");
+        expect(failure?._tag).toBe("Failure");
+        if (failure?._tag === "Failure") {
+          expect(failure.failure).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        }
+        expect(["# First\n", "# Second\n"]).toContain(
+          yield* fileSystem.readFileString(path.join(cwd, "notes/race.md")),
+        );
+      }),
+    );
+
     it.effect("rejects new-file writes through a symlinked parent outside the workspace", () =>
       Effect.gen(function* () {
         if ((yield* HostProcessPlatform) === "win32") return;
@@ -593,6 +634,39 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.readFileString(path.join(cwd, "analysis.m"))).toBe(
           "answer = 2;\n",
         );
+      }),
+    );
+
+    it.effect("does not recreate a file deleted after it was opened", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "deleted.md");
+        yield* writeTextFile(cwd, "deleted.md", "# Before\n");
+        const opened = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "deleted.md",
+        });
+        yield* fileSystem.remove(absolutePath);
+
+        const result = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "deleted.md",
+            contents: "# Local\n",
+            expectedRevision: opened.revision,
+          })
+          .pipe(Effect.result);
+
+        expect(result._tag).toBe("Failure");
+        expect(
+          yield* fileSystem.stat(absolutePath).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
       }),
     );
 
@@ -785,6 +859,59 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.readFileString(path.join(cwd, "draft.md"))).toBe("# Two\n");
         expect(
           yield* fileSystem.stat(path.join(cwd, "final.md")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("allows only one concurrent rename of the same source", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "draft.md", "# Draft\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "draft.md" });
+
+        const results = yield* Effect.all(
+          [
+            workspaceFileSystem
+              .renameFile({
+                cwd,
+                relativePath: "draft.md",
+                destinationRelativePath: "final-a.md",
+                expectedRevision: opened.revision,
+              })
+              .pipe(Effect.result),
+            workspaceFileSystem
+              .renameFile({
+                cwd,
+                relativePath: "draft.md",
+                destinationRelativePath: "final-b.md",
+                expectedRevision: opened.revision,
+              })
+              .pipe(Effect.result),
+          ],
+          { concurrency: 2 },
+        );
+
+        expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+        const existingDestinations: string[] = [];
+        for (const relativePath of ["final-a.md", "final-b.md"]) {
+          const exists = yield* fileSystem.stat(path.join(cwd, relativePath)).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (exists) existingDestinations.push(relativePath);
+        }
+        expect(existingDestinations).toHaveLength(1);
+        expect(yield* fileSystem.readFileString(path.join(cwd, existingDestinations[0]!))).toBe(
+          "# Draft\n",
+        );
+        expect(
+          yield* fileSystem.stat(path.join(cwd, "draft.md")).pipe(
             Effect.as(true),
             Effect.orElseSucceed(() => false),
           ),

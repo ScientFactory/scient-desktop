@@ -136,4 +136,27 @@ describe("MarkdownSaveQueue", () => {
     expect(queue.pending).toBe(true);
     expect(persist).not.toHaveBeenCalled();
   });
+
+  it("flushes the latest debounced edit before disposal completes", async () => {
+    vi.useFakeTimers();
+    const persist = vi.fn(async () => ({ revision: "r1" }));
+    const confirmed = vi.fn();
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 60_000,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: confirmed,
+      onFailure: vi.fn(),
+    });
+    queue.enqueue(intent("close-safe", 1));
+
+    await queue.dispose({ flush: true });
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(confirmed).toHaveBeenCalledWith(intent("close-safe", 1), { revision: "r1" });
+    expect(queue.pending).toBe(false);
+    expect(() => queue.enqueue(intent("too-late", 2))).toThrow(
+      "Cannot enqueue a disposed Markdown save queue.",
+    );
+  });
 });
