@@ -4,7 +4,7 @@ import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-import type { FileReloadNotice } from "./useWorkspaceFileRefresh";
+import type { FileReloadNotice, FileSaveErrorNotice } from "./useWorkspaceFileRefresh";
 
 export function ScientFileReloadButton(props: {
   readonly automaticRefreshUnavailable?: boolean;
@@ -48,13 +48,17 @@ export function ScientFileFreshnessNotices(props: {
   readonly relativePath: string | null;
   readonly notice: FileReloadNotice | null;
   readonly readError: string | null;
+  readonly saveError: FileSaveErrorNotice | null;
   readonly hasFallbackData: boolean;
   readonly onCancel: () => void;
   readonly onReload: () => void;
   readonly onRequestOverwrite: () => void;
+  readonly onRetrySave: () => void;
   readonly onResolve: (action: "discard" | "retry") => void;
 }) {
   const visibleNotice = props.notice?.relativePath === props.relativePath ? props.notice : null;
+  const visibleSaveError =
+    props.saveError?.relativePath === props.relativePath ? props.saveError : null;
 
   return (
     <>
@@ -88,6 +92,23 @@ export function ScientFileFreshnessNotices(props: {
             }
           >
             {visibleNotice.kind === "confirm-overwrite" ? "Overwrite disk" : "Reload from disk"}
+          </Button>
+        </div>
+      ) : null}
+      {visibleSaveError && !visibleNotice ? (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] text-destructive"
+          role="alert"
+        >
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            Changes are still local and have not been saved. {visibleSaveError.message}
+          </span>
+          <Button size="xs" variant="ghost" onClick={props.onReload}>
+            Reload…
+          </Button>
+          <Button size="xs" variant="outline" onClick={props.onRetrySave}>
+            Retry save
           </Button>
         </div>
       ) : null}

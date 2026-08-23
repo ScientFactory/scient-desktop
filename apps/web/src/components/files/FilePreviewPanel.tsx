@@ -69,6 +69,10 @@ import {
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
 import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
+import {
+  ScientMarkdownSaveStatus,
+  type ScientMarkdownSaveStatusKind,
+} from "~/scient/markdownEditor/ui/ScientMarkdownSaveStatus";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -1033,7 +1037,9 @@ export default function FilePreviewPanel({
     reloadNotice,
     requestManualReload,
     requestOverwrite,
+    requestRetrySave,
     resolveReloadNotice,
+    saveError,
     saveResolution,
     viewerRefreshKey,
   } = useWorkspaceFileRefresh({
@@ -1059,6 +1065,18 @@ export default function FilePreviewPanel({
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const markdownSaveStatus: ScientMarkdownSaveStatusKind =
+    file.data === null
+      ? "loading"
+      : reloadNotice?.kind === "external-change" || reloadNotice?.kind === "confirm-overwrite"
+        ? "conflict"
+        : reloadNotice?.kind === "manual-reload"
+          ? "unsaved"
+          : saveError?.relativePath === relativePath
+            ? "failed"
+            : sourcePending
+              ? "saving"
+              : "saved";
   const setMarkdownMode = useCallback(
     (mode: MarkdownDocumentMode) => {
       setMarkdownModeState(mode);
@@ -1211,6 +1229,7 @@ export default function FilePreviewPanel({
               }}
             />
           ) : null}
+          {isMarkdown ? <ScientMarkdownSaveStatus status={markdownSaveStatus} /> : null}
           {isMarkdown && !file.data?.readOnly ? (
             <div className="flex shrink-0 items-center gap-0.5" aria-label="Markdown view mode">
               <Tooltip>
@@ -1344,10 +1363,12 @@ export default function FilePreviewPanel({
         relativePath={relativePath}
         notice={reloadNotice}
         readError={file.error}
+        saveError={saveError}
         hasFallbackData={file.data !== null}
         onCancel={cancelReloadNotice}
         onReload={requestManualReload}
         onRequestOverwrite={requestOverwrite}
+        onRetrySave={requestRetrySave}
         onResolve={resolveReloadNotice}
       />
       {relativePath && !isPdf && file.data?.readOnly ? (

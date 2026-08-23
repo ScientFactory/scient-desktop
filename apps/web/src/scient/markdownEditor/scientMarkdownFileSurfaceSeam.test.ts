@@ -20,6 +20,7 @@ describe("Scient Markdown file-preview seam", () => {
   it("lazily mounts exactly one owned editor and removes the old ChatMarkdown preview path", () => {
     expect(panelSource).toContain('import("~/scient/markdownEditor/ScientMarkdownFileSurface")');
     expect(panelSource.match(/<ScientMarkdownFileSurface\b/gu)).toHaveLength(1);
+    expect(panelSource.match(/<ScientMarkdownSaveStatus\b/gu)).toHaveLength(1);
     expect(panelSource).not.toContain("RenderedMarkdownSurface");
     expect(panelSource).not.toContain("resolveMarkdownTaskPreviewUpdate");
   });

@@ -57,6 +57,11 @@ export interface FileReloadNotice {
   readonly revision: string;
 }
 
+export interface FileSaveErrorNotice {
+  readonly message: string;
+  readonly relativePath: string;
+}
+
 /**
  * Scient's additive freshness seam for the inherited file surface. Native
  * watcher hints, manual reload, optimistic-editor conflict
@@ -79,6 +84,7 @@ export function useWorkspaceFileRefresh(input: {
   );
   const fileChanges = useWorkspaceFileChanges(input.environmentId, input.cwd, input.relativePath);
   const [reloadNotice, setReloadNotice] = useState<FileReloadNotice | null>(null);
+  const [saveError, setSaveError] = useState<FileSaveErrorNotice | null>(null);
   const [saveResolution, setSaveResolution] = useState<FileSaveResolution | null>(null);
   const [viewerRefreshKey, setViewerRefreshKey] = useState(0);
   const lastObservedChangeRef = useRef<object | null>(null);
@@ -148,6 +154,7 @@ export function useWorkspaceFileRefresh(input: {
 
   useEffect(() => {
     setReloadNotice(null);
+    setSaveError(null);
     setSaveResolution(null);
     lastObservedChangeRef.current = null;
     lastConfirmedSaveRef.current = null;
@@ -165,26 +172,61 @@ export function useWorkspaceFileRefresh(input: {
 
   const handleSaveFailure = useCallback(
     (path: string, error: unknown) => {
-      if (path !== input.relativePath || !isProjectWriteFileError(error)) return;
-      if (error.failure !== "revision_conflict" || error.currentRevision === undefined) return;
-      setReloadNotice({
-        kind: "external-change",
+      if (path !== input.relativePath) return;
+      if (
+        isProjectWriteFileError(error) &&
+        error.failure === "revision_conflict" &&
+        error.currentRevision !== undefined
+      ) {
+        setSaveError(null);
+        setReloadNotice({
+          kind: "external-change",
+          relativePath: path,
+          revision: error.currentRevision,
+        });
+        refreshAuthoritativeFile();
+        return;
+      }
+      setSaveError({
         relativePath: path,
-        revision: error.currentRevision,
+        message:
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The workspace write failed.",
       });
-      refreshAuthoritativeFile();
     },
     [input.relativePath, refreshAuthoritativeFile],
   );
 
   const handleSaveConfirmed = useCallback((path: string, contents: string, revision: string) => {
     lastConfirmedSaveRef.current = { relativePath: path, contents, revision };
+    setSaveError((current) => (current?.relativePath === path ? null : current));
     setReloadNotice((current) => (current?.relativePath === path ? null : current));
   }, []);
 
   const handleSaveResolutionApplied = useCallback(() => {
     setSaveResolution(null);
+    setSaveError(null);
   }, []);
+
+  const requestRetrySave = useCallback(() => {
+    if (input.relativePath === null || saveError?.relativePath !== input.relativePath) return;
+    const revision = file.authoritativeData?.revision ?? file.data?.revision;
+    if (revision === undefined) return;
+    setSaveResolution({
+      id: (saveResolution?.id ?? 0) + 1,
+      relativePath: input.relativePath,
+      revision,
+      action: "retry",
+    });
+    setSaveError(null);
+  }, [
+    file.authoritativeData?.revision,
+    file.data?.revision,
+    input.relativePath,
+    saveError?.relativePath,
+    saveResolution?.id,
+  ]);
 
   const requestManualReload = useCallback(() => {
     if (input.relativePath === null) return;
@@ -260,10 +302,12 @@ export function useWorkspaceFileRefresh(input: {
     handleSaveFailure,
     handleSaveResolutionApplied,
     reloadNotice,
+    requestRetrySave,
     requestManualReload,
     requestOverwrite,
     resolveReloadNotice,
     saveResolution,
+    saveError,
     viewerRefreshKey,
   };
 }
