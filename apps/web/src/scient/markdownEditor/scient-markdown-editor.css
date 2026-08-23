@@ -167,6 +167,54 @@
   white-space: pre-wrap;
 }
 
+.scient-markdown-math {
+  border-radius: 0.35rem;
+}
+
+.scient-markdown-math.is-inline {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 0.35rem;
+  vertical-align: baseline;
+}
+
+.scient-markdown-math.is-display {
+  display: flex;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-block: 0.5rem;
+}
+
+.scient-markdown-math.is-selected {
+  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.scient-markdown-math-source {
+  min-width: 8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--background);
+  padding: 0.35rem 0.5rem;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  outline: none;
+}
+
+textarea.scient-markdown-math-source {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.scient-markdown-math-source:focus-visible {
+  border-color: color-mix(in oklab, var(--primary) 70%, var(--border));
+}
+
 .scient-markdown-document.is-write,
 .scient-markdown-document.is-split {
   caret-color: var(--foreground);

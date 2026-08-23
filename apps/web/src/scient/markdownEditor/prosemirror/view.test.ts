@@ -76,4 +76,31 @@ describe("ScientMarkdownEditorView", () => {
     expect(view.dom.querySelector("h1")?.textContent).toBe("Agent update");
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
+
+  it("keeps rendered math visible while the rich document is editable", async () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Energy is $E=mc^2$.\n\n$$\n\\int_0^1 x \\, dx\n$$\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Scientific Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(view.editable).toBe(true);
+    expect(view.dom.querySelectorAll("[data-scient-markdown-math]")).toHaveLength(2);
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("[data-scient-markdown-math='inline']")?.textContent).toContain(
+        "E=mc^2",
+      );
+      expect(
+        view.dom.querySelector("[data-scient-markdown-math='display']")?.textContent,
+      ).toContain("\\int_0^1 x \\, dx");
+    });
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
 });

@@ -131,6 +131,52 @@ describe("Scient ProseMirror projection", () => {
     expect(state.session.draftSource.endsWith("\r\n\r\n<!-- keep  exact -->\r\n")).toBe(true);
   });
 
+  it("keeps inline and display math as rich nodes and rewrites only the edited source block", () => {
+    const source = [
+      "Energy is $E=mc^2$.",
+      "",
+      "$$",
+      "\\int_0^1 x \\, dx",
+      "$$",
+      "",
+      "Untouched  spacing.",
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let inlineMathPosition: number | null = null;
+    let displayMathPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "inline_math") inlineMathPosition = position;
+      if (node.type.name === "display_math") displayMathPosition = position;
+    });
+
+    expect(inlineMathPosition).not.toBeNull();
+    expect(displayMathPosition).not.toBeNull();
+    expect(state.state.doc.nodeAt(inlineMathPosition!)?.attrs.tex).toBe("E=mc^2");
+    expect(state.state.doc.nodeAt(displayMathPosition!)?.attrs.tex).toBe("\\int_0^1 x \\, dx");
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(inlineMathPosition!, undefined, {
+        ...state.state.doc.nodeAt(inlineMathPosition!)?.attrs,
+        tex: "E=mc^3",
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe(
+      [
+        "Energy is $E=mc^3$.",
+        "",
+        "$$",
+        "\\int_0^1 x \\, dx",
+        "$$",
+        "",
+        "Untouched  spacing.",
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("keeps the projection immutable when replacing only the current document", () => {
     const projection = createScientMarkdownProjection("One\n");
     const next = withProjectedDocument(projection, projection.document);

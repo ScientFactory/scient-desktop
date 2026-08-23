@@ -35,7 +35,19 @@ function rawBlock(block: MarkdownSourceBlock): ProseMirrorNode {
   return nodeType.create({ source: block.source, sourceId: block.id, sourceKind: block.kind });
 }
 
+function displayMathBlock(block: MarkdownSourceBlock): ProseMirrorNode {
+  const nodeType = scientMarkdownSchema.nodes.display_math;
+  if (!nodeType) throw new Error("Scient Markdown schema is missing display_math.");
+  const trimmed = block.source.trim();
+  if (!trimmed.startsWith("$$") || !trimmed.endsWith("$$") || trimmed.length < 4) {
+    return rawBlock(block);
+  }
+  const tex = trimmed.slice(2, -2).replace(/^\r?\n|\r?\n$/gu, "");
+  return nodeType.create({ tex, delimiter: "$$", sourceId: block.id });
+}
+
 function parseBlock(block: MarkdownSourceBlock): ProseMirrorNode {
+  if (block.kind === "math") return displayMathBlock(block);
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);
   const parsed = scientMarkdownParser.parse(block.source);
   if (parsed.childCount !== 1) return rawBlock(block);

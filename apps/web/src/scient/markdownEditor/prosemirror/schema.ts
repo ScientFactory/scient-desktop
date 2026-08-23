@@ -9,6 +9,8 @@ import type { Node as ProseMirrorNode, NodeSpec, SchemaSpec } from "prosemirror-
 import { Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
+import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
+
 const SOURCE_ID_ATTR = { default: null } as const;
 const TOP_LEVEL_SOURCE_NODE_NAMES = [
   "paragraph",
@@ -19,8 +21,57 @@ const TOP_LEVEL_SOURCE_NODE_NAMES = [
   "ordered_list",
   "bullet_list",
   "table",
+  "display_math",
   "raw_block",
 ] as const;
+
+const inlineMathSpec: NodeSpec = {
+  attrs: { tex: { default: "" }, delimiter: { default: "$" } },
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  parseDOM: [
+    {
+      tag: "span[data-scient-markdown-inline-math]",
+      getAttrs: (element) => ({ tex: element.getAttribute("data-tex") ?? "" }),
+    },
+  ],
+  toDOM: (node) => [
+    "span",
+    {
+      "data-scient-markdown-inline-math": "true",
+      "data-tex": String(node.attrs.tex),
+    },
+    `$${String(node.attrs.tex)}$`,
+  ],
+};
+
+const displayMathSpec: NodeSpec = {
+  attrs: {
+    tex: { default: "" },
+    delimiter: { default: "$$" },
+    sourceId: SOURCE_ID_ATTR,
+  },
+  group: "block",
+  atom: true,
+  selectable: true,
+  defining: true,
+  parseDOM: [
+    {
+      tag: "div[data-scient-markdown-display-math]",
+      getAttrs: (element) => ({ tex: element.getAttribute("data-tex") ?? "" }),
+    },
+  ],
+  toDOM: (node) => [
+    "div",
+    {
+      "data-scient-markdown-display-math": "true",
+      "data-tex": String(node.attrs.tex),
+    },
+    `$$\n${String(node.attrs.tex)}\n$$`,
+  ],
+};
 
 const rawBlockSpec: NodeSpec = {
   attrs: {
@@ -52,7 +103,13 @@ const rawBlockSpec: NodeSpec = {
   toDebugString: (node) => `raw_block(${JSON.stringify(node.attrs.sourceKind)})`,
 };
 
-let nodes = defaultMarkdownParser.schema.spec.nodes.addBefore("image", "raw_block", rawBlockSpec);
+let nodes = defaultMarkdownParser.schema.spec.nodes.addBefore(
+  "image",
+  "inline_math",
+  inlineMathSpec,
+);
+nodes = nodes.addBefore("image", "display_math", displayMathSpec);
+nodes = nodes.addBefore("image", "raw_block", rawBlockSpec);
 nodes = nodes.append(
   tableNodes({
     tableGroup: "block",
@@ -92,6 +149,27 @@ function tableAlignment(token: { readonly attrGet: (name: string) => string | nu
 
 const gfmTokenizer = MarkdownIt("commonmark", { html: false }).enable("table");
 
+gfmTokenizer.inline.ruler.after("escape", "scient_inline_math", (state, silent) => {
+  const start = state.pos;
+  if (state.src[start] !== "$" || state.src[start + 1] === "$") return false;
+  const previous = start > 0 ? state.src[start - 1] : "";
+  if (previous && /[\p{L}\p{N}$]/u.test(previous)) return false;
+  let end = start + 1;
+  while (end < state.posMax) {
+    if (state.src[end] === "$" && state.src[end - 1] !== "\\") break;
+    end += 1;
+  }
+  if (end >= state.posMax) return false;
+  const tex = state.src.slice(start + 1, end);
+  if (!isPlausibleScientSingleDollarTex(tex)) return false;
+  if (!silent) {
+    const token = state.push("scient_inline_math", "math", 0);
+    token.content = tex;
+  }
+  state.pos = end + 1;
+  return true;
+});
+
 export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfmTokenizer, {
   ...defaultMarkdownParser.tokens,
   table: { block: "table" },
@@ -100,6 +178,10 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
   tr: { block: "table_row" },
   th: { block: "table_header", getAttrs: tableAlignment },
   td: { block: "table_cell", getAttrs: tableAlignment },
+  scient_inline_math: {
+    node: "inline_math",
+    getAttrs: (token) => ({ tex: token.content, delimiter: "$" }),
+  },
 });
 
 function tableCellMarkdown(cell: ProseMirrorNode): string {
@@ -147,6 +229,11 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
     raw_block: (state, node) => state.write(String(node.attrs.source)),
+    inline_math: (state, node) => state.text(`$${String(node.attrs.tex)}$`, false),
+    display_math: (state, node) => {
+      state.write(`$$\n${String(node.attrs.tex)}\n$$`);
+      state.closeBlock(node);
+    },
     table: (state, node) => {
       state.write(tableMarkdown(node));
       state.closeBlock(node);

@@ -8,6 +8,7 @@ import {
   type ScientExternalSourceResult,
   type ScientMarkdownTransactionOrigin,
 } from "./session";
+import { scientMarkdownNodeViews } from "../nodes";
 
 export interface ScientMarkdownEditorViewOptions {
   readonly source: string;
@@ -112,6 +113,7 @@ export class ScientMarkdownEditorView {
             : "user";
         this.applyTransaction(transaction, origin);
       },
+      nodeViews: scientMarkdownNodeViews,
     };
   }
 }
