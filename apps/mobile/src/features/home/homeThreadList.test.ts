@@ -746,34 +746,16 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
   });
 
-  it("represents Quick Chat as an environment workspace, never a fake project", () => {
-    const environmentId = EnvironmentId.make("environment-quick-chat");
+  it("does not surface legacy projectless threads", () => {
+    const environmentId = EnvironmentId.make("environment-legacy");
     const thread = makeThread({
       environmentId,
-      id: ThreadId.make("thread-quick-chat"),
+      id: ThreadId.make("thread-legacy"),
       projectId: null,
       title: "Plan the week",
-      workspaceRoot: "/workspaces/quick-chat",
+      workspaceRoot: "/workspaces/legacy",
     });
 
-    const groups = buildGroups([], [thread]);
-
-    expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({
-      title: "Quick chats",
-      context: {
-        kind: "quick-chat",
-        environmentId,
-        workspaceRoot: "/workspaces/quick-chat",
-      },
-      projects: [],
-      newThreadTarget: null,
-    });
-
-    expect(
-      buildGroups([], [thread], {
-        searchQuery: "general chat",
-      }),
-    ).toHaveLength(1);
+    expect(buildGroups([], [thread])).toEqual([]);
   });
 });

@@ -15,10 +15,6 @@ import {
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import {
-  projectlessDraftKey,
-  type DraftThreadTargetRef,
-} from "../scient/quickChat/projectlessDraftTarget";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
@@ -75,7 +71,7 @@ export function useNewThreadHandler() {
 
   return useCallback(
     (
-      projectRef: DraftThreadTargetRef,
+      projectRef: ScopedProjectRef,
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
@@ -182,8 +178,6 @@ export function useNewThreadHandler() {
           moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
         }
       };
-      const scopedProjectRef =
-        projectRef.projectId === null ? null : (projectRef as ScopedProjectRef);
       // Async callers can outlive the render that created this callback. Read
       // the live projection as a fallback so a just-created project gets its
       // canonical logical identity and defaults even before React re-renders.
@@ -192,12 +186,13 @@ export function useNewThreadHandler() {
           (candidate) =>
             candidate.id === projectRef.projectId &&
             candidate.environmentId === projectRef.environmentId,
-        ) ?? (scopedProjectRef ? (readProject(scopedProjectRef) ?? undefined) : undefined);
+        ) ??
+        readProject(projectRef) ??
+        undefined;
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-        if (projectRef.projectId === null) return "local";
         const consultProjectFile = project !== undefined && project.defaultThreadEnvMode == null;
         return resolveDefaultThreadEnvMode({
           projectSetting: project?.defaultThreadEnvMode,
@@ -210,12 +205,9 @@ export function useNewThreadHandler() {
           globalDefault: primaryServerSettings.defaultThreadEnvMode,
         });
       };
-      const logicalProjectKey =
-        projectRef.projectId === null
-          ? projectlessDraftKey(projectRef.environmentId)
-          : project
-            ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-            : scopedProjectKey(projectRef as ScopedProjectRef);
+      const logicalProjectKey = project
+        ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+        : scopedProjectKey(projectRef);
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;

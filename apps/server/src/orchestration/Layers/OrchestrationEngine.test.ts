@@ -567,69 +567,6 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
-  it("durably relocates a projectless Quick Chat without changing its identity", async () => {
-    const system = await createOrchestrationSystem();
-    const { engine } = system;
-    const createdAt = now();
-    const targetProjectId = asProjectId("project-quick-chat-target");
-    const threadId = ThreadId.make("thread-quick-chat-relocation");
-
-    await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-quick-chat-target-create"),
-        projectId: targetProjectId,
-        title: "Research Project",
-        workspaceRoot: "/tmp/quick-chat-target",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-quick-chat-create"),
-        threadId,
-        projectId: null,
-        workspaceRoot: "/tmp/quick-chat-environment",
-        title: "Quick chat",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "full-access",
-        branch: "quick-chat-branch",
-        worktreePath: "/tmp/quick-chat-worktree",
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-quick-chat-move"),
-        threadId,
-        moveToProjectId: targetProjectId,
-      }),
-    );
-
-    const snapshot = await system.readModel();
-    const relocated = snapshot.threads.find((thread) => thread.id === threadId);
-    expect(relocated).toMatchObject({
-      id: threadId,
-      projectId: targetProjectId,
-      workspaceRoot: null,
-      branch: null,
-      worktreePath: null,
-      title: "Quick chat",
-    });
-
-    await system.dispose();
-  });
-
   it("allows authoritative worktree bootstrap to assign a temporary branch", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

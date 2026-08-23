@@ -339,13 +339,12 @@ function ThreadNavigationSidebarPane(
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProjectRefs === null
-        ? threads
-        : threads.filter(
-            (thread) =>
-              thread.projectId !== null &&
-              selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
-          ),
+      threads.filter(
+        (thread) =>
+          thread.projectId !== null &&
+          (selectedProjectRefs === null ||
+            selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId))),
+      ),
     [selectedProjectRefs, threads],
   );
   const scopedPendingTasks = useMemo(
@@ -938,10 +937,8 @@ function ThreadNavigationSidebarPane(
         }
         case "v2-thread": {
           const thread = item.item.thread;
-          const scopeKey =
-            thread.projectId === null
-              ? `projectless:${thread.environmentId}`
-              : scopedProjectKey(thread.environmentId, thread.projectId);
+          if (thread.projectId === null) return null;
+          const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
           return (
             <ThreadListV2Row
               thread={thread}
@@ -1075,6 +1072,7 @@ function ThreadNavigationSidebarPane(
           );
         case "thread": {
           const thread = item.thread;
+          if (thread.projectId === null) return null;
           return (
             <ThreadListRow
               variant="sidebar"
@@ -1083,11 +1081,8 @@ function ThreadNavigationSidebarPane(
                 savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
               projectCwd={
-                thread.projectId === null
-                  ? (thread.workspaceRoot ?? null)
-                  : (projectCwdByKey.get(
-                      scopedProjectKey(thread.environmentId, thread.projectId),
-                    ) ?? null)
+                projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
+                null
               }
               isLast={item.isLast}
               searchMatch={threadSearchMatchByKey.get(

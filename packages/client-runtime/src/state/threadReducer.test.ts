@@ -306,15 +306,15 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
-    it("relocates an open Quick Chat without replacing its conversation", () => {
-      const quickChat: OrchestrationThread = {
+    it("replays a historical project reassignment without replacing the conversation", () => {
+      const legacyThread: OrchestrationThread = {
         ...baseThread,
         projectId: null,
-        workspaceRoot: "/tmp/quick-chat",
-        branch: "quick-chat-branch",
-        worktreePath: "/tmp/quick-chat-worktree",
+        workspaceRoot: "/tmp/legacy-workspace",
+        branch: "legacy-branch",
+        worktreePath: "/tmp/legacy-worktree",
       };
-      const result = applyThreadDetailEvent(quickChat, {
+      const result = applyThreadDetailEvent(legacyThread, {
         ...baseEventFields,
         sequence: 6,
         occurredAt: "2026-04-01T06:00:00.000Z",
@@ -333,12 +333,12 @@ describe("applyThreadDetailEvent", () => {
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
-        expect(result.thread.id).toBe(quickChat.id);
+        expect(result.thread.id).toBe(legacyThread.id);
         expect(result.thread.projectId).toBe("project-research");
         expect(result.thread.workspaceRoot).toBeNull();
         expect(result.thread.branch).toBeNull();
         expect(result.thread.worktreePath).toBeNull();
-        expect(result.thread.messages).toBe(quickChat.messages);
+        expect(result.thread.messages).toBe(legacyThread.messages);
       }
     });
   });

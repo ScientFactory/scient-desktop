@@ -1,9 +1,5 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import {
-  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
-  SCIENT_QUICK_CHATS_LABEL,
-} from "@t3tools/client-runtime/scient/quick-chat";
-import {
   scopeProject,
   scopeThreadShell,
   type EnvironmentThreadShell,
@@ -13,13 +9,13 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import type { ScientThreadGroupContext } from "../scient-quick-chat/threadGroupContext";
+import type { ProjectThreadGroupContext } from "../threads/projectThreadGroupContext";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
 export interface ArchivedThreadGroup {
   readonly key: string;
-  readonly context: ScientThreadGroupContext;
+  readonly context: ProjectThreadGroupContext;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
@@ -49,16 +45,12 @@ export function buildArchivedThreadGroups(input: {
 
     const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
     const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
-    const projectlessThreads: EnvironmentThreadShell[] = [];
     for (const thread of entry.snapshot.threads) {
       if (thread.archivedAt === null) {
         continue;
       }
       const scopedThread = scopeThreadShell(entry.environmentId, thread);
-      if (thread.projectId === null) {
-        projectlessThreads.push(scopedThread);
-        continue;
-      }
+      if (thread.projectId === null) continue;
       const threads = threadsByProjectId.get(thread.projectId) ?? [];
       threads.push(scopedThread);
       threadsByProjectId.set(thread.projectId, threads);
@@ -99,39 +91,6 @@ export function buildArchivedThreadGroups(input: {
         ),
       });
     }
-    const matchingProjectlessThreads =
-      query.length === 0 ||
-      matchesQuery(SCIENT_QUICK_CHATS_LABEL, query) ||
-      SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS.some((term) => matchesQuery(term, query)) ||
-      matchesQuery(environmentLabel, query)
-        ? projectlessThreads
-        : projectlessThreads.filter((thread) => matchesQuery(thread.title, query));
-    const firstProjectlessThread = matchingProjectlessThreads[0];
-    if (firstProjectlessThread) {
-      groups.push({
-        key: `projectless:${entry.environmentId}`,
-        context: {
-          kind: "quick-chat",
-          environmentId: entry.environmentId,
-          workspaceRoot: firstProjectlessThread.workspaceRoot ?? "",
-        },
-        threads: Arr.sort(
-          matchingProjectlessThreads,
-          Order.mapInput(
-            Order.Struct({
-              timestamp: input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number,
-              title: Order.String,
-              id: Order.String,
-            }),
-            (thread: EnvironmentThreadShell) => ({
-              timestamp: archiveTimestamp(thread),
-              title: thread.title,
-              id: thread.id,
-            }),
-          ),
-        ),
-      });
-    }
   }
 
   const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
@@ -141,8 +100,7 @@ export function buildArchivedThreadGroups(input: {
       Order.Struct({ timestamp: timestampOrder, title: Order.String, key: Order.String }),
       (group: ArchivedThreadGroup) => ({
         timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : 0,
-        title:
-          group.context.kind === "project" ? group.context.project.title : SCIENT_QUICK_CHATS_LABEL,
+        title: group.context.project.title,
         key: group.key,
       }),
     ),

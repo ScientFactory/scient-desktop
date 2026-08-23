@@ -21,17 +21,13 @@ import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
-import {
-  resolveScientThreadStartTurnWorkspace,
-  validateQuickChatCreation,
-} from "../scient-quick-chat/quickChatCreationValidation";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
 
   return useCallback(
     async (input: {
-      readonly project: EnvironmentProject | null;
+      readonly project: EnvironmentProject;
       readonly environmentId: EnvironmentProject["environmentId"];
       readonly modelSelection: ModelSelection;
       readonly envMode: "local" | "worktree";
@@ -49,34 +45,23 @@ export function useCreateProjectThread() {
       const threadId = ThreadId.make(metadata.threadId);
       const initialMessageText = input.initialMessageText.trim();
 
-      const validationError = input.project
-        ? validateProjectThreadCreation({
-            environmentId: input.project.environmentId,
-            projectId: input.project.id,
-            environmentMode: input.envMode,
-            branch: input.branch,
-            initialMessageText,
-          })
-        : validateQuickChatCreation({
-            environmentId: input.environmentId,
-            initialMessageText,
-          });
+      const validationError = validateProjectThreadCreation({
+        environmentId: input.project.environmentId,
+        projectId: input.project.id,
+        environmentMode: input.envMode,
+        branch: input.branch,
+        initialMessageText,
+      });
       if (validationError !== null) {
         setPendingConnectionError(validationError.message);
         return AsyncResult.failure(Cause.fail(validationError));
       }
 
-      const workspace = resolveScientThreadStartTurnWorkspace({
-        hasProject: input.project !== null,
-        envMode: input.envMode,
-        branch: input.branch,
-        worktreePath: input.worktreePath,
-      });
       const result = await startTurn({
         environmentId: input.environmentId,
         input: buildProjectThreadStartTurnInput({
-          projectId: input.project?.id ?? null,
-          projectCwd: input.project?.workspaceRoot ?? null,
+          projectId: input.project.id,
+          projectCwd: input.project.workspaceRoot,
           threadId: metadata.threadId,
           commandId: metadata.commandId,
           messageId: metadata.messageId,
@@ -86,9 +71,9 @@ export function useCreateProjectThread() {
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
-          workspaceMode: workspace.workspaceMode,
-          branch: workspace.branch,
-          worktreePath: workspace.worktreePath,
+          workspaceMode: input.envMode,
+          branch: input.branch,
+          worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),

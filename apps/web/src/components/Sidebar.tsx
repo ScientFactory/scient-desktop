@@ -164,22 +164,6 @@ import {
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
-import {
-  ScientQuickChatIcon,
-  ScientQuickChatSection,
-} from "./scient-quick-chat/ScientQuickChatSection";
-import { ScientQuickChatPinnedList } from "./scient-quick-chat/ScientQuickChatPinnedList";
-import { shouldCreateScientThreadInCurrentProject } from "./scient-quick-chat/newThreadTarget";
-import { useScientQuickChatDisclosure } from "./scient-quick-chat/useScientQuickChatDisclosure";
-import {
-  buildScientQuickChatSidebarModel,
-  isScientSidebarThreadVisible,
-} from "../scient/quickChat/sidebarModel";
-import {
-  resolveScientQuickChatCreationEnvironment,
-  SCIENT_QUICK_CHAT_LABEL,
-  supportsScientQuickChat,
-} from "../scient/quickChat/policy";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
   deriveProviderEntriesByEnvironment,
@@ -596,7 +580,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectCwdByKey: ReadonlyMap<string, string>;
   projectFaviconPathByKey: ReadonlyMap<string, string | null | undefined>;
   scopedProjectKeys: ReadonlySet<string> | null;
-  placement: "general" | "projects";
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
 }) {
@@ -636,9 +619,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       if (session.promotedTo != null) {
         continue;
       }
-      if (props.placement === "general" ? session.projectId !== null : session.projectId === null) {
-        continue;
-      }
       if (
         props.scopedProjectKeys !== null &&
         !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
@@ -668,7 +648,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     frozenActive,
     props.routeDraftId,
     props.scopedProjectKeys,
-    props.placement,
   ]);
   const handleDiscard = useCallback(
     (draftId: DraftId) => {
@@ -1273,7 +1252,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 cwd={props.projectCwd ?? ""}
                 faviconPath={props.projectFaviconPath}
                 className="size-4"
-                fallbackIcon={thread.projectId === null ? ScientQuickChatIcon : MessageSquareIcon}
+                fallbackIcon={MessageSquareIcon}
               />
             </span>
             {title}
@@ -1702,7 +1681,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             cwd={props.projectCwd ?? ""}
             faviconPath={props.projectFaviconPath}
             className="size-4 shrink-0"
-            fallbackIcon={thread.projectId === null ? ScientQuickChatIcon : MessageSquareIcon}
+            fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
@@ -2043,14 +2022,12 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter((thread) =>
-      isScientSidebarThreadVisible({
-        archivedAt: thread.archivedAt,
-        projectId: thread.projectId,
-        projectMatchesScope:
-          scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
-      }),
+    const visible = threads.filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        thread.projectId !== null &&
+        (scopedProjectKeys === null ||
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2133,46 +2110,14 @@ export default function Sidebar() {
   ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
-  const {
-    pinnedThreads,
-    activeThreads,
-    snoozedThreads,
-    settledThreads,
-    generalPinnedThreads,
-    generalActiveThreads,
-    generalSnoozedThreads,
-    generalSettledThreads,
-    quickChatThreads,
-    activeQuickChatKey,
-    searchableThreads,
-  } = useMemo(
-    () =>
-      buildScientQuickChatSidebarModel({
-        shelves: {
-          pinned: sortedPinnedThreads,
-          active: sortedActiveThreads,
-          snoozed: sortedSnoozedThreads,
-          settled: sortedSettledThreads,
-        },
-        activeDraft:
-          routeTarget?.kind === "draft" && routeDraftThread !== null
-            ? { draftId: routeTarget.draftId, projectId: routeDraftThread.projectId }
-            : null,
-        routeThreadKey,
-        getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      }),
-    [
-      routeDraftThread,
-      routeTarget,
-      routeThreadKey,
-      sortedActiveThreads,
-      sortedPinnedThreads,
-      sortedSettledThreads,
-      sortedSnoozedThreads,
-    ],
+  const pinnedThreads = sortedPinnedThreads;
+  const activeThreads = sortedActiveThreads;
+  const snoozedThreads = sortedSnoozedThreads;
+  const settledThreads = sortedSettledThreads;
+  const searchableThreads = useMemo(
+    () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
+    [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
-  const { expanded: quickChatExpanded, toggle: toggleQuickChat } =
-    useScientQuickChatDisclosure(activeQuickChatKey);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
@@ -2292,21 +2237,8 @@ export default function Sidebar() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [
-      ...(quickChatExpanded ? quickChatThreads : []),
-      ...pinnedThreads,
-      ...activeThreads,
-      ...visibleSnoozedThreads,
-      ...renderedSettledThreads,
-    ],
-    [
-      activeThreads,
-      quickChatExpanded,
-      quickChatThreads,
-      pinnedThreads,
-      renderedSettledThreads,
-      visibleSnoozedThreads,
-    ],
+    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [activeThreads, pinnedThreads, renderedSettledThreads, visibleSnoozedThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2343,22 +2275,22 @@ export default function Sidebar() {
   const settledThreadKeys = useMemo(
     () =>
       new Set(
-        [...generalSettledThreads, ...settledThreads].map((thread) =>
+        settledThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         ),
       ),
-    [generalSettledThreads, settledThreads],
+    [settledThreads],
   );
   const settledThreadKeysRef = useRef(settledThreadKeys);
   settledThreadKeysRef.current = settledThreadKeys;
   const snoozedThreadKeys = useMemo(
     () =>
       new Set(
-        [...generalSnoozedThreads, ...snoozedThreads].map((thread) =>
+        snoozedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         ),
       ),
-    [generalSnoozedThreads, snoozedThreads],
+    [snoozedThreads],
   );
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
@@ -2543,16 +2475,14 @@ export default function Sidebar() {
               (key) => !settledKeys.has(key) && !snoozedKeys.has(key) && !coParkingKeys?.has(key),
             ) ?? null);
       const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
-      return nextThread
-        ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
-        : shell
-          ? () =>
-              void handleNewThreadRef.current(
-                shell.projectId === null
-                  ? { environmentId: shell.environmentId, projectId: null }
-                  : scopeProjectRef(shell.environmentId, shell.projectId),
-              )
-          : () => void router.navigate({ to: "/" });
+      if (nextThread) {
+        return () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id));
+      }
+      if (shell === undefined || shell.projectId === null) {
+        return () => void router.navigate({ to: "/" });
+      }
+      const projectRef = scopeProjectRef(shell.environmentId, shell.projectId);
+      return () => void handleNewThreadRef.current(projectRef);
     },
     [navigateToThread, router],
   );
@@ -3421,72 +3351,25 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  const quickChatCapableEnvironmentIds = useMemo(
-    () =>
-      [...serverConfigs.entries()].flatMap(([environmentId, config]) =>
-        supportsScientQuickChat(config) ? [environmentId] : [],
-      ),
-    [serverConfigs],
-  );
-  const supportsProjectlessThreads = quickChatCapableEnvironmentIds.length > 0;
-  const quickChatCreationEnvironmentId = resolveScientQuickChatCreationEnvironment({
-    activeEnvironmentId:
-      newThreadContext.activeDraftThread?.environmentId ??
-      newThreadContext.activeThread?.environmentId ??
-      null,
-    primaryEnvironmentId,
-    capableEnvironmentIds: quickChatCapableEnvironmentIds,
-  });
-  const handleNewQuickChat = useCallback(() => {
-    if (quickChatCreationEnvironmentId === null) {
-      if (quickChatCapableEnvironmentIds.length > 1) {
-        openCommandPalette({ open: "new-thread-in" });
-      }
-      return;
-    }
-    if (isMobile) setOpenMobile(false);
-    void newThreadContext.handleNewThread({
-      environmentId: quickChatCreationEnvironmentId,
-      projectId: null,
-    });
-  }, [
-    quickChatCapableEnvironmentIds.length,
-    quickChatCreationEnvironmentId,
-    isMobile,
-    newThreadContext.handleNewThread,
-    setOpenMobile,
-  ]);
-
-  // A plain click uses the same target-picker rule as chat.new. Shift+click
-  // keeps upstream's direct-create behavior when a current project exists.
+  // A plain click uses the same target-picker rule as chat.new.
   const opensNewThreadTargetPicker = shouldOpenNewThreadTargetPicker({
     legacySidebarEnabled: false,
     projectGroupCount: projectGroups.length,
-    supportsProjectlessThreads,
   });
-  const handleNewThreadClick = useCallback(
-    (event?: ReactMouseEvent) => {
-      if (
-        shouldCreateScientThreadInCurrentProject({
-          shiftKey: event?.shiftKey ?? false,
-          projectGroupCount: projectGroups.length,
-          supportsProjectlessThreads,
-        })
-      ) {
-        if (isMobile) setOpenMobile(false);
-        void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread: newThreadContext.handleNewThread,
-        });
-        return;
-      }
+  const handleNewThreadClick = useCallback(() => {
+    if (!opensNewThreadTargetPicker) {
       if (isMobile) setOpenMobile(false);
-      openCommandPalette({ open: "new-thread-in" });
-    },
-    [isMobile, newThreadContext, projectGroups.length, setOpenMobile, supportsProjectlessThreads],
-  );
+      void startNewThreadFromContext({
+        activeDraftThread: newThreadContext.activeDraftThread,
+        activeThread: newThreadContext.activeThread ?? undefined,
+        defaultProjectRef: newThreadContext.defaultProjectRef,
+        handleNewThread: newThreadContext.handleNewThread,
+      });
+      return;
+    }
+    if (isMobile) setOpenMobile(false);
+    openCommandPalette({ open: "new-thread-in" });
+  }, [isMobile, newThreadContext, opensNewThreadTargetPicker, setOpenMobile]);
 
   // chat.newLocal is a valid fallback label only when both commands create
   // directly. When the picker is available, it is advertised separately as
@@ -3556,7 +3439,7 @@ export default function Sidebar() {
         }
         projectTitle={
           thread.projectId === null
-            ? SCIENT_QUICK_CHAT_LABEL
+            ? null
             : (projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null)
         }
         providerEntryByInstanceId={
@@ -3648,7 +3531,7 @@ export default function Sidebar() {
                         type="button"
                         className="relative focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                         onClick={handleNewThreadClick}
-                        disabled={projects.length === 0 && !supportsProjectlessThreads}
+                        disabled={projects.length === 0}
                         aria-label="New thread"
                       />
                     }
@@ -3683,57 +3566,6 @@ export default function Sidebar() {
                 </Tooltip>
               </div>
             </div>
-            {supportsProjectlessThreads ? (
-              <ScientQuickChatSection
-                expanded={quickChatExpanded}
-                itemCount={quickChatThreads.length}
-                onToggle={toggleQuickChat}
-                onCreate={handleNewQuickChat}
-              >
-                <SidebarDraftBlock
-                  projectDisplayNameByKey={projectDisplayNameByKey}
-                  projectCwdByKey={projectCwdByKey}
-                  projectFaviconPathByKey={projectFaviconPathByKey}
-                  scopedProjectKeys={null}
-                  placement="general"
-                  routeDraftId={routeDraftIdForRows}
-                  onNavigateToDraft={navigateToDraft}
-                />
-                <ScientQuickChatPinnedList
-                  threads={generalPinnedThreads}
-                  reorderableKeys={reorderablePinnedKeys}
-                  onReorder={async (thread, orderKey) => {
-                    const result = await reorderPinnedThread(
-                      scopeThreadRef(thread.environmentId, thread.id),
-                      orderKey,
-                    );
-                    if (result._tag !== "Failure") return true;
-                    if (!isAtomCommandInterrupted(result)) {
-                      const error = squashAtomCommandFailure(result);
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: "Failed to reorder pinned threads",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        }),
-                      );
-                    }
-                    return false;
-                  }}
-                  renderRow={(thread, bag) => renderThreadRow(thread, "pinned", bag, true)}
-                />
-                {generalActiveThreads.map((thread) =>
-                  renderThreadRow(thread, "active", undefined, true),
-                )}
-                {generalSnoozedThreads.map((thread) =>
-                  renderThreadRow(thread, "snoozed", undefined, true),
-                )}
-                {generalSettledThreads.map((thread) =>
-                  renderThreadRow(thread, "settled", undefined, true),
-                )}
-              </ScientQuickChatSection>
-            ) : null}
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
                 <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
@@ -3868,7 +3700,7 @@ export default function Sidebar() {
                         }
                         projectTitle={
                           thread.projectId === null
-                            ? SCIENT_QUICK_CHAT_LABEL
+                            ? null
                             : (projectDisplayNameByKey.get(
                                 `${thread.environmentId}:${thread.projectId}`,
                               ) ?? null)
@@ -3920,7 +3752,6 @@ export default function Sidebar() {
                       projectCwdByKey={projectCwdByKey}
                       projectFaviconPathByKey={projectFaviconPathByKey}
                       scopedProjectKeys={scopedProjectKeys}
-                      placement="projects"
                       routeDraftId={routeDraftIdForRows}
                       onNavigateToDraft={navigateToDraft}
                     />,

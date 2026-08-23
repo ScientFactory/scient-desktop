@@ -1,6 +1,6 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
-import type { DraftThreadEnvMode, DraftThreadTargetRef } from "../composerDraftStore";
+import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
@@ -9,7 +9,7 @@ interface ThreadContextLike {
 
 interface NewThreadHandler {
   (
-    projectRef: DraftThreadTargetRef,
+    projectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
       worktreePath?: string | null;
@@ -36,15 +36,15 @@ export function resolveNewDraftStartFromOrigin(input: {
 
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
-): DraftThreadTargetRef | null {
+): ScopedProjectRef | null {
   if (context.activeThread) {
     return context.activeThread.projectId === null
-      ? { environmentId: context.activeThread.environmentId, projectId: null }
+      ? null
       : scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
   }
   if (context.activeDraftThread) {
     return context.activeDraftThread.projectId === null
-      ? { environmentId: context.activeDraftThread.environmentId, projectId: null }
+      ? null
       : scopeProjectRef(
           context.activeDraftThread.environmentId,
           context.activeDraftThread.projectId,

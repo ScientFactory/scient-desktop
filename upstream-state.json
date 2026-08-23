@@ -36,10 +36,10 @@
         "5566cfc166cebd9b207a541cd8551fba23a4fbda"
       ],
       "importMerge": "c6150ff1bdb0ecc10a8686452178036105c3c304",
-      "attribution": "Frozen projectless-thread snapshot adopted as the historical foundation for Scient General Chat.",
+      "attribution": "Frozen projectless-thread snapshot retained only as provenance for Scient's retired Quick Chat experiment.",
       "followUpdates": false,
       "includedInIntegrationBase": false,
-      "replacementRecord": "docs/internals/scient-quick-chat.md",
+      "replacementRecord": "UPSTREAM.md",
       "replacementPullRequest": null,
       "replacementMerge": null
     }

@@ -1,12 +1,11 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { supportsScientQuickChat } from "@t3tools/client-runtime/scient/quick-chat";
 import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects, useServerConfigs } from "../state/entities";
+import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -33,7 +32,6 @@ function ChatRouteGlobalShortcuts() {
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
-  const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupCount = useMemo(
     () =>
@@ -44,9 +42,6 @@ function ChatRouteGlobalShortcuts() {
         resolveEnvironmentLabel: () => null,
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
-  );
-  const supportsProjectlessThreads = [...serverConfigs.values()].some((config) =>
-    supportsScientQuickChat(config),
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -102,7 +97,6 @@ function ChatRouteGlobalShortcuts() {
           shouldOpenNewThreadTargetPicker({
             legacySidebarEnabled,
             projectGroupCount,
-            supportsProjectlessThreads,
           })
         ) {
           openCommandPalette({ open: "new-thread-in" });
@@ -177,7 +171,6 @@ function ChatRouteGlobalShortcuts() {
     routeThreadRef,
     selectedThreadKeysSize,
     legacySidebarEnabled,
-    supportsProjectlessThreads,
     terminalOpen,
   ]);
 

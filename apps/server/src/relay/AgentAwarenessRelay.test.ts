@@ -294,8 +294,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       }),
     ).toMatchObject({
       projectId: null,
-      state: { projectTitle: "Quick chat" },
-      reason: "snapshot",
+      state: null,
+      reason: "project-not-found",
     });
   });
 

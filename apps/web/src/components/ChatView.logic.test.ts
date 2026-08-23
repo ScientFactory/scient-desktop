@@ -73,28 +73,17 @@ describe("resolveThreadWorkspaceRoot", () => {
       resolveThreadWorkspaceRoot({
         worktreePath: "/repo/worktree",
         projectCwd: "/repo",
-        threadWorkspaceRoot: null,
       }),
     ).toBe("/repo/worktree");
   });
 
-  it("falls back to the durable projectless root and then the environment cwd", () => {
+  it("has no workspace without a project or worktree", () => {
     expect(
       resolveThreadWorkspaceRoot({
         worktreePath: null,
         projectCwd: null,
-        threadWorkspaceRoot: "/durable/root",
-        environmentCwd: "/environment/root",
       }),
-    ).toBe("/durable/root");
-    expect(
-      resolveThreadWorkspaceRoot({
-        worktreePath: null,
-        projectCwd: null,
-        threadWorkspaceRoot: null,
-        environmentCwd: "/environment/root",
-      }),
-    ).toBe("/environment/root");
+    ).toBeUndefined();
   });
 });
 

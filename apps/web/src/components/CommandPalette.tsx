@@ -79,7 +79,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells } from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
@@ -124,12 +124,6 @@ import {
   resolveWslProjectSelection,
 } from "../wslPaths";
 import { recordScientAnalytics } from "../scient/analytics/client";
-import {
-  SCIENT_QUICK_CHAT_LABEL,
-  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
-  shouldAssignScientQuickChatNewThreadShortcut,
-  supportsScientQuickChat,
-} from "../scient/quickChat/policy";
 import {
   ADDON_ICON_CLASS,
   browseInputEndPaddingClass,
@@ -627,7 +621,6 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
-  const serverConfigs = useServerConfigs();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -782,25 +775,6 @@ function OpenCommandPaletteDialog(props: {
         handleNewThread,
       }),
     [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
-  );
-  const projectlessEnvironmentId = contextualProjectRef?.environmentId ?? primaryEnvironmentId;
-  const supportsProjectlessThreads =
-    projectlessEnvironmentId !== null &&
-    supportsScientQuickChat(serverConfigs.get(projectlessEnvironmentId));
-  const projectlessTargets = useMemo(
-    () =>
-      [...serverConfigs.entries()]
-        .filter(([, config]) => supportsScientQuickChat(config))
-        .map(([environmentId]) => ({
-          environmentId,
-          environmentLabel: environmentLabelById.get(environmentId) ?? "Environment",
-        }))
-        .sort((left, right) => {
-          if (left.environmentId === primaryEnvironmentId) return -1;
-          if (right.environmentId === primaryEnvironmentId) return 1;
-          return left.environmentLabel.localeCompare(right.environmentLabel);
-        }),
-    [environmentLabelById, primaryEnvironmentId, serverConfigs],
   );
   const projectPickerEntries = useMemo(
     () =>
@@ -1151,37 +1125,13 @@ function OpenCommandPaletteDialog(props: {
         );
       },
     });
-    const showEnvironmentLabel = projectlessTargets.length > 1;
-    const projectlessItems: CommandPaletteActionItem[] = projectlessTargets.map(
-      ({ environmentId, environmentLabel }) => ({
-        kind: "action",
-        value: `new-thread-in:${environmentId}:projectless`,
-        searchTerms: [
-          "new thread",
-          "quick chat",
-          ...SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
-          "without project",
-          "no project",
-          "chat",
-          environmentLabel,
-        ],
-        title: SCIENT_QUICK_CHAT_LABEL,
-        description: showEnvironmentLabel ? environmentLabel : "Chat without a project",
-        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-        run: async () => {
-          await handleNewThread({ environmentId, projectId: null });
-        },
-      }),
-    );
-
-    return enumerateCommandPaletteItems([...projectItems, ...projectlessItems]);
+    return enumerateCommandPaletteItems(projectItems);
   }, [
     contextualProjectRef,
     handleNewThread,
     pickerProjects,
     projectEnvironmentLocationById,
     projectGroupByTargetKey,
-    projectlessTargets,
   ]);
 
   const allThreadItems = useMemo(
@@ -1573,11 +1523,9 @@ function OpenCommandPaletteDialog(props: {
     setViewStack([]);
     setQuery("");
     const currentPrefix =
-      contextualProjectRef?.projectId === null
-        ? `new-thread-in:${contextualProjectRef.environmentId}:projectless`
-        : currentProjectEnvironmentId && currentProjectId
-          ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
-          : null;
+      currentProjectEnvironmentId && currentProjectId
+        ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
+        : null;
     const prioritized = currentPrefix
       ? [
           ...projectThreadItems.filter((item) => item.value === currentPrefix),
@@ -1645,32 +1593,6 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
-    });
-  }
-
-  if (projectlessEnvironmentId !== null && supportsProjectlessThreads) {
-    actionItems.push({
-      kind: "action",
-      value: "action:new-thread-without-project",
-      searchTerms: [
-        "new thread",
-        "quick chat",
-        ...SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
-        "without project",
-        "no project",
-        "chat",
-      ],
-      title: SCIENT_QUICK_CHAT_LABEL,
-      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-      ...(shouldAssignScientQuickChatNewThreadShortcut({
-        hasQuickChatTarget: true,
-        hasProjectShortcutTarget: activeProjectTitle !== null,
-      })
-        ? { shortcutCommand: "chat.new" as const }
-        : {}),
-      run: async () => {
-        await handleNewThread({ environmentId: projectlessEnvironmentId, projectId: null });
-      },
     });
   }
 

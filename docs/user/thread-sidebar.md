@@ -7,27 +7,6 @@ one environment.
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
 
-## Quick Chat
-
-Choose **Quick chat** from the new-thread picker, or use the plain **+** in the **Quick chats**
-section, to start a conversation without placing it in a project. The direct action uses the
-current capable environment, then the primary environment; when several environments remain
-possible, Scient opens the target picker instead of choosing one silently.
-
-Quick chats use the selected environment's workspace and appear in the separate, collapsible
-**Quick chats** section above the project filter. Scient remembers whether the section is open,
-and reveals it when you open or create a Quick Chat. Quick chats support files, search, PDFs,
-browser previews, agents, and plain terminals at that workspace. They do not offer project-only
-Git, Diff, pull-request, setup-script, checkpoint, revert, or worktree controls.
-
-To turn a useful general conversation into project work, open the chat and choose **Move chat to
-project** in its header or in the open right panel. Close every terminal first. Scient stops the
-current provider session before changing the workspace boundary, then moves the same conversation
-and history under the selected project. File, PDF, terminal, Diff, and pull-request tabs bound to
-the old workspace close after the move; browser and agent tabs remain. A chat can be moved from
-Quick Chat into one project; moving an existing project chat between projects is not part of
-this action.
-
 On web and desktop, drag a pinned thread to change its position. On mobile, open the thread's menu
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your
 other connected devices.

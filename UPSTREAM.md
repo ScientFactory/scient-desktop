@@ -272,29 +272,28 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
-Quick Chat is a Scient-owned product and compatibility boundary. Its
-capability authority, product policy, naming, workspace routing, navigation,
-mobile behavior, and relocation controllers live under explicit Scient
-modules; inherited files retain only shared thread-engine support and narrow
-mounts. Conversation history continues to use the ordinary thread model.
+Scient retired its projectless Quick Chat experiment. Every newly created
+thread now requires a real owning project; the product surfaces, capability,
+relocation command, and seam verifier were removed together. A migration
+deletes threads that remain projectless at upgrade time and retries their
+attachment cleanup after the transactional database step.
 
 The repository contains literal history from the then-open T3 projectless-
 thread PR `pingdotgg/t3code#5822`, but that commit is provenance for adopted
 code, not a runtime or update dependency. Scient does not refresh from open PR
 heads. Only an official T3 `main` merge enters through the bounded upstream
-process, where equivalent generic primitives may replace adopted compatibility
-patches without changing Scient's product contract. See
-[Scient Quick Chat](docs/internals/scient-quick-chat.md).
+process. Immutable event decoders retain only the nullability required to
+replay a historical thread that was moved into a real project before the
+retirement; no current command can create or move a projectless thread.
 
 The exact #5822 snapshot and import merge are frozen as a historical exception
 in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
-workflow rejects new non-official merge parents, while
-`scient-quick-chat-seams.json` keeps raw projectless decisions and inherited
-mounts explicit for future upstream reconciliation.
+workflow rejects new non-official merge parents. Historical sync reports remain
+the provenance record; there is no longer a live Quick Chat seam inventory.
 
 Scient's first-run Getting Started flow is isolated under
-`apps/web/src/scient/onboarding`. It reuses canonical provider, project,
-permission, and Quick Chat state and owns only local presentation and optional
+`apps/web/src/scient/onboarding`. It reuses canonical provider, project, and
+permission state and owns only local presentation and optional
 preference records. The inherited-host seams are limited to the empty chat
 route, one General settings row, and the generated route entry. Preserve those
 mounts through upstream reconciliation;

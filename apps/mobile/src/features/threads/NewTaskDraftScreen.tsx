@@ -21,8 +21,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { SCIENT_QUICK_CHAT_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
-import { EnvironmentId } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -98,7 +96,6 @@ export function NewTaskDraftScreen(props: {
   readonly pendingTaskId?: string;
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
-  readonly projectless?: boolean;
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
@@ -116,7 +113,7 @@ export function NewTaskDraftScreen(props: {
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
-  const { projectScopes, selectedProject, selectedProjectKey, setProject, setProjectless } = flow;
+  const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(flow.selectedEnvironmentId);
   const environmentConnected =
@@ -315,15 +312,6 @@ export function NewTaskDraftScreen(props: {
       appliedInitialProjectKeyRef.current = null;
     }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
-    if (props.projectless && initialEnvironmentId) {
-      const projectlessKey = `projectless:${initialEnvironmentId}`;
-      if (appliedInitialProjectKeyRef.current === projectlessKey) {
-        return;
-      }
-      appliedInitialProjectKeyRef.current = projectlessKey;
-      setProjectless(EnvironmentId.make(initialEnvironmentId));
-      return;
-    }
     const initialProjectId = props.initialProjectRef?.projectId;
     if (initialEnvironmentId && initialProjectId) {
       const directProject =
@@ -375,12 +363,10 @@ export function NewTaskDraftScreen(props: {
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
-    props.projectless,
     navigation,
     selectedProject,
     selectedProjectKey,
     setProject,
-    setProjectless,
   ]);
 
   useEffect(() => {
@@ -652,7 +638,7 @@ export function NewTaskDraftScreen(props: {
     const selectedProject = flow.selectedProject;
     const selectedEnvironmentId = flow.selectedEnvironmentId;
     const draftKey = flow.draftKey;
-    if ((!selectedProject && !flow.isProjectless) || !selectedEnvironmentId || !draftKey) {
+    if (!selectedProject || !selectedEnvironmentId || !draftKey) {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
@@ -679,7 +665,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       initialMessageText.length === 0 ||
       flow.submitting ||
-      (!flow.isProjectless && workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && !selectedBranchName)
     ) {
       return;
     }
@@ -687,13 +673,6 @@ export function NewTaskDraftScreen(props: {
     const editingPendingTask = flow.editingPendingTask;
 
     if (!environmentConnected) {
-      if (flow.isProjectless) {
-        Alert.alert(
-          "Environment unavailable",
-          "Connect to the environment before starting a thread without a project.",
-        );
-        return;
-      }
       // Offline: park the task in the outbox; the drain sends it when the
       // environment reconnects. Editing an existing pending task re-queues it
       // under its original identifiers.
@@ -741,7 +720,7 @@ export function NewTaskDraftScreen(props: {
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: selectedEnvironmentId,
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
-      projectTitle: selectedProject?.title ?? SCIENT_QUICK_CHAT_LABEL,
+      projectTitle: selectedProject.title,
     });
     const creationBranch = resolveProjectThreadCreationBranch({
       workspaceMode,
@@ -802,7 +781,7 @@ export function NewTaskDraftScreen(props: {
     );
   }
 
-  if (!selectedProject && !flow.isProjectless) {
+  if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         {Platform.OS === "android" ? (
@@ -820,15 +799,14 @@ export function NewTaskDraftScreen(props: {
   const isAndroid = Platform.OS === "android";
   const isDarkMode = colorScheme === "dark";
   const canStart =
-    Boolean(flow.selectedProject || flow.isProjectless) &&
+    Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    (!flow.isProjectless || environmentConnected) &&
-    !(!flow.isProjectless && flow.workspaceMode === "worktree" && !flow.selectedBranchName);
-  const targetTitle = selectedProject?.title ?? SCIENT_QUICK_CHAT_LABEL;
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+  const targetTitle = selectedProject.title;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
@@ -891,34 +869,25 @@ export function NewTaskDraftScreen(props: {
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
-          {flow.isProjectless ? (
+          <Pressable
+            accessibilityHint="Opens the project picker"
+            accessibilityLabel={`Change project from ${targetTitle}`}
+            accessibilityRole="button"
+            disabled={isIncomingShareTransferPending}
+            onPress={chooseProject}
+            className="min-w-0 max-w-[250px] active:opacity-65"
+            style={{
+              borderBottomColor: projectUnderlineColor,
+              borderBottomWidth: 1,
+            }}
+          >
             <Text
               className="text-2xl font-t3-medium tracking-tight text-foreground"
               numberOfLines={1}
             >
               {targetTitle}
             </Text>
-          ) : (
-            <Pressable
-              accessibilityHint="Opens the project picker"
-              accessibilityLabel={`Change project from ${targetTitle}`}
-              accessibilityRole="button"
-              disabled={isIncomingShareTransferPending}
-              onPress={chooseProject}
-              className="min-w-0 max-w-[250px] active:opacity-65"
-              style={{
-                borderBottomColor: projectUnderlineColor,
-                borderBottomWidth: 1,
-              }}
-            >
-              <Text
-                className="text-2xl font-t3-medium tracking-tight text-foreground"
-                numberOfLines={1}
-              >
-                {targetTitle}
-              </Text>
-            </Pressable>
-          )}
+          </Pressable>
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
         </View>
       </View>
@@ -956,7 +925,7 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
-  const workspaceControls = flow.isProjectless ? null : (
+  const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
@@ -1060,16 +1029,10 @@ export function NewTaskDraftScreen(props: {
           </ComposerToolbarScroller>
           <ComposerToolbarButton
             accessibilityLabel={
-              flow.submitting
-                ? "Starting task"
-                : environmentConnected
-                  ? "Start task"
-                  : flow.isProjectless
-                    ? "Environment unavailable"
-                    : "Queue task"
+              flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
             }
             disabled={!canStart}
-            icon={environmentConnected || flow.isProjectless ? "arrow.up" : "tray.and.arrow.up"}
+            icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
             onPress={() => void handleStart()}
             showChevron={false}
             variant="primary"
