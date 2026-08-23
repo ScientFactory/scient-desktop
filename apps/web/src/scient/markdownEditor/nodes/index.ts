@@ -4,6 +4,7 @@ import { createScientCodeBlockNodeView } from "./codeBlockNodeView";
 import { createScientImageNodeView, type ScientMarkdownImageSourceResolver } from "./imageNodeView";
 import { createScientMathNodeView } from "./mathNodeView";
 import { createScientRawBlockNodeView } from "./rawBlockNodeView";
+import { createScientReferenceNodeView } from "./referenceNodeView";
 import { createScientTaskListItemNodeView } from "./taskListItemNodeView";
 import { createScientWikiLinkNodeView } from "./wikiLinkNodeView";
 
@@ -19,10 +20,13 @@ export function buildScientMarkdownNodeViews(
 ): Readonly<Record<string, NodeViewConstructor>> {
   return {
     code_block: createScientCodeBlockNodeView,
+    citation: createScientReferenceNodeView,
     display_math: createScientMathNodeView,
     image: (node, view, getPos) =>
       createScientImageNodeView(node, view, getPos, options.resolveImageSource),
     inline_math: createScientMathNodeView,
+    footnote_definition: createScientReferenceNodeView,
+    footnote_reference: createScientReferenceNodeView,
     list_item: createScientTaskListItemNodeView,
     raw_block: createScientRawBlockNodeView,
     wiki_link: (node, view, getPos) =>

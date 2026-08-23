@@ -22,6 +22,7 @@ const TOP_LEVEL_SOURCE_NODE_NAMES = [
   "bullet_list",
   "table",
   "display_math",
+  "footnote_definition",
   "raw_block",
 ] as const;
 
@@ -74,6 +75,79 @@ const wikiLinkSpec: NodeSpec = {
       "data-label": typeof node.attrs.label === "string" ? node.attrs.label : null,
     },
     String(node.attrs.label ?? node.attrs.target),
+  ],
+};
+
+const citationSpec: NodeSpec = {
+  attrs: { source: { default: "@citation" } },
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  leafText: (node) => `[${String(node.attrs.source)}]`,
+  parseDOM: [
+    {
+      tag: "span[data-scient-markdown-citation]",
+      getAttrs: (element) => ({ source: element.getAttribute("data-source") ?? "@citation" }),
+    },
+  ],
+  toDOM: (node) => [
+    "span",
+    { "data-scient-markdown-citation": "true", "data-source": String(node.attrs.source) },
+    `[${String(node.attrs.source)}]`,
+  ],
+};
+
+const footnoteReferenceSpec: NodeSpec = {
+  attrs: { label: { default: "note" } },
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  leafText: (node) => `[^${String(node.attrs.label)}]`,
+  parseDOM: [
+    {
+      tag: "sup[data-scient-markdown-footnote-reference]",
+      getAttrs: (element) => ({ label: element.getAttribute("data-label") ?? "note" }),
+    },
+  ],
+  toDOM: (node) => [
+    "sup",
+    {
+      "data-scient-markdown-footnote-reference": "true",
+      "data-label": String(node.attrs.label),
+    },
+    String(node.attrs.label),
+  ],
+};
+
+const footnoteDefinitionSpec: NodeSpec = {
+  attrs: {
+    label: { default: "note" },
+    source: { default: "[^note]: " },
+    sourceId: SOURCE_ID_ATTR,
+  },
+  group: "block",
+  atom: true,
+  defining: true,
+  selectable: true,
+  parseDOM: [
+    {
+      tag: "aside[data-scient-markdown-footnote-definition]",
+      getAttrs: (element) => ({
+        label: element.getAttribute("data-label") ?? "note",
+        source: element.getAttribute("data-source") ?? element.textContent ?? "",
+      }),
+    },
+  ],
+  toDOM: (node) => [
+    "aside",
+    {
+      "data-scient-markdown-footnote-definition": "true",
+      "data-label": String(node.attrs.label),
+      "data-source": String(node.attrs.source),
+    },
+    String(node.attrs.source),
   ],
 };
 
@@ -144,7 +218,10 @@ let nodes = defaultMarkdownParser.schema.spec.nodes.addBefore(
   inlineMathSpec,
 );
 nodes = nodes.addBefore("image", "wiki_link", wikiLinkSpec);
+nodes = nodes.addBefore("image", "citation", citationSpec);
+nodes = nodes.addBefore("image", "footnote_reference", footnoteReferenceSpec);
 nodes = nodes.addBefore("image", "display_math", displayMathSpec);
+nodes = nodes.addBefore("image", "footnote_definition", footnoteDefinitionSpec);
 nodes = nodes.addBefore("image", "raw_block", rawBlockSpec);
 const listItemSpec = nodes.get("list_item");
 if (!listItemSpec) throw new Error("Missing ProseMirror node spec 'list_item'.");
@@ -224,6 +301,38 @@ function listIsTight(
 }
 
 const gfmTokenizer = MarkdownIt("commonmark", { html: false }).enable(["strikethrough", "table"]);
+
+gfmTokenizer.inline.ruler.before("link", "scient_footnote_reference", (state, silent) => {
+  const start = state.pos;
+  if (state.src.slice(start, start + 2) !== "[^") return false;
+  const end = state.src.indexOf("]", start + 2);
+  if (end < 0) return false;
+  const label = state.src.slice(start + 2, end).trim();
+  if (label.length === 0 || /\s/u.test(label) || label.includes("[") || label.includes("]")) {
+    return false;
+  }
+  if (!silent) {
+    const token = state.push("scient_footnote_reference", "sup", 0);
+    token.meta = { label };
+  }
+  state.pos = end + 1;
+  return true;
+});
+
+gfmTokenizer.inline.ruler.before("link", "scient_citation", (state, silent) => {
+  const start = state.pos;
+  if (state.src[start] !== "[") return false;
+  const end = state.src.indexOf("]", start + 1);
+  if (end < 0) return false;
+  const source = state.src.slice(start + 1, end).trim();
+  if (!/(?:^|[;\s])-?@[\p{L}\p{N}_:.#-]+/u.test(source)) return false;
+  if (!silent) {
+    const token = state.push("scient_citation", "span", 0);
+    token.meta = { source };
+  }
+  state.pos = end + 1;
+  return true;
+});
 
 gfmTokenizer.inline.ruler.before("link", "scient_wiki_link", (state, silent) => {
   const start = state.pos;
@@ -318,6 +427,14 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
     node: "wiki_link",
     getAttrs: (token) => token.meta,
   },
+  scient_citation: {
+    node: "citation",
+    getAttrs: (token) => token.meta,
+  },
+  scient_footnote_reference: {
+    node: "footnote_reference",
+    getAttrs: (token) => token.meta,
+  },
 });
 
 function tableCellMarkdown(cell: ProseMirrorNode): string {
@@ -369,6 +486,12 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
       const target = String(node.attrs.target);
       const label = typeof node.attrs.label === "string" ? `|${node.attrs.label}` : "";
       state.write(`[[${target}${label}]]`);
+    },
+    citation: (state, node) => state.write(`[${String(node.attrs.source)}]`),
+    footnote_reference: (state, node) => state.write(`[^${String(node.attrs.label)}]`),
+    footnote_definition: (state, node) => {
+      state.write(String(node.attrs.source));
+      state.closeBlock(node);
     },
     inline_math: (state, node) => state.text(`$${String(node.attrs.tex)}$`, false),
     display_math: (state, node) => {

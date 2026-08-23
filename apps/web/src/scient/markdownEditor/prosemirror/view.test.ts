@@ -172,6 +172,32 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
+  it("keeps a rendered scientific diagram visible beside its nested source editor", async () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "```mermaid title=Flow\ngraph LR\n  A --> B\n```\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("[data-scient-markdown-rich-fence='mermaid']")).not.toBeNull();
+      expect(view.dom.querySelector(".scient-mermaid-card")).not.toBeNull();
+    });
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).not.toBeNull();
+    });
+    expect(view.dom.querySelector(".scient-mermaid-card")).not.toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("runs formatting and slash commands through user transactions", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

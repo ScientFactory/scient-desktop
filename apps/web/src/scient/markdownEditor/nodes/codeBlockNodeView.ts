@@ -1,13 +1,24 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
+import { createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
+import { resolveScientRichFenceKind, ScientRichFence } from "~/scient/presentation/ScientRichFence";
 
 import type { ScientNestedCodeEditor } from "./codeMirrorCodeEditor";
 
 function codeLanguage(node: ProseMirrorNode): string {
   return String(node.attrs.params).trim().split(/\s+/u)[0] || "text";
+}
+
+function fenceMetadata(node: ProseMirrorNode): string | undefined {
+  const params = String(node.attrs.params).trim();
+  const firstSpace = params.search(/\s/u);
+  if (firstSpace < 0) return undefined;
+  const metadata = params.slice(firstSpace).trim();
+  return metadata.length > 0 ? metadata : undefined;
 }
 
 class ScientCodeBlockNodeView implements NodeView {
@@ -16,6 +27,7 @@ class ScientCodeBlockNodeView implements NodeView {
   private readonly rendered = document.createElement("div");
   private readonly editorHost = document.createElement("div");
   private nestedEditor: ScientNestedCodeEditor | null = null;
+  private reactRoot: Root | null = null;
   private node: ProseMirrorNode;
   private destroyed = false;
   private highlightVersion = 0;
@@ -62,7 +74,11 @@ class ScientCodeBlockNodeView implements NodeView {
   }
 
   stopEvent(event: Event): boolean {
-    return this.editorHost.contains(event.target as globalThis.Node);
+    if (this.editorHost.contains(event.target as globalThis.Node)) return true;
+    return (
+      event.target instanceof Element &&
+      event.target.closest("button, a, input, select, textarea, [role='button']") !== null
+    );
   }
 
   ignoreMutation(): boolean {
@@ -74,6 +90,8 @@ class ScientCodeBlockNodeView implements NodeView {
     this.highlightVersion += 1;
     this.nestedEditor?.destroy();
     this.nestedEditor = null;
+    this.reactRoot?.unmount();
+    this.reactRoot = null;
   }
 
   private async activateEditor(): Promise<void> {
@@ -108,7 +126,31 @@ class ScientCodeBlockNodeView implements NodeView {
   private render(): void {
     const language = codeLanguage(this.node);
     const code = this.node.textContent;
+    const richKind = resolveScientRichFenceKind(language);
+    const metadata = fenceMetadata(this.node);
     this.languageLabel.textContent = language === "text" ? "Plain text" : language;
+    if (richKind) {
+      this.highlightVersion += 1;
+      this.reactRoot ??= createRoot(this.rendered);
+      const theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
+      this.reactRoot.render(
+        createElement(ScientRichFence, {
+          kind: richKind,
+          language,
+          source: code,
+          theme,
+          title: null,
+          ...(metadata ? { fenceMeta: metadata } : {}),
+        }),
+      );
+      this.dom.setAttribute("data-scient-markdown-rich-fence", richKind);
+      return;
+    }
+    this.dom.removeAttribute("data-scient-markdown-rich-fence");
+    if (this.reactRoot) {
+      this.reactRoot.unmount();
+      this.reactRoot = null;
+    }
     this.rendered.textContent = code;
     const version = ++this.highlightVersion;
     const theme = document.documentElement.classList.contains("dark") ? "dark" : "light";

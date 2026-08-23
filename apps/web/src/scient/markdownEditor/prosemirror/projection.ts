@@ -47,8 +47,18 @@ function displayMathBlock(block: MarkdownSourceBlock): ProseMirrorNode {
   return nodeType.create({ tex, delimiter: "$$", sourceId: block.id });
 }
 
+function footnoteDefinitionBlock(block: MarkdownSourceBlock): ProseMirrorNode | null {
+  const match = /^\[\^([^\]\r\n]+)\]:/u.exec(block.source);
+  if (!match?.[1]) return null;
+  const nodeType = scientMarkdownSchema.nodes.footnote_definition;
+  if (!nodeType) throw new Error("Scient Markdown schema is missing footnote_definition.");
+  return nodeType.create({ label: match[1], source: block.source, sourceId: block.id });
+}
+
 function parseBlock(block: MarkdownSourceBlock): ProseMirrorNode {
   if (block.kind === "math") return displayMathBlock(block);
+  const footnote = footnoteDefinitionBlock(block);
+  if (footnote) return footnote;
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);
   const parsed = scientMarkdownParser.parse(block.source);
   if (parsed.childCount !== 1) return rawBlock(block);

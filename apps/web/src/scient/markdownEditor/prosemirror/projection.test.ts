@@ -194,6 +194,40 @@ describe("Scient ProseMirror projection", () => {
     expect(state.session.draftSource.endsWith("\n\nFollowing  bytes.\n")).toBe(true);
   });
 
+  it("projects citations and footnotes as rich references with editable source", () => {
+    const source = [
+      "Evidence [@smith2020, pp. 2-3] and note[^lab].",
+      "",
+      "[^lab]: Collected **twice**.",
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let citationPosition: number | null = null;
+    let footnoteReferencePosition: number | null = null;
+    let footnoteDefinitionPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "citation") citationPosition = position;
+      if (node.type.name === "footnote_reference") footnoteReferencePosition = position;
+      if (node.type.name === "footnote_definition") footnoteDefinitionPosition = position;
+    });
+
+    expect(state.state.doc.nodeAt(citationPosition!)?.attrs.source).toBe("@smith2020, pp. 2-3");
+    expect(state.state.doc.nodeAt(footnoteReferencePosition!)?.attrs.label).toBe("lab");
+    expect(state.state.doc.nodeAt(footnoteDefinitionPosition!)?.attrs).toMatchObject({
+      label: "lab",
+      source: "[^lab]: Collected **twice**.",
+    });
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(citationPosition!, undefined, {
+        source: "@smith2020, p. 4",
+      }),
+      "user",
+    );
+    expect(state.session.draftSource).toContain("Evidence [@smith2020, p. 4] and note[^lab].");
+    expect(state.session.draftSource.endsWith("\n\n[^lab]: Collected **twice**.\n")).toBe(true);
+  });
+
   it("preserves CRLF fences and raw blocks around a mixed-direction edit", () => {
     const source = [
       "~~~python linenos",
