@@ -100,6 +100,100 @@ describe("Scient ProseMirror projection", () => {
     expect(state.session.draftSource.endsWith("\n\nAfter  with spacing.\n")).toBe(true);
   });
 
+  it("patches text without normalizing list markers or emphasis delimiters", () => {
+    const source = "- parent\n  * nested __item__\n  * untouched  spacing\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let itemPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "item") itemPosition = position;
+    });
+    expect(itemPosition).not.toBeNull();
+
+    state.applyTransaction(
+      state.state.tr.insertText("result", itemPosition!, itemPosition! + "item".length),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe(
+      "- parent\n  * nested __result__\n  * untouched  spacing\n",
+    );
+  });
+
+  it("patches a table cell without normalizing the table source", () => {
+    const source = "| Name|Value |\n|:--| --:|\n|  A  | **2.4** |\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let valuePosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "2.4") valuePosition = position;
+    });
+    expect(valuePosition).not.toBeNull();
+
+    state.applyTransaction(
+      state.state.tr.insertText("3.1", valuePosition!, valuePosition! + "2.4".length),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe("| Name|Value |\n|:--| --:|\n|  A  | **3.1** |\n");
+  });
+
+  it("projects task lists, strikethrough, and wiki links as editable rich structure", () => {
+    const source = [
+      "- [x] Collected",
+      "- [ ] Analyze",
+      "",
+      "Keep ~~obsolete~~ notes in [[Methods/Protocol|the protocol]].",
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const list = state.state.doc.firstChild;
+    expect(list?.type.name).toBe("bullet_list");
+    expect(list?.child(0).attrs.taskChecked).toBe(true);
+    expect(list?.child(1).attrs.taskChecked).toBe(false);
+
+    let strikeText = false;
+    let wikiPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "obsolete") {
+        strikeText = node.marks.some((mark) => mark.type.name === "strike");
+      }
+      if (node.type.name === "wiki_link") wikiPosition = position;
+    });
+    expect(strikeText).toBe(true);
+    expect(wikiPosition).not.toBeNull();
+    expect(state.state.doc.nodeAt(wikiPosition!)?.attrs).toMatchObject({
+      label: "the protocol",
+      target: "Methods/Protocol",
+    });
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(wikiPosition!, undefined, {
+        label: "updated protocol",
+        target: "Methods/Updated",
+      }),
+      "user",
+    );
+    expect(state.session.draftSource).toContain(
+      "Keep ~~obsolete~~ notes in [[Methods/Updated|updated protocol]].",
+    );
+  });
+
+  it("serializes a task checkbox change without touching the following block", () => {
+    const source = "- [x] Complete\n- [ ] Pending\n\nFollowing  bytes.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const list = state.state.doc.firstChild!;
+    const firstItemPosition = 1;
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(firstItemPosition, undefined, {
+        ...list.child(0).attrs,
+        taskChecked: false,
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain("- [ ] Complete\n- [ ] Pending");
+    expect(state.session.draftSource.endsWith("\n\nFollowing  bytes.\n")).toBe(true);
+  });
+
   it("preserves CRLF fences and raw blocks around a mixed-direction edit", () => {
     const source = [
       "~~~python linenos",

@@ -1,4 +1,5 @@
 import {
+  applyMarkdownSourcePatches,
   createMarkdownSourceLedger,
   type MarkdownSourceBlock,
   type MarkdownSourceLedger,
@@ -83,6 +84,80 @@ function serializeNode(node: ProseMirrorNode): string {
   return scientMarkdownSerializer.serialize(document);
 }
 
+function comparableAttrs(node: ProseMirrorNode): string {
+  const attrs = Object.fromEntries(
+    Object.entries(node.attrs).filter(([name]) => name !== "sourceId"),
+  );
+  return JSON.stringify(attrs);
+}
+
+function textStructure(node: ProseMirrorNode): string {
+  if (node.isText) {
+    return `text:${node.marks
+      .map((mark) => `${mark.type.name}:${JSON.stringify(mark.attrs)}`)
+      .join(",")}`;
+  }
+  const children: string[] = [];
+  node.forEach((child) => children.push(textStructure(child)));
+  return `${node.type.name}:${comparableAttrs(node)}[${children.join("|")}]`;
+}
+
+function textDifference(before: string, after: string) {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) {
+    start += 1;
+  }
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  return { start, beforeEnd, replacement: after.slice(start, afterEnd) };
+}
+
+/**
+ * Preserve list markers, table spacing, emphasis delimiters, and other local
+ * syntax when an edit changes only text inside one exact mdast text span.
+ * Structural or ambiguous edits deliberately fall back to the block
+ * serializer.
+ */
+function minimallyPatchedTextBlock(
+  block: MarkdownSourceBlock,
+  baseline: ProseMirrorNode,
+  next: ProseMirrorNode,
+): string | null {
+  if (block.logicalText !== baseline.textContent) return null;
+  if (baseline.textContent === next.textContent) return null;
+  if (textStructure(baseline) !== textStructure(next)) return null;
+  const difference = textDifference(baseline.textContent, next.textContent);
+  const candidates = block.textSpans.filter(
+    (candidate) =>
+      candidate.direct &&
+      difference.start >= candidate.textStart &&
+      difference.beforeEnd <= candidate.textEnd,
+  );
+  // At a boundary between two logical text spans, ProseMirror positions the
+  // caret inside the following text node. Prefer that span so an insertion at
+  // the start of a nested list item is not appended to the preceding item.
+  const span =
+    candidates.find((candidate) => candidate.textStart === difference.start) ?? candidates[0];
+  if (!span) return null;
+  const sourceStart = span.sourceStart + difference.start - span.textStart;
+  const sourceEnd = span.sourceStart + difference.beforeEnd - span.textStart;
+  const expected = baseline.textContent.slice(difference.start, difference.beforeEnd);
+  if (block.source.slice(sourceStart - block.start, sourceEnd - block.start) !== expected) {
+    return null;
+  }
+  return applyMarkdownSourcePatches(block.source, [
+    {
+      start: sourceStart - block.start,
+      end: sourceEnd - block.start,
+      replacement: difference.replacement,
+    },
+  ]);
+}
+
 function inferredSeparator(
   ledger: MarkdownSourceLedger,
   index: number,
@@ -119,7 +194,11 @@ export function serializeScientMarkdownProjection(
     const baseline = sourceId === null ? undefined : baselineById.get(sourceId);
     if (sourceId !== null) consumedIds.add(sourceId);
 
-    output += original && baseline?.eq(node) ? original.source : serializeNode(node);
+    output +=
+      original && baseline?.eq(node)
+        ? original.source
+        : ((original && baseline ? minimallyPatchedTextBlock(original, baseline, node) : null) ??
+          serializeNode(node));
     const nextSourceId = nodes[index + 1] ? sourceIdOf(nodes[index + 1]!) : null;
     const originalSequenceContinues =
       original !== undefined && originalSuccessorById.get(original.id) === nextSourceId;

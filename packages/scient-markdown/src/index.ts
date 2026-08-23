@@ -6,6 +6,7 @@ export {
   type MarkdownSourceBlockReplacement,
   type MarkdownSourceLedger,
   type MarkdownSourcePatch,
+  type MarkdownSourceTextSpan,
 } from "./sourceLedger.ts";
 export {
   applyUserMarkdownSource,

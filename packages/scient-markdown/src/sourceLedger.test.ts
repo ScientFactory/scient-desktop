@@ -43,6 +43,21 @@ describe("createMarkdownSourceLedger", () => {
       "html",
     ]);
     expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(SCIENTIFIC_FIXTURE);
+    expect(ledger.blocks.find((block) => block.kind === "list")?.logicalText).toBe(
+      "parentnested item",
+    );
+    expect(
+      ledger.blocks.find((block) => block.kind === "list")?.textSpans.filter((span) => span.direct),
+    ).not.toHaveLength(0);
+  });
+
+  it("marks only exact plain-text spans as directly patchable", () => {
+    const source = "Text **bold** and `code` and &copy;.\n";
+    const block = createMarkdownSourceLedger(source).blocks[0]!;
+
+    expect(block.logicalText).toBe("Text bold and code and ©.");
+    expect(block.textSpans.some((span) => span.direct)).toBe(true);
+    expect(block.textSpans.some((span) => !span.direct)).toBe(true);
   });
 
   it("preserves every outside byte when replacing one block", () => {

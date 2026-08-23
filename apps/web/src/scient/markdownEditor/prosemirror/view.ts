@@ -58,6 +58,7 @@ export class ScientMarkdownEditorView {
   mount(element: HTMLElement): EditorView {
     if (this.editorView !== null) return this.editorView;
     this.editorView = new EditorView(element, this.directProps());
+    this.syncNodeViewEditability();
     return this.editorView;
   }
 
@@ -69,6 +70,7 @@ export class ScientMarkdownEditorView {
       attributes: accessibilityAttributes(mode, this.options.ariaLabel),
       editable: () => modeIsEditable(mode),
     });
+    this.syncNodeViewEditability();
   }
 
   applyTransaction(transaction: Transaction, origin: ScientMarkdownTransactionOrigin): void {
@@ -115,5 +117,14 @@ export class ScientMarkdownEditorView {
       },
       nodeViews: scientMarkdownNodeViews,
     };
+  }
+
+  private syncNodeViewEditability(): void {
+    const editable = modeIsEditable(this.mode);
+    this.editorView?.dom
+      .querySelectorAll<HTMLInputElement>(".scient-markdown-task-checkbox")
+      .forEach((checkbox) => {
+        checkbox.disabled = !editable;
+      });
   }
 }

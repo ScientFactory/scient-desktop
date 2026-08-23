@@ -18,6 +18,23 @@ export interface MarkdownSourceBlock {
   readonly end: number;
   readonly source: string;
   readonly trailing: string;
+  /**
+   * Logical text in the order a rich document exposes it. Direct spans point
+   * at source bytes that contain exactly the same UTF-16 text and can
+   * therefore accept a narrow text patch without normalizing Markdown around
+   * them. Non-direct spans keep later offsets aligned but require block
+   * serialization when edited.
+   */
+  readonly logicalText: string;
+  readonly textSpans: ReadonlyArray<MarkdownSourceTextSpan>;
+}
+
+export interface MarkdownSourceTextSpan {
+  readonly textStart: number;
+  readonly textEnd: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
+  readonly direct: boolean;
 }
 
 export interface MarkdownSourceLedger {
@@ -59,6 +76,53 @@ function lineEndingOf(source: string): "\n" | "\r\n" {
   return newline > 0 && source[newline - 1] === "\r" ? "\r\n" : "\n";
 }
 
+interface MdastValueNode {
+  readonly type: string;
+  readonly value?: unknown;
+  readonly children?: ReadonlyArray<MdastValueNode> | undefined;
+  readonly position?:
+    | {
+        readonly start?: { readonly offset?: number | undefined } | undefined;
+        readonly end?: { readonly offset?: number | undefined } | undefined;
+      }
+    | undefined;
+}
+
+const LOGICAL_VALUE_NODE_KINDS = new Set(["code", "inlineCode", "text"]);
+
+function markdownLogicalText(
+  node: MdastValueNode,
+  source: string,
+): {
+  readonly logicalText: string;
+  readonly textSpans: ReadonlyArray<MarkdownSourceTextSpan>;
+} {
+  let logicalText = "";
+  const textSpans: MarkdownSourceTextSpan[] = [];
+  const visit = (current: MdastValueNode): void => {
+    if (LOGICAL_VALUE_NODE_KINDS.has(current.type) && typeof current.value === "string") {
+      const textStart = logicalText.length;
+      logicalText += current.value;
+      const textEnd = logicalText.length;
+      const sourceStart = current.position?.start?.offset;
+      const sourceEnd = current.position?.end?.offset;
+      if (typeof sourceStart === "number" && typeof sourceEnd === "number") {
+        textSpans.push({
+          textStart,
+          textEnd,
+          sourceStart,
+          sourceEnd,
+          direct: current.type === "text" && source.slice(sourceStart, sourceEnd) === current.value,
+        });
+      }
+      return;
+    }
+    current.children?.forEach(visit);
+  };
+  visit(node);
+  return { logicalText, textSpans };
+}
+
 /**
  * Parse exact top-level Markdown source ownership without normalizing bytes.
  * The syntax tree is used only to locate blocks; the original string remains
@@ -84,6 +148,7 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
     if (start > contentEnd || contentEnd > end) {
       throw new Error(`Invalid Markdown source range for top-level ${node.type} block.`);
     }
+    const text = markdownLogicalText(node as MdastValueNode, source);
     return {
       // Position is deliberately excluded: ordinary text edits can move every
       // later block offset, while their session identities must remain stable.
@@ -94,6 +159,8 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
       end,
       source: source.slice(start, contentEnd),
       trailing: source.slice(contentEnd, end),
+      logicalText: text.logicalText,
+      textSpans: text.textSpans,
     };
   });
   return {

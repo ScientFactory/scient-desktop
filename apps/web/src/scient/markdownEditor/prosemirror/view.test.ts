@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { NodeSelection } from "prosemirror-state";
 
 import { ScientMarkdownEditorView } from "./view";
 
@@ -101,6 +102,61 @@ describe("ScientMarkdownEditorView", () => {
         view.dom.querySelector("[data-scient-markdown-math='display']")?.textContent,
       ).toContain("\\int_0^1 x \\, dx");
     });
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("renders task, wiki, and raw-source nodes and gates task changes by mode", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: '- [x] Done\n\nSee [[Methods|protocol]].\n\n<section data-x="1">raw</section>\n',
+      revision: "sha256:before",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const checkbox = view.dom.querySelector<HTMLInputElement>(".scient-markdown-task-checkbox");
+
+    expect(checkbox?.checked).toBe(true);
+    expect(checkbox?.disabled).toBe(true);
+    expect(view.dom.querySelector("[data-scient-markdown-wiki-link]")?.textContent).toContain(
+      "protocol",
+    );
+    expect(view.dom.querySelector("[data-scient-markdown-source-island]")?.textContent).toContain(
+      "raw",
+    );
+
+    controller.setMode("write");
+    expect(checkbox?.disabled).toBe(false);
+    checkbox!.checked = false;
+    checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+    expect(onUserSourceChange.mock.calls[0]?.[0]).toContain("- [ ] Done");
+  });
+
+  it("keeps a rendered code block visible when its nested editor activates", async () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "```python linenos\nprint('result')\n```\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const rendered = view.dom.querySelector<HTMLElement>(".scient-markdown-code-render");
+
+    expect(rendered?.textContent).toContain("print('result')");
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).not.toBeNull();
+    });
+    expect(rendered?.hidden).toBe(false);
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 });

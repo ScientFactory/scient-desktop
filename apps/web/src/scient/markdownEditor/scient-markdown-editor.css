@@ -106,6 +106,36 @@
   margin-block: 0.2em;
 }
 
+.scient-markdown-document li[data-task-checked] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  list-style: none;
+}
+
+.scient-markdown-task-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.scient-markdown-task-content > :last-child {
+  margin-block-end: 0;
+}
+
+.scient-markdown-task-checkbox {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: 0 0 auto;
+  margin-block-start: 0.37em;
+  accent-color: var(--primary);
+}
+
+.scient-markdown-document li[data-task-checked="true"] > .scient-markdown-task-content {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
+}
+
 .scient-markdown-document blockquote {
   padding-inline-start: 1em;
   border-inline-start: 2px solid var(--border);
@@ -131,6 +161,71 @@
 .scient-markdown-document pre code {
   background: transparent;
   padding: 0;
+}
+
+.scient-markdown-code-block {
+  margin-block: 0 1rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--code-background, var(--muted));
+}
+
+.scient-markdown-code-header {
+  display: flex;
+  min-height: 1.8rem;
+  align-items: center;
+  justify-content: flex-end;
+  border-block-end: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  padding-inline: 0.7rem;
+}
+
+.scient-markdown-code-language {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.035em;
+}
+
+.scient-markdown-code-render {
+  overflow: auto;
+  padding: 0.8rem 0.95rem;
+  color: var(--code-foreground, var(--foreground));
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.scient-markdown-code-render > pre {
+  overflow: visible;
+  margin: 0;
+  border: 0;
+  background: transparent !important;
+  padding: 0;
+}
+
+.scient-markdown-code-editor {
+  border-block-start: 1px solid var(--border);
+}
+
+.scient-markdown-code-editor .cm-editor {
+  max-height: 24rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.scient-markdown-code-editor .cm-scroller {
+  overflow: auto;
+  padding: 0.65rem 0.8rem;
+  font-family: inherit;
+  line-height: 1.55;
+}
+
+.scient-markdown-code-editor .cm-focused {
+  outline: none;
 }
 
 .scient-markdown-document table {
@@ -165,6 +260,77 @@
   border-style: dashed;
   color: var(--muted-foreground);
   white-space: pre-wrap;
+}
+
+.scient-markdown-wiki-link {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 0.35rem;
+  border-radius: 0.35rem;
+  background: color-mix(in oklab, var(--primary) 9%, transparent);
+  padding-inline: 0.25em;
+  color: var(--primary);
+  vertical-align: baseline;
+}
+
+.scient-markdown-wiki-link.is-selected {
+  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.scient-markdown-wiki-link-source {
+  min-width: 10rem;
+  border: 0;
+  border-inline-start: 1px solid var(--border);
+  background: transparent;
+  padding-inline: 0.4rem;
+  color: var(--foreground);
+  font: inherit;
+  outline: none;
+}
+
+.scient-markdown-source-island {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-block: 0 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--muted) 45%, transparent);
+  padding: 0.65rem 0.75rem;
+}
+
+.scient-markdown-source-island-kind {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.scient-markdown-source-island-preview {
+  max-height: 14rem;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+}
+
+.scient-markdown-source-island-editor {
+  min-height: 6rem;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--background);
+  padding: 0.55rem 0.65rem;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  outline: none;
 }
 
 .scient-markdown-math {
