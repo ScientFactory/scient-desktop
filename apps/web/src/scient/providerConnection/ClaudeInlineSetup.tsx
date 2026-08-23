@@ -25,6 +25,7 @@ import {
 } from "./claudeLifecycleActions";
 import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
+import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -262,7 +263,6 @@ export function ClaudeInlineSetup(props: {
     setLocalError(null);
     try {
       await props.controller.openAuthorizationPage(authorizationUrl);
-      setShowAuthorizationCode(true);
     } catch (error) {
       setLocalError(failureMessage(error, "Scient could not open Claude’s fallback sign-in page."));
     }
@@ -391,34 +391,18 @@ export function ClaudeInlineSetup(props: {
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           title={verifying ? "Checking your account" : "Finish signing in"}
         />
-        {showAuthorizationCode ? (
-          <form
-            className="flex max-w-full items-center gap-2 ps-8"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submitCode();
-            }}
-          >
-            <input
-              aria-label="Claude one-time sign-in code"
-              autoCapitalize="none"
-              autoComplete="off"
-              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring disabled:opacity-64"
-              onChange={(event) => setAuthorizationCode(event.currentTarget.value)}
-              placeholder="Paste code"
-              spellCheck={false}
-              value={authorizationCode}
-            />
-            <Button
-              className="h-8 px-2.5"
-              disabled={authorizationCode.trim().length === 0 || pendingAction === "submit-code"}
-              size="sm"
-              type="submit"
-              variant="outline"
-            >
-              Submit
-            </Button>
-          </form>
+        {activeConnectionOperation &&
+        activeConnectionOperation.acceptsAuthorizationCode !== false ? (
+          <ProviderAuthorizationCodeDisclosure
+            authorizationCode={authorizationCode}
+            disabled={pendingAction === "submit-code"}
+            expanded={showAuthorizationCode}
+            onAuthorizationCodeChange={setAuthorizationCode}
+            onExpandedChange={setShowAuthorizationCode}
+            onSubmit={() => void submitCode()}
+            providerName="Claude"
+            submitting={pendingAction === "submit-code"}
+          />
         ) : null}
         {localError ? (
           <p className="ps-8 text-destructive text-xs" role="alert">
@@ -435,7 +419,7 @@ export function ClaudeInlineSetup(props: {
               variant="ghost-muted"
             >
               <ExternalLinkIcon aria-hidden />
-              {showAuthorizationCode ? "Reopen fallback page" : "Browser didn’t open?"}
+              Browser didn’t open?
             </Button>
           ) : null}
           {activeConnectionOperation ? (
@@ -569,8 +553,8 @@ export function ClaudeInlineSetup(props: {
         body={
           signInError ??
           (signInMethod === "claude_subscription"
-            ? "Sign in with your existing Claude subscription. The secure flow opens in your browser, and Scient never sees your password."
-            : "Connect your Anthropic Console account. The secure flow opens in your browser, and Scient never sees your password.")
+            ? "Sign in with your existing Claude subscription. Scient never sees your password."
+            : "Connect your Anthropic Console account. Scient never sees your password.")
         }
         icon={
           signInError ? (

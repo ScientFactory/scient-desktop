@@ -291,10 +291,16 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     }
 
     const attempt = attemptResult.success;
-    const waitingStatus =
-      input.method === "codex_device_code" ? "waiting_for_device_code" : "waiting_for_browser";
-    const waitingMessage =
-      input.method === "codex_device_code"
+    const hasAuthorizationPage =
+      attempt.authorizationUrl !== undefined && attempt.authorizationUrlKind !== undefined;
+    const waitingStatus = !hasAuthorizationPage
+      ? "verifying"
+      : input.method === "codex_device_code" || input.method === "grok_device_code"
+        ? "waiting_for_device_code"
+        : "waiting_for_browser";
+    const waitingMessage = !hasAuthorizationPage
+      ? "Verifying the connected provider account."
+      : input.method === "codex_device_code" || input.method === "grok_device_code"
         ? "Enter the code in the provider's secure sign-in page."
         : "Finish signing in securely in your browser.";
     const waitingProviders = yield* transitionLock.withPermits(1)(
@@ -317,8 +323,12 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             status: waitingStatus,
             startedAt,
             message: waitingMessage,
-            authorizationUrl: attempt.authorizationUrl,
-            authorizationUrlKind: attempt.authorizationUrlKind,
+            ...(hasAuthorizationPage
+              ? {
+                  authorizationUrl: attempt.authorizationUrl,
+                  authorizationUrlKind: attempt.authorizationUrlKind,
+                }
+              : {}),
             acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
             ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
           }),

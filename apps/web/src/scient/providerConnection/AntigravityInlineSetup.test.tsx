@@ -63,11 +63,32 @@ describe("AntigravityInlineSetup", () => {
   });
 
   it("renders Google sign-in button when installed but unauthenticated", () => {
-    const markup = render(provider());
+    const markup = render(
+      provider({
+        message:
+          "Antigravity is not authenticated. Start the Antigravity sign-in flow and complete Google sign-in.",
+      }),
+    );
 
     expect(markup).toContain("Antigravity is installed");
     expect(markup).toContain("Sign in with Google");
-    expect(markup).toContain("existing subscription");
+    expect(markup).toContain(
+      "Sign in with the Google account for your existing subscription. Scient never sees your password.",
+    );
+    expect(markup).not.toContain("Antigravity owns the sign-in");
+    expect(markup).not.toContain("Start the Antigravity sign-in flow");
+  });
+
+  it("preserves actionable API-key-mode recovery guidance", () => {
+    const markup = render(
+      provider({
+        message:
+          "Antigravity is configured for Gemini API-key mode. Remove `modelProvider`, then sign in with Google.",
+      }),
+    );
+
+    expect(markup).toContain("configured for Gemini API-key mode");
+    expect(markup).toContain("Remove `modelProvider`");
   });
 
   it("never offers duplicate sign-in while account state is unknown", () => {

@@ -12,6 +12,7 @@ import * as AcpError from "effect-acp/errors";
 import * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
+const grokProbeAuthState = process.env.T3_ACP_GROK_PROBE_AUTH_STATE;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
@@ -334,9 +335,24 @@ const program = Effect.gen(function* () {
     Effect.sync(() => {
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      const authMethods =
+        grokProbeAuthState === "account" ||
+        grokProbeAuthState === "account-no-metadata" ||
+        grokProbeAuthState === "account-stale-subscription"
+          ? [
+              { id: "cached_token", name: "Connected Grok account" },
+              { id: "grok.com", name: "Grok account" },
+            ]
+          : grokProbeAuthState === "api_key"
+            ? [{ id: "xai.api_key", name: "xAI API key" }]
+            : grokProbeAuthState === "unauthenticated"
+              ? [{ id: "grok.com", name: "Grok account" }]
+              : undefined;
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        ...(authMethods ? { authMethods } : {}),
+        ...(grokProbeAuthState ? { _meta: { modelState: modelState() } } : {}),
       };
     }),
   );
@@ -990,6 +1006,43 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_x.ai/auth/info" && grokProbeAuthState === "account") {
+      return Effect.succeed({
+        methodId: "cached_token",
+        email: "scientist@example.com",
+      });
+    }
+
+    if (method === "_x.ai/auth/info" && grokProbeAuthState === "account-stale-subscription") {
+      return Effect.succeed({
+        methodId: "cached_token",
+        email: "current@example.com",
+      });
+    }
+
+    if (method === "_x.ai/auth/check_subscription" && grokProbeAuthState === "account") {
+      return Effect.succeed({
+        authenticated: true,
+        meta: {
+          email: "scientist@example.com",
+          subscription_tier: "SuperGrok",
+        },
+      });
+    }
+
+    if (
+      method === "_x.ai/auth/check_subscription" &&
+      grokProbeAuthState === "account-stale-subscription"
+    ) {
+      return Effect.succeed({
+        authenticated: false,
+        meta: {
+          email: "stale@example.com",
+          subscription_tier: "Stale tier",
+        },
+      });
+    }
+
     if (method === "cursor/list_available_models") {
       return Effect.succeed({
         models: availableModels(),

@@ -83,8 +83,12 @@ describe("CodexInlineSetup", () => {
   it("keeps browser sign-in primary and exposes device code as a fallback", () => {
     const markup = render(provider());
 
+    expect(markup).toContain(
+      "Sign in with your existing ChatGPT subscription. Scient never sees your password.",
+    );
     expect(markup).toContain("Sign in with ChatGPT");
     expect(markup).toContain("Use device code");
+    expect(markup).not.toContain("The secure flow opens in your browser");
   });
 
   it("shows and labels the active Codex device code", () => {

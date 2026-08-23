@@ -114,7 +114,7 @@ Scient adds an optional lifecycle seam to the existing T3 provider instance. It 
 second provider registry, model catalog, session router, or credential store. A driver without the
 optional seam keeps its inherited setup and provider behavior.
 
-The current vertical implementations are Codex, Claude, and Antigravity:
+The current vertical implementations are Codex, Claude, Antigravity, and Grok:
 
 - [`ProviderDriver.ts`][driver] exposes optional provider-owned connection and managed-runtime
   actions on a materialized provider instance;
@@ -126,6 +126,13 @@ The current vertical implementations are Codex, Claude, and Antigravity:
   runtime action; and
 - [`packages/scient-provider-runtime`][runtime-package] owns the reviewed artifact catalog and the
   small filesystem/download boundary.
+
+Grok uses the same lifecycle seam without adding a credential store. Its reviewed raw executable is
+installed atomically into Scient's private runtime directory. Account sign-in, device-code sign-in,
+authorization-code submission, cancellation, account inspection, and logout use Grok Build's
+official ACP auth extensions. Readiness probes initialize ACP only: they never call authenticate,
+create a session, or request token-bearing extension data. A configured `XAI_API_KEY` remains a
+distinct ready state and is not presented as a connected Grok subscription.
 
 The contracts are additive. `ServerProvider.auth.required` distinguishes a provider that needs no
 account from one whose account state is not yet known. The optional `connection` summary adds only

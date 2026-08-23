@@ -15,6 +15,8 @@ export const ProviderConnectionMethod = Schema.Literals([
   "claude_subscription",
   "claude_console",
   "antigravity_google",
+  "grok_account",
+  "grok_device_code",
 ]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
 

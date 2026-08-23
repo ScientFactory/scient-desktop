@@ -374,10 +374,13 @@ export function AntigravityInlineSetup(props: {
   if (!isAuthenticated) {
     const signInError =
       localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+    const configurationWarning = props.provider.message?.includes("Gemini API-key mode")
+      ? props.provider.message
+      : null;
     const signInGuidance =
       signInError ??
-      props.provider.message ??
-      "Sign in with the Google account that has your existing subscription.";
+      configurationWarning ??
+      "Sign in with the Google account for your existing subscription. Scient never sees your password.";
     return (
       <SetupFrame>
         {signInError ? (
@@ -408,9 +411,6 @@ export function AntigravityInlineSetup(props: {
         >
           <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Google"}
         </Button>
-        <p className="text-muted-foreground text-[11px]">
-          Antigravity owns the sign-in. Scient never sees your Google password.
-        </p>
       </SetupFrame>
     );
   }

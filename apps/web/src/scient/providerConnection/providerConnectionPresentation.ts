@@ -94,11 +94,15 @@ export function preferredProviderConnectionMethod(
       ? "claude_subscription"
       : methods.includes("antigravity_google")
         ? "antigravity_google"
-        : methods.includes("codex_device_code")
-          ? "codex_device_code"
-          : methods.includes("claude_console")
-            ? "claude_console"
-            : undefined;
+        : methods.includes("grok_account")
+          ? "grok_account"
+          : methods.includes("codex_device_code")
+            ? "codex_device_code"
+            : methods.includes("grok_device_code")
+              ? "grok_device_code"
+              : methods.includes("claude_console")
+                ? "claude_console"
+                : undefined;
 }
 
 export function isSafeProviderAuthorizationUrl(value: string): boolean {

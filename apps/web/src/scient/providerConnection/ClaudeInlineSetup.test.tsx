@@ -128,10 +128,13 @@ describe("ClaudeInlineSetup", () => {
 
   it("shows subscription login by default and preserves the Console fallback", () => {
     const subscriptionMarkup = render(provider());
-    expect(subscriptionMarkup).toContain("Sign in with your existing Claude subscription.");
+    expect(subscriptionMarkup).toContain(
+      "Sign in with your existing Claude subscription. Scient never sees your password.",
+    );
     expect(subscriptionMarkup).toContain("Sign in to Claude");
     expect(subscriptionMarkup).toContain("Use Anthropic Console");
     expect(subscriptionMarkup).toContain("Scient never sees your password.");
+    expect(subscriptionMarkup).not.toContain("The secure flow opens in your browser");
 
     const consoleMarkup = render(
       provider({
@@ -142,7 +145,9 @@ describe("ClaudeInlineSetup", () => {
         },
       }),
     );
-    expect(consoleMarkup).toContain("Connect your Anthropic Console account.");
+    expect(consoleMarkup).toContain(
+      "Connect your Anthropic Console account. Scient never sees your password.",
+    );
     expect(consoleMarkup).toContain("Sign in with Console");
   });
 
@@ -168,6 +173,8 @@ describe("ClaudeInlineSetup", () => {
 
     expect(markup).toContain("Checking your account");
     expect(markup).toContain("Browser didn’t open?");
+    expect(markup).toContain("Have a sign-in code?");
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain("Claude one-time sign-in code");
   });
 
@@ -194,6 +201,8 @@ describe("ClaudeInlineSetup", () => {
     expect(markup).toContain("Finish signing in");
     expect(markup).toContain("Complete sign-in in your browser.");
     expect(markup).toContain("Browser didn’t open?");
+    expect(markup).toContain("Have a sign-in code?");
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain("Claude one-time sign-in code");
   });
 
