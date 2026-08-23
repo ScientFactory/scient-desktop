@@ -1,8 +1,8 @@
 # Scient rich Markdown editor
 
-Status: implementation in progress on an isolated feature branch. This document is the
-product contract, architecture decision, implementation plan, and qualification ledger. It is
-not evidence that a listed gate has passed.
+Status: accepted architecture and product contract for Scient's file-native rich Markdown
+surface. This document records durable invariants, dependency decisions, module boundaries, and
+acceptance requirements; pull requests and their evidence remain the implementation record.
 
 ## Outcome
 
@@ -192,26 +192,19 @@ Useful interaction components and backend tests from that branch may be ported o
 behavior is revalidated against this contract. Its import/export bridge and whole-document
 autosave design must not be reused.
 
-### Current implementation audit (feature branch snapshot)
+### Implemented product shape
 
-The replacement branch is not a conceptual mock-up. It currently contains a persistent rich
-surface and source ledger, minimal source patching, Read/Write/Source/Split, revision-bound serial
+The surface contains a persistent rich view and source ledger, minimal source patching,
+Read/Write/Source/Split, revision-bound serial
 autosave, external-conflict handling, rich formatting/lists/tasks/tables, math, highlighted nested
 code editing, images, wiki links, citations/footnotes, Mermaid/Vega/Plotly previews, raw source
 islands, find/replace, outline navigation, structural block operations, create/rename, and secure
 asset insertion.
 
-The implementation has focused tests for unchanged-source reuse, CRLF and Unicode, malformed
-input fuzzing, composition safety, RTL block direction, last-valid math/diagram rendering,
-mode-safe link behavior, collision-safe file operations, save recovery, and representative 100
-KiB/500 KiB latency. These are implementation evidence, not the final product gate.
-
-The remaining high-risk work is qualification and gap closure: synchronized Split mapping,
-remaining table/figure polish, complete keyboard and screen-reader review, real Hebrew/English and
-IME exercises, two-writer/process-interruption stress, remote and packaged-runtime checks, bundle
-measurement, full repository checks, and visual inspection in the exact isolated Scient app.
-Until those pass, the feature is not ready for manual review and this document must not imply that
-it is.
+Changes to that shape require proportional evidence for unchanged-source reuse, CRLF and Unicode,
+malformed input, composition safety, RTL block direction, last-valid scientific rendering,
+mode-safe links, collision-safe file operations, save recovery, and representative large-document
+latency.
 
 ### Module boundaries
 
@@ -317,66 +310,11 @@ alignment, entity spelling, and untouched whitespace.
 - Before review, rebase onto the then-current owned main, rerun seam tests, inspect upstream
   overlap, and record any conscious adaptation. Do not mix an upstream merge into this branch.
 
-## Implementation stages and gates
+## Qualification requirements
 
-### Stage 0 - destructive-old-path quarantine and executable foundation
-
-- [x] Preserve the old branch/worktree unchanged for evidence.
-- [x] Create a clean isolated branch from current owned `origin/main`.
-- [x] Add the pure Scient Markdown package and adversarial fixture corpus.
-- [x] Add lazy ProseMirror/CodeMirror dependencies and license inventory.
-- [ ] Prove a persistent view can toggle Read/Write 100 times with no document transaction,
-      serialization, save callback, hash change, scroll movement, or geometry drift.
-- [x] Prove untouched-block byte preservation around an edited paragraph, list item, table cell,
-      Unicode/RTL span, and fenced block.
-
-Exit gate: the previous silent-write/data-loss path is structurally impossible and covered by
-tests. No product UI is mounted before this passes.
-
-### Stage 1 - complete core writing surface
-
-- [ ] Paragraphs, headings, emphasis, strong, strike, inline code, quotes, rules, links.
-- [ ] Bulleted, numbered, and task lists including nesting and marker preservation.
-- [ ] GFM tables with keyboard navigation and structural actions.
-- [ ] Undo/redo, selection toolbar, slash menu, shortcuts, paste, find/replace.
-- [ ] Read/Write/Source/Split with stable scroll and selection mapping.
-- [ ] Minimal header and truthful saved/saving/conflict/accessibility states.
-- [ ] Existing file refresh and compare-and-swap save lifecycle integration.
-
-Exit gate: the ordinary full writing workflow needs no source-mode escape and passes keyboard,
-IME, RTL, accessibility, and source-preservation tests.
-
-### Stage 2 - scientific and workspace-native nodes
-
-- [ ] Inline and display math with last-valid rendering and accessible source.
-- [ ] Highlighted code with embedded CodeMirror and fence preservation.
-- [ ] Image/figure insertion, paste/drop, alt text, captions, relative assets.
-- [ ] Wiki links with workspace completion, missing-target state, and safe navigation.
-- [ ] Citations, footnotes, Mermaid, Vega-Lite, and Plotly source islands and previews.
-- [ ] Raw HTML/directive/unknown syntax islands with safe rendering and exact preservation.
-- [ ] Create, rename, outline, block movement, and document-format action.
-
-Exit gate: the scientific fixture corpus is fully editable without silent loss; every unsupported
-construct remains available in place as source.
-
-### Stage 3 - hardening and qualification
-
-- [ ] Concurrent agent edits, rapid local edits, slow writes, disconnect/reconnect, rename races,
-      file deletion, permissions, disk-full, and process-interruption tests.
-- [ ] Property/fuzz tests for source ranges, patches, Unicode, CRLF, malformed Markdown, and large
-      documents.
-- [ ] Performance budgets for lazy bundle, open latency, keystroke latency, memory, long-document
-      scrolling, math/diagram rendering, and repeated mode toggles.
-- [ ] Keyboard-only and screen-reader pass; Hebrew/English mixed-direction pass; macOS IME and
-      composition pass; reduced-motion/high-contrast/zoom pass.
-- [ ] Remote connection and desktop-packaged runtime checks using only synthetic workspace data.
-- [ ] Focused tests, formatting, lint, typecheck, build, desktop smoke, brand check, and
-      `git diff --check` according to repository guidance.
-- [ ] Real Scient isolated-app review with screenshots and a recorded requirement-by-requirement
-      evidence ledger.
-
-Exit gate: every requirement below has direct current-state evidence and no open P0/P1 data-loss,
-accessibility, security, or file-conflict finding remains.
+Changes to the rich Markdown surface must prove the relevant rows below with current evidence.
+Data-loss, accessibility, security, and file-conflict defects are release blockers. Automated
+tests are necessary but do not replace proportional review in the real web/desktop surface.
 
 ## Verification matrix
 
@@ -410,9 +348,9 @@ Budgets are qualification thresholds, not aspirations:
 - Inactive Plotly and Mermaid nodes do not continuously animate or repaint.
 - Repeated mode toggles and file switches show no unbounded listener, DOM, or heap growth.
 
-## Completion rule
+## Change acceptance
 
-This feature is ready for Yaacov's manual review only when every applicable checkbox and matrix
-row has current evidence, the branch is rebased on current owned main, the worktree is clean, and
-the exact candidate is running as a verified isolated Scient development app. Passing narrow unit
-tests, completing the visual shell, or demonstrating plain-text editing is not completion.
+A rich Markdown change is reviewable only when every applicable matrix row has current evidence,
+the branch is based on current owned main, the worktree is clean, and the exact candidate has been
+qualified in an isolated Scient development app. Passing narrow unit tests, completing a visual
+shell, or demonstrating plain-text editing is not product acceptance.
