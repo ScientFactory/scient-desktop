@@ -193,6 +193,48 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange.mock.calls[0]?.[0]).toContain("- [ ] Done");
   });
 
+  it("does not persist an intermediate IME composition from a nested rich editor", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "See [[Method]].\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    let wikiPosition: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "wiki_link") wikiPosition = position;
+    });
+    expect(wikiPosition).not.toBeNull();
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, wikiPosition!)));
+    const source = view.dom.querySelector<HTMLInputElement>(
+      "[aria-label='Wiki link target and label']",
+    );
+    expect(source).not.toBeNull();
+    source!.value = "שיטה";
+    source!.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: "ה",
+        inputType: "insertText",
+        isComposing: true,
+      }),
+    );
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expect(view.state.doc.nodeAt(wikiPosition!)?.attrs.target).toBe("Method");
+
+    source!.dispatchEvent(
+      new InputEvent("input", { bubbles: true, data: "ה", inputType: "insertText" }),
+    );
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+    expect(controller.session.session.draftSource).toContain("[[שיטה]]");
+  });
+
   it("keeps a rendered code block visible when its nested editor activates", async () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
@@ -524,7 +566,7 @@ describe("ScientMarkdownEditorView", () => {
     const onUserSourceChange = vi.fn();
     const resolveImageSource = vi.fn(async (source: string) => `https://asset.test/${source}`);
     const controller = new ScientMarkdownEditorView({
-      source: "![Microscopy image](figures/cell.png)\n",
+      source: '![Microscopy image](figures/cell.png "Cell culture")\n',
       revision: "sha256:before",
       mode: "write",
       ariaLabel: "Markdown document",
@@ -539,12 +581,23 @@ describe("ScientMarkdownEditorView", () => {
 
     await vi.waitFor(() => expect(image?.src).toContain("figures/cell.png"));
     expect(image?.alt).toBe("Microscopy image");
+    expect(view.dom.querySelector(".scient-markdown-image-caption")?.textContent).toBe(
+      "Cell culture",
+    );
     expect(resolveImageSource).toHaveBeenCalledWith("figures/cell.png");
     view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
     expect(view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']")?.value).toBe(
       "figures/cell.png",
     );
     expect(image?.hidden).toBe(false);
-    expect(onUserSourceChange).not.toHaveBeenCalled();
+    const caption = view.dom.querySelector<HTMLInputElement>(
+      "[aria-label='Image title or caption']",
+    );
+    expect(caption?.value).toBe("Cell culture");
+    caption!.value = "Updated caption";
+    caption!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(controller.session.session.draftSource).toContain('"Updated caption"');
+    expect(image?.hidden).toBe(false);
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
   });
 });

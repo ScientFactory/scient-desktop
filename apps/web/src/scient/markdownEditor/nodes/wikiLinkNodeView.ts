@@ -62,7 +62,8 @@ class ScientWikiLinkNodeView implements NodeView {
     this.dom.removeEventListener("click", this.handleClick);
   }
 
-  private readonly handleInput = () => {
+  private readonly handleInput = (event: Event) => {
+    if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
     const separator = this.sourceEditor.value.indexOf("|");

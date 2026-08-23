@@ -96,7 +96,8 @@ class ScientMathNodeView implements NodeView {
     this.reactRoot.unmount();
   }
 
-  private readonly handleInput = () => {
+  private readonly handleInput = (event: Event) => {
+    if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
     this.view.dispatch(

@@ -95,7 +95,8 @@ class ScientReferenceNodeView implements NodeView {
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
   }
 
-  private readonly handleInput = () => {
+  private readonly handleInput = (event: Event) => {
+    if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
     const value = this.sourceEditor.value;

@@ -8,10 +8,12 @@ export type ScientMarkdownImageSourceResolver = (
 class ScientImageNodeView implements NodeView {
   readonly dom = document.createElement("span");
   private readonly image = document.createElement("img");
+  private readonly caption = document.createElement("span");
   private readonly placeholder = document.createElement("span");
   private readonly editor = document.createElement("span");
   private readonly sourceInput = document.createElement("input");
   private readonly altInput = document.createElement("input");
+  private readonly titleInput = document.createElement("input");
   private node: ProseMirrorNode;
   private resolveVersion = 0;
   private destroyed = false;
@@ -28,22 +30,29 @@ class ScientImageNodeView implements NodeView {
     this.dom.setAttribute("data-scient-markdown-image", "true");
     this.image.className = "scient-markdown-image-render";
     this.dom.append(this.image);
+    this.caption.className = "scient-markdown-image-caption";
+    this.dom.append(this.caption);
     this.placeholder.className = "scient-markdown-image-placeholder";
     this.placeholder.textContent = "Choose an image path";
     this.dom.append(this.placeholder);
     this.editor.className = "scient-markdown-image-editor";
     this.editor.hidden = true;
     this.sourceInput.type = "text";
-    this.sourceInput.dir = "auto";
+    this.sourceInput.dir = "ltr";
     this.sourceInput.placeholder = "Relative image path";
     this.sourceInput.setAttribute("aria-label", "Image path");
     this.altInput.type = "text";
     this.altInput.dir = "auto";
     this.altInput.placeholder = "Describe the image";
     this.altInput.setAttribute("aria-label", "Image alternative text");
+    this.titleInput.type = "text";
+    this.titleInput.dir = "auto";
+    this.titleInput.placeholder = "Optional title or caption";
+    this.titleInput.setAttribute("aria-label", "Image title or caption");
     this.sourceInput.addEventListener("input", this.handleInput);
     this.altInput.addEventListener("input", this.handleInput);
-    this.editor.append(this.sourceInput, this.altInput);
+    this.titleInput.addEventListener("input", this.handleInput);
+    this.editor.append(this.sourceInput, this.altInput, this.titleInput);
     this.dom.append(this.editor);
     this.render();
   }
@@ -78,9 +87,11 @@ class ScientImageNodeView implements NodeView {
     this.resolveVersion += 1;
     this.sourceInput.removeEventListener("input", this.handleInput);
     this.altInput.removeEventListener("input", this.handleInput);
+    this.titleInput.removeEventListener("input", this.handleInput);
   }
 
-  private readonly handleInput = () => {
+  private readonly handleInput = (event: Event) => {
+    if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
     this.view.dispatch(
@@ -88,6 +99,7 @@ class ScientImageNodeView implements NodeView {
         ...this.node.attrs,
         alt: this.altInput.value,
         src: this.sourceInput.value,
+        title: this.titleInput.value.trim().length > 0 ? this.titleInput.value : null,
       }),
     );
   };
@@ -95,10 +107,14 @@ class ScientImageNodeView implements NodeView {
   private render(): void {
     const source = String(this.node.attrs.src);
     const alt = String(this.node.attrs.alt ?? "");
+    const title = typeof this.node.attrs.title === "string" ? this.node.attrs.title : "";
     this.sourceInput.value = source;
     this.altInput.value = alt;
+    this.titleInput.value = title;
     this.image.alt = alt;
-    this.image.title = typeof this.node.attrs.title === "string" ? this.node.attrs.title : "";
+    this.image.title = title;
+    this.caption.textContent = title;
+    this.caption.hidden = title.length === 0;
     this.placeholder.hidden = source.length > 0;
     this.image.hidden = source.length === 0;
     if (source.length === 0) {
