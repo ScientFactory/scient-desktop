@@ -279,6 +279,15 @@ workflow rejects new non-official merge parents, while
 `scient-quick-chat-seams.json` keeps raw projectless decisions and inherited
 mounts explicit for future upstream reconciliation.
 
+Scient's first-run Getting Started flow is isolated under
+`apps/web/src/scient/onboarding`. It reuses canonical provider, project,
+permission, and Quick Chat state and owns only local presentation and optional
+preference records. The inherited-host seams are limited to the empty chat
+route, one General settings row, and the generated route entry. Preserve those
+mounts through upstream reconciliation;
+`scient-onboarding-seams.json` is the machine-readable inventory. See
+[Scient getting started](docs/internals/scient-onboarding.md).
+
 Local voice dictation is isolated under `packages/scient-voice`,
 `apps/web/src/scient/voice`, and `apps/desktop/src/app/DesktopVoice.ts`. The
 inherited-host seams are limited to typed IPC/preload registration, one

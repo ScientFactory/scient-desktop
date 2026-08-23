@@ -20,6 +20,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { ScientGettingStartedGate } from "~/scient/onboarding/ScientGettingStartedGate";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -29,7 +30,7 @@ function ChatIndexRouteView() {
     return <HostedStaticOnboardingState />;
   }
 
-  return <IndexDraftLanding />;
+  return <ScientGettingStartedGate fallback={<IndexDraftLanding />} />;
 }
 
 /**
