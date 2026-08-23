@@ -30,3 +30,33 @@ export function resolveWikiLinkPath(markdownRelativePath: string, target: string
     : `${withoutHeading}.md`;
   return resolveMarkdownSiblingPath(markdownRelativePath, withExtension);
 }
+
+export function markdownWikiTargetForPath(
+  markdownRelativePath: string,
+  targetRelativePath: string,
+): string | null {
+  const documentSegments = markdownRelativePath.replaceAll("\\", "/").split("/");
+  const targetSegments = targetRelativePath.replaceAll("\\", "/").split("/");
+  if (
+    targetSegments.length === 0 ||
+    targetSegments.some((segment) => segment.length === 0 || segment === "." || segment === "..") ||
+    !targetSegments.at(-1)?.toLocaleLowerCase().endsWith(".md")
+  ) {
+    return null;
+  }
+  documentSegments.pop();
+  let common = 0;
+  while (
+    common < documentSegments.length &&
+    common < targetSegments.length &&
+    documentSegments[common] === targetSegments[common]
+  ) {
+    common += 1;
+  }
+  const relativeSegments = [
+    ...Array.from({ length: documentSegments.length - common }, () => ".."),
+    ...targetSegments.slice(common),
+  ];
+  const relative = relativeSegments.join("/").replace(/\.md$/iu, "");
+  return relative.length > 0 ? relative : null;
+}

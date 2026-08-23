@@ -14,6 +14,8 @@ export interface ScientMarkdownNodeViewOptions {
   readonly onOpenWikiLink?: (target: string) => void;
   readonly registerTaskCheckbox?: (checkbox: HTMLInputElement) => () => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
+  readonly wikiLinkTargetExists?: (target: string) => boolean | null;
 }
 
 export function buildScientMarkdownNodeViews(
@@ -32,6 +34,13 @@ export function buildScientMarkdownNodeViews(
       createScientTaskListItemNodeView(node, view, getPos, options.registerTaskCheckbox),
     raw_block: createScientRawBlockNodeView,
     wiki_link: (node, view, getPos) =>
-      createScientWikiLinkNodeView(node, view, getPos, options.onOpenWikiLink),
+      createScientWikiLinkNodeView(
+        node,
+        view,
+        getPos,
+        options.onOpenWikiLink,
+        options.wikiLinkSuggestions,
+        options.wikiLinkTargetExists,
+      ),
   };
 }

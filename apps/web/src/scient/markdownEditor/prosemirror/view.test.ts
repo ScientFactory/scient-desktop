@@ -242,14 +242,17 @@ describe("ScientMarkdownEditorView", () => {
       revision: "sha256:before",
       ariaLabel: "Markdown document",
       onOpenWikiLink,
+      wikiLinkSuggestions: () => ["Methods", "Results"],
+      wikiLinkTargetExists: (target) => target === "Methods",
     });
     const host = document.createElement("div");
     document.body.append(host);
     mounted.push(controller);
-    controller.mount(host);
+    const view = controller.mount(host);
     const link = host.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]");
     expect(link?.getAttribute("role")).toBe("link");
     expect(link?.tabIndex).toBe(0);
+    expect(link?.dataset.scientMarkdownWikiTargetState).toBe("present");
 
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
     expect(onOpenWikiLink).toHaveBeenCalledExactlyOnceWith("Methods");
@@ -262,6 +265,21 @@ describe("ScientMarkdownEditorView", () => {
     controller.setMode("read");
     link!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     expect(onOpenWikiLink).toHaveBeenCalledTimes(3);
+
+    controller.setMode("write");
+    let wikiPosition: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "wiki_link") wikiPosition = position;
+    });
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, wikiPosition!)));
+    const input = host.querySelector<HTMLInputElement>("[aria-label='Wiki link target and label']");
+    expect(
+      [...host.querySelectorAll("datalist option")].map((option) => option.getAttribute("value")),
+    ).toEqual(["Methods", "Results"]);
+    input!.value = "Missing";
+    input!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(link?.dataset.scientMarkdownWikiTargetState).toBe("missing");
+    expect(input?.getAttribute("aria-invalid")).toBe("true");
   });
 
   it("opens safe document links by mode and resolves local heading fragments", () => {

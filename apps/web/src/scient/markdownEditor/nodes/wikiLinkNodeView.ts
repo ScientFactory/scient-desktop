@@ -1,10 +1,13 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
 
+let nextWikiListId = 1;
+
 class ScientWikiLinkNodeView implements NodeView {
   readonly dom = document.createElement("span");
   private readonly label = document.createElement("span");
   private readonly sourceEditor = document.createElement("input");
+  private readonly suggestions = document.createElement("datalist");
   private node: ProseMirrorNode;
 
   constructor(
@@ -12,6 +15,8 @@ class ScientWikiLinkNodeView implements NodeView {
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
     private readonly onOpen: ((target: string) => void) | undefined,
+    private readonly getSuggestions: (() => ReadonlyArray<string>) | undefined,
+    private readonly targetExists: ((target: string) => boolean | null) | undefined,
   ) {
     this.node = node;
     this.dom.className = "scient-markdown-wiki-link";
@@ -25,11 +30,14 @@ class ScientWikiLinkNodeView implements NodeView {
     this.sourceEditor.dir = "auto";
     this.sourceEditor.hidden = true;
     this.sourceEditor.setAttribute("aria-label", "Wiki link target and label");
+    this.suggestions.id = `scient-markdown-wiki-targets-${nextWikiListId}`;
+    nextWikiListId += 1;
+    this.sourceEditor.setAttribute("list", this.suggestions.id);
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
     this.dom.addEventListener("click", this.handleClick);
     this.dom.addEventListener("keydown", this.handleLinkKeyDown);
-    this.dom.append(this.sourceEditor);
+    this.dom.append(this.sourceEditor, this.suggestions);
     this.render();
   }
 
@@ -42,6 +50,8 @@ class ScientWikiLinkNodeView implements NodeView {
 
   selectNode(): void {
     this.dom.classList.add("is-selected");
+    this.populateSuggestions();
+    this.render();
     this.sourceEditor.hidden = false;
     this.sourceEditor.value = this.sourceValue();
   }
@@ -109,12 +119,29 @@ class ScientWikiLinkNodeView implements NodeView {
       : target;
   }
 
+  private populateSuggestions(): void {
+    this.suggestions.replaceChildren(
+      ...(this.getSuggestions?.() ?? []).slice(0, 300).map((target) => {
+        const option = document.createElement("option");
+        option.value = target;
+        return option;
+      }),
+    );
+  }
+
   private render(): void {
     const target = String(this.node.attrs.target);
     this.label.textContent = String(this.node.attrs.label ?? target);
     this.dom.setAttribute("data-target", target);
     this.dom.setAttribute("aria-label", `Open wiki link ${target}`);
-    this.dom.title = target;
+    const exists = this.targetExists?.(target) ?? null;
+    this.dom.classList.toggle("is-missing", exists === false);
+    this.dom.setAttribute(
+      "data-scient-markdown-wiki-target-state",
+      exists === null ? "unknown" : exists ? "present" : "missing",
+    );
+    this.sourceEditor.setAttribute("aria-invalid", exists === false ? "true" : "false");
+    this.dom.title = exists === false ? `Missing Markdown target: ${target}` : target;
     if (this.sourceEditor !== document.activeElement) {
       this.sourceEditor.value = this.sourceValue();
     }
@@ -126,6 +153,8 @@ export function createScientWikiLinkNodeView(
   view: EditorView,
   getPos: () => number | undefined,
   onOpen?: (target: string) => void,
+  getSuggestions?: () => ReadonlyArray<string>,
+  targetExists?: (target: string) => boolean | null,
 ): NodeView {
-  return new ScientWikiLinkNodeView(node, view, getPos, onOpen);
+  return new ScientWikiLinkNodeView(node, view, getPos, onOpen, getSuggestions, targetExists);
 }

@@ -21,6 +21,8 @@ export interface ScientMarkdownDocumentProps {
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly selectImage?: () => void;
+  readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
+  readonly wikiLinkTargetExists?: (target: string) => boolean | null;
   /** Supplied by the owning workspace surface so rich and source share one session. */
   readonly controller?: ScientMarkdownEditorView;
 }
@@ -49,6 +51,8 @@ export function ScientMarkdownDocument(props: ScientMarkdownDocumentProps) {
         ...(props.uploadImage ? { uploadImage: props.uploadImage } : {}),
         ...(props.onImageUploadFailure ? { onImageUploadFailure: props.onImageUploadFailure } : {}),
         ...(props.selectImage ? { selectImage: props.selectImage } : {}),
+        ...(props.wikiLinkSuggestions ? { wikiLinkSuggestions: props.wikiLinkSuggestions } : {}),
+        ...(props.wikiLinkTargetExists ? { wikiLinkTargetExists: props.wikiLinkTargetExists } : {}),
         onUserSourceChange: (source, intent) => onUserSourceChangeRef.current(source, intent),
       }),
   );

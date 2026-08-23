@@ -705,6 +705,12 @@ sup.scient-markdown-reference {
   outline-offset: 2px;
 }
 
+.scient-markdown-wiki-link.is-missing {
+  background: color-mix(in oklab, var(--warning) 12%, transparent);
+  text-decoration: underline wavy color-mix(in oklab, var(--warning) 75%, currentColor);
+  text-underline-offset: 0.2em;
+}
+
 .scient-markdown-wiki-link-source {
   min-width: 10rem;
   border: 0;

@@ -1,11 +1,12 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useCallback } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
   confirmProjectFileQueryData,
   refreshProjectEntriesQuery,
+  useProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
@@ -19,7 +20,11 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
-import { resolveMarkdownSiblingPath, resolveWikiLinkPath } from "./workspacePaths";
+import {
+  markdownWikiTargetForPath,
+  resolveMarkdownSiblingPath,
+  resolveWikiLinkPath,
+} from "./workspacePaths";
 
 export interface ScientMarkdownFileSurfaceProps {
   readonly environmentId: EnvironmentId;
@@ -50,6 +55,42 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
+  const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
+  const allMarkdownPaths = useMemo(
+    () =>
+      (entriesQuery.data?.entries ?? [])
+        .filter((entry) => entry.kind === "file" && entry.path.toLocaleLowerCase().endsWith(".md"))
+        .map((entry) => entry.path),
+    [entriesQuery.data?.entries],
+  );
+  const markdownPaths = useMemo(
+    () => allMarkdownPaths.filter((path) => path !== props.relativePath),
+    [allMarkdownPaths, props.relativePath],
+  );
+  const markdownPathSet = useMemo(() => new Set(allMarkdownPaths), [allMarkdownPaths]);
+  const markdownPathsRef = useRef(markdownPaths);
+  const markdownPathSetRef = useRef<ReadonlySet<string>>(markdownPathSet);
+  const entriesTruncatedRef = useRef(entriesQuery.data?.truncated ?? true);
+  markdownPathsRef.current = markdownPaths;
+  markdownPathSetRef.current = markdownPathSet;
+  entriesTruncatedRef.current = entriesQuery.data?.truncated ?? true;
+  const wikiLinkSuggestions = useCallback(
+    () =>
+      markdownPathsRef.current.flatMap((path) => {
+        const target = markdownWikiTargetForPath(props.relativePath, path);
+        return target === null ? [] : [target];
+      }),
+    [props.relativePath],
+  );
+  const wikiLinkTargetExists = useCallback(
+    (target: string): boolean | null => {
+      const resolved = resolveWikiLinkPath(props.relativePath, target);
+      if (resolved === null) return false;
+      if (markdownPathSetRef.current.has(resolved)) return true;
+      return entriesTruncatedRef.current ? null : false;
+    },
+    [props.relativePath],
+  );
   const persist = useCallback(
     async (intent: MarkdownSaveIntent) => {
       const result = await writeFile({
@@ -143,6 +184,8 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         const path = resolveWikiLinkPath(props.relativePath, target);
         if (path) props.onOpenFile(path);
       }}
+      wikiLinkSuggestions={wikiLinkSuggestions}
+      wikiLinkTargetExists={wikiLinkTargetExists}
       onOpenLink={(target) => {
         if (/^(?:https?:|mailto:)/iu.test(target)) {
           void readLocalApi()

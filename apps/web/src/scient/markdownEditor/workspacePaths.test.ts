@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveMarkdownSiblingPath, resolveWikiLinkPath } from "./workspacePaths";
+import {
+  markdownWikiTargetForPath,
+  resolveMarkdownSiblingPath,
+  resolveWikiLinkPath,
+} from "./workspacePaths";
 
 describe("Markdown workspace paths", () => {
   it("resolves portable sibling assets and wiki links", () => {
@@ -20,5 +24,15 @@ describe("Markdown workspace paths", () => {
     expect(resolveMarkdownSiblingPath("result.md", "/absolute.png")).toBeNull();
     expect(resolveMarkdownSiblingPath("result.md", "file:///tmp/a.png")).toBeNull();
     expect(resolveWikiLinkPath("result.md", "#local-heading")).toBeNull();
+  });
+
+  it("builds portable wiki targets relative to the authored document", () => {
+    expect(markdownWikiTargetForPath("notes/result.md", "notes/Methods/Protocol.md")).toBe(
+      "Methods/Protocol",
+    );
+    expect(markdownWikiTargetForPath("notes/result.md", "Overview.md")).toBe("../Overview");
+    expect(markdownWikiTargetForPath("result.md", "result.md")).toBe("result");
+    expect(markdownWikiTargetForPath("result.md", "images/plot.png")).toBeNull();
+    expect(markdownWikiTargetForPath("result.md", "../outside.md")).toBeNull();
   });
 });

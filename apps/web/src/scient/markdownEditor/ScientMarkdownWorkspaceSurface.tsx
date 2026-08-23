@@ -31,6 +31,8 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
+  readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
+  readonly wikiLinkTargetExists?: (target: string) => boolean | null;
   readonly saveResolution?: {
     readonly action: "discard" | "retry";
     readonly revision: string;
@@ -95,6 +97,8 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
               selectImage: () => imageInputRef.current?.click(),
             }
           : {}),
+        ...(props.wikiLinkSuggestions ? { wikiLinkSuggestions: props.wikiLinkSuggestions } : {}),
+        ...(props.wikiLinkTargetExists ? { wikiLinkTargetExists: props.wikiLinkTargetExists } : {}),
         onUserSourceChange: (source, intent) => {
           setDraftSource(source);
           saveQueue.enqueue(intent);

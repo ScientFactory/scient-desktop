@@ -54,6 +54,8 @@ export interface ScientMarkdownEditorViewOptions {
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly selectImage?: () => void;
+  readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
+  readonly wikiLinkTargetExists?: (target: string) => boolean | null;
 }
 
 export interface ScientMarkdownEditorSnapshot {
@@ -432,6 +434,12 @@ export class ScientMarkdownEditorView {
           checkbox.disabled = !modeIsEditable(this.mode);
           return () => this.taskCheckboxes.delete(checkbox);
         },
+        ...(this.options.wikiLinkSuggestions
+          ? { wikiLinkSuggestions: this.options.wikiLinkSuggestions }
+          : {}),
+        ...(this.options.wikiLinkTargetExists
+          ? { wikiLinkTargetExists: this.options.wikiLinkTargetExists }
+          : {}),
       }),
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
       handlePaste: (_view, event) => this.handleImageTransfer(event.clipboardData),
