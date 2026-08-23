@@ -31,6 +31,34 @@ describe("Scient ProseMirror projection", () => {
     expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(SOURCE);
   });
 
+  it("round-trips 250 varied Unicode and CRLF projections without normalization", () => {
+    const words = ["result", "תוצאה", "نتيجة", "😀", "e\u0301", "\u2067RTL\u2069"];
+    for (let seed = 0; seed < 250; seed += 1) {
+      const eol = seed % 2 === 0 ? "\n" : "\r\n";
+      const left = words[seed % words.length];
+      const right = words[(seed * 7 + 3) % words.length];
+      const source =
+        [
+          ...(seed % 5 === 0 ? ["---", `title: ${left}`, "---", ""] : []),
+          `${"#".repeat((seed % 6) + 1)} ${left} ${right}`,
+          "",
+          `Paragraph  with __${left}__ and &copy; ${right}.`,
+          "",
+          `- ${left}`,
+          `  ${seed % 2 === 0 ? "+" : "*"} nested ${right}`,
+          "",
+          `| Name|Value |`,
+          `|:--| --:|`,
+          `| ${left} | ${seed} |`,
+          "",
+          seed % 3 === 0 ? `<!-- malformed -- ${right} -->` : `$$${left}_${seed}$$`,
+          ...(seed % 4 === 0 ? ["", "````text meta=kept", `${left} ${right}`, "````"] : []),
+        ].join(eol) + (seed % 3 === 0 ? "" : eol);
+      const projection = createScientMarkdownProjection(source);
+      expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(source);
+    }
+  });
+
   it("serializes only an edited paragraph and preserves unsupported blocks verbatim", () => {
     const projection = createScientMarkdownProjection(SOURCE);
     let paragraphPosition: number | null = null;

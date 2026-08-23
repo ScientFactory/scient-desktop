@@ -28,6 +28,75 @@ const SCIENTIFIC_FIXTURE = [
   "",
 ].join("\n");
 
+function deterministicRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) / 0x1_0000_0000;
+  };
+}
+
+const FUZZ_TEXT = [
+  "alpha",
+  "תוצאות",
+  "نتائج",
+  "😀",
+  "e\u0301",
+  "x_y",
+  "A&B",
+  "<tag>",
+  "[link]",
+  "\u2067RTL\u2069",
+  "\u200fבידוד\u200e",
+] as const;
+
+function fuzzWord(random: () => number): string {
+  return FUZZ_TEXT[Math.floor(random() * FUZZ_TEXT.length)] ?? "text";
+}
+
+function fuzzMarkdown(seed: number): string {
+  const random = deterministicRandom(seed);
+  const lineEnding = random() < 0.5 ? "\n" : "\r\n";
+  const blocks: string[] = [];
+  const count = 1 + Math.floor(random() * 9);
+  for (let index = 0; index < count; index += 1) {
+    const left = fuzzWord(random);
+    const right = fuzzWord(random);
+    switch (Math.floor(random() * 8)) {
+      case 0:
+        blocks.push(`${"#".repeat(1 + Math.floor(random() * 6))} ${left} ${right}`);
+        break;
+      case 1:
+        blocks.push(`${left}  ${right} **${fuzzWord(random)}**`);
+        break;
+      case 2:
+        blocks.push(`- ${left}${lineEnding}  * ${right}${lineEnding}  * __${fuzzWord(random)}__`);
+        break;
+      case 3:
+        blocks.push(`| ${left} | ${right} |${lineEnding}| :-- | --: |${lineEnding}| 1 | 2 |`);
+        break;
+      case 4:
+        blocks.push(`\`\`\`\`text meta=${index}${lineEnding}${left} ${right}${lineEnding}\`\`\`\``);
+        break;
+      case 5:
+        blocks.push(`$$${lineEnding}${left}_${index} + ${right}${lineEnding}$$`);
+        break;
+      case 6:
+        blocks.push(`<!-- ${left} -- broken > ${right} -->`);
+        break;
+      default:
+        blocks.push(`> ${left}${lineEnding}> ## ${right}`);
+        break;
+    }
+  }
+  const separator = `${lineEnding}${lineEnding.repeat(1 + Math.floor(random() * 2))}`;
+  const prefix = random() < 0.2 ? `${lineEnding}${lineEnding}` : "";
+  const suffix = random() < 0.65 ? lineEnding : "";
+  return `${prefix}${blocks.join(separator)}${suffix}`;
+}
+
 describe("createMarkdownSourceLedger", () => {
   it("round-trips a mixed scientific document byte-for-byte", () => {
     const ledger = createMarkdownSourceLedger(SCIENTIFIC_FIXTURE);
@@ -102,6 +171,37 @@ describe("createMarkdownSourceLedger", () => {
       ]),
     ).toThrow("Duplicate replacement");
   });
+
+  it("partitions and reconstructs 500 deterministic malformed Unicode documents", () => {
+    for (let seed = 1; seed <= 500; seed += 1) {
+      const source = fuzzMarkdown(seed);
+      const ledger = createMarkdownSourceLedger(source);
+      expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
+      expect(
+        ledger.prefix + ledger.blocks.map((block) => block.source + block.trailing).join(""),
+      ).toBe(source);
+      let previousEnd = ledger.prefix.length;
+      for (const block of ledger.blocks) {
+        expect(block.start).toBe(previousEnd);
+        expect(block.start).toBeLessThanOrEqual(block.contentEnd);
+        expect(block.contentEnd).toBeLessThanOrEqual(block.end);
+        expect(block.source).toBe(source.slice(block.start, block.contentEnd));
+        expect(block.trailing).toBe(source.slice(block.contentEnd, block.end));
+        for (const span of block.textSpans) {
+          expect(span.textStart).toBeLessThanOrEqual(span.textEnd);
+          expect(span.sourceStart).toBeGreaterThanOrEqual(block.start);
+          expect(span.sourceEnd).toBeLessThanOrEqual(block.contentEnd);
+          if (span.direct) {
+            expect(source.slice(span.sourceStart, span.sourceEnd)).toBe(
+              block.logicalText.slice(span.textStart, span.textEnd),
+            );
+          }
+        }
+        previousEnd = block.end;
+      }
+      expect(previousEnd).toBe(source.length);
+    }
+  });
 });
 
 describe("applyMarkdownSourcePatches", () => {
@@ -133,5 +233,31 @@ describe("applyMarkdownSourcePatches", () => {
     expect(() =>
       applyMarkdownSourcePatches("abc", [{ start: -1, end: 2, replacement: "x" }]),
     ).toThrow("outside");
+  });
+
+  it("matches a token oracle for 2,000 unordered Unicode patch sets", () => {
+    const tokenPool = ["a", "ב", "ع", "😀", "e\u0301", "\r\n", "\n", "_", "[]"] as const;
+    for (let seed = 1; seed <= 2_000; seed += 1) {
+      const random = deterministicRandom(seed * 17);
+      const tokens = Array.from(
+        { length: 2 + Math.floor(random() * 20) },
+        () => tokenPool[Math.floor(random() * tokenPool.length)] ?? "x",
+      );
+      const patches: Array<{ start: number; end: number; replacement: string }> = [];
+      const expected: string[] = [];
+      let offset = 0;
+      tokens.forEach((token, index) => {
+        if (random() < 0.28) {
+          const replacement = `${fuzzWord(random)}${index % 3 === 0 ? "😀" : ""}`;
+          patches.push({ start: offset, end: offset + token.length, replacement });
+          expected.push(replacement);
+        } else {
+          expected.push(token);
+        }
+        offset += token.length;
+      });
+      const source = tokens.join("");
+      expect(applyMarkdownSourcePatches(source, patches.toReversed())).toBe(expected.join(""));
+    }
   });
 });
