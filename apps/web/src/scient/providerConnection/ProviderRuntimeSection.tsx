@@ -30,6 +30,10 @@ import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles
 import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
+type StartedRuntimeOperation = {
+  readonly action: ProviderManagedRuntimeAction;
+  readonly operationId: ProviderRuntimeOperation["operationId"];
+};
 
 const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
   "preparing",
@@ -142,17 +146,48 @@ export function ProviderRuntimeSection(props: {
   const [plan, setPlan] = useState<ProviderRuntimePlan | null>(null);
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [startedOperation, setStartedOperation] = useState<StartedRuntimeOperation | null>(null);
+  const providerInstanceIdRef = useRef(props.provider.instanceId);
   const initialPlanRequestRef = useRef<string | null>(null);
+  const reportedOperationIdRef = useRef<ProviderRuntimeOperation["operationId"] | null>(null);
 
   useEffect(() => {
+    if (providerInstanceIdRef.current === props.provider.instanceId) return;
+    providerInstanceIdRef.current = props.provider.instanceId;
     setPendingAction(null);
     setPlan(null);
     setLocalRuntime(null);
     setLocalError(null);
+    setStartedOperation(null);
     initialPlanRequestRef.current = null;
+    reportedOperationIdRef.current = null;
   }, [props.provider.instanceId]);
 
   const serverRuntime = props.provider.connection?.runtime;
+  const serverOperation = serverRuntime?.operation;
+  const startedOperationId = startedOperation?.operationId;
+  const startedOperationAction = startedOperation?.action;
+
+  useEffect(() => {
+    if (!startedOperationId || serverOperation?.operationId !== startedOperationId) return;
+    if (ACTIVE_RUNTIME_STATUSES.has(serverOperation.status)) return;
+
+    setStartedOperation(null);
+    if (
+      serverOperation.status === "succeeded" &&
+      reportedOperationIdRef.current !== serverOperation.operationId
+    ) {
+      reportedOperationIdRef.current = serverOperation.operationId;
+      if (startedOperationAction) props.onActionSucceeded?.(startedOperationAction);
+    }
+  }, [
+    props.onActionSucceeded,
+    serverOperation?.operationId,
+    serverOperation?.status,
+    startedOperationAction,
+    startedOperationId,
+  ]);
+
   const runtime = useMemo(
     () => resolveProviderRuntimeForPresentation(serverRuntime, localRuntime),
     [localRuntime, serverRuntime],
@@ -199,16 +234,25 @@ export function ProviderRuntimeSection(props: {
         return;
       }
       const nextRuntime = runtimeFromResult(result.value.providers, props.provider.instanceId);
+      const nextOperation = nextRuntime?.operation;
+      if (nextOperation?.action === nextPlan.action) {
+        if (ACTIVE_RUNTIME_STATUSES.has(nextOperation.status)) {
+          setStartedOperation({
+            action: nextPlan.action,
+            operationId: nextOperation.operationId,
+          });
+        } else if (
+          nextOperation.status === "succeeded" &&
+          reportedOperationIdRef.current !== nextOperation.operationId
+        ) {
+          reportedOperationIdRef.current = nextOperation.operationId;
+          props.onActionSucceeded?.(nextPlan.action);
+        }
+      }
       setLocalRuntime(nextRuntime ?? null);
       setPlan(null);
       props.onPlanOpenChange?.(false);
       setPendingAction(null);
-      if (
-        nextRuntime?.operation?.action === nextPlan.action &&
-        nextRuntime.operation.status === "succeeded"
-      ) {
-        props.onActionSucceeded?.(nextPlan.action);
-      }
     },
     [
       startRuntime,

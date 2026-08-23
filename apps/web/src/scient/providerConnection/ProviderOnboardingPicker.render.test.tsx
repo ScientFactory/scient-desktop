@@ -15,49 +15,62 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("./GrokInlineSetup", () => ({
   GrokInlineSetup: () => <div>Grok inline lifecycle</div>,
 }));
+vi.mock("./DroidInlineSetup", () => ({
+  DroidInlineSetup: () => <div>Droid inline lifecycle</div>,
+}));
 vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({}),
 }));
 
 import { ProviderLifecycleSetupSurface } from "./ProviderOnboardingPicker";
 
-it("renders Grok's complete lifecycle inline instead of sending the composer to settings", () => {
-  const provider: ServerProvider = {
-    instanceId: ProviderInstanceId.make("grok"),
-    driver: ProviderDriverKind.make("grok"),
-    displayName: "Grok",
-    enabled: true,
-    installed: false,
-    version: null,
-    status: "error",
-    auth: { status: "unauthenticated", required: true, type: "grok_account" },
-    checkedAt: "2026-08-23T08:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
-    connection: {
-      methods: ["grok_account", "grok_device_code"],
-      canDisconnect: false,
-      operation: null,
-      runtime: {
-        source: "missing",
-        supportTier: "fully_assisted",
-        target: "darwin-arm64",
-        actions: ["install"],
-        managedVersion: null,
-        previousManagedVersion: null,
-        operation: null,
-        message: "Scient can install Grok privately.",
+it.each([
+  ["grok", "Grok", "grok_account", "Grok inline lifecycle"],
+  ["droid", "Droid", "droid_device_pairing", "Droid inline lifecycle"],
+] as const)(
+  "renders %s's complete lifecycle inline instead of sending the composer to settings",
+  (driver, displayName, method, expectedSurface) => {
+    const provider: ServerProvider = {
+      instanceId: ProviderInstanceId.make(driver),
+      driver: ProviderDriverKind.make(driver),
+      displayName,
+      enabled: true,
+      installed: false,
+      version: null,
+      status: "error",
+      auth: {
+        status: "unauthenticated",
+        required: true,
+        ...(driver === "grok" ? { type: "grok_account" as const } : {}),
       },
-    },
-  };
-  const [entry] = deriveProviderInstanceEntries([provider]);
-  if (!entry) throw new Error("Expected the Grok provider entry.");
+      checkedAt: "2026-08-23T08:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      connection: {
+        methods: [method],
+        canDisconnect: false,
+        operation: null,
+        runtime: {
+          source: "missing",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["install"],
+          managedVersion: null,
+          previousManagedVersion: null,
+          operation: null,
+          message: `Scient can install ${displayName} privately.`,
+        },
+      },
+    };
+    const [entry] = deriveProviderInstanceEntries([provider]);
+    if (!entry) throw new Error(`Expected the ${displayName} provider entry.`);
 
-  const markup = renderToStaticMarkup(
-    <ProviderLifecycleSetupSurface environmentId={EnvironmentId.make("local")} entry={entry} />,
-  );
+    const markup = renderToStaticMarkup(
+      <ProviderLifecycleSetupSurface environmentId={EnvironmentId.make("local")} entry={entry} />,
+    );
 
-  expect(markup).toContain("Grok inline lifecycle");
-  expect(markup).not.toContain("Open provider settings");
-});
+    expect(markup).toContain(expectedSurface);
+    expect(markup).not.toContain("Open provider settings");
+  },
+);

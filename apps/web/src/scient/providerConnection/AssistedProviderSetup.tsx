@@ -4,7 +4,7 @@ import { cn } from "~/lib/utils";
 
 export function AssistedSetupFrame(props: {
   readonly children: ReactNode;
-  readonly flow: "claude" | "codex" | "grok";
+  readonly flow: "claude" | "codex" | "droid" | "grok";
 }) {
   return (
     <div

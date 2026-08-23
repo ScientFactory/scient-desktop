@@ -17,6 +17,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
@@ -143,13 +144,48 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       return removed;
     });
 
+  const cleanupInterruptedStart = Effect.fn("ProviderConnectionManager.cleanupInterruptedStart")(
+    function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly operationId: string;
+      readonly method: ProviderConnectionStartInput["method"];
+      readonly startedAt: string;
+    }) {
+      const active = yield* removeIfCurrent(input.instanceId, input.operationId);
+      if (!active) return;
+
+      const attempt = yield* Ref.get(active.attemptRef);
+      if (attempt) yield* attempt.cancel.pipe(Effect.ignore);
+      const supervisor = yield* Ref.get(active.fiberRef);
+      if (supervisor) yield* Fiber.interrupt(supervisor);
+      yield* Scope.close(active.scope, Exit.void).pipe(Effect.ignore);
+
+      const previousOperation = (yield* providerRegistry.getProviders).find(
+        (provider) => provider.instanceId === input.instanceId,
+      )?.connection?.operation;
+      if (previousOperation?.operationId !== input.operationId) return;
+      const finishedAt = yield* nowIso;
+      yield* providerRegistry.setProviderConnectionOperation({
+        instanceId: input.instanceId,
+        operation: operation({
+          operationId: input.operationId,
+          method: input.method,
+          status: "cancelled",
+          startedAt: input.startedAt,
+          finishedAt,
+          message: "Provider sign in cancelled.",
+        }),
+      });
+    },
+  );
+
   const start: ProviderConnectionManagerShape["start"] = Effect.fn(
     "ProviderConnectionManager.start",
   )(function* (input) {
     // Account state can change outside Scient and immediately after a managed
-    // install/reload. Re-probe before reserving or launching an OAuth flow so
-    // an existing Google subscription session is treated as ready, not as a
-    // reason to start a duplicate sign-in process.
+    // install/reload. Re-probe before reserving or launching an account flow
+    // so an existing provider session is treated as ready, not as a reason to
+    // start a duplicate sign-in process.
     yield* providerRegistry.refreshInstance(input.instanceId);
     const target = yield* readTarget(input.instanceId);
     if (!target.actions || !target.snapshot) {
@@ -249,176 +285,196 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       }),
     });
 
-    const attemptResult = yield* actions.start(input.method).pipe(
-      Effect.provideService(Scope.Scope, scope),
-      Effect.result,
-      Effect.catchCause(() =>
-        Effect.succeed({
-          _tag: "Failure" as const,
-          failure: {
-            message: "The provider sign-in flow stopped unexpectedly.",
-          },
-        }),
-      ),
-    );
-    if (attemptResult._tag === "Failure") {
-      const removed = yield* removeIfCurrent(input.instanceId, operationId);
-      yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
-      // A second client may have cancelled while the provider was still
-      // preparing its browser flow. Preserve that authoritative cancelled
-      // state instead of overwriting it with a late startup failure.
-      if (!removed) {
-        return { providers: yield* providerRegistry.getProviders };
-      }
-      const finishedAt = yield* nowIso;
-      yield* providerRegistry.setProviderConnectionOperation({
-        instanceId: input.instanceId,
-        operation: operation({
-          operationId,
-          method: input.method,
-          status: "failed",
-          startedAt,
-          finishedAt,
-          message: attemptResult.failure.message,
-        }),
-      });
-      return yield* makeError({
-        provider: target.provider,
-        instanceId: input.instanceId,
-        reason: "connection_failed",
-        message: attemptResult.failure.message,
-      });
-    }
-
-    const attempt = attemptResult.success;
-    const hasAuthorizationPage =
-      attempt.authorizationUrl !== undefined && attempt.authorizationUrlKind !== undefined;
-    const waitingStatus = !hasAuthorizationPage
-      ? "verifying"
-      : input.method === "codex_device_code" || input.method === "grok_device_code"
-        ? "waiting_for_device_code"
-        : "waiting_for_browser";
-    const waitingMessage = !hasAuthorizationPage
-      ? "Verifying the connected provider account."
-      : input.method === "codex_device_code" || input.method === "grok_device_code"
-        ? "Enter the code in the provider's secure sign-in page."
-        : "Finish signing in securely in your browser.";
-    const waitingProviders = yield* transitionLock.withPermits(1)(
-      Effect.gen(function* () {
-        const current = (yield* Ref.get(activeRef)).get(input.instanceId);
-        if (current?.operationId !== operationId) {
-          // Cancellation can race the provider's initial URL discovery. The
-          // scope has already been closed by cancel; ask the provider process
-          // to stop as a best-effort fallback and never resurrect waiting.
-          yield* attempt.cancel.pipe(Effect.ignore);
-          yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
-          return undefined;
+    return yield* Effect.gen(function* () {
+      const attemptResult = yield* actions.start(input.method).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.result,
+        Effect.catchCause(() =>
+          Effect.succeed(
+            Result.fail({
+              message: "The provider sign-in flow stopped unexpectedly.",
+            }),
+          ),
+        ),
+      );
+      if (attemptResult._tag === "Failure") {
+        const removed = yield* removeIfCurrent(input.instanceId, operationId);
+        yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+        // A second client may have cancelled while the provider was still
+        // preparing its browser flow. Preserve that authoritative cancelled
+        // state instead of overwriting it with a late startup failure.
+        if (!removed) {
+          return { providers: yield* providerRegistry.getProviders };
         }
-        yield* Ref.set(attemptRef, attempt);
-        return yield* providerRegistry.setProviderConnectionOperation({
+        const finishedAt = yield* nowIso;
+        yield* providerRegistry.setProviderConnectionOperation({
           instanceId: input.instanceId,
           operation: operation({
             operationId,
             method: input.method,
-            status: waitingStatus,
+            status: "failed",
             startedAt,
-            message: waitingMessage,
-            ...(hasAuthorizationPage
-              ? {
-                  authorizationUrl: attempt.authorizationUrl,
-                  authorizationUrlKind: attempt.authorizationUrlKind,
-                }
-              : {}),
-            acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
-            ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
+            finishedAt,
+            message: attemptResult.failure.message,
           }),
         });
-      }),
-    );
-    if (!waitingProviders) {
-      return { providers: yield* providerRegistry.getProviders };
-    }
+        return yield* makeError({
+          provider: target.provider,
+          instanceId: input.instanceId,
+          reason: "connection_failed",
+          message: attemptResult.failure.message,
+        });
+      }
 
-    const supervise = attempt.waitForCompletion.pipe(
-      Effect.result,
-      Effect.flatMap((result) =>
-        transitionLock.withPermits(1)(
-          Effect.gen(function* () {
-            const current = (yield* Ref.get(activeRef)).get(input.instanceId);
-            if (current?.operationId !== operationId) {
-              return;
-            }
-            if (result._tag === "Success") {
-              yield* providerRegistry.setProviderConnectionOperation({
-                instanceId: input.instanceId,
-                operation: operation({
-                  operationId,
-                  method: input.method,
-                  status: "verifying",
-                  startedAt,
-                  message: "Verifying the connected provider account.",
-                }),
-              });
-              yield* providerRegistry.refreshInstance(input.instanceId);
-            }
-            const removed = yield* removeIfCurrent(input.instanceId, operationId);
-            if (!removed) {
-              return;
-            }
-            const finishedAt = yield* nowIso;
-            yield* providerRegistry.setProviderConnectionOperation({
-              instanceId: input.instanceId,
-              operation: operation({
-                operationId,
-                method: input.method,
-                status: result._tag === "Success" ? "connected" : "failed",
-                startedAt,
-                finishedAt,
-                message:
-                  result._tag === "Success"
-                    ? "Provider account connected."
-                    : result.failure.message,
-              }),
-            });
+      const attempt = attemptResult.success;
+      const waitingStatus = attempt.initialStatus;
+      const waitingMessage =
+        waitingStatus === "verifying"
+          ? "Verifying the connected provider account."
+          : waitingStatus === "waiting_for_device_code"
+            ? "Enter the code in the provider's secure sign-in page."
+            : "Finish signing in securely in your browser.";
+      const waitingProviders = yield* transitionLock.withPermits(1)(
+        Effect.gen(function* () {
+          const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+          if (current?.operationId !== operationId) {
+            // Cancellation can race the provider's initial URL discovery. The
+            // scope has already been closed by cancel; ask the provider process
+            // to stop as a best-effort fallback and never resurrect waiting.
+            yield* attempt.cancel.pipe(Effect.ignore);
             yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
-          }),
-        ),
-      ),
-      Effect.catchCause(() =>
-        transitionLock.withPermits(1)(
-          Effect.gen(function* () {
-            const removed = yield* removeIfCurrent(input.instanceId, operationId);
-            if (removed) {
+            return undefined;
+          }
+          yield* Ref.set(attemptRef, attempt);
+          return yield* providerRegistry.setProviderConnectionOperation({
+            instanceId: input.instanceId,
+            operation: operation({
+              operationId,
+              method: input.method,
+              status: waitingStatus,
+              startedAt,
+              message: waitingMessage,
+              ...(attempt.authorizationUrl
+                ? {
+                    authorizationUrl: attempt.authorizationUrl,
+                    ...(attempt.authorizationUrlKind
+                      ? { authorizationUrlKind: attempt.authorizationUrlKind }
+                      : {}),
+                  }
+                : {}),
+              acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
+              ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
+            }),
+          });
+        }),
+      );
+      if (!waitingProviders) {
+        return { providers: yield* providerRegistry.getProviders };
+      }
+
+      const supervise = attempt.waitForCompletion.pipe(
+        Effect.result,
+        Effect.flatMap((result) =>
+          transitionLock.withPermits(1)(
+            Effect.gen(function* () {
+              const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+              if (current?.operationId !== operationId) {
+                return;
+              }
+              let completion = result;
+              if (completion._tag === "Success") {
+                yield* providerRegistry.setProviderConnectionOperation({
+                  instanceId: input.instanceId,
+                  operation: operation({
+                    operationId,
+                    method: input.method,
+                    status: "verifying",
+                    startedAt,
+                    message: "Verifying the connected provider account.",
+                  }),
+                });
+                const refreshed = yield* providerRegistry.refreshInstance(input.instanceId);
+                const refreshedProvider = refreshed.find(
+                  (provider) => provider.instanceId === input.instanceId,
+                );
+                if (
+                  refreshedProvider?.auth.required !== false &&
+                  refreshedProvider?.auth.status !== "authenticated"
+                ) {
+                  completion = Result.fail({
+                    message:
+                      "The provider finished sign in, but Scient could not verify the connected account.",
+                  });
+                }
+              }
+              const removed = yield* removeIfCurrent(input.instanceId, operationId);
+              if (!removed) {
+                return;
+              }
               const finishedAt = yield* nowIso;
               yield* providerRegistry.setProviderConnectionOperation({
                 instanceId: input.instanceId,
                 operation: operation({
                   operationId,
                   method: input.method,
-                  status: "failed",
+                  status: completion._tag === "Success" ? "connected" : "failed",
                   startedAt,
                   finishedAt,
-                  message: "The provider sign-in flow stopped unexpectedly.",
+                  message:
+                    completion._tag === "Success"
+                      ? "Provider account connected."
+                      : completion.failure.message,
                 }),
               });
               yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
-            }
-            yield* Effect.logError("Provider connection supervisor failed");
-          }),
+            }),
+          ),
         ),
+        Effect.catchCause(() =>
+          transitionLock.withPermits(1)(
+            Effect.gen(function* () {
+              const removed = yield* removeIfCurrent(input.instanceId, operationId);
+              if (removed) {
+                const finishedAt = yield* nowIso;
+                yield* providerRegistry.setProviderConnectionOperation({
+                  instanceId: input.instanceId,
+                  operation: operation({
+                    operationId,
+                    method: input.method,
+                    status: "failed",
+                    startedAt,
+                    finishedAt,
+                    message: "The provider sign-in flow stopped unexpectedly.",
+                  }),
+                });
+                yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+              }
+              yield* Effect.logError("Provider connection supervisor failed");
+            }),
+          ),
+        ),
+      );
+      const fiber = yield* Effect.forkDetach(supervise);
+      yield* Ref.set(fiberRef, fiber);
+      const stillCurrent = (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId;
+      if (stillCurrent !== operationId) {
+        // Cancellation can arrive between publishing the browser state and
+        // storing the supervisor. Do not leave that late fiber detached.
+        yield* Fiber.interrupt(fiber);
+        return { providers: yield* providerRegistry.getProviders };
+      }
+
+      return { providers: waitingProviders };
+    }).pipe(
+      Effect.onInterrupt(() =>
+        cleanupInterruptedStart({
+          instanceId: input.instanceId,
+          operationId,
+          method: input.method,
+          startedAt,
+        }),
       ),
     );
-    const fiber = yield* Effect.forkDetach(supervise);
-    yield* Ref.set(fiberRef, fiber);
-    const stillCurrent = (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId;
-    if (stillCurrent !== operationId) {
-      // Cancellation can arrive between publishing the browser state and
-      // storing the supervisor. Do not leave that late fiber detached.
-      yield* Fiber.interrupt(fiber);
-      return { providers: yield* providerRegistry.getProviders };
-    }
-
-    return { providers: waitingProviders };
   });
 
   const submitAuthorizationCode: ProviderConnectionManagerShape["submitAuthorizationCode"] =
@@ -572,7 +628,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     "ProviderConnectionManager.disconnect",
   )(function* (input) {
     const target = yield* readTarget(input.instanceId);
-    if (!target.actions || !target.snapshot) {
+    if (!target.actions || !target.snapshot || target.snapshot.connection?.canDisconnect !== true) {
       return yield* makeError({
         provider: target.provider,
         instanceId: input.instanceId,
@@ -599,12 +655,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       Effect.scoped,
       Effect.result,
       Effect.catchCause(() =>
-        Effect.succeed({
-          _tag: "Failure" as const,
-          failure: {
+        Effect.succeed(
+          Result.fail({
             message: "The provider sign-out flow stopped unexpectedly.",
-          },
-        }),
+          }),
+        ),
       ),
       Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
     );

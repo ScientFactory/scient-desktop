@@ -70,10 +70,13 @@ Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`)
 session runtime with Grok and Cursor. See [providers-droid.md](../user/providers-droid.md) for the
 user-facing setup flow. Implementation notes that go beyond the shared runtime:
 
-- `Drivers/DroidDriver.ts` is manual-maintenance only: no managed install/update actions are
-  declared yet.
-- `Layers/DroidProvider.ts` probes status as version check → one non-inference ACP session that
-  authenticates, reads the model inventory from `sessionSetupResult.configOptions`, and then walks
+- `Drivers/DroidDriver.ts` composes the existing adapter with the optional Scient lifecycle seam.
+  It preserves healthy custom and system binaries, otherwise resolves the reviewed app-private
+  runtime and exposes only the actions that match the current runtime and ACP capabilities.
+- `Layers/DroidProvider.ts` probes status as version check → one passive ACP connection. That
+  connection initializes once to read account capabilities, then calls `session/new` without
+  `authenticate` to classify account state and read the model inventory from
+  `sessionSetupResult.configOptions`. It then walks
   every catalog entry to observe its own reasoning-effort ladder (best-effort and time-bounded; on
   failure the snapshot inventory stands with unknown per-model ladders rather than wrong ones). Only an
   "Authentication required" failure maps to an unauthenticated snapshot; any other startup or spawn
@@ -90,6 +93,15 @@ user-facing setup flow. Implementation notes that go beyond the shared runtime:
   and advertises standard ACP form elicitation so structured Droid questions use Scient's existing
   user-input request/response lifecycle. It also adds a Droid idle watchdog: a silent child turn is cancelled after
   `SCIENT_DROID_TURN_IDLE_TIMEOUT_MS` (default 600s; capped at 3600s while nested Tasks run).
+- `scient/providerLifecycle/DroidConnectionActions.ts` invokes only the standard ACP
+  `device-pairing` method advertised by the exact initialized peer. Droid owns its dynamic browser
+  flow; because ACP exposes no URL to Scient, the generic connection attempt represents that
+  provider-opened-browser state explicitly and publishes no invented fallback URL or code. Sign out
+  is exposed only when the passive probe advertises ACP logout and is rechecked against the exact
+  connection used for logout; there is no terminal-output fallback.
+- `scient/providerLifecycle/DroidManagedRuntimeActions.ts` delegates immutable download,
+  verification, staging, smoke testing, atomic activation, repair, and removal to the shared
+  provider-runtime package. Scient disables Droid's in-place updater for managed processes.
 
 Shared-runtime edits this driver required (reconcile on upstream refreshes):
 
@@ -114,7 +126,7 @@ Scient adds an optional lifecycle seam to the existing T3 provider instance. It 
 second provider registry, model catalog, session router, or credential store. A driver without the
 optional seam keeps its inherited setup and provider behavior.
 
-The current vertical implementations are Codex, Claude, Antigravity, and Grok:
+The current vertical implementations are Codex, Claude, Antigravity, Grok, and Droid:
 
 - [`ProviderDriver.ts`][driver] exposes optional provider-owned connection and managed-runtime
   actions on a materialized provider instance;
@@ -224,7 +236,8 @@ Antigravity is a native integration, not an ACP compatibility bridge:
 
 The reviewed runtime catalogs currently include OpenAI Codex `0.147.0`, release tag
 `rust-v0.147.0`; Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version already
-used by T3; and Google Antigravity CLI `1.1.19`. Each known artifact has an exact HTTPS URL,
+used by T3; Google Antigravity CLI `1.1.19`; and Factory Droid `0.202.0`. Each known artifact has an
+exact HTTPS URL,
 allowlisted redirect hosts, byte size, SHA-256 or SHA-512 digest, archive shape, executable path,
 and smoke command compiled into the signed application source.
 
@@ -308,6 +321,18 @@ Known local-desktop targets receive managed install, repair, update, and removal
 hosts may use an externally administered runtime but cannot mutate it through Scient. As with the
 other provider catalogs, each operating-system and architecture row still requires packaged-app
 qualification before release; catalog metadata and unit tests alone are not cross-platform proof.
+
+### Droid platform capability matrix
+
+The reviewed Droid `0.202.0` catalog covers Apple-silicon and Intel macOS, ARM64 and x64 Windows,
+and ARM64 and x64 glibc Linux. X64 targets use Factory's official baseline binaries so managed
+installation does not require a separate CPU-detection subsystem. Musl Linux is not advertised
+because Factory does not publish a distinct reviewed artifact for it.
+
+Known local-desktop targets receive managed install, repair, and removal. Remote/server hosts may
+use an externally administered runtime but cannot mutate it through Scient. Catalog metadata and
+unit tests do not replace packaged-app qualification of every operating-system and architecture
+row.
 
 ### Upstream-maintenance boundary
 

@@ -36,6 +36,7 @@ describe("ClaudeDriver assisted account boundary", () => {
           Effect.succeed({
             authorizationUrl: "https://platform.claude.com/oauth/authorize",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_browser",
             waitForCompletion: Effect.sync(() => events.push("signed-in")).pipe(Effect.asVoid),
             cancel: Effect.void,
           }),
@@ -67,6 +68,7 @@ describe("ClaudeDriver assisted account boundary", () => {
           Effect.succeed({
             authorizationUrl: "https://platform.claude.com/oauth/authorize",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_browser",
             waitForCompletion: Effect.fail({ message: "not completed" }),
             cancel: Effect.void,
           }),

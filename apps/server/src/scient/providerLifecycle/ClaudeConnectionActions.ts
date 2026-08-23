@@ -135,6 +135,7 @@ export function makeClaudeConnectionActionsFromRuntime(
           // printed by the CLI is the provider's manual copy-code recovery,
           // not Scient's primary launch target.
           authorizationUrlKind: "manual_fallback",
+          initialStatus: "waiting_for_browser",
           submitAuthorizationCode: process.submitAuthorizationCode,
           waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
           cancel: process.cancel,

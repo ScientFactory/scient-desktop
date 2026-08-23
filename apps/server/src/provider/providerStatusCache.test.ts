@@ -150,6 +150,55 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
+  it.effect("never persists transient connection or managed-runtime operations", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-volatile-" });
+      const cachePath = `${tempDir}/provider.json`;
+      const provider = makeProvider(CODEX_DRIVER, {
+        connection: {
+          methods: ["codex_browser"],
+          canDisconnect: false,
+          operation: {
+            operationId: "connect-active",
+            method: "codex_browser",
+            status: "waiting_for_browser",
+            startedAt: "2026-08-23T10:00:00.000Z",
+            finishedAt: null,
+            message: "Finish sign in.",
+            authorizationUrl: "https://example.invalid/secret-flow",
+          },
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "1.0.0",
+            previousManagedVersion: null,
+            operation: {
+              operationId: "runtime-active",
+              action: "repair",
+              status: "downloading",
+              startedAt: "2026-08-23T10:00:00.000Z",
+              finishedAt: null,
+              message: "Downloading provider.",
+            },
+            message: "Managed by Scient.",
+          },
+        },
+      });
+
+      yield* writeProviderStatusCache({ filePath: cachePath, provider });
+
+      const cached = yield* readProviderStatusCache(cachePath);
+      assert.strictEqual(cached?.connection?.operation, null);
+      assert.strictEqual(cached?.connection?.runtime?.operation, null);
+      const raw = yield* fs.readFileString(cachePath);
+      assert.ok(!raw.includes("secret-flow"));
+      assert.ok(!raw.includes("runtime-active"));
+    }),
+  );
+
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",

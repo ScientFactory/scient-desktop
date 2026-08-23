@@ -207,6 +207,7 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
           return yield* actionError("Grok finished sign in without reporting a connected account.");
         }
         return {
+          initialStatus: "verifying",
           waitForCompletion: Effect.void,
           cancel: Effect.void,
         };
@@ -241,6 +242,8 @@ export const makeGrokConnectionActionsFromRuntime = Effect.fn(
       return {
         authorizationUrl: authorizationUrl.toString(),
         authorizationUrlKind,
+        initialStatus:
+          authorization.mode === "device" ? "waiting_for_device_code" : "waiting_for_browser",
         ...(userCode ? { userCode } : {}),
         ...(submitAuthorizationCode ? { submitAuthorizationCode } : {}),
         waitForCompletion: mapFailure(

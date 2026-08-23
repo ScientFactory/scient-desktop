@@ -7,28 +7,40 @@ calls, file edits, and nested Tasks all appear in the thread.
 Droid is marked **Early Access** in Scient. It is fully functional but newer than the other
 providers, and a few Droid-specific behaviors are documented below.
 
-## Requirements
+## Setup and account connection
 
-- A `droid` CLI binary (Factory's `@factory/cli`). Install it with your preferred package manager,
-  or point Scient at an existing binary under **Settings > Providers > Droid > Binary path**. If no
-  path is configured, Scient resolves `droid` through the environment `PATH` inherited by the app.
-- One of:
-  - **Device pairing** (default): run `droid` once in a terminal and complete its pairing flow.
-    Scient's background ACP sessions are deliberately headless and will reuse that cached sign-in;
-    they never open an authentication browser themselves.
-  - **`FACTORY_API_KEY`**: if that environment variable is set when Scient starts, Droid sessions
-    authenticate with it automatically and no pairing is needed. The key is passed through to the
-    CLI only; Scient never stores or displays it.
+The local desktop app can install a reviewed Droid runtime privately for Scient. A custom binary
+path or a healthy system installation is preserved and used as-is; Scient never replaces or
+removes it. Managed install, repair, and removal appear only when the runtime is Scient-owned.
+
+Droid supports two existing-account modes:
+
+- **Factory account pairing** (default): choose **Sign in with Factory**. Droid opens its secure
+  browser flow itself. Factory owns the browser, callback, and credential store; Scient receives no
+  password or token and does not invent or parse a sign-in URL.
+- **`FACTORY_API_KEY`** (advanced): when this environment variable is configured before Scient
+  starts, Droid uses it directly. The key is passed to the CLI only and is never displayed by
+  Scient. Interactive account actions are hidden because they cannot manage an environment-owned
+  key.
+
+You can still point Scient at an existing binary under **Settings > Providers > Droid > Binary
+path**. With no custom path, Scient preserves a healthy `droid` found on the app's `PATH`; otherwise
+it can offer the reviewed app-private runtime.
 
 ## Enabling Droid
 
 1. Open **Settings > Providers** and enable **Droid**, or pick Droid from the composer's provider
    rail.
-2. Scient runs a quick version check and then starts one background Droid session to sign in and
-   discover your available models. When the provider reports **Ready**, pick a model and start a
-   thread.
-3. If Scient reports Droid as unauthenticated, run `droid` in a terminal and complete pairing (or
-   set `FACTORY_API_KEY` and restart Scient), then retry the provider check.
+2. If Droid is missing, choose **Install** and review the official artifact before continuing.
+3. Choose **Sign in with Factory**, finish the provider-opened browser flow, and wait for Scient to
+   verify the connected account.
+4. When Droid reports **Ready**, pick a model and start a thread.
+
+Repair downloads and verifies a fresh reviewed copy before atomically replacing Scient's managed
+runtime. Remove deletes only that app-private copy; neither action changes Factory credentials,
+custom paths, or system installations. **Sign out** appears only if the exact running Droid version
+advertises ACP logout. Droid `0.202.0` does not advertise it, so Scient does not offer an unreliable
+terminal-automation fallback.
 
 ## Models and reasoning effort
 
@@ -74,5 +86,5 @@ at compile time instead of silently choosing an autonomy level.
 - **Quota**: Droid usage draws on your Factory plan. If the CLI reports an out-of-quota or
   payment-required error, the turn fails with that message and you can retry after topping up or
   waiting for the quota window.
-- **Maintenance is manual.** Scient does not install or update the Droid CLI for you; update it
-  with the same tool you used to install it.
+- **External runtime maintenance stays external.** Scient can repair or remove only its own
+  app-private runtime. Update a custom or system Droid installation with the tool that installed it.

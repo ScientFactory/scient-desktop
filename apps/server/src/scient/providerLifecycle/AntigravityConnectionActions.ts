@@ -320,6 +320,7 @@ export function makeAntigravityConnectionActionsFromRuntime(
         return {
           authorizationUrl: process.authorizationUrl,
           authorizationUrlKind: process.authorizationUrlKind,
+          initialStatus: "waiting_for_browser",
           ...(process.submitAuthorizationCode
             ? { submitAuthorizationCode: process.submitAuthorizationCode }
             : {}),

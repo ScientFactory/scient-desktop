@@ -76,9 +76,11 @@ function makeHarness(
   actions: ProviderManagedRuntimeActions,
   initialProviders: ReadonlyArray<ServerProvider> = [provider],
   stopProviderSessions: ProviderRegistryShape["stopProviderSessions"] = () => Effect.void,
+  actionsAfterReload?: ProviderManagedRuntimeActions,
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
+    const actionsRef = yield* Ref.make(actions);
     const reloadCountRef = yield* Ref.make(0);
     const stopCountRef = yield* Ref.make(0);
     const reloadOperationsRef = yield* Ref.make<ReadonlyArray<string | null>>([]);
@@ -105,6 +107,7 @@ function makeHarness(
             providers.find((candidate) => candidate.instanceId === INSTANCE)?.connection?.runtime
               ?.operation?.status ?? null;
           yield* Ref.update(reloadOperationsRef, (statuses) => [...statuses, operationStatus]);
+          if (actionsAfterReload) yield* Ref.set(actionsRef, actionsAfterReload);
           return providers;
         }),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
@@ -112,7 +115,7 @@ function makeHarness(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-      getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
+      getProviderManagedRuntimeActionsForInstance: () => Ref.get(actionsRef),
       stopProviderSessions: (provider) =>
         Ref.update(stopCountRef, (count) => count + 1).pipe(
           Effect.andThen(stopProviderSessions(provider)),
@@ -239,6 +242,66 @@ describe("ProviderRuntimeManager", () => {
         completed[0]?.connection?.runtime?.operation?.message,
         "The provider runtime was repaired and verified successfully.",
       );
+    }),
+  );
+
+  it.effect("publishes the freshly resolved system fallback after managed removal", () =>
+    Effect.gen(function* () {
+      const managedRuntime: ProviderRuntimeSummary = {
+        ...missingRuntime,
+        source: "scient_managed",
+        actions: ["repair", "remove"],
+        managedVersion: "0.202.0",
+        message: "Managed Droid is ready.",
+      };
+      const staleManagedActions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(missingRuntime),
+        plan: () =>
+          Effect.succeed({
+            action: "remove" as const,
+            target: "darwin-arm64",
+            version: "0.202.0",
+            downloadBytes: null,
+            sourceLabel: "Official Factory Droid release",
+            catalogRevision: "managed-droid:remove:0.202.0",
+            message: "Remove managed Droid.",
+          }),
+        run: () => Effect.void,
+      };
+      const systemRuntime: ProviderRuntimeSummary = {
+        ...missingRuntime,
+        source: "system",
+        actions: [],
+        message: "Using the system Droid runtime.",
+      };
+      const reloadedSystemActions: ProviderManagedRuntimeActions = {
+        ...staleManagedActions,
+        getSummary: Effect.succeed(systemRuntime),
+      };
+      const managedProvider: ServerProvider = {
+        ...provider,
+        installed: true,
+        connection: { ...provider.connection!, runtime: managedRuntime },
+      };
+      const { manager, providersRef } = yield* makeHarness(
+        staleManagedActions,
+        [managedProvider],
+        () => Effect.void,
+        reloadedSystemActions,
+      );
+
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "remove",
+        catalogRevision: "managed-droid:remove:0.202.0",
+      });
+
+      const completed = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+      );
+      assert.strictEqual(completed[0]?.connection?.runtime?.source, "system");
+      assert.deepStrictEqual(completed[0]?.connection?.runtime?.actions, []);
     }),
   );
 

@@ -434,11 +434,7 @@ export function ProviderInstanceCard({
           ? "warning"
           : "secondary";
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const usesScientManagedRuntime =
-    (liveProvider?.driver === "codex" ||
-      liveProvider?.driver === "claudeAgent" ||
-      liveProvider?.driver === "antigravity") &&
-    liveProvider.connection?.runtime?.source === "scient_managed";
+  const usesScientManagedRuntime = liveProvider?.connection?.runtime?.source === "scient_managed";
   // A Scient-managed provider copy updates only through the reviewed managed
   // artifact path. Do not expose T3's external package-manager update command
   // for that same executable; the visible lifecycle action below owns it.

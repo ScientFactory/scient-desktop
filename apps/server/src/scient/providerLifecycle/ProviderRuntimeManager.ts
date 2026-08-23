@@ -197,12 +197,16 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         providers.filter((candidate) => candidate.driver === provider),
         (candidate) =>
           Effect.gen(function* () {
+            const currentOperation = candidate.connection?.runtime?.operation ?? null;
+            // Runtime selection happens while constructing the provider. Reload
+            // first so removing a private runtime can discover a healthy system
+            // fallback before the durable summary is published.
+            yield* providerRegistry.reloadInstance(candidate.instanceId);
             const actions = yield* providerRegistry.getProviderManagedRuntimeActionsForInstance(
               candidate.instanceId,
             );
             if (actions) {
               const summary = yield* actions.getSummary;
-              const currentOperation = candidate.connection?.runtime?.operation ?? null;
               yield* providerRegistry.setProviderManagedRuntimeSummary({
                 instanceId: candidate.instanceId,
                 runtime: {
@@ -218,7 +222,6 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                 },
               });
             }
-            yield* providerRegistry.reloadInstance(candidate.instanceId);
           }).pipe(Effect.ignore),
         { concurrency: 1, discard: true },
       );
@@ -365,7 +368,13 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                 yield* refreshRuntimeInstances(target.provider);
               }
               const finishedAt = yield* nowIso;
-              const latestSummary = yield* target.actions.getSummary.pipe(
+              const latestActions =
+                result._tag === "Success"
+                  ? ((yield* providerRegistry.getProviderManagedRuntimeActionsForInstance(
+                      input.instanceId,
+                    )) ?? target.actions)
+                  : target.actions;
+              const latestSummary = yield* latestActions.getSummary.pipe(
                 Effect.orElseSucceed(() => baseSummary),
               );
               yield* providerRegistry.setProviderManagedRuntimeSummary({

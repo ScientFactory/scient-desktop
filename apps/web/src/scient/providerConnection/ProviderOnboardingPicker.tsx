@@ -13,6 +13,7 @@ import { cn } from "~/lib/utils";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
+import { DroidInlineSetup } from "./DroidInlineSetup";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
@@ -51,16 +52,6 @@ export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefin
     entry.models.find((model) => !model.isCustom)?.slug ??
     entry.models[0]?.slug ??
     null
-  );
-}
-
-/** Providers whose complete readiness flow can stay inside the composer. */
-export function hasInlineProviderLifecycleSurface(driverKind: ProviderDriverKind): boolean {
-  return (
-    driverKind === "codex" ||
-    driverKind === "claudeAgent" ||
-    driverKind === "antigravity" ||
-    driverKind === "grok"
   );
 }
 
@@ -281,25 +272,18 @@ export function ProviderOnboardingPicker(props: {
                   </div>
                 )
               ) : selectedDefinition && selectedEntry ? (
-                hasInlineProviderLifecycleSurface(selectedEntry.driverKind) ? (
-                  <ProviderLifecycleSetupSurface
-                    entry={selectedEntry}
-                    environmentId={props.environmentId}
-                  />
-                ) : (
-                  <ProviderSetupDetail
-                    displayName={selectedDefinition.label}
-                    status={providerOnboardingStatusLabel(selectedEntry)}
-                    onManage={() => {
-                      if (canManageProviderLifecycle(selectedEntry.snapshot)) {
-                        setOpen(false);
-                        setDialogEntry(selectedEntry);
-                      } else {
-                        openSettings();
-                      }
-                    }}
-                  />
-                )
+                <ProviderLifecycleSetupSurface
+                  entry={selectedEntry}
+                  environmentId={props.environmentId}
+                  onManageFallback={() => {
+                    if (canManageProviderLifecycle(selectedEntry.snapshot)) {
+                      setOpen(false);
+                      setDialogEntry(selectedEntry);
+                    } else {
+                      openSettings();
+                    }
+                  }}
+                />
               ) : (
                 <ProviderSetupDetail
                   displayName={selectedDefinition?.label ?? "Provider"}
@@ -375,6 +359,18 @@ function GrokSetupWithController(props: {
   return <GrokInlineSetup {...props} controller={controller} />;
 }
 
+function DroidSetupWithController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ProviderInstanceEntry["snapshot"];
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  return <DroidInlineSetup {...props} controller={controller} />;
+}
+
 /**
  * Inline setup surface used by the regular model picker after another provider
  * is already ready. Keeping this in Scient-owned code lets T3 continue to own
@@ -383,6 +379,7 @@ function GrokSetupWithController(props: {
 export function ProviderLifecycleSetupSurface(props: {
   readonly environmentId: EnvironmentId;
   readonly entry: ProviderInstanceEntry;
+  readonly onManageFallback?: (() => void) | undefined;
 }) {
   const navigate = useNavigate();
   if (props.entry.driverKind === "codex") {
@@ -421,11 +418,20 @@ export function ProviderLifecycleSetupSurface(props: {
       />
     );
   }
+  if (props.entry.driverKind === "droid") {
+    return (
+      <DroidSetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
   return (
     <ProviderSetupDetail
       displayName={props.entry.displayName}
       status={providerOnboardingStatusLabel(props.entry)}
-      onManage={() => void navigate({ to: "/settings/providers" })}
+      onManage={props.onManageFallback ?? (() => void navigate({ to: "/settings/providers" }))}
     />
   );
 }

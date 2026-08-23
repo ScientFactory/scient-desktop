@@ -47,6 +47,13 @@ const disconnectedProvider: ServerProvider = {
   },
 };
 
+const authenticatedProvider = (provider: ServerProvider): ServerProvider => ({
+  ...provider,
+  status: "ready",
+  auth: { status: "authenticated", required: true },
+  ...(provider.connection ? { connection: { ...provider.connection, canDisconnect: true } } : {}),
+});
+
 const yieldUntil = <A>(
   effect: Effect.Effect<A, never, never>,
   predicate: (value: A) => boolean,
@@ -68,7 +75,7 @@ function makeHarness(options?: {
   readonly beforeSetProviderConnectionOperation?: (
     operation: ProviderConnectionOperation | null,
   ) => Effect.Effect<void>;
-  readonly refreshProvider?: (provider: ServerProvider) => ServerProvider;
+  readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
 }) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
@@ -99,11 +106,11 @@ function makeHarness(options?: {
       refresh: () => Ref.get(providersRef),
       refreshInstance: (instanceId) =>
         Effect.gen(function* () {
-          yield* Ref.update(refreshCountRef, (count) => count + 1);
+          const refreshCount = yield* Ref.updateAndGet(refreshCountRef, (count) => count + 1);
           return yield* Ref.updateAndGet(providersRef, (providers) =>
             providers.map((provider) =>
               provider.instanceId === instanceId
-                ? (options?.refreshProvider?.(provider) ?? provider)
+                ? (options?.refreshProvider?.(provider, refreshCount) ?? provider)
                 : provider,
             ),
           );
@@ -144,12 +151,17 @@ describe("ProviderConnectionManager", () => {
             Effect.succeed({
               authorizationUrl: "https://auth.openai.com/",
               authorizationUrlKind: "primary",
+              initialStatus: "waiting_for_browser",
               waitForCompletion: Deferred.await(completed),
               cancel: Effect.void,
             }),
           disconnect: Effect.void,
         };
-        const { manager, transitionsRef, refreshCountRef } = yield* makeHarness({ actions });
+        const { manager, transitionsRef, refreshCountRef } = yield* makeHarness({
+          actions,
+          refreshProvider: (provider, refreshCount) =>
+            refreshCount >= 2 ? authenticatedProvider(provider) : provider,
+        });
 
         const started = yield* manager.start({
           instanceId: CODEX_INSTANCE,
@@ -202,6 +214,7 @@ describe("ProviderConnectionManager", () => {
           Effect.succeed({
             authorizationUrl: "https://accounts.x.ai/device?user_code=GROK-1234",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_device_code",
             userCode: "GROK-1234",
             waitForCompletion: Deferred.await(completed),
             cancel: Effect.void,
@@ -211,6 +224,8 @@ describe("ProviderConnectionManager", () => {
       const { manager, transitionsRef } = yield* makeHarness({
         actions,
         provider: grokProvider,
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 2 ? authenticatedProvider(provider) : provider,
       });
 
       const started = yield* manager.start({
@@ -237,12 +252,17 @@ describe("ProviderConnectionManager", () => {
         methods: ["grok_account"],
         start: () =>
           Effect.succeed({
+            initialStatus: "verifying",
             waitForCompletion: Deferred.await(completed),
             cancel: Effect.void,
           }),
         disconnect: Effect.void,
       };
-      const { manager, transitionsRef } = yield* makeHarness({ actions });
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions,
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 2 ? authenticatedProvider(provider) : provider,
+      });
 
       const started = yield* manager.start({
         instanceId: CODEX_INSTANCE,
@@ -268,6 +288,7 @@ describe("ProviderConnectionManager", () => {
           Effect.succeed({
             authorizationUrl: "https://claude.ai/oauth/authorize",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_browser",
             submitAuthorizationCode: (code) => Ref.set(submittedCode, code),
             waitForCompletion: Deferred.await(completed),
             cancel: Effect.void,
@@ -340,6 +361,7 @@ describe("ProviderConnectionManager", () => {
           Effect.succeed({
             authorizationUrl: "https://platform.claude.com/oauth/authorize",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_browser",
             submitAuthorizationCode: (code) =>
               Ref.updateAndGet(submittedCodes, (codes) => [...codes, code]).pipe(
                 Effect.flatMap((codes) =>
@@ -407,6 +429,7 @@ describe("ProviderConnectionManager", () => {
           Effect.succeed({
             authorizationUrl: "https://claude.ai/oauth/authorize",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_browser",
             submitAuthorizationCode: () =>
               Deferred.succeed(codeStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(releaseCode)),
@@ -468,6 +491,7 @@ describe("ProviderConnectionManager", () => {
           Effect.succeed({
             authorizationUrl: "https://auth.openai.com/",
             authorizationUrlKind: "primary",
+            initialStatus: "waiting_for_browser",
             waitForCompletion: Deferred.await(completed),
             cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
           }),
@@ -516,6 +540,7 @@ describe("ProviderConnectionManager", () => {
             Effect.as({
               authorizationUrl: "https://auth.openai.com/",
               authorizationUrlKind: "primary" as const,
+              initialStatus: "waiting_for_browser" as const,
               waitForCompletion: Effect.never,
               cancel: Deferred.succeed(providerCancelled, undefined).pipe(Effect.asVoid),
             }),
@@ -558,6 +583,7 @@ describe("ProviderConnectionManager", () => {
           Effect.succeed({
             authorizationUrl: "https://claude.ai/oauth/authorize",
             authorizationUrlKind: "manual_fallback",
+            initialStatus: "waiting_for_browser",
             waitForCompletion: Effect.never,
             cancel: Deferred.succeed(providerCancelled, undefined).pipe(Effect.asVoid),
           }),
@@ -646,6 +672,135 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
+  it.effect("supports provider-owned browser launch without publishing an invented URL", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["droid_device_pairing"],
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Effect.never,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: {
+          ...disconnectedProvider,
+          driver: ProviderDriverKind.make("droid"),
+          connection: {
+            methods: ["droid_device_pairing"],
+            canDisconnect: false,
+            operation: null,
+          },
+        },
+      });
+
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "droid_device_pairing",
+      });
+      const operation = started.providers[0]?.connection?.operation;
+      assert.strictEqual(operation?.status, "waiting_for_browser");
+      assert.strictEqual(operation?.authorizationUrl, undefined);
+      assert.strictEqual(operation?.authorizationUrlKind, undefined);
+      assert.strictEqual(operation?.acceptsAuthorizationCode, false);
+
+      assert.ok(operation?.operationId);
+      yield* manager.cancel({
+        instanceId: CODEX_INSTANCE,
+        operationId: operation.operationId,
+      });
+    }),
+  );
+
+  it.effect("releases the connection reservation when starting is interrupted", () =>
+    Effect.gen(function* () {
+      const interrupted = yield* Deferred.make<void>();
+      const starts = yield* Ref.make(0);
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Ref.updateAndGet(starts, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Effect.never.pipe(
+                    Effect.onInterrupt(() =>
+                      Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+                    ),
+                  )
+                : Effect.fail(
+                    new ProviderConnectionActionError({ message: "Second start reached." }),
+                  ),
+            ),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness({ actions });
+
+      const first = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.forkChild);
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.operation?.status === "starting",
+      );
+      yield* Fiber.interrupt(first);
+      yield* Deferred.await(interrupted);
+
+      const retry = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.flip);
+      assert.strictEqual(retry.reason, "connection_failed");
+      assert.strictEqual(retry.message, "Second start reached.");
+      assert.strictEqual(yield* Ref.get(starts), 2);
+    }),
+  );
+
+  it.effect("fails completion when the single post-auth refresh cannot verify the account", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const actions: ProviderConnectionActions = {
+        methods: ["droid_device_pairing"],
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef, refreshCountRef } = yield* makeHarness({
+        actions,
+        provider: {
+          ...disconnectedProvider,
+          driver: ProviderDriverKind.make("droid"),
+          connection: {
+            methods: ["droid_device_pairing"],
+            canDisconnect: false,
+            operation: null,
+          },
+        },
+      });
+
+      yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "droid_device_pairing",
+      });
+      yield* Deferred.succeed(completed, undefined);
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+
+      assert.deepStrictEqual(
+        transitions.map((item) => item?.status ?? null),
+        ["starting", "waiting_for_browser", "verifying", "failed"],
+      );
+      assert.strictEqual(yield* Ref.get(refreshCountRef), 2);
+    }),
+  );
+
   it.effect("validates provider availability before starting a flow", () =>
     Effect.gen(function* () {
       const unsupported = yield* makeHarness();
@@ -680,14 +835,7 @@ describe("ProviderConnectionManager", () => {
       };
       const { manager, refreshCountRef } = yield* makeHarness({
         actions,
-        refreshProvider: (provider) => ({
-          ...provider,
-          status: "ready",
-          auth: { status: "authenticated", required: true },
-          ...(provider.connection
-            ? { connection: { ...provider.connection, canDisconnect: true } }
-            : {}),
-        }),
+        refreshProvider: authenticatedProvider,
       });
 
       const result = yield* manager.start({

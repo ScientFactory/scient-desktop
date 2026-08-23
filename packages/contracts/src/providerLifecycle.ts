@@ -17,6 +17,7 @@ export const ProviderConnectionMethod = Schema.Literals([
   "antigravity_google",
   "grok_account",
   "grok_device_code",
+  "droid_device_pairing",
 ]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
 

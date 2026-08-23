@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
-  hasInlineProviderLifecycleSurface,
   providerOnboardingStatusLabel,
   readyProviderDefaultModel,
 } from "./ProviderOnboardingPicker";
@@ -136,19 +135,5 @@ describe("readyProviderDefaultModel", () => {
 
     expect(readyProviderDefaultModel(antigravityEntry)).toBe("gemini-3.7-flash");
     expect(providerOnboardingStatusLabel(antigravityEntry)).toBe("Ready");
-  });
-});
-
-describe("hasInlineProviderLifecycleSurface", () => {
-  it("keeps every assisted provider readiness flow inside the composer", () => {
-    expect(
-      ["codex", "claudeAgent", "antigravity", "grok"].map((driver) =>
-        hasInlineProviderLifecycleSurface(ProviderDriverKind.make(driver)),
-      ),
-    ).toEqual([true, true, true, true]);
-  });
-
-  it("leaves providers without an assisted lifecycle on the settings fallback", () => {
-    expect(hasInlineProviderLifecycleSurface(ProviderDriverKind.make("opencode"))).toBe(false);
   });
 });

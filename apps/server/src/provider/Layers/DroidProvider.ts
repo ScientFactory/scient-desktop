@@ -36,9 +36,12 @@ import {
   buildDroidCapabilitiesFromEfforts,
   buildDroidModelsFromConfigOptions,
   discoverDroidModels,
+  droidAccountCapabilitiesFromInitializeResult,
+  hasDroidApiKeyEnvironment,
   isDroidCustomModelId,
   makeDroidAcpRuntime,
   resolveDroidCliBinaryPath,
+  type DroidAccountCapabilities,
 } from "../acp/DroidAcpSupport.ts";
 
 const DROID_PRESENTATION = {
@@ -50,6 +53,10 @@ const DROID_PRESENTATION = {
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+const EMPTY_ACCOUNT_CAPABILITIES: DroidAccountCapabilities = {
+  devicePairing: false,
+  logout: false,
+};
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS = 20_000;
@@ -166,8 +173,9 @@ export function isDroidAuthenticationRequiredError(error: unknown): boolean {
 }
 
 interface DroidAcpProbeOutcome {
-  readonly authenticated: boolean;
+  readonly authentication: "authenticated" | "unauthenticated";
   readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly accountCapabilities: DroidAccountCapabilities;
 }
 
 /**
@@ -191,11 +199,12 @@ const makeDroidAcpProbeRuntime = (droidSettings: DroidSettings, environment: Nod
       cwd: process.cwd(),
       clientInfo: { name: "scient-provider-probe", version: "0.0.0" },
       clientCapabilities: DROID_PROBE_CLIENT_CAPABILITIES,
+      authenticationMode: "passive",
     });
   });
 
 /**
- * Full ACP probe over one disposable session: authenticate, read the model
+ * Passive ACP probe over one disposable session: read the model
  * inventory from the session-setup config options, then walk every catalog
  * entry to observe its own reasoning-effort ladder (restoring the original
  * selection afterwards, inside `discoverDroidModels`). The walk is
@@ -203,7 +212,7 @@ const makeDroidAcpProbeRuntime = (droidSettings: DroidSettings, environment: Nod
  * stands with per-model ladders unknown rather than wrong — models never
  * disappear because a ladder could not be observed.
  */
-const authenticateAndDiscoverDroidViaAcp = (
+const probeAndDiscoverDroidViaAcp = (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.Effect<
@@ -220,6 +229,10 @@ const authenticateAndDiscoverDroidViaAcp = (
       const acp = yield* makeDroidAcpProbeRuntime(droidSettings, environment).pipe(
         Effect.catch((error) => Effect.die(error)),
       );
+      const initializeResult = yield* acp
+        .initialize()
+        .pipe(Effect.catch((error) => Effect.die(error)));
+      const accountCapabilities = droidAccountCapabilitiesFromInitializeResult(initializeResult);
       // `null` = the agent refused startup with the scoped Droid
       // authentication signal (CLI not signed in). Any other failure is a
       // defect (dies), which the probe layer surfaces as a generic probe
@@ -232,7 +245,11 @@ const authenticateAndDiscoverDroidViaAcp = (
           ? null
           : yield* Effect.die(startExit.cause);
       if (started === null) {
-        return { authenticated: false, models: [] } satisfies DroidAcpProbeOutcome;
+        return {
+          authentication: "unauthenticated",
+          models: [],
+          accountCapabilities,
+        } satisfies DroidAcpProbeOutcome;
       }
 
       const baseModels = buildDroidDiscoveredModelsFromConfigOptions(
@@ -248,12 +265,17 @@ const authenticateAndDiscoverDroidViaAcp = (
         yield* Effect.logWarning(
           "Droid per-model effort discovery was unavailable; advertising unobserved ladders as unknown.",
         );
-        return { authenticated: true, models: baseModels } satisfies DroidAcpProbeOutcome;
+        return {
+          authentication: "authenticated",
+          models: baseModels,
+          accountCapabilities,
+        } satisfies DroidAcpProbeOutcome;
       }
 
       const walkedBySlug = new Map(walkedModels.value.map((model) => [model.slug, model] as const));
       return {
-        authenticated: true,
+        authentication: "authenticated",
+        accountCapabilities,
         models: baseModels.map((model) => {
           const walked = walkedBySlug.get(model.slug);
           return {
@@ -288,31 +310,48 @@ const runDroidVersionCommand = (
     );
   });
 
-export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(function* (
+export interface DroidProviderStatusResult {
+  readonly snapshot: ServerProviderDraft;
+  readonly accountCapabilities: DroidAccountCapabilities;
+}
+
+const droidProviderStatusResult = (
+  snapshot: ServerProviderDraft,
+  accountCapabilities: DroidAccountCapabilities = EMPTY_ACCOUNT_CAPABILITIES,
+): DroidProviderStatusResult => ({ snapshot, accountCapabilities });
+
+export const checkDroidProviderStatusWithCapabilities = Effect.fn(
+  "checkDroidProviderStatusWithCapabilities",
+)(function* (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<
-  ServerProviderDraft,
+  DroidProviderStatusResult,
   never,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = droidModelsFromSettings(droidSettings.customModels);
+  const authenticatedAccount = hasDroidApiKeyEnvironment(environment)
+    ? ({ status: "authenticated", type: "apiKey", label: "Factory API Key" } as const)
+    : ({ status: "authenticated", type: "subscription", label: "Factory account" } as const);
 
   if (!droidSettings.enabled) {
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Droid is disabled in Scient settings.",
-      },
-    });
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Droid is disabled in Scient settings.",
+        },
+      }),
+    );
   }
 
   const versionResult = yield* runDroidVersionCommand(droidSettings, environment).pipe(
@@ -325,37 +364,41 @@ export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(fu
     yield* Effect.logWarning("Droid CLI health check failed.", {
       errorTag: error._tag,
     });
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: droidSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Droid CLI (`droid`) is not installed or not on PATH."
-          : "Failed to execute Droid CLI health check.",
-      },
-    });
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: !isCommandMissingCause(error),
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          message: isCommandMissingCause(error)
+            ? "Droid CLI (`droid`) is not installed or not on PATH."
+            : "Failed to execute Droid CLI health check.",
+        },
+      }),
+    );
   }
 
   if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: droidSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Droid CLI is installed but timed out while running `droid --version`.",
-      },
-    });
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Droid CLI is installed but timed out while running `droid --version`.",
+        },
+      }),
+    );
   }
 
   const versionOutput = versionResult.success.value;
@@ -366,22 +409,24 @@ export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(fu
       stdoutLength: versionOutput.stdout.length,
       stderrLength: versionOutput.stderr.length,
     });
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: droidSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Droid CLI is installed but failed to run.",
-      },
-    });
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Droid CLI is installed but failed to run.",
+        },
+      }),
+    );
   }
 
-  const probeExit = yield* authenticateAndDiscoverDroidViaAcp(droidSettings, environment).pipe(
+  const probeExit = yield* probeAndDiscoverDroidViaAcp(droidSettings, environment).pipe(
     Effect.timeoutOption(DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
   );
@@ -389,84 +434,107 @@ export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(fu
     yield* Effect.logWarning("Droid ACP auth/model probe failed", {
       errorTag: causeErrorTag(probeExit.cause),
     });
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: droidSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Droid CLI is installed but ACP startup failed. Check server logs for details.",
-      },
-    });
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Droid CLI is installed but ACP startup failed. Check server logs for details.",
+        },
+      }),
+    );
   }
   if (Option.isNone(probeExit.value)) {
     yield* Effect.logWarning(
       `Droid ACP probe timed out after ${DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS}ms.`,
     );
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: droidSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `Droid CLI is installed but ACP startup timed out after ${DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS}ms.`,
-      },
-    });
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: `Droid CLI is installed but ACP startup timed out after ${DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS}ms.`,
+        },
+      }),
+    );
   }
 
   const probeOutcome = probeExit.value.value;
-  if (!probeOutcome.authenticated) {
-    return buildServerProvider({
-      presentation: DROID_PRESENTATION,
-      enabled: droidSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "warning",
-        auth: { status: "unauthenticated", required: true },
-        message:
-          "Droid CLI is installed but not signed in. Run `droid` once in a terminal to pair this device, or set FACTORY_API_KEY.",
-      },
-    });
+  if (probeOutcome.authentication === "unauthenticated") {
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "warning",
+          auth: { status: "unauthenticated", required: true },
+          message: "Droid is installed. Sign in with your existing Factory subscription.",
+        },
+      }),
+      probeOutcome.accountCapabilities,
+    );
   }
   if (probeOutcome.models.length === 0) {
-    return buildServerProvider({
+    return droidProviderStatusResult(
+      buildServerProvider({
+        presentation: DROID_PRESENTATION,
+        enabled: droidSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version,
+          status: "warning",
+          auth: authenticatedAccount,
+          message: "Droid CLI is authenticated but did not report any models.",
+        },
+      }),
+      probeOutcome.accountCapabilities,
+    );
+  }
+
+  return droidProviderStatusResult(
+    buildServerProvider({
       presentation: DROID_PRESENTATION,
       enabled: droidSettings.enabled,
       checkedAt,
-      models: fallbackModels,
+      models: probeOutcome.models,
       probe: {
         installed: true,
         version,
-        status: "warning",
-        auth: { status: "authenticated" },
-        message: "Droid CLI is authenticated but did not report any models.",
+        status: "ready",
+        auth: authenticatedAccount,
       },
-    });
-  }
+    }),
+    probeOutcome.accountCapabilities,
+  );
+});
 
-  return buildServerProvider({
-    presentation: DROID_PRESENTATION,
-    enabled: droidSettings.enabled,
-    checkedAt,
-    models: probeOutcome.models,
-    probe: {
-      installed: true,
-      version,
-      status: "ready",
-      auth: { status: "authenticated" },
-    },
-  });
+export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(function* (
+  droidSettings: DroidSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+> {
+  return (yield* checkDroidProviderStatusWithCapabilities(droidSettings, environment)).snapshot;
 });
 
 export const enrichDroidSnapshot = (input: {

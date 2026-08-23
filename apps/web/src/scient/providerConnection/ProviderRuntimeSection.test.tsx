@@ -316,7 +316,7 @@ describe("ProviderRuntimeSection", () => {
     );
   });
 
-  it("starts repair immediately without opening a review step", async () => {
+  it("reports repair success only after the matching streamed operation succeeds", async () => {
     const onActionSucceeded = vi.fn();
     commands.plan.mockResolvedValue({
       _tag: "Success",
@@ -342,12 +342,12 @@ describe("ProviderRuntimeSection", () => {
               runtime: {
                 ...provider.connection!.runtime!,
                 operation: {
-                  operationId: "repair-succeeded",
+                  operationId: "repair-active",
                   action: "repair",
-                  status: "succeeded",
+                  status: "preparing",
                   startedAt: "2026-08-22T12:00:00.000Z",
-                  finishedAt: "2026-08-22T12:00:05.000Z",
-                  message: "The provider runtime was repaired and verified successfully.",
+                  finishedAt: null,
+                  message: "Preparing the provider runtime operation.",
                 },
               },
             },
@@ -374,8 +374,110 @@ describe("ProviderRuntimeSection", () => {
           catalogRevision: "reviewed:repair-1",
         },
       });
-      expect(onActionSucceeded).toHaveBeenCalledWith("repair");
     });
+
+    expect(onActionSucceeded).not.toHaveBeenCalled();
+
+    const otherRepairProvider: ServerProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "other-repair",
+            action: "repair",
+            status: "succeeded",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: "2026-08-22T12:00:05.000Z",
+            message: "Another provider runtime operation completed.",
+          },
+        },
+      },
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      environmentId,
+      provider: otherRepairProvider,
+      displayName: "Antigravity",
+      initialAction: "repair",
+      onActionSucceeded,
+    });
+
+    expect(onActionSucceeded).not.toHaveBeenCalled();
+
+    const repairedProvider: ServerProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "repair-active",
+            action: "repair",
+            status: "succeeded",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: "2026-08-22T12:00:05.000Z",
+            message: "The provider runtime was repaired and verified successfully.",
+          },
+        },
+      },
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      environmentId,
+      provider: repairedProvider,
+      displayName: "Antigravity",
+      initialAction: "repair",
+      onActionSucceeded,
+    });
+
+    expect(onActionSucceeded).toHaveBeenCalledTimes(1);
+    expect(onActionSucceeded).toHaveBeenCalledWith("repair");
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      environmentId,
+      provider: repairedProvider,
+      displayName: "Antigravity",
+      initialAction: "repair",
+      onActionSucceeded,
+    });
+
+    expect(onActionSucceeded).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a stale successful repair that this section did not start", () => {
+    const onActionSucceeded = vi.fn();
+    const repairedProvider: ServerProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "stale-repair",
+            action: "repair",
+            status: "succeeded",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: "2026-08-22T12:00:05.000Z",
+            message: "The provider runtime was repaired and verified successfully.",
+          },
+        },
+      },
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      environmentId,
+      provider: repairedProvider,
+      displayName: "Antigravity",
+      onActionSucceeded,
+    });
+
+    expect(onActionSucceeded).not.toHaveBeenCalled();
   });
 
   it("does not persist a successful repair message in the runtime row", () => {

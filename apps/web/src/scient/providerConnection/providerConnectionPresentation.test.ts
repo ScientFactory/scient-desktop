@@ -225,4 +225,17 @@ describe("providerConnectionPresentation", () => {
       }),
     ).toBe("claude_subscription");
   });
+
+  it("selects Droid's advertised ACP device-pairing method", () => {
+    expect(
+      preferredProviderConnectionMethod({
+        ...provider,
+        driver: ProviderDriverKind.make("droid"),
+        connection: {
+          ...provider.connection!,
+          methods: ["droid_device_pairing"],
+        },
+      }),
+    ).toBe("droid_device_pairing");
+  });
 });
