@@ -14,6 +14,7 @@ export const ProviderConnectionMethod = Schema.Literals([
   "codex_device_code",
   "claude_subscription",
   "claude_console",
+  "antigravity_google",
 ]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
 
@@ -47,6 +48,8 @@ export const ProviderConnectionOperation = Schema.Struct({
   message: TrimmedNonEmptyString,
   authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
   authorizationUrlKind: Schema.optionalKey(ProviderAuthorizationUrlKind),
+  /** True only while the live provider process can accept a pasted one-time code. */
+  acceptsAuthorizationCode: Schema.optionalKey(Schema.Boolean),
   userCode: Schema.optionalKey(
     TrimmedNonEmptyString.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/)),
   ),

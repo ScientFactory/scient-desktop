@@ -44,6 +44,12 @@ export function CodexProviderLifecycleAction(props: {
         runtime.operation.status,
       ));
   const installFailed = !props.provider.installed && runtime?.operation?.status === "failed";
+  const canInstallManaged = runtime?.actions.includes("install") ?? false;
+  const shouldOfferManagedInstall =
+    canInstallManaged &&
+    (runtime?.source === "missing" ||
+      props.provider.auth.status === "authenticated" ||
+      props.provider.auth.required === false);
   const signInFailed =
     props.provider.installed &&
     props.provider.auth.status !== "authenticated" &&
@@ -87,9 +93,8 @@ export function CodexProviderLifecycleAction(props: {
     );
   }
 
-  if (presentation.kind === "not-installed" || installFailed) {
-    const canInstall = runtime?.actions.includes("install") ?? false;
-    if (!canInstall) return null;
+  if (presentation.kind === "not-installed" || installFailed || shouldOfferManagedInstall) {
+    if (!canInstallManaged) return null;
     return (
       <Button
         className="h-7 px-2.5 text-xs"

@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  CodexRuntimeDiagnosticsDetails,
-  resolveCodexRuntimeDiagnostics,
-} from "./CodexRuntimeDiagnostics";
+  ProviderRuntimeDiagnosticsDetails,
+  resolveProviderRuntimeDiagnostics,
+} from "./ProviderRuntimeDiagnostics";
 
 const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make("codex"),
@@ -43,7 +43,7 @@ const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   ...patch,
 });
 
-describe("CodexRuntimeDiagnostics", () => {
+describe("ProviderRuntimeDiagnostics", () => {
   it("omits diagnostics for an older server instead of inventing runtime coordinates", () => {
     const { diagnostics: _diagnostics, ...runtimeWithoutDiagnostics } =
       provider().connection!.runtime!;
@@ -54,35 +54,45 @@ describe("CodexRuntimeDiagnostics", () => {
       },
     });
 
-    expect(resolveCodexRuntimeDiagnostics(withoutDiagnostics)).toBeNull();
+    expect(resolveProviderRuntimeDiagnostics(withoutDiagnostics)).toBeNull();
     expect(
-      renderToStaticMarkup(<CodexRuntimeDiagnosticsDetails provider={withoutDiagnostics} />),
+      renderToStaticMarkup(
+        <ProviderRuntimeDiagnosticsDetails displayName="Codex" provider={withoutDiagnostics} />,
+      ),
     ).toBe("");
   });
 
   it("uses the provider version when runtime diagnostics do not supply one", () => {
-    expect(resolveCodexRuntimeDiagnostics(provider())?.version).toBe("0.147.0");
+    expect(resolveProviderRuntimeDiagnostics(provider())?.version).toBe("0.147.0");
   });
 
-  it("renders server-scoped diagnostics without an unsafe shell command", () => {
-    const markup = renderToStaticMarkup(<CodexRuntimeDiagnosticsDetails provider={provider()} />);
+  it("renders provider-generic server diagnostics and a copyable executable path", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderRuntimeDiagnosticsDetails displayName="Claude" provider={provider()} />,
+    );
 
     expect(markup).toContain("Runtime diagnostics");
+    expect(markup).toContain("server running Claude");
     expect(markup).toContain("Server backend");
-    expect(markup).toContain("Server Codex home");
+    expect(markup).toContain("Server account home");
     expect(markup).toContain("Server executable");
+    expect(markup).toContain('aria-label="Copy Claude executable path"');
     expect(markup).toContain("Remote clients may show paths from a different computer.");
     expect(markup).not.toContain("Manual fallback");
     expect(markup).not.toContain("app-server");
   });
 
-  it("offers managed recovery only when the server exposes the install action", () => {
+  it("offers managed recovery only when the caller exposes the install action", () => {
     const onUseManaged = vi.fn();
     const available = renderToStaticMarkup(
-      <CodexRuntimeDiagnosticsDetails onUseManaged={onUseManaged} provider={provider()} />,
+      <ProviderRuntimeDiagnosticsDetails
+        displayName="Codex"
+        onUseManaged={onUseManaged}
+        provider={provider()}
+      />,
     );
     const unavailable = renderToStaticMarkup(
-      <CodexRuntimeDiagnosticsDetails provider={provider()} />,
+      <ProviderRuntimeDiagnosticsDetails displayName="Codex" provider={provider()} />,
     );
 
     expect(available).toContain("Use Scient-managed Codex");

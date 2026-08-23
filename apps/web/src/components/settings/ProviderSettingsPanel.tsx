@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type ProviderManagedRuntimeAction,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -381,7 +382,10 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
-  const [connectionInstanceId, setConnectionInstanceId] = useState<ProviderInstanceId | null>(null);
+  const [connectionRequest, setConnectionRequest] = useState<{
+    readonly instanceId: ProviderInstanceId;
+    readonly initialRuntimeAction?: ProviderManagedRuntimeAction;
+  } | null>(null);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
@@ -580,13 +584,13 @@ export function EnvironmentProviderSettings({
   }
 
   const connectionProvider =
-    connectionInstanceId === null
+    connectionRequest === null
       ? undefined
-      : serverProviders.find((provider) => provider.instanceId === connectionInstanceId);
+      : serverProviders.find((provider) => provider.instanceId === connectionRequest.instanceId);
   const connectionRow =
-    connectionInstanceId === null
+    connectionRequest === null
       ? undefined
-      : rows.find((row) => row.instanceId === connectionInstanceId);
+      : rows.find((row) => row.instanceId === connectionRequest.instanceId);
   const connectionDisplayName = connectionRow
     ? connectionRow.instance.displayName?.trim() ||
       getDriverOption(connectionRow.driver)?.label ||
@@ -796,7 +800,15 @@ export function EnvironmentProviderSettings({
                 instance={row.instance}
                 driverOption={driverOption}
                 liveProvider={liveProvider}
-                onManageConnection={() => setConnectionInstanceId(row.instanceId)}
+                onManageConnection={() =>
+                  setConnectionRequest({
+                    instanceId: row.instanceId,
+                    ...(liveProvider?.installed === false &&
+                    liveProvider.connection?.runtime?.actions.includes("install")
+                      ? { initialRuntimeAction: "install" as const }
+                      : {}),
+                  })
+                }
                 isExpanded={openInstanceDetails[row.instanceId] ?? false}
                 onExpandedChange={(open) =>
                   setOpenInstanceDetails((existing) => ({
@@ -930,9 +942,10 @@ export function EnvironmentProviderSettings({
           environmentId={environmentId}
           provider={connectionProvider}
           displayName={connectionDisplayName}
+          initialRuntimeAction={connectionRequest?.initialRuntimeAction}
           open
           onOpenChange={(open) => {
-            if (!open) setConnectionInstanceId(null);
+            if (!open) setConnectionRequest(null);
           }}
         />
       ) : null}

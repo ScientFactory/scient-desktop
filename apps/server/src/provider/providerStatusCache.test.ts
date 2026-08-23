@@ -14,6 +14,7 @@ import * as Logger from "effect/Logger";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
+  orderProviderSnapshots,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
@@ -23,6 +24,34 @@ const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+
+it("orders provider snapshots canonically and keeps custom instances stable", () => {
+  const antigravity = ProviderDriverKind.make("antigravity");
+  const providers = [
+    makeProvider(ProviderDriverKind.make("zeta")),
+    makeProvider(antigravity, { instanceId: ProviderInstanceId.make("antigravity_work") }),
+    makeProvider(ProviderDriverKind.make("cursor")),
+    makeProvider(antigravity, { instanceId: ProviderInstanceId.make("antigravity_personal") }),
+    makeProvider(ProviderDriverKind.make("codex")),
+    makeProvider(antigravity),
+    makeProvider(ProviderDriverKind.make("alpha")),
+    makeProvider(ProviderDriverKind.make("claudeAgent")),
+  ];
+
+  assert.deepStrictEqual(
+    orderProviderSnapshots(providers).map((provider) => provider.instanceId),
+    [
+      "codex",
+      "claudeAgent",
+      "antigravity",
+      "antigravity_work",
+      "antigravity_personal",
+      "cursor",
+      "alpha",
+      "zeta",
+    ],
+  );
+});
 
 const makeProvider = (
   provider: ProviderDriverKind,

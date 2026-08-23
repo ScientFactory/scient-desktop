@@ -4,13 +4,18 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
+  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
+import {
+  AssistedSetupActions,
+  AssistedSetupFrame,
+  AssistedSetupStatus,
+} from "./AssistedProviderSetup";
 import {
   hasExternalClaudeUpdate,
   hasManagedClaudeUpdate,
@@ -19,6 +24,8 @@ import {
   updateClaudeRuntime,
 } from "./claudeLifecycleActions";
 import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
+import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -45,33 +52,22 @@ function failureMessage(value: unknown, fallback: string): string {
   return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
 }
 
-function runtimeStage(operation: ProviderRuntimeOperation | null): {
-  readonly label: string;
-  readonly progress: number;
-} {
+function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
     case "preparing":
-      return { label: "Preparing the verified download…", progress: 8 };
-    case "downloading": {
-      const progress =
-        operation.downloadedBytes !== undefined && operation.totalBytes !== undefined
-          ? Math.min(
-              42,
-              Math.max(12, Math.round((operation.downloadedBytes / operation.totalBytes) * 42)),
-            )
-          : 24;
-      return { label: "Downloading Claude…", progress };
-    }
+      return "Preparing the verified download…";
+    case "downloading":
+      return "Downloading Claude…";
     case "verifying":
-      return { label: "Verifying the download…", progress: 48 };
+      return "Verifying the download…";
     case "installing":
-      return { label: "Installing Claude privately…", progress: 66 };
+      return "Installing Claude privately…";
     case "testing":
-      return { label: "Checking the installation…", progress: 83 };
+      return "Checking the installation…";
     case "activating":
-      return { label: "Finishing setup…", progress: 94 };
+      return "Finishing setup…";
     default:
-      return { label: "Preparing Claude…", progress: 6 };
+      return "Preparing Claude…";
   }
 }
 
@@ -84,9 +80,12 @@ function computerLabel(provider: ServerProvider): string {
 }
 
 export function ClaudeInlineSetup(props: {
+  readonly accountAction?: ReactNode;
   readonly controller: ProviderLifecycleController;
   readonly provider: ServerProvider;
   readonly displayName: string;
+  readonly managedRuntimePresentedExternally?: boolean;
+  readonly onRepairSucceeded?: () => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -144,12 +143,14 @@ export function ClaudeInlineSetup(props: {
       : signInMethod === "claude_console" && supportsSubscriptionSignIn
         ? "claude_subscription"
         : null;
-  const managedUpdateAvailable = hasManagedClaudeUpdate(props.provider);
+  const managedUpdateAvailable =
+    !props.managedRuntimePresentedExternally && hasManagedClaudeUpdate(props.provider);
   const externalUpdateAvailable = hasExternalClaudeUpdate(props.provider);
   const updateAvailable = managedUpdateAvailable || externalUpdateAvailable;
   const updateState = props.provider.updateState;
   const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
-  const needsRuntimeRepair = needsManagedRuntimeRecovery(props.provider);
+  const needsRuntimeRepair =
+    !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
 
   const install = async () => {
     setLocalError(null);
@@ -179,13 +180,39 @@ export function ClaudeInlineSetup(props: {
     setLocalError(null);
     setPendingAction("repair");
     try {
-      await startReviewedClaudeRuntimeAction(props.controller, "repair");
+      const provider = await startReviewedClaudeRuntimeAction(props.controller, "repair");
+      if (
+        provider.connection?.runtime?.operation?.action === "repair" &&
+        provider.connection.runtime.operation.status === "succeeded"
+      ) {
+        props.onRepairSucceeded?.();
+      }
     } catch (error) {
       setLocalError(failureMessage(error, "Scient could not repair Claude."));
     } finally {
       setPendingAction(null);
     }
   };
+
+  const canShowInlineRepair =
+    !props.managedRuntimePresentedExternally && runtime?.actions.includes("repair");
+  const connectedActions =
+    canShowInlineRepair || props.accountAction ? (
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        {canShowInlineRepair ? (
+          <Button
+            disabled={pendingAction !== null}
+            onClick={() => void repair()}
+            size="sm"
+            type="button"
+            variant="ghost-muted"
+          >
+            <RefreshCwIcon aria-hidden /> Repair
+          </Button>
+        ) : null}
+        {props.accountAction}
+      </div>
+    ) : undefined;
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
@@ -266,42 +293,31 @@ export function ClaudeInlineSetup(props: {
     const repairing = pendingAction === "repair" || activeRuntimeOperation?.action === "repair";
     return (
       <SetupFrame>
-        <LoaderIcon aria-hidden className="mb-3 size-7 animate-spin text-primary" />
-        <h2 className="font-semibold text-lg">
-          {updating ? "Updating Claude" : repairing ? "Repairing Claude" : "Installing Claude"}
-        </h2>
-        <p className="mt-1.5 text-muted-foreground text-sm">{stage.label}</p>
-        <div
-          aria-label={`Claude ${updating ? "update" : repairing ? "repair" : "installation"} progress`}
-          aria-valuemax={100}
-          aria-valuemin={0}
-          aria-valuenow={stage.progress}
-          className="mt-4 w-full max-w-56"
-          role="progressbar"
-        >
-          <div className="h-1.5 overflow-hidden rounded-full bg-foreground/8">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-300"
-              style={{ width: `${stage.progress}%` }}
-            />
-          </div>
-        </div>
+        <AssistedSetupStatus
+          body={stage}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title={
+            updating ? "Updating Claude" : repairing ? "Repairing Claude" : "Installing Claude"
+          }
+        />
         {activeRuntimeOperation ? (
-          <Button
-            className="mt-4"
-            disabled={pendingAction === "cancel-runtime"}
-            onClick={() => void cancelRuntime()}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            {pendingAction === "cancel-runtime" ? (
-              <LoaderIcon aria-hidden className="animate-spin" />
-            ) : (
-              <XIcon aria-hidden />
-            )}
-            Cancel
-          </Button>
+          <AssistedSetupActions>
+            <Button
+              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+              disabled={pendingAction === "cancel-runtime"}
+              onClick={() => void cancelRuntime()}
+              size="sm"
+              type="button"
+              variant="ghost-muted"
+            >
+              {pendingAction === "cancel-runtime" ? (
+                <LoaderIcon aria-hidden className="animate-spin" />
+              ) : (
+                <XIcon aria-hidden />
+              )}
+              Cancel
+            </Button>
+          </AssistedSetupActions>
         ) : null}
       </SetupFrame>
     );
@@ -315,14 +331,17 @@ export function ClaudeInlineSetup(props: {
         : (props.provider.message ?? "Claude's private runtime could not start."));
     return (
       <SetupFrame>
-        <TriangleAlertIcon aria-hidden className="mb-3 size-8 text-warning" />
-        <h2 className="font-semibold text-lg">Claude needs repair</h2>
-        <p className="mt-1.5 max-w-60 text-balance text-muted-foreground text-sm leading-relaxed">
-          {error}
-        </p>
-        <Button className="mt-4 gap-1.5" onClick={() => void repair()} size="sm" type="button">
-          <RefreshCwIcon aria-hidden /> Repair Claude
-        </Button>
+        <AssistedSetupStatus
+          body={error}
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role="alert"
+          title="Claude needs repair"
+        />
+        <AssistedSetupActions>
+          <Button onClick={() => void repair()} size="sm" type="button">
+            <RefreshCwIcon aria-hidden /> Repair Claude
+          </Button>
+        </AssistedSetupActions>
       </SetupFrame>
     );
   }
@@ -333,36 +352,31 @@ export function ClaudeInlineSetup(props: {
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>
-        {error ? (
-          <TriangleAlertIcon aria-hidden className="mb-3 size-8 text-destructive" />
-        ) : (
-          <ProviderInstanceIcon
-            className="mb-3 size-9"
-            displayName={props.displayName}
-            driverKind={props.provider.driver}
-            iconClassName="size-8"
-          />
-        )}
-        <h2 className="font-semibold text-lg">
-          {error ? "Claude installation couldn’t finish" : props.displayName}
-        </h2>
-        <p
-          className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed"
+        <AssistedSetupStatus
+          body={
+            error ??
+            (canInstall
+              ? `Claude is not installed on ${computerLabel(props.provider)}.`
+              : `Assisted installation is not available for ${computerLabel(props.provider)}. You can use an existing Claude installation.`)
+          }
+          icon={
+            error ? (
+              <TriangleAlertIcon className="size-5 text-destructive" />
+            ) : (
+              <ShieldCheckIcon className="size-5 text-primary" />
+            )
+          }
           role={error ? "alert" : undefined}
-        >
-          {error ?? `Claude is not installed on ${computerLabel(props.provider)}.`}
-        </p>
+          title={error ? "Claude installation couldn’t finish" : "Install Claude"}
+        />
         {canInstall ? (
-          <Button className="mt-4 gap-1.5" onClick={() => void install()} size="sm" type="button">
-            {error ? <RefreshCwIcon aria-hidden /> : null}
-            {error ? "Retry installation" : "Install Claude"}
-          </Button>
-        ) : (
-          <p className="mt-3 max-w-60 text-balance text-muted-foreground text-xs leading-relaxed">
-            Assisted installation is not available for this computer yet. You can use an existing
-            Claude installation.
-          </p>
-        )}
+          <AssistedSetupActions>
+            <Button onClick={() => void install()} size="sm" type="button">
+              {error ? <RefreshCwIcon aria-hidden /> : null}
+              {error ? "Retry installation" : "Install Claude"}
+            </Button>
+          </AssistedSetupActions>
+        ) : null}
       </SetupFrame>
     );
   }
@@ -372,29 +386,14 @@ export function ClaudeInlineSetup(props: {
       activeConnectionOperation?.status === "verifying" || pendingAction === "submit-code";
     return (
       <SetupFrame>
-        <LoaderIcon aria-hidden className="mb-3 size-7 animate-spin text-primary" />
-        <h2 className="font-semibold text-lg">
-          {verifying ? "Checking your account" : "Finish signing in"}
-        </h2>
-        <p className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed">
-          {verifying ? "Finding your available models…" : "Complete sign-in in your browser."}
-        </p>
-        {activeConnectionOperation?.authorizationUrl &&
-        activeConnectionOperation.authorizationUrlKind === "manual_fallback" ? (
-          <Button
-            className="mt-3 gap-1.5"
-            onClick={() => void openManualFallback()}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <ExternalLinkIcon aria-hidden />
-            {showAuthorizationCode ? "Reopen fallback page" : "Browser didn’t open?"}
-          </Button>
-        ) : null}
+        <AssistedSetupStatus
+          body={verifying ? "Finding your available models…" : "Complete sign-in in your browser."}
+          icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
+          title={verifying ? "Checking your account" : "Finish signing in"}
+        />
         {showAuthorizationCode ? (
           <form
-            className="mx-auto mt-2 flex w-fit max-w-full items-center gap-1.5"
+            className="flex max-w-full items-center gap-2 ps-8"
             onSubmit={(event) => {
               event.preventDefault();
               void submitCode();
@@ -404,14 +403,14 @@ export function ClaudeInlineSetup(props: {
               aria-label="Claude one-time sign-in code"
               autoCapitalize="none"
               autoComplete="off"
-              className="h-7 w-36 min-w-0 rounded-md border border-input bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring disabled:opacity-64"
+              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring disabled:opacity-64"
               onChange={(event) => setAuthorizationCode(event.currentTarget.value)}
               placeholder="Paste code"
               spellCheck={false}
               value={authorizationCode}
             />
             <Button
-              className="h-7 px-2.5"
+              className="h-8 px-2.5"
               disabled={authorizationCode.trim().length === 0 || pendingAction === "submit-code"}
               size="sm"
               type="submit"
@@ -421,23 +420,37 @@ export function ClaudeInlineSetup(props: {
             </Button>
           </form>
         ) : null}
-        {activeConnectionOperation ? (
-          <Button
-            className="mt-2"
-            disabled={pendingAction === "cancel-sign-in" || pendingAction === "submit-code"}
-            onClick={() => void cancelSignIn()}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            Cancel
-          </Button>
-        ) : null}
         {localError ? (
-          <p className="mt-2 max-w-60 text-balance text-destructive text-xs" role="alert">
+          <p className="ps-8 text-destructive text-xs" role="alert">
             {localError}
           </p>
         ) : null}
+        <AssistedSetupActions>
+          {activeConnectionOperation?.authorizationUrl &&
+          activeConnectionOperation.authorizationUrlKind === "manual_fallback" ? (
+            <Button
+              onClick={() => void openManualFallback()}
+              size="sm"
+              type="button"
+              variant="ghost-muted"
+            >
+              <ExternalLinkIcon aria-hidden />
+              {showAuthorizationCode ? "Reopen fallback page" : "Browser didn’t open?"}
+            </Button>
+          ) : null}
+          {activeConnectionOperation ? (
+            <Button
+              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+              disabled={pendingAction === "cancel-sign-in" || pendingAction === "submit-code"}
+              onClick={() => void cancelSignIn()}
+              size="sm"
+              type="button"
+              variant="ghost-muted"
+            >
+              Cancel
+            </Button>
+          ) : null}
+        </AssistedSetupActions>
       </SetupFrame>
     );
   }
@@ -446,6 +459,7 @@ export function ClaudeInlineSetup(props: {
     if (!isReady) {
       return (
         <StatusFrame
+          accountAction={connectedActions}
           body={
             props.provider.message ??
             (hasModels
@@ -460,6 +474,7 @@ export function ClaudeInlineSetup(props: {
     if (updateRunning) {
       return (
         <StatusFrame
+          accountAction={props.accountAction}
           title="Updating Claude"
           body={updateState?.message ?? "Updating and verifying Claude…"}
           loading
@@ -470,41 +485,53 @@ export function ClaudeInlineSetup(props: {
       const error = localError ?? (updateState?.status === "failed" ? updateState.message : null);
       return (
         <SetupFrame>
-          {error ? (
-            <TriangleAlertIcon aria-hidden className="mb-3 size-8 text-destructive" />
-          ) : (
-            <ProviderInstanceIcon
-              className="mb-3 size-9"
-              displayName={props.displayName}
-              driverKind={props.provider.driver}
-              iconClassName="size-8"
-            />
-          )}
-          <h2 className="font-semibold text-lg">
-            {error ? "Claude couldn’t be updated" : "Claude update available"}
-          </h2>
-          <p
-            className="mt-1.5 max-w-60 text-balance text-muted-foreground text-sm leading-relaxed"
+          <AssistedSetupStatus
+            body={
+              error ?? (
+                <>
+                  Install the reviewed update when you’re ready. Your current version remains
+                  available until the update is verified.
+                </>
+              )
+            }
+            icon={
+              error ? (
+                <TriangleAlertIcon className="size-5 text-destructive" />
+              ) : (
+                <RefreshCwIcon className="size-5 text-primary" />
+              )
+            }
             role={error ? "alert" : undefined}
-          >
-            {error ?? "Install the reviewed update when you’re ready."}
-          </p>
-          <Button className="mt-4" onClick={() => void update()} size="sm" type="button">
-            {error ? "Try again" : "Update Claude"}
-          </Button>
-          <p className="mt-2 text-muted-foreground text-[11px]">
-            Your current version stays available until the update is verified.
-          </p>
+            title={error ? "Claude couldn’t be updated" : "Claude update available"}
+          />
+          <AssistedSetupActions>
+            {props.accountAction}
+            <Button onClick={() => void update()} size="sm" type="button">
+              {error ? "Try again" : "Update Claude"}
+            </Button>
+          </AssistedSetupActions>
         </SetupFrame>
       );
     }
+    const accountLabel = props.provider.auth.label;
+    const isSubscriptionAccount = accountLabel?.toLowerCase().includes("subscription") ?? false;
     return (
       <StatusFrame
+        accountAction={connectedActions}
         title="Claude is ready"
         body={
-          props.provider.auth.label
-            ? `${props.provider.auth.label} is connected.`
-            : "Claude is connected."
+          accountLabel && isSubscriptionAccount ? (
+            <>
+              <ProviderAccountManagementLink provider="claude">
+                {accountLabel}
+              </ProviderAccountManagementLink>{" "}
+              is connected.
+            </>
+          ) : accountLabel ? (
+            `${accountLabel} is connected.`
+          ) : (
+            "Claude is connected."
+          )
         }
       />
     );
@@ -538,89 +565,77 @@ export function ClaudeInlineSetup(props: {
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
   return (
     <SetupFrame>
-      {signInError ? (
-        <TriangleAlertIcon aria-hidden className="mb-3 size-8 text-destructive" />
-      ) : (
-        <ProviderInstanceIcon
-          className="mb-3 size-9"
-          displayName={props.displayName}
-          driverKind={props.provider.driver}
-          iconClassName="size-8"
-        />
-      )}
-      <h2 className="font-semibold text-lg">
-        {signInError ? "Claude sign-in didn’t finish" : "Claude is installed"}
-      </h2>
-      <p
-        className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed"
-        role={signInError ? "alert" : undefined}
-      >
-        {signInError ??
+      <AssistedSetupStatus
+        body={
+          signInError ??
           (signInMethod === "claude_subscription"
-            ? "Sign in with your existing Claude subscription."
-            : "Connect your Anthropic Console account.")}
-      </p>
-      <Button className="mt-4 gap-1.5" onClick={() => void signIn()} size="sm" type="button">
-        {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
-        {signInError
-          ? "Try sign in again"
-          : signInMethod === "claude_subscription"
-            ? "Sign in to Claude"
-            : "Sign in with Console"}
-      </Button>
-      {alternateSignInMethod ? (
-        <Button
-          className="mt-1.5 h-auto px-2 py-1 text-muted-foreground text-xs"
-          onClick={() => void signIn(alternateSignInMethod)}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          {alternateSignInMethod === "claude_console"
-            ? "Use Anthropic Console"
-            : "Use Claude subscription"}
+            ? "Sign in with your existing Claude subscription. The secure flow opens in your browser, and Scient never sees your password."
+            : "Connect your Anthropic Console account. The secure flow opens in your browser, and Scient never sees your password.")
+        }
+        icon={
+          signInError ? (
+            <TriangleAlertIcon className="size-5 text-destructive" />
+          ) : (
+            <ShieldCheckIcon className="size-5 text-primary" />
+          )
+        }
+        role={signInError ? "alert" : undefined}
+        title={signInError ? "Claude sign-in didn’t finish" : "Sign in required"}
+      />
+      <AssistedSetupActions>
+        {alternateSignInMethod ? (
+          <Button
+            className="text-muted-foreground"
+            onClick={() => void signIn(alternateSignInMethod)}
+            size="sm"
+            type="button"
+            variant="ghost-muted"
+          >
+            {alternateSignInMethod === "claude_console"
+              ? "Use Anthropic Console"
+              : "Use Claude subscription"}
+          </Button>
+        ) : null}
+        <Button onClick={() => void signIn()} size="sm" type="button">
+          {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
+          {signInError
+            ? "Try sign in again"
+            : signInMethod === "claude_subscription"
+              ? "Sign in to Claude"
+              : "Sign in with Console"}
         </Button>
-      ) : null}
-      {!signInError ? (
-        <p className="mt-2 max-w-56 text-balance text-muted-foreground text-[11px] leading-relaxed">
-          Opens in your browser. Scient never sees your password.
-        </p>
-      ) : null}
+      </AssistedSetupActions>
     </SetupFrame>
   );
 }
 
 function StatusFrame(props: {
+  readonly accountAction?: ReactNode;
   readonly title: string;
-  readonly body: string;
+  readonly body: ReactNode;
   readonly loading?: boolean;
   readonly warning?: boolean;
 }) {
   return (
     <SetupFrame>
-      {props.loading ? (
-        <LoaderIcon aria-hidden className="mb-3 size-7 animate-spin text-primary" />
-      ) : props.warning ? (
-        <TriangleAlertIcon aria-hidden className="mb-3 size-8 text-warning" />
-      ) : (
-        <CheckCircle2Icon aria-hidden className="mb-3 size-8 text-success" />
-      )}
-      <h2 className="font-semibold text-lg">{props.title}</h2>
-      <p className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed">
-        {props.body}
-      </p>
+      <AssistedSetupStatus
+        body={props.body}
+        icon={
+          props.loading ? (
+            <LoaderIcon className="size-5 animate-spin text-primary" />
+          ) : props.warning ? (
+            <TriangleAlertIcon className="size-5 text-warning" />
+          ) : (
+            <CheckCircle2Icon className="size-5 text-success" />
+          )
+        }
+        title={props.title}
+        trailing={props.accountAction}
+      />
     </SetupFrame>
   );
 }
 
 function SetupFrame({ children }: { readonly children: ReactNode }) {
-  return (
-    <div
-      aria-live="polite"
-      className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-4 text-center"
-      data-provider-onboarding-view="claude-flow"
-    >
-      {children}
-    </div>
-  );
+  return <AssistedSetupFrame flow="claude">{children}</AssistedSetupFrame>;
 }

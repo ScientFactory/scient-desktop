@@ -68,6 +68,7 @@ function makeHarness(options?: {
   readonly beforeSetProviderConnectionOperation?: (
     operation: ProviderConnectionOperation | null,
   ) => Effect.Effect<void>;
+  readonly refreshProvider?: (provider: ServerProvider) => ServerProvider;
 }) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
@@ -102,19 +103,7 @@ function makeHarness(options?: {
           return yield* Ref.updateAndGet(providersRef, (providers) =>
             providers.map((provider) =>
               provider.instanceId === instanceId
-                ? {
-                    ...provider,
-                    status: "ready" as const,
-                    auth: { status: "authenticated" as const, required: true },
-                    ...(provider.connection
-                      ? {
-                          connection: {
-                            ...provider.connection,
-                            canDisconnect: true,
-                          },
-                        }
-                      : {}),
-                  }
+                ? (options?.refreshProvider?.(provider) ?? provider)
                 : provider,
             ),
           );
@@ -126,6 +115,7 @@ function makeHarness(options?: {
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      stopProviderSessions: () => Effect.void,
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation,
@@ -177,6 +167,10 @@ describe("ProviderConnectionManager", () => {
           started.providers[0]?.connection?.operation?.authorizationUrlKind,
           "primary",
         );
+        assert.strictEqual(
+          started.providers[0]?.connection?.operation?.acceptsAuthorizationCode,
+          false,
+        );
 
         yield* Deferred.succeed(completed, undefined);
         const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
@@ -186,7 +180,7 @@ describe("ProviderConnectionManager", () => {
           transitions.map((item) => item?.status ?? null),
           ["starting", "waiting_for_browser", "verifying", "connected"],
         );
-        assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
+        assert.strictEqual(yield* Ref.get(refreshCountRef), 2);
       }),
   );
 
@@ -227,6 +221,10 @@ describe("ProviderConnectionManager", () => {
       assert.strictEqual(
         started.providers[0]?.connection?.operation?.authorizationUrlKind,
         "manual_fallback",
+      );
+      assert.strictEqual(
+        started.providers[0]?.connection?.operation?.acceptsAuthorizationCode,
+        true,
       );
 
       const wrongOperation = yield* manager
@@ -595,6 +593,37 @@ describe("ProviderConnectionManager", () => {
         .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
         .pipe(Effect.flip);
       assert.strictEqual(notInstalledError.reason, "provider_not_installed");
+    }),
+  );
+
+  it.effect("re-probes account state and skips duplicate sign-in for an existing session", () =>
+    Effect.gen(function* () {
+      const starts = yield* Ref.make(0);
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () => Ref.update(starts, (count) => count + 1).pipe(Effect.andThen(Effect.never)),
+        disconnect: Effect.void,
+      };
+      const { manager, refreshCountRef } = yield* makeHarness({
+        actions,
+        refreshProvider: (provider) => ({
+          ...provider,
+          status: "ready",
+          auth: { status: "authenticated", required: true },
+          ...(provider.connection
+            ? { connection: { ...provider.connection, canDisconnect: true } }
+            : {}),
+        }),
+      });
+
+      const result = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+      });
+
+      assert.strictEqual(result.providers[0]?.auth.status, "authenticated");
+      assert.strictEqual(yield* Ref.get(starts), 0);
+      assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
     }),
   );
 

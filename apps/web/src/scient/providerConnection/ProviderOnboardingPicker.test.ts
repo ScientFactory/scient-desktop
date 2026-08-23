@@ -101,4 +101,39 @@ describe("readyProviderDefaultModel", () => {
     expect(providerOnboardingStatusLabel(readyEntry)).toBe("Ready");
     expect(providerOnboardingStatusLabel(incompleteEntry)).toBe("Needs attention");
   });
+
+  it("resolves default model for Antigravity when ready", () => {
+    const antigravityEntry = deriveProviderInstanceEntries([
+      {
+        instanceId: ProviderInstanceId.make("antigravity"),
+        driver: ProviderDriverKind.make("antigravity"),
+        enabled: true,
+        installed: true,
+        version: "1.1.17",
+        status: "ready",
+        auth: { status: "authenticated", required: true },
+        checkedAt: "2026-08-22T00:00:00.000Z",
+        models: [
+          {
+            slug: "gemini-3.7-flash",
+            name: "Gemini 3.7 Flash",
+            isCustom: false,
+            isDefault: true,
+            capabilities: null,
+          },
+          {
+            slug: "gemini-3.1-pro",
+            name: "Gemini 3.1 Pro",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ])[0];
+
+    expect(readyProviderDefaultModel(antigravityEntry)).toBe("gemini-3.7-flash");
+    expect(providerOnboardingStatusLabel(antigravityEntry)).toBe("Ready");
+  });
 });

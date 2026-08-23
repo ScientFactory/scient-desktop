@@ -21,7 +21,10 @@ describe("reviewed Claude runtime manifest", () => {
       expect(artifact?.version).toBe("2.1.170");
       expect(artifact?.archiveFormat).toBe("raw");
       expect(artifact?.supportTier).toBe("fully_assisted");
-      expect(artifact?.sha256).toHaveLength(64);
+      expect(artifact?.checksum).toEqual({
+        algorithm: "sha256",
+        digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
       expect(artifact?.url).toMatch(/^https:\/\/downloads\.claude\.ai\//u);
     }
   });
@@ -92,7 +95,7 @@ describe("reviewed Claude runtime manifest", () => {
 
     for (const [target, sha256, size] of expected) {
       const artifact = resolveReviewedClaudeArtifact(target);
-      expect(artifact?.sha256).toBe(sha256);
+      expect(artifact?.checksum).toEqual({ algorithm: "sha256", digest: sha256 });
       expect(artifact?.size).toBe(size);
     }
   });

@@ -3,6 +3,8 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 
 import {
   canManageProviderLifecycle,
+  hasActiveProviderRuntimeOperation,
+  isProviderAccountConnected,
   isSafeProviderAuthorizationUrl,
   needsManagedRuntimeRecovery,
   preferredProviderConnectionMethod,
@@ -108,6 +110,37 @@ describe("providerConnectionPresentation", () => {
         },
       }).kind,
     ).toBe("setting-up");
+  });
+
+  it("keeps runtime activity separate from the connected account state", () => {
+    const repairing: ServerProvider = {
+      ...provider,
+      auth: { status: "authenticated", required: true, label: "Google account" },
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+          previousManagedVersion: null,
+          operation: {
+            operationId: "runtime-repair-1",
+            action: "repair",
+            status: "verifying",
+            startedAt: "2026-08-09T00:00:00.000Z",
+            finishedAt: null,
+            message: "Verifying Antigravity.",
+          },
+          message: "Managed Antigravity is ready.",
+        },
+      },
+    };
+
+    expect(providerConnectionPresentation(repairing).kind).toBe("setting-up");
+    expect(hasActiveProviderRuntimeOperation(repairing)).toBe(true);
+    expect(isProviderAccountConnected(repairing)).toBe(true);
   });
 
   it("routes a broken managed executable to repair instead of account sign-in", () => {

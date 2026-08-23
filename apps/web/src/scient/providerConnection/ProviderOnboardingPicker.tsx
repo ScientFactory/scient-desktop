@@ -12,6 +12,7 @@ import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../..
 import { cn } from "~/lib/utils";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
+import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
@@ -281,6 +282,12 @@ export function ProviderOnboardingPicker(props: {
                     environmentId={props.environmentId}
                     provider={selectedEntry.snapshot}
                   />
+                ) : selectedDefinition.value === "antigravity" ? (
+                  <AntigravitySetupWithController
+                    displayName={selectedEntry.displayName}
+                    environmentId={props.environmentId}
+                    provider={selectedEntry.snapshot}
+                  />
                 ) : (
                   <ProviderSetupDetail
                     displayName={selectedDefinition.label}
@@ -346,6 +353,18 @@ function ClaudeSetupWithController(props: {
   return <ClaudeInlineSetup {...props} controller={controller} />;
 }
 
+function AntigravitySetupWithController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ProviderInstanceEntry["snapshot"];
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  return <AntigravityInlineSetup {...props} controller={controller} />;
+}
+
 /**
  * Inline setup surface used by the regular model picker after another provider
  * is already ready. Keeping this in Scient-owned code lets T3 continue to own
@@ -368,6 +387,15 @@ export function ProviderLifecycleSetupSurface(props: {
   if (props.entry.driverKind === "claudeAgent") {
     return (
       <ClaudeSetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  if (props.entry.driverKind === "antigravity") {
+    return (
+      <AntigravitySetupWithController
         displayName={props.entry.displayName}
         environmentId={props.environmentId}
         provider={props.entry.snapshot}

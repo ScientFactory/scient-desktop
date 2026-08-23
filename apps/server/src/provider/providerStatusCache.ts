@@ -1,4 +1,6 @@
 import {
+  compareProviderDriverKinds,
+  defaultInstanceIdForDriver,
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
@@ -37,12 +39,17 @@ const mergeProviderModels = (
 export const orderProviderSnapshots = (
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ServerProvider> =>
-  [...providers].toSorted(
-    (left, right) =>
-      (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
-      left.driver.localeCompare(right.driver) ||
-      left.instanceId.localeCompare(right.instanceId),
-  );
+  [...providers].toSorted((left, right) => {
+    const driverOrder = compareProviderDriverKinds(left.driver, right.driver);
+    if (driverOrder !== 0) return driverOrder;
+
+    const leftIsDefault = left.instanceId === defaultInstanceIdForDriver(left.driver);
+    const rightIsDefault = right.instanceId === defaultInstanceIdForDriver(right.driver);
+    if (leftIsDefault !== rightIsDefault) return leftIsDefault ? -1 : 1;
+
+    // Stable sorting preserves user-authored order among custom instances.
+    return 0;
+  });
 
 export const isCachedProviderCorrelated = (input: {
   readonly cachedProvider: ServerProvider;

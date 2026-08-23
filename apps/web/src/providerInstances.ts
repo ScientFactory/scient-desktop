@@ -14,6 +14,7 @@
  */
 import {
   DEFAULT_MODEL_BY_PROVIDER,
+  compareProviderDriverKinds,
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
   resolveProviderInstanceEnabled,
@@ -280,7 +281,9 @@ export function sortProviderInstanceEntries(
     }
   }
   const sorted: ProviderInstanceEntry[] = [];
-  for (const bucket of byKind.values()) {
+  const orderedKinds = [...byKind.keys()].toSorted(compareProviderDriverKinds);
+  for (const kind of orderedKinds) {
+    const bucket = byKind.get(kind)!;
     const defaults = bucket.filter((entry) => entry.isDefault);
     const customs = bucket.filter((entry) => !entry.isDefault);
     sorted.push(...defaults, ...customs);
