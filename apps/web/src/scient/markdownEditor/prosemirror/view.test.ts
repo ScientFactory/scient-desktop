@@ -639,6 +639,43 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange.mock.lastCall?.[0]).toContain("|  |  |  |");
   });
 
+  it("applies GFM alignment to the complete selected table column", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "| Group | Value |\n| --- | --- |\n| A | 2.4 |\n| B | 4.8 |\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    let selectedCellPosition = -1;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "table_cell" && node.textContent === "2.4") {
+        selectedCellPosition = position;
+        return false;
+      }
+      return true;
+    });
+    expect(selectedCellPosition).toBeGreaterThanOrEqual(0);
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, selectedCellPosition + 2)),
+    );
+
+    expect(controller.execute("align-column-center")).toBe(true);
+    expect(controller.getSnapshot().tableAlignment).toBe("center");
+    const table = view.state.doc.firstChild;
+    expect(table?.type.name).toBe("table");
+    for (let row = 0; row < (table?.childCount ?? 0); row += 1) {
+      expect(table?.child(row).child(1).attrs.alignment).toBe("center");
+    }
+    expect(controller.session.session.draftSource).toContain("| --- | :---: |");
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+  });
+
   it("keeps a workspace image rendered while its portable source fields are edited", async () => {
     const onUserSourceChange = vi.fn();
     const resolveImageSource = vi.fn(async (source: string) => `https://asset.test/${source}`);

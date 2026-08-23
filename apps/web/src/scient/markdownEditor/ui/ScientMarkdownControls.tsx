@@ -130,6 +130,45 @@ function InsertMenu({ controller }: { readonly controller: ScientMarkdownEditorV
   );
 }
 
+function TableMoreControl({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const execute = (command: ScientMarkdownCommand) => {
+    controller.execute(command);
+    detailsRef.current?.removeAttribute("open");
+  };
+  const actions: ReadonlyArray<{
+    readonly command: ScientMarkdownCommand;
+    readonly label: string;
+  }> = [
+    { command: "add-row-before", label: "Add row above" },
+    { command: "add-column-before", label: "Add column before" },
+    { command: "toggle-header-cell", label: "Toggle header cell" },
+    { command: "merge-cells", label: "Merge selected cells" },
+    { command: "split-cell", label: "Split cell" },
+    { command: "align-column-default", label: "Clear column alignment" },
+    { command: "delete-table", label: "Delete table" },
+  ];
+  return (
+    <details ref={detailsRef} className="scient-markdown-table-more-control">
+      <summary className="scient-markdown-command-button" aria-label="More table actions">
+        •••
+      </summary>
+      <div className="scient-markdown-table-more-menu" role="menu" aria-label="More table actions">
+        {actions.map((action) => (
+          <button
+            key={action.command}
+            type="button"
+            role="menuitem"
+            onClick={() => execute(action.command)}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function OutlineControl({
   controller,
   snapshot,
@@ -430,6 +469,29 @@ export function ScientMarkdownControls({
             label="Delete column"
             text="− Column"
           />
+          <span className="scient-markdown-command-divider" />
+          <CommandButton
+            controller={controller}
+            command="align-column-left"
+            label="Align column left"
+            text="⇤"
+            active={snapshot.tableAlignment === "left"}
+          />
+          <CommandButton
+            controller={controller}
+            command="align-column-center"
+            label="Align column center"
+            text="↔"
+            active={snapshot.tableAlignment === "center"}
+          />
+          <CommandButton
+            controller={controller}
+            command="align-column-right"
+            label="Align column right"
+            text="⇥"
+            active={snapshot.tableAlignment === "right"}
+          />
+          <TableMoreControl controller={controller} />
         </div>
       ) : null}
       {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (

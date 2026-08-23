@@ -12,6 +12,8 @@ import {
   deleteRow,
   deleteTable,
   mergeCells,
+  isInTable,
+  selectedRect,
   splitCell,
   toggleHeaderCell,
 } from "prosemirror-tables";
@@ -23,6 +25,10 @@ export type ScientMarkdownCommand =
   | "add-column-before"
   | "add-row-after"
   | "add-row-before"
+  | "align-column-center"
+  | "align-column-default"
+  | "align-column-left"
+  | "align-column-right"
   | "blockquote"
   | "bold"
   | "bullet-list"
@@ -111,6 +117,34 @@ function createTable(): ProseMirrorNode {
   return requiredNodeType("table").create(null, rows);
 }
 
+function setSelectedTableColumnAlignment(alignment: string | null): Command {
+  return (state, dispatch) => {
+    if (!isInTable(state)) return false;
+    if (!dispatch) return true;
+
+    const rect = selectedRect(state);
+    const cellOffsets = new Set<number>();
+    for (let row = 0; row < rect.map.height; row += 1) {
+      for (let column = rect.left; column < rect.right; column += 1) {
+        const offset = rect.map.map[row * rect.map.width + column];
+        if (offset !== undefined) cellOffsets.add(offset);
+      }
+    }
+
+    let transaction = state.tr;
+    for (const offset of cellOffsets) {
+      const cell = rect.table.nodeAt(offset);
+      if (!cell || cell.attrs.alignment === alignment) continue;
+      transaction = transaction.setNodeMarkup(rect.tableStart + offset, undefined, {
+        ...cell.attrs,
+        alignment,
+      });
+    }
+    if (transaction.docChanged) dispatch(transaction);
+    return true;
+  };
+}
+
 function commandFor(command: ScientMarkdownCommand): Command {
   switch (command) {
     case "bold":
@@ -152,6 +186,14 @@ function commandFor(command: ScientMarkdownCommand): Command {
       return insertNode(requiredNodeType("wiki_link").create({ target: "Untitled", label: null }));
     case "table":
       return insertNode(createTable());
+    case "align-column-default":
+      return setSelectedTableColumnAlignment(null);
+    case "align-column-left":
+      return setSelectedTableColumnAlignment("left");
+    case "align-column-center":
+      return setSelectedTableColumnAlignment("center");
+    case "align-column-right":
+      return setSelectedTableColumnAlignment("right");
     case "add-column-after":
       return addColumnAfter;
     case "add-column-before":

@@ -80,6 +80,7 @@ export interface ScientMarkdownEditorSnapshot {
   readonly selectionEmpty: boolean;
   readonly slashActiveIndex: number;
   readonly slashQuery: string | null;
+  readonly tableAlignment: string | null;
   readonly version: number;
 }
 
@@ -525,9 +526,14 @@ export class ScientMarkdownEditorView {
     let headingLevel: number | null =
       blockType === "heading" ? Number(selection.$from.parent.attrs.level) : null;
     let inTable = false;
+    let tableAlignment: string | null = null;
     for (let depth = selection.$from.depth; depth >= 0; depth -= 1) {
       const node = selection.$from.node(depth);
       if (node.type.name === "table") inTable = true;
+      if (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell") {
+        tableAlignment =
+          typeof node.attrs.alignment === "string" ? node.attrs.alignment : tableAlignment;
+      }
       if (blockType === "paragraph" && node.isBlock && node.type.name !== "doc") {
         blockType = node.type.name;
         headingLevel = node.type.name === "heading" ? Number(node.attrs.level) : headingLevel;
@@ -564,6 +570,7 @@ export class ScientMarkdownEditorView {
       selectionEmpty: selection.empty,
       slashActiveIndex: Math.min(this.slashActiveIndex, Math.max(0, slashItems.length - 1)),
       slashQuery,
+      tableAlignment,
       version: this.snapshotVersion,
     };
   }

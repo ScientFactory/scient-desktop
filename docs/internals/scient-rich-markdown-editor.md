@@ -98,6 +98,74 @@ state, last selection, and active find result. They create no document transacti
 
 ## Architecture decision
 
+### Open-source landscape review (verified 2026-08-23)
+
+The investigation reviewed 120 current search results across editor foundations, Markdown-native
+editors, source-preservation behavior, and scientific rendering. The primary documentation,
+repositories, licenses, release state, and relevant round-trip reports of the serious candidates
+were then read directly. Stars are not an architectural criterion; they are useful only as a weak
+signal of ecosystem size.
+
+The decisive distinction is between **semantic round-trip** and **source round-trip**. Most rich
+editors can parse Markdown into a document tree and serialize an equivalent document. That does
+not preserve the file: semantically equivalent output may change list markers, emphasis
+delimiters, soft breaks, table whitespace, entity spelling, fences, comments, or unsupported
+extensions. Scient requires semantic editing plus exact reuse of every source range the user did
+not change.
+
+| Candidate                                                                                   | License and current state                                            | What it gives us                                                                                             | Decision for Scient                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [ProseMirror](https://prosemirror.net/docs/guide/)                                          | MIT; modular core maintained at its new upstream forge               | Mature schema, transactions, persistent view, NodeViews, selection mapping, tables, accessibility primitives | **Adopt the core**, behind a Scient adapter. Its normal Markdown serializer is not the file-authority layer.                                                                                                                                                                                     |
+| [CodeMirror 6](https://codemirror.net/docs/guide/)                                          | MIT; modular and actively maintained at its new upstream forge       | Excellent source editor, nested code/config editor, search, completion, language packages                    | **Adopt** for Source/Split and nested source islands. It is not the rich document model.                                                                                                                                                                                                         |
+| [Lexical](https://github.com/facebook/lexical)                                              | MIT; active, large ecosystem                                         | Strong React integration, immutable state, accessibility, custom nodes, Markdown import/export               | Keep where inherited UI already uses it, but do not use its tree as Markdown authority. The promising [mdast package](https://lexical.dev/docs/packages/lexical-mdast) now retains several syntax choices, but is explicitly experimental and still does not preserve arbitrary untouched bytes. |
+| [Tiptap](https://github.com/ueberdosis/tiptap)                                              | MIT core; active; optional commercial/cloud suite exists             | Polished headless ProseMirror extension ecosystem and useful interaction references                          | Do not add the abstraction layer. It does not solve exact source authority, and Scient needs direct transaction and serialization policy. No paid or hosted Tiptap component is required.                                                                                                        |
+| [Milkdown](https://github.com/Milkdown/milkdown)                                            | MIT; active; ProseMirror plus remark                                 | The strongest Markdown-oriented framework reference, plugin architecture, polished Typora-like interactions  | Reference and selectively port ideas. Its parse-to-tree/serialize path does not establish unchanged-byte preservation.                                                                                                                                                                           |
+| [MDXEditor](https://mdxeditor.dev/editor/docs/diff-source)                                  | MIT; active; Lexical-based                                           | Rich Markdown/MDX editing, source and diff modes, extensible visitors                                        | Reference its source/diff UX. Source is a separate mode and export still crosses a document model; it does not meet Scient's byte contract.                                                                                                                                                      |
+| [Slate](https://github.com/ianstormtaylor/slate)                                            | MIT; active but explicitly beta with breaking APIs                   | Highly customizable React editor primitives                                                                  | Reject as the foundation: not Markdown-native, table/science behavior would be largely ours, and its API stability warning is material.                                                                                                                                                          |
+| [Remirror](https://github.com/remirror/remirror)                                            | MIT; active ProseMirror React toolkit                                | React bindings and extension conventions                                                                     | Reference only; another policy layer without a source-preservation solution.                                                                                                                                                                                                                     |
+| [BlockNote](https://github.com/TypeCellOS/BlockNote)                                        | Primarily MPL-2.0 with separately governed XL packages; active       | Excellent Notion-style block interactions and a ready-made UI                                                | UX reference only. Its block model is not Markdown authority, MPL obligations are less clean than the selected permissive stack, and XL licensing complicates the ownership boundary.                                                                                                            |
+| [MarkText](https://github.com/marktext/marktext) / [Muya](https://github.com/marktext/muya) | MIT; MarkText active, standalone Muya repository archived            | Mature desktop interaction reference and real-time rich preview                                              | Do not embed. Muya's documented Markdown-to-HTML-to-Markdown pipeline necessarily normalizes source, and the reusable standalone repository is archived.                                                                                                                                         |
+| [Vditor](https://github.com/Vanessa219/vditor)                                              | MIT; active                                                          | WYSIWYG, instant-rendering, and split modes in one package                                                   | Strong interaction/test reference. It is a large opinionated editor and provides no evidence of exact unchanged-byte preservation.                                                                                                                                                               |
+| [TOAST UI Editor](https://github.com/nhn/tui.editor)                                        | MIT; repository open, latest published editor release found was 2023 | Established GFM Markdown/WYSIWYG editor with plugins                                                         | Reject as a new foundation because of release staleness, dual-mode conversion, and weak fit for our scientific/source contract.                                                                                                                                                                  |
+| [Cherry Markdown](https://github.com/Tencent/cherry-markdown)                               | Apache-2.0; active                                                   | Broad Markdown features, extensible engine, split and rich modes                                             | Useful compatibility reference, not the foundation; it brings a full editor policy and no exact-source guarantee.                                                                                                                                                                                |
+| [coflat](https://github.com/chaoxu/coflat)                                                  | MIT; created in 2026, three stars when reviewed                      | Interesting CodeMirror 6 Typora-style experiment including math/citation editing                             | Watch and borrow ideas only. It is far too new and small to become a core dependency.                                                                                                                                                                                                            |
+
+Several newer projects and demos were also inspected and filtered out because they were thin app
+shells, lacked evidence of file fidelity or accessibility, used copyleft/unclear licensing, or
+were too immature to place beneath an authoritative scientific file editor.
+
+### Scientific rendering components
+
+The scientific preview stack is also fully local and ownable:
+
+- [KaTeX](https://github.com/KaTeX/KaTeX) is MIT and provides fast self-contained TeX rendering.
+- [Mermaid](https://github.com/mermaid-js/mermaid) is MIT and remains a text-authoritative diagram
+  renderer.
+- [Vega](https://github.com/vega/vega) is BSD-3-Clause and
+  [Plotly.js](https://github.com/plotly/plotly.js) is MIT; both can render local declarative
+  visualization specifications without a hosted service.
+- [prosemirror-tables](https://github.com/ProseMirror/prosemirror-tables) is MIT and supplies the
+  proven table selection and structural-command layer.
+
+These renderers remain behind Scient NodeView adapters. Their input text stays in the Markdown
+file, rendering runs locally, invalid intermediate edits retain the last valid visual, and no
+renderer is allowed to rewrite the document.
+
+### Answer to rich editing without losing the preview
+
+This is feasible and is the selected design. Read and Write use the same mounted ProseMirror
+`EditorView` and the same document nodes. Write changes only `editable`, focus, selection, and
+interaction plugins. A bullet remains a bullet, a table remains a laid-out table with editable
+cells, an equation remains typeset with a compact TeX editor when active, and a figure or diagram
+keeps its last valid preview while its source is being edited. Source and Split are precision
+tools, not the default writing experience.
+
+This continuity cannot be achieved safely by hiding Markdown punctuation in a textarea alone:
+tables, nested structures, selections, accessibility, and unsupported syntax all need a semantic
+document model. Conversely, a semantic model alone is unsafe for real files because normal
+serialization changes untouched syntax. The combined persistent-view plus source-ledger design is
+therefore a product requirement, not implementation ornament.
+
 ### Selected foundation
 
 Use ProseMirror directly behind a Scient-owned adapter, paired with CodeMirror 6 for source and
@@ -105,9 +173,9 @@ nested code/source islands. ProseMirror's persistent `EditorView`, transaction m
 `NodeView` boundary, selection mapping, and mature table implementation align with the required
 invariants. Direct use avoids adopting another framework's document conversion and UI policy.
 
-All selected ProseMirror and CodeMirror packages are MIT-licensed. They are dynamically imported
-only when a Markdown document surface is opened so the ordinary chat path does not pay their
-bundle or initialization cost.
+All selected ProseMirror and CodeMirror packages are MIT-licensed. The rich surface is isolated
+behind the Markdown file mount; expensive nested source and scientific renderers load only when
+their surfaces are needed, so the ordinary chat path does not initialize them.
 
 Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects remain interaction and
 test references, not runtime foundations. Their useful ideas may be reimplemented through the
@@ -123,6 +191,27 @@ observed result included removal of a table and flattening of a nested list with
 Useful interaction components and backend tests from that branch may be ported only after their
 behavior is revalidated against this contract. Its import/export bridge and whole-document
 autosave design must not be reused.
+
+### Current implementation audit (feature branch snapshot)
+
+The replacement branch is not a conceptual mock-up. It currently contains a persistent rich
+surface and source ledger, minimal source patching, Read/Write/Source/Split, revision-bound serial
+autosave, external-conflict handling, rich formatting/lists/tasks/tables, math, highlighted nested
+code editing, images, wiki links, citations/footnotes, Mermaid/Vega/Plotly previews, raw source
+islands, find/replace, outline navigation, structural block operations, create/rename, and secure
+asset insertion.
+
+The implementation has focused tests for unchanged-source reuse, CRLF and Unicode, malformed
+input fuzzing, composition safety, RTL block direction, last-valid math/diagram rendering,
+mode-safe link behavior, collision-safe file operations, save recovery, and representative 100
+KiB/500 KiB latency. These are implementation evidence, not the final product gate.
+
+The remaining high-risk work is qualification and gap closure: synchronized Split mapping,
+remaining table/figure polish, complete keyboard and screen-reader review, real Hebrew/English and
+IME exercises, two-writer/process-interruption stress, remote and packaged-runtime checks, bundle
+measurement, full repository checks, and visual inspection in the exact isolated Scient app.
+Until those pass, the feature is not ready for manual review and this document must not imply that
+it is.
 
 ### Module boundaries
 
@@ -210,8 +299,10 @@ alignment, entity spelling, and untouched whitespace.
   image policy. SVG is sanitized or rejected according to the existing preview policy.
 - Use same-directory temporary files, fsync where supported, atomic rename, and cleanup.
 - Refresh workspace entries only after a successful operation.
-- HTTP is the remote-ready authority. WebSocket compatibility is added only if an existing client
-  path genuinely requires it; duplicate transports are not created by default.
+- Existing authenticated typed project RPC remains the create/write/rename transport used by
+  connected Scient clients. Authenticated typed HTTP handles multipart binary asset ingestion.
+  Both delegate to the same workspace path/revision authority; duplicate file semantics are not
+  created in the transport layers.
 - Error contracts distinguish invalid input, outside-root path, resolved escape, conflict,
   existing destination, unsupported media, excessive size, and operational failure.
 

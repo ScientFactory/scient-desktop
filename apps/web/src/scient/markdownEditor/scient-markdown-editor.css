@@ -61,6 +61,7 @@
 .scient-markdown-command-button,
 .scient-markdown-link-actions button,
 .scient-markdown-insert-menu button,
+.scient-markdown-table-more-menu button,
 .scient-markdown-slash-menu button {
   display: inline-flex;
   min-width: 1.65rem;
@@ -82,6 +83,8 @@
 .scient-markdown-command-button[aria-pressed="true"],
 .scient-markdown-insert-menu button:hover,
 .scient-markdown-insert-menu button:focus-visible,
+.scient-markdown-table-more-menu button:hover,
+.scient-markdown-table-more-menu button:focus-visible,
 .scient-markdown-slash-menu button:hover,
 .scient-markdown-slash-menu button:focus-visible,
 .scient-markdown-slash-menu button[aria-selected="true"] {
@@ -110,12 +113,14 @@ summary.scient-markdown-command-button::-webkit-details-marker {
 
 .scient-markdown-insert-control,
 .scient-markdown-link-control,
-.scient-markdown-outline-control {
+.scient-markdown-outline-control,
+.scient-markdown-table-more-control {
   position: relative;
 }
 
 .scient-markdown-insert-menu,
 .scient-markdown-link-popover,
+.scient-markdown-table-more-menu,
 .scient-markdown-slash-menu {
   position: absolute;
   z-index: 30;
@@ -136,7 +141,13 @@ summary.scient-markdown-command-button::-webkit-details-marker {
   inset-inline-start: 0;
 }
 
+.scient-markdown-table-more-menu {
+  inset-block-end: calc(100% + 0.4rem);
+  inset-inline-end: 0;
+}
+
 .scient-markdown-insert-menu button,
+.scient-markdown-table-more-menu button,
 .scient-markdown-slash-menu button {
   justify-content: flex-start;
   padding-inline: 0.55rem;
