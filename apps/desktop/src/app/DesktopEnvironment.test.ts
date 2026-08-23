@@ -155,7 +155,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("keeps the candidate app identity fixed", () =>
+  it.effect("keeps the Scient app identity fixed", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},

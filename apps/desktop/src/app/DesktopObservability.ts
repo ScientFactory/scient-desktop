@@ -20,7 +20,7 @@ import * as Tracer from "effect/Tracer";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
@@ -341,7 +341,7 @@ const readPersistedOtlpTracesUrl: Effect.Effect<
 
 const resolveOtlpTracesUrl = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (environment.safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled) {
+  if (environment.safetyEnvelopeEnabled && !SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled) {
     return Option.none<string>();
   }
   if (Option.isSome(environment.otlpTracesUrl)) {

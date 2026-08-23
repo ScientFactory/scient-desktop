@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -21,12 +21,15 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // our own handler entry pointing at the current AppImage and claim the
 // scheme default via xdg-mime, exactly what the file manager's "set as
 // default" checkbox would record in mimeapps.list.
-export const URL_HANDLER_DESKTOP_ENTRY_NAME = SCIENT_NEXT_IDENTITY.linuxDesktopEntryName.replace(
+export const URL_HANDLER_DESKTOP_ENTRY_NAME = SCIENT_DESKTOP_IDENTITY.linuxDesktopEntryName.replace(
   ".desktop",
   "-url-handler.desktop",
 );
 export const DEVELOPMENT_URL_HANDLER_DESKTOP_ENTRY_NAME =
-  SCIENT_NEXT_IDENTITY.linuxDevelopmentDesktopEntryName.replace(".desktop", "-url-handler.desktop");
+  SCIENT_DESKTOP_IDENTITY.linuxDevelopmentDesktopEntryName.replace(
+    ".desktop",
+    "-url-handler.desktop",
+  );
 
 export const getUrlHandlerDesktopEntryName = (isDevelopment: boolean): string =>
   isDevelopment ? DEVELOPMENT_URL_HANDLER_DESKTOP_ENTRY_NAME : URL_HANDLER_DESKTOP_ENTRY_NAME;

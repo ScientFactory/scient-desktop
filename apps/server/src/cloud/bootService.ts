@@ -3,7 +3,7 @@ import {
   HostProcessPlatform,
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -30,10 +30,10 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-export const BOOT_SERVICE_UNIT_FILE = SCIENT_NEXT_IDENTITY.serviceUnitName;
+export const BOOT_SERVICE_UNIT_FILE = SCIENT_DESKTOP_IDENTITY.serviceUnitName;
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = SCIENT_NEXT_IDENTITY.serviceLaunchdLabel;
+export const BOOT_SERVICE_LAUNCHD_LABEL = SCIENT_DESKTOP_IDENTITY.serviceLaunchdLabel;
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 

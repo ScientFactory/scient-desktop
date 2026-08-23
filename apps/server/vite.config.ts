@@ -4,7 +4,7 @@ import { defineConfig, mergeConfig } from "vite-plus";
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import packageJson from "./package.json" with { type: "json" };
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 // The bundle used to inline only workspace packages, leaving every third-party
 // runtime dep external. External deps must exist on the real filesystem (the WSL
 // backend runs plain `wsl.exe -- node`, which cannot read inside an asar), so the
@@ -62,30 +62,30 @@ export default mergeConfig(
       define: {
         __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(
-          SCIENT_NEXT_IDENTITY.cloudEnabled ? (repoEnv.T3CODE_RELAY_URL?.trim() ?? "") : "",
+          SCIENT_DESKTOP_IDENTITY.cloudEnabled ? (repoEnv.T3CODE_RELAY_URL?.trim() ?? "") : "",
         ),
         __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-          SCIENT_NEXT_IDENTITY.cloudEnabled
+          SCIENT_DESKTOP_IDENTITY.cloudEnabled
             ? (repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "")
             : "",
         ),
         __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
-          SCIENT_NEXT_IDENTITY.cloudEnabled
+          SCIENT_DESKTOP_IDENTITY.cloudEnabled
             ? (repoEnv.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "")
             : "",
         ),
         __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: JSON.stringify(
-          SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled
+          SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled
             ? (repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ?? "")
             : "",
         ),
         __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: JSON.stringify(
-          SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled
+          SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled
             ? (repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ?? "")
             : "",
         ),
         __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
-          SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled
+          SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled
             ? (repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "")
             : "",
         ),

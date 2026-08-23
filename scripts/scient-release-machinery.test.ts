@@ -29,6 +29,11 @@ describe("Scient release machinery", () => {
     assert.notMatch(workflow, /^  schedule:\n/mu);
     assert.include(workflow, "group: scient-stable-release");
     assert.include(workflow, "cancel-in-progress: false");
+    assert.include(workflow, "SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop");
+    assert.include(
+      workflow,
+      '"$PUBLISH_RELEASE" == "true" && "$GITHUB_REPOSITORY" != "$SCIENT_DESKTOP_CANONICAL_REPOSITORY"',
+    );
   });
 
   it("prepares stable candidates at 03:00 Jerusalem without direct publication authority", () => {
@@ -299,6 +304,11 @@ describe("Scient release machinery", () => {
 
     assert.equal(manifest.name, "t3");
     assert.equal(manifest.version, "0.6.0");
+    assert.deepStrictEqual(manifest.repository, {
+      type: "git",
+      url: "https://github.com/ScientFactory/scient-desktop.git",
+      directory: "apps/server",
+    });
     assert.deepStrictEqual(manifest.files, ["dist", "npm-shrinkwrap.json"]);
     assert.deepStrictEqual(manifest.dependencies, { effect: "4.0.0" });
     assert.deepStrictEqual(manifest.overrides, {});
@@ -339,6 +349,8 @@ describe("Scient release machinery", () => {
         root,
         "--version",
         "0.6.0",
+        "--repository",
+        "ScientFactory/scient-desktop",
         "--source-sha",
         "a".repeat(40),
         "--source-tree",
@@ -361,7 +373,7 @@ describe("Scient release machinery", () => {
       };
       const expectedHash = NodeCrypto.createHash("sha256").update("linux").digest("hex");
       assert.deepStrictEqual(handoff.source, {
-        repository: "ScientFactory/scient-desktop-next",
+        repository: "ScientFactory/scient-desktop",
         commit: "a".repeat(40),
         tree: "b".repeat(40),
       });
@@ -375,5 +387,49 @@ describe("Scient release machinery", () => {
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a malformed release repository", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-release-handoff-"));
+    try {
+      NodeFS.writeFileSync(NodePath.join(root, "Scient-0.6.0-x64.AppImage"), "linux");
+      assert.throws(() =>
+        createScientReleaseHandoff([
+          "--assets-dir",
+          root,
+          "--version",
+          "0.6.0",
+          "--repository",
+          "https://github.com/ScientFactory/scient-desktop",
+          "--source-sha",
+          "a".repeat(40),
+          "--source-tree",
+          "b".repeat(40),
+          "--output",
+          NodePath.join(root, "scient-release-handoff.json"),
+        ]),
+      );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires an explicit release repository", () => {
+    assert.throws(
+      () =>
+        createScientReleaseHandoff([
+          "--assets-dir",
+          ".",
+          "--version",
+          "0.6.0",
+          "--source-sha",
+          "a".repeat(40),
+          "--source-tree",
+          "b".repeat(40),
+          "--output",
+          "scient-release-handoff.json",
+        ]),
+      /--repository is required/u,
+    );
   });
 });

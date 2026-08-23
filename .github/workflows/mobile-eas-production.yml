@@ -56,8 +56,8 @@ on:
 jobs:
   production:
     name: EAS Production ${{ inputs.mode }}
-    # D4 candidate: mobile release and OTA publication are deferred until
-    # the later mobile/cutover authority review.
+    # Mobile release and OTA publication remain disabled until the mobile
+    # release owner explicitly enables them.
     if: ${{ false }}
     runs-on: ubuntu-24.04
     permissions:

@@ -219,9 +219,9 @@
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
     },
-    "./scientNextIdentity": {
-      "types": "./src/scientNextIdentity.ts",
-      "import": "./src/scientNextIdentity.ts"
+    "./scientDesktopIdentity": {
+      "types": "./src/scientDesktopIdentity.ts",
+      "import": "./src/scientDesktopIdentity.ts"
     },
     "./scientForkTitle": {
       "types": "./src/scientForkTitle.ts",

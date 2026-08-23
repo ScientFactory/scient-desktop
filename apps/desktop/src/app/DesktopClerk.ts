@@ -90,7 +90,7 @@ export const make = Effect.gen(function* () {
   // Electron scopes the single-instance lock to the userData directory and
   // creates that directory when the lock is acquired. The SDK bridge takes
   // the lock at creation, so userData must already point at the explicit
-  // Scient Next directory. Legacy T3/current-Scient paths are never probed.
+  // established Scient directory. T3 and retired-Scient paths are never probed.
   const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
 

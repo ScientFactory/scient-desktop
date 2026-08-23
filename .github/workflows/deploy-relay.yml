@@ -17,8 +17,8 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
-    # D4 candidate: production infrastructure remains disabled until a later
-    # cutover review explicitly restores release authority.
+    # Production relay deployment remains disabled until its infrastructure
+    # owner explicitly restores release authority.
     if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

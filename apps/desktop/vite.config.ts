@@ -1,13 +1,15 @@
 import { defineConfig } from "vite-plus";
 
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
 const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-    SCIENT_NEXT_IDENTITY.cloudEnabled ? (repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "") : "",
+    SCIENT_DESKTOP_IDENTITY.cloudEnabled
+      ? (repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "")
+      : "",
   ),
 };
 

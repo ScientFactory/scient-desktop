@@ -16,7 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -32,9 +32,7 @@ export const hostFlag = Flag.string("host").pipe(
   Flag.optional,
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
-  Flag.withDescription(
-    "Explicit Scient candidate data directory; runtime state is stored under userdata.",
-  ),
+  Flag.withDescription("Explicit Scient data directory; runtime state is stored under userdata."),
   Flag.optional,
 );
 export const devUrlFlag = Flag.string("dev-url").pipe(
@@ -284,16 +282,16 @@ export const resolveServerConfig = (
     const cliBaseDir = normalizedFlags.baseDir.pipe(
       Option.filter((value) => value.trim().length > 0),
     );
-    const candidateEnvBaseDir = Option.fromUndefinedOr(env.scientNextHome).pipe(
+    const scientEnvBaseDir = Option.fromUndefinedOr(env.scientNextHome).pipe(
       Option.filter((value) => value.trim().length > 0),
     );
     const explicitBaseDir = resolveOptionPrecedence(
       cliBaseDir,
-      // The candidate-owned name is authoritative for direct/server and
+      // The Scient compatibility name is authoritative for direct/server and
       // desktop child launches. Do not allow ambient T3CODE_HOME to redirect
-      // a Scient Next process into an installed T3/current-Scient state root.
-      candidateEnvBaseDir,
-      SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
+      // a Scient process into an installed T3 or retired-Scient state root.
+      scientEnvBaseDir,
+      SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
         ? Option.none()
         : Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
@@ -302,9 +300,9 @@ export const resolveServerConfig = (
         resolveOptionPrecedence(
           explicitBaseDir,
           // The inherited bootstrap field is private IPC, but it still carries
-          // a T3-owned state path. Ignore it in the candidate so a direct
+          // a T3-owned state path. Ignore it in Scient so a direct
           // server launch cannot be redirected into legacy state.
-          SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled
+          SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
             ? Option.none()
             : Option.fromUndefinedOr(bootstrap?.t3Home),
         ),
@@ -318,12 +316,12 @@ export const resolveServerConfig = (
       // state, but that is still implicit development state when a dev URL is
       // present. Keep it under the candidate development directory rather
       // than production userdata.
-      developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName,
+      developmentStateDirName: SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName,
       forceDevelopmentState: env.scientNextDevelopmentState,
       baseDirIsExplicit:
         Option.isSome(cliBaseDir) ||
         (Option.isSome(explicitBaseDir) &&
-          !(SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && Option.isSome(candidateEnvBaseDir))),
+          !(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && Option.isSome(scientEnvBaseDir))),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
@@ -398,13 +396,13 @@ export const resolveServerConfig = (
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
       otlpTracesUrl:
-        SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
           ? undefined
           : (env.otlpTracesUrl ??
             bootstrap?.otlpTracesUrl ??
             persistedObservabilitySettings.otlpTracesUrl),
       otlpMetricsUrl:
-        SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
           ? undefined
           : (env.otlpMetricsUrl ??
             bootstrap?.otlpMetricsUrl ??

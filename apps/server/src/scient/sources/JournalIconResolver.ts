@@ -25,7 +25,7 @@ const ICON_DISCOVERY_VERSION = 2;
 const SUCCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const FAILURE_TTL_MS = 6 * 60 * 60 * 1_000;
 const USER_AGENT =
-  "Scient/0.0 (https://github.com/ScientFactory/scient-desktop-next; journal icon resolution)";
+  "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; journal icon resolution)";
 
 const blockedAddresses = new NodeNet.BlockList();
 for (const [network, prefix] of [

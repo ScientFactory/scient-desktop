@@ -15,7 +15,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -87,15 +87,15 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = SCIENT_NEXT_IDENTITY.baseName;
+const APP_BASE_NAME = SCIENT_DESKTOP_IDENTITY.baseName;
 
 const resolveCandidateAppUserModelId = (input: {
   readonly isDevelopment: boolean;
   readonly override: Option.Option<string>;
 }): string => {
   const defaultId = input.isDevelopment
-    ? SCIENT_NEXT_IDENTITY.developmentAppId
-    : SCIENT_NEXT_IDENTITY.appId;
+    ? SCIENT_DESKTOP_IDENTITY.developmentAppId
+    : SCIENT_DESKTOP_IDENTITY.appId;
   return Option.match(input.override, {
     onNone: () => defaultId,
     onSome: (override) => {
@@ -105,8 +105,8 @@ const resolveCandidateAppUserModelId = (input: {
       // cross the D4 boundary.
       if (
         input.isDevelopment &&
-        (normalized === SCIENT_NEXT_IDENTITY.developmentAppId ||
-          normalized.startsWith(`${SCIENT_NEXT_IDENTITY.developmentAppId}.`))
+        (normalized === SCIENT_DESKTOP_IDENTITY.developmentAppId ||
+          normalized.startsWith(`${SCIENT_DESKTOP_IDENTITY.developmentAppId}.`))
       ) {
         return normalized;
       }
@@ -134,7 +134,7 @@ function resolveDesktopAppBranding(input: {
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: input.isDevelopment ? SCIENT_NEXT_IDENTITY.developmentName : APP_BASE_NAME,
+    displayName: input.isDevelopment ? SCIENT_DESKTOP_IDENTITY.developmentName : APP_BASE_NAME,
   };
 }
 
@@ -209,8 +209,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
   });
   const userDataDirName = isDevelopment
-    ? SCIENT_NEXT_IDENTITY.developmentUserDataDirName
-    : SCIENT_NEXT_IDENTITY.productionUserDataDirName;
+    ? SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName
+    : SCIENT_DESKTOP_IDENTITY.productionUserDataDirName;
   // Kept in the service shape for callers that display migration diagnostics;
   // D4 intentionally never probes or adopts this path.
   const legacyUserDataDirName = "__scient_next_legacy_disabled__";
@@ -267,11 +267,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
       override: config.appUserModelIdOverride,
     }),
     linuxDesktopEntryName: isDevelopment
-      ? SCIENT_NEXT_IDENTITY.linuxDevelopmentDesktopEntryName
-      : SCIENT_NEXT_IDENTITY.linuxDesktopEntryName,
+      ? SCIENT_DESKTOP_IDENTITY.linuxDevelopmentDesktopEntryName
+      : SCIENT_DESKTOP_IDENTITY.linuxDesktopEntryName,
     linuxWmClass: isDevelopment
-      ? SCIENT_NEXT_IDENTITY.linuxDevelopmentWmClass
-      : SCIENT_NEXT_IDENTITY.linuxWmClass,
+      ? SCIENT_DESKTOP_IDENTITY.linuxDevelopmentWmClass
+      : SCIENT_DESKTOP_IDENTITY.linuxWmClass,
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

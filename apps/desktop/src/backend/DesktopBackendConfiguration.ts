@@ -19,7 +19,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
@@ -403,7 +403,7 @@ const buildObservabilityFragment = (
 ) => {
   // Candidate D4 deliberately does not forward persisted OTLP destinations.
   // Local trace files remain available for diagnostics.
-  if (safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled) return {};
+  if (safetyEnvelopeEnabled && !SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled) return {};
   return {
     ...Option.match(observabilitySettings.otlpTracesUrl, {
       onNone: () => ({}),
@@ -470,13 +470,13 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
         // Keep the server's derived state directory identical to the
-        // desktop-owned candidate directory. The server still understands
-        // T3CODE_HOME for upstream compatibility, but D4 launches use the
-        // candidate-owned alias explicitly.
+        // desktop-owned data directory. The server still understands
+        // T3CODE_HOME for upstream compatibility, but Scient launches use the
+        // established Scient compatibility alias explicitly.
         T3CODE_HOME: environment.baseDir,
         SCIENT_NEXT_HOME: environment.baseDir,
         SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
-        SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_NEXT_IDENTITY.safetyEnvelopeMarker,
+        SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -624,7 +624,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       T3CODE_HOME: "~/.scient-next",
       SCIENT_NEXT_HOME: "~/.scient-next",
       SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
-      SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_NEXT_IDENTITY.safetyEnvelopeMarker,
+      SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
     // env is already a complete process.env minus both desktop home aliases; pass it

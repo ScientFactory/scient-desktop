@@ -4,7 +4,7 @@ const EXACT_RELEASE_VERSION = new RegExp(
   "u",
 );
 
-export const SCIENT_DESKTOP_RELEASE_REPOSITORY = "ScientFactory/scient-desktop-next";
+export const SCIENT_DESKTOP_RELEASE_REPOSITORY = "ScientFactory/scient-desktop";
 export const SCIENT_SERVER_PACKAGE_NAME = "t3";
 export const SCIENT_SERVER_ALLOWED_INSTALL_SCRIPTS = [
   "node-pty@1.1.0",

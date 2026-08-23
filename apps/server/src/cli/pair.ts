@@ -14,8 +14,8 @@ import {
   ExecutionEnvironmentDescriptor,
   PortSchema,
 } from "@t3tools/contracts";
-import { resolveWorktreeScientNextHome } from "@t3tools/shared/devHome";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { resolveWorktreeScientDevHome } from "@t3tools/shared/devHome";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
@@ -258,7 +258,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     // Same precedence as dev-runner: inside a linked worktree its own `.scient-next`
     // outranks the shared home, so `t3 pair` in a worktree pairs with the dev
     // server under test rather than the daily-driver install.
-    const worktreeHome = yield* resolveWorktreeScientNextHome(process.cwd());
+    const worktreeHome = yield* resolveWorktreeScientDevHome(process.cwd());
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
     }
@@ -272,7 +272,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
         baseDir,
         variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
-        { developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName },
+        { developmentStateDirName: SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName },
       );
       const statePath = derivedPaths.serverRuntimeStatePath;
       checkedStatePaths.push(statePath);
@@ -314,12 +314,12 @@ const makePairServerConfig = Effect.fn(function* (input: {
 }) {
   const { baseDir, variant, state } = input.target;
   // The recorded devUrl marks the development state directory. Keep the
-  // candidate-specific directory name aligned with server startup.
+  // worktree-specific directory name aligned with server startup.
   const devUrl = state.devUrl !== undefined ? new URL(state.devUrl) : undefined;
   const derivedPaths = yield* ServerConfig.deriveServerPaths(
     baseDir,
     variant === "dev" ? (devUrl ?? DEV_VARIANT_PLACEHOLDER_URL) : undefined,
-    { developmentStateDirName: SCIENT_NEXT_IDENTITY.developmentUserDataDirName },
+    { developmentStateDirName: SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName },
   );
   return ServerConfig.make({
     logLevel: input.logLevel,

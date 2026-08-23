@@ -263,6 +263,8 @@ function verifyCompleteReleaseFixture(root: string): void {
     assets,
     "--version",
     version,
+    "--repository",
+    "ScientFactory/scient-desktop",
     "--source-sha",
     "a".repeat(40),
     "--source-tree",
