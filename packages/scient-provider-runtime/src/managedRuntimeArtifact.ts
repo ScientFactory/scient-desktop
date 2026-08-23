@@ -7,6 +7,11 @@ export type ManagedRuntimeSupportTier =
   | "manual_or_advanced_only"
   | "unsupported";
 
+export interface ManagedRuntimeChecksum {
+  readonly algorithm: "sha256" | "sha512";
+  readonly digest: string;
+}
+
 /**
  * One reviewed, immutable provider-runtime artifact.
  *
@@ -14,13 +19,13 @@ export type ManagedRuntimeSupportTier =
  * verification, staging, smoke testing, and atomic activation are shared.
  */
 export interface ManagedRuntimeArtifact {
-  readonly provider: "codex" | "claudeAgent";
+  readonly provider: "codex" | "claudeAgent" | "antigravity";
   readonly version: string;
   readonly target: ManagedRuntimeTarget;
   readonly artifactName: string;
   readonly url: string;
   readonly allowedHosts: ReadonlyArray<string>;
-  readonly sha256: string;
+  readonly checksum: ManagedRuntimeChecksum;
   readonly size: number;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
   readonly executablePath: string;

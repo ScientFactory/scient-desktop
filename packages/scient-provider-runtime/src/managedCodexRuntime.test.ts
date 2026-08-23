@@ -24,7 +24,7 @@ function artifact(version: string): ManagedRuntimeArtifact {
     artifactName: "codex.tar.gz",
     url: "https://github.com/openai/codex/releases/download/test/codex.tar.gz",
     allowedHosts: ["github.com"],
-    sha256: "0".repeat(64),
+    checksum: { algorithm: "sha256", digest: "0".repeat(64) },
     size: 5,
     archiveFormat: "tar.gz",
     executablePath: "codex",

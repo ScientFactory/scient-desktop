@@ -78,7 +78,7 @@ export function providerSettingsLifecyclePresentation(
       busy: true,
     };
   }
-  if (!provider.installed) {
+  if (!provider.installed || provider.connection?.runtime?.source === "missing") {
     return {
       kind: "not-installed",
       statusLabel: "Not installed",
@@ -91,25 +91,6 @@ export function providerSettingsLifecyclePresentation(
     };
   }
 
-  const connectionOperation = provider.connection?.operation ?? null;
-  if (connectionOperation?.status === "failed") {
-    return {
-      kind: "failed",
-      statusLabel: "Sign-in failed",
-      detail: connectionOperation.message,
-      actionLabel: "Retry",
-      busy: false,
-    };
-  }
-  if (connectionOperation && ACTIVE_CONNECTION_STATUSES.has(connectionOperation.status)) {
-    return {
-      kind: "signing-in",
-      statusLabel: connectionOperation.status === "verifying" ? "Verifying" : "Signing in",
-      detail: connectionOperation.message,
-      actionLabel: "Continue",
-      busy: true,
-    };
-  }
   if (provider.auth.status === "authenticated" || provider.auth.required === false) {
     if (provider.status !== "ready" || provider.models.length === 0) {
       return {
@@ -129,6 +110,25 @@ export function providerSettingsLifecyclePresentation(
           : (provider.auth.label ?? provider.auth.email ?? "Account connected."),
       actionLabel: "Manage",
       busy: false,
+    };
+  }
+  const connectionOperation = provider.connection?.operation ?? null;
+  if (connectionOperation?.status === "failed") {
+    return {
+      kind: "failed",
+      statusLabel: "Sign-in failed",
+      detail: connectionOperation.message,
+      actionLabel: "Retry",
+      busy: false,
+    };
+  }
+  if (connectionOperation && ACTIVE_CONNECTION_STATUSES.has(connectionOperation.status)) {
+    return {
+      kind: "signing-in",
+      statusLabel: connectionOperation.status === "verifying" ? "Verifying" : "Signing in",
+      detail: connectionOperation.message,
+      actionLabel: "Continue",
+      busy: true,
     };
   }
   if ((provider.connection?.methods.length ?? 0) > 0) {

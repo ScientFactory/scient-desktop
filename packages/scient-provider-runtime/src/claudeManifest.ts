@@ -87,7 +87,7 @@ export function resolveReviewedClaudeArtifact(
     artifactName,
     url: `${RELEASE_BASE}/${VERSION}/${artifact.platform}/${artifact.executablePath}`,
     allowedHosts: ALLOWED_HOSTS,
-    sha256: artifact.sha256,
+    checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "raw",
     executablePath: artifact.executablePath,

@@ -27,6 +27,9 @@ describe("reviewed Codex runtime manifest", () => {
     expect(windows?.archiveFormat).toBe("raw");
     expect(windows?.artifactName).toBe("codex-aarch64-pc-windows-msvc.exe");
     expect(mac?.archiveFormat).toBe("tar.gz");
-    expect(mac?.sha256).toHaveLength(64);
+    expect(mac?.checksum).toEqual({
+      algorithm: "sha256",
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
   });
 });

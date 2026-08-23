@@ -67,6 +67,29 @@ interface ActiveRuntimeOperation {
 
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
+const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
+  "preparing",
+  "downloading",
+  "verifying",
+  "installing",
+  "testing",
+  "activating",
+  "removing",
+]);
+
+function runtimeSuccessMessage(action: ProviderManagedRuntimeAction): string {
+  switch (action) {
+    case "install":
+      return "The provider runtime was installed and verified.";
+    case "update":
+      return "The provider runtime was updated and verified.";
+    case "repair":
+      return "The provider runtime was repaired and verified successfully.";
+    case "remove":
+      return "Scient's private provider runtime was removed.";
+  }
+}
+
 const makeError = (input: {
   readonly provider: ProviderDriverKind;
   readonly instanceId: ProviderInstanceId;
@@ -179,9 +202,20 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             );
             if (actions) {
               const summary = yield* actions.getSummary;
+              const currentOperation = candidate.connection?.runtime?.operation ?? null;
               yield* providerRegistry.setProviderManagedRuntimeSummary({
                 instanceId: candidate.instanceId,
-                runtime: summary,
+                runtime: {
+                  ...summary,
+                  // `getSummary` describes durable runtime state and therefore has no
+                  // in-flight operation. Keep the supervisor-owned operation visible until
+                  // probing and instance reload have both finished; otherwise the UI can
+                  // briefly expose conflicting sign-in or management actions.
+                  operation:
+                    currentOperation && ACTIVE_RUNTIME_STATUSES.has(currentOperation.status)
+                      ? currentOperation
+                      : summary.operation,
+                },
               });
             }
             yield* providerRegistry.reloadInstance(candidate.instanceId);
@@ -343,11 +377,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                       finishedAt,
                       message:
                         result._tag === "Success"
-                          ? input.action === "remove"
-                            ? "Scient's private provider runtime was removed."
-                            : input.action === "update"
-                              ? "The provider runtime was updated and verified."
-                              : "The provider runtime is installed and verified."
+                          ? runtimeSuccessMessage(input.action)
                           : result.failure.message,
                     }),
                   },

@@ -7,7 +7,11 @@ import * as NodePath from "node:path";
 import * as Tar from "tar";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { materializeManagedRuntimeArtifact, verifySha256 } from "./runtimeFiles.ts";
+import {
+  materializeManagedRuntimeArtifact,
+  verifyManagedRuntimeChecksum,
+  verifySha256,
+} from "./runtimeFiles.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -33,6 +37,21 @@ describe("managed runtime files", () => {
 
     await expect(verifySha256(file, digest)).resolves.toBeUndefined();
     await expect(verifySha256(file, "0".repeat(64))).rejects.toThrow("checksum mismatch");
+  });
+
+  it("verifies exact SHA-512 digests", async () => {
+    const root = await temporaryRoot();
+    const file = NodePath.join(root, "artifact");
+    const content = "reviewed Antigravity artifact";
+    await NodeFSP.writeFile(file, content);
+    const digest = NodeCrypto.createHash("sha512").update(content).digest("hex");
+
+    await expect(
+      verifyManagedRuntimeChecksum(file, { algorithm: "sha512", digest }),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyManagedRuntimeChecksum(file, { algorithm: "sha512", digest: "0".repeat(128) }),
+    ).rejects.toThrow("checksum mismatch");
   });
 
   it("extracts a reviewed executable and makes it runnable on Unix", async () => {

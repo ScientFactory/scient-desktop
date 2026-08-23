@@ -45,7 +45,12 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider.installed) {
     return {
       headline: "Not found",
-      detail: provider.message ?? "CLI not detected on PATH.",
+      // The lifecycle presentation already gives the user the actionable
+      // next step (for example, "Install Antigravity to connect your
+      // account."). Provider probe messages can contain absolute executable
+      // paths and PATH troubleshooting intended for diagnostics; repeating
+      // those in the collapsed settings row is noisy and exposes internals.
+      detail: null,
     };
   }
   if (provider.auth.status === "authenticated") {

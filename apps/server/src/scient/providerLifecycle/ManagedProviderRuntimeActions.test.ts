@@ -6,7 +6,9 @@ import {
 } from "@scientfactory/provider-runtime";
 
 import {
+  makeManagedProviderRuntimeDiagnostics,
   managedRuntimeInstallationFailureMessage,
+  nativeProviderRuntimeBackendLabel,
   resolveManagedRuntimeSource,
 } from "./ManagedProviderRuntimeActions.ts";
 
@@ -43,6 +45,40 @@ describe("managed provider runtime source", () => {
         managedInstalled: false,
       }),
     ).toBe("missing");
+  });
+});
+
+describe("managed provider runtime diagnostics", () => {
+  it("reports managed versions without inventing a version for external runtimes", () => {
+    expect(
+      makeManagedProviderRuntimeDiagnostics({
+        executable: "/private/claude",
+        source: "scient_managed",
+        managedVersion: "2.1.241",
+        homePath: "/private/claude-home",
+        backend: "macOS native",
+      }),
+    ).toEqual({
+      executable: "/private/claude",
+      version: "2.1.241",
+      homePath: "/private/claude-home",
+      backend: "macOS native",
+    });
+    expect(
+      makeManagedProviderRuntimeDiagnostics({
+        executable: "/usr/local/bin/claude",
+        source: "system",
+        managedVersion: null,
+        homePath: null,
+        backend: "macOS native",
+      }).version,
+    ).toBeNull();
+  });
+
+  it("uses truthful platform-specific backend labels", () => {
+    expect(nativeProviderRuntimeBackendLabel("darwin")).toBe("macOS native");
+    expect(nativeProviderRuntimeBackendLabel("win32")).toBe("Windows native");
+    expect(nativeProviderRuntimeBackendLabel("linux")).toBe("Linux native");
   });
 });
 

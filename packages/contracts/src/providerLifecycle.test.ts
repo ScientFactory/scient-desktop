@@ -46,9 +46,24 @@ describe("ProviderConnectionOperation", () => {
       message: "Finish sign in.",
       authorizationUrl: "https://claude.ai/oauth/authorize",
       authorizationUrlKind: "manual_fallback",
+      acceptsAuthorizationCode: true,
     });
 
     expect(decoded.authorizationUrlKind).toBe("manual_fallback");
+    expect(decoded.acceptsAuthorizationCode).toBe(true);
+  });
+
+  it("keeps authorization-code support optional for older servers and cached operations", () => {
+    const decoded = decodeConnectionOperation({
+      operationId: "connection-1",
+      method: "codex_browser",
+      status: "waiting_for_browser",
+      startedAt: "2026-08-09T08:00:00.000Z",
+      finishedAt: null,
+      message: "Finish sign in.",
+    });
+
+    expect(decoded).not.toHaveProperty("acceptsAuthorizationCode");
   });
 });
 

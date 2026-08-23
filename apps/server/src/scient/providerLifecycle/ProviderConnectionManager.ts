@@ -76,6 +76,7 @@ function operation(input: {
   readonly message: string;
   readonly authorizationUrl?: string;
   readonly authorizationUrlKind?: ProviderConnectionOperation["authorizationUrlKind"];
+  readonly acceptsAuthorizationCode?: boolean;
   readonly userCode?: string;
 }): ProviderConnectionOperation {
   return {
@@ -87,6 +88,9 @@ function operation(input: {
     message: input.message,
     ...(input.authorizationUrl ? { authorizationUrl: input.authorizationUrl } : {}),
     ...(input.authorizationUrlKind ? { authorizationUrlKind: input.authorizationUrlKind } : {}),
+    ...(input.acceptsAuthorizationCode !== undefined
+      ? { acceptsAuthorizationCode: input.acceptsAuthorizationCode }
+      : {}),
     ...(input.userCode ? { userCode: input.userCode } : {}),
   };
 }
@@ -142,6 +146,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   const start: ProviderConnectionManagerShape["start"] = Effect.fn(
     "ProviderConnectionManager.start",
   )(function* (input) {
+    // Account state can change outside Scient and immediately after a managed
+    // install/reload. Re-probe before reserving or launching an OAuth flow so
+    // an existing Google subscription session is treated as ready, not as a
+    // reason to start a duplicate sign-in process.
+    yield* providerRegistry.refreshInstance(input.instanceId);
     const target = yield* readTarget(input.instanceId);
     if (!target.actions || !target.snapshot) {
       return yield* makeError({
@@ -310,6 +319,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             message: waitingMessage,
             authorizationUrl: attempt.authorizationUrl,
             authorizationUrlKind: attempt.authorizationUrlKind,
+            acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
             ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
           }),
         });

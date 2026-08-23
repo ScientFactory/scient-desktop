@@ -29,6 +29,34 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
+  it("offers installation when runtime discovery is missing even if readiness is stale", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", label: "ChatGPT" },
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: true,
+            operation: null,
+            runtime: {
+              source: "missing",
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: ["install"],
+              managedVersion: null,
+              previousManagedVersion: "0.147.0",
+              operation: null,
+              message: "Install available.",
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({ kind: "not-installed", actionLabel: "Install" });
+  });
+
   it("offers sign in after installation", () => {
     expect(
       providerSettingsLifecyclePresentation(provider({ installed: true }), "Codex"),
@@ -120,6 +148,39 @@ describe("provider settings lifecycle presentation", () => {
           ],
         }),
         "Codex",
+      ),
+    ).toMatchObject({ kind: "ready", statusLabel: "Ready", actionLabel: "Manage" });
+  });
+
+  it("does not let a stale sign-in operation override confirmed readiness", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", label: "Google account" },
+          models: [
+            {
+              slug: "gemini-3.7-flash",
+              name: "Gemini 3.7 Flash",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          connection: {
+            methods: ["antigravity_google"],
+            canDisconnect: true,
+            operation: {
+              operationId: "stale-sign-in",
+              method: "antigravity_google",
+              status: "waiting_for_browser",
+              startedAt: "2026-08-22T08:00:00.000Z",
+              finishedAt: null,
+              message: "Finish Google sign-in.",
+            },
+          },
+        }),
+        "Antigravity",
       ),
     ).toMatchObject({ kind: "ready", statusLabel: "Ready", actionLabel: "Manage" });
   });

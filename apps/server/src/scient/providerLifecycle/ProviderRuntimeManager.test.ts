@@ -78,6 +78,7 @@ function makeHarness(
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
     const reloadCountRef = yield* Ref.make(0);
+    const reloadOperationsRef = yield* Ref.make<ReadonlyArray<string | null>>([]);
     const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
       Ref.updateAndGet(providersRef, (providers) =>
         providers.map((candidate) =>
@@ -94,9 +95,15 @@ function makeHarness(
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
       reloadInstance: () =>
-        Ref.update(reloadCountRef, (count) => count + 1).pipe(
-          Effect.andThen(Ref.get(providersRef)),
-        ),
+        Effect.gen(function* () {
+          yield* Ref.update(reloadCountRef, (count) => count + 1);
+          const providers = yield* Ref.get(providersRef);
+          const operationStatus =
+            providers.find((candidate) => candidate.instanceId === INSTANCE)?.connection?.runtime
+              ?.operation?.status ?? null;
+          yield* Ref.update(reloadOperationsRef, (statuses) => [...statuses, operationStatus]);
+          return providers;
+        }),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
@@ -114,7 +121,7 @@ function makeHarness(
       Effect.provideService(ProviderLifecycleCoordinator, coordinator),
       Effect.provide(NodeServices.layer),
     );
-    return { manager, providersRef, reloadCountRef };
+    return { manager, providersRef, reloadCountRef, reloadOperationsRef };
   });
 }
 
@@ -161,10 +168,10 @@ describe("ProviderRuntimeManager", () => {
         ...provider,
         instanceId: SECOND_INSTANCE,
       };
-      const { manager, providersRef, reloadCountRef } = yield* makeHarness(actions, [
-        provider,
-        secondProvider,
-      ]);
+      const { manager, providersRef, reloadCountRef, reloadOperationsRef } = yield* makeHarness(
+        actions,
+        [provider, secondProvider],
+      );
       const planned = yield* manager.plan({ instanceId: INSTANCE, action: "install" });
       assert.strictEqual(planned.catalogRevision, "reviewed:1");
       yield* manager.start({
@@ -183,6 +190,49 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(completed[1]?.connection?.runtime?.source, "scient_managed");
       assert.strictEqual(completed[1]?.connection?.runtime?.managedVersion, "0.147.0");
       assert.strictEqual(yield* Ref.get(reloadCountRef), 2);
+      assert.deepStrictEqual(yield* Ref.get(reloadOperationsRef), ["downloading", "downloading"]);
+    }),
+  );
+
+  it.effect("reports a successful repair explicitly", () =>
+    Effect.gen(function* () {
+      const readyRuntime: ProviderRuntimeSummary = {
+        ...missingRuntime,
+        source: "scient_managed",
+        actions: ["repair", "remove"],
+        managedVersion: "0.147.0",
+        message: "Managed Codex is ready.",
+      };
+      const readyProvider: ServerProvider = {
+        ...provider,
+        installed: true,
+        connection: { ...provider.connection!, runtime: readyRuntime },
+      };
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(readyRuntime),
+        plan: () =>
+          Effect.succeed({
+            ...installPlan(),
+            action: "repair" as const,
+            message: "Repair reviewed Codex.",
+          }),
+        run: () => Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness(actions, [readyProvider]);
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "repair",
+        catalogRevision: "reviewed:1",
+      });
+
+      const completed = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+      );
+      assert.strictEqual(
+        completed[0]?.connection?.runtime?.operation?.message,
+        "The provider runtime was repaired and verified successfully.",
+      );
     }),
   );
 

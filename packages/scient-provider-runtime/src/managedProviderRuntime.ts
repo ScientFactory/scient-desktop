@@ -7,7 +7,7 @@ import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import {
   downloadManagedRuntime,
   materializeManagedRuntimeArtifact,
-  verifySha256,
+  verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
 
@@ -144,7 +144,7 @@ async function smokeExecutable(
 
 export interface ManagedProviderRuntimeDependencies {
   readonly download: typeof downloadManagedRuntime;
-  readonly verify: typeof verifySha256;
+  readonly verify: typeof verifyManagedRuntimeChecksum;
   readonly materialize: typeof materializeManagedRuntimeArtifact;
   readonly smoke: (
     executable: string,
@@ -180,7 +180,7 @@ async function commitManagedRuntimeState(
 
 const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
   download: downloadManagedRuntime,
-  verify: verifySha256,
+  verify: verifyManagedRuntimeChecksum,
   materialize: materializeManagedRuntimeArtifact,
   smoke: smokeExecutable,
   commitState: commitManagedRuntimeState,
@@ -315,7 +315,7 @@ export class ManagedProviderRuntime {
           onProgress?.({ stage: "downloading", downloadedBytes, totalBytes }),
       });
       onProgress?.({ stage: "verifying" });
-      await this.#dependencies.verify(archivePath, artifact.sha256);
+      await this.#dependencies.verify(archivePath, artifact.checksum);
       onProgress?.({ stage: "installing" });
       const stagedExecutable = await this.#dependencies.materialize({
         archivePath,
@@ -382,7 +382,40 @@ export class ManagedProviderRuntime {
   }
 
   async remove(): Promise<void> {
-    await NodeFSP.rm(this.#root, { recursive: true, force: true });
+    const parent = NodePath.dirname(this.#root);
+    const tombstone = NodePath.join(
+      parent,
+      `${NodePath.basename(this.#root)}.removing-${process.pid}-${this.#dependencies.now()}`,
+    );
+    try {
+      // Make the managed runtime disappear atomically before recursively
+      // deleting it. A concurrent probe therefore sees either the complete
+      // runtime or no runtime, never a half-deleted version directory.
+      await NodeFSP.rename(this.#root, tombstone);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new ManagedProviderRuntimeError(
+        `Managed ${this.#displayName} could not be prepared for removal.`,
+        { cause },
+      );
+    }
+
+    try {
+      await NodeFSP.rm(tombstone, { recursive: true, force: true });
+    } catch (cause) {
+      try {
+        await NodeFSP.rename(tombstone, this.#root);
+      } catch (rollbackCause) {
+        throw new ManagedProviderRuntimeError(
+          `Managed ${this.#displayName} removal failed and its private runtime could not be restored.`,
+          { cause: new AggregateError([cause, rollbackCause]) },
+        );
+      }
+      throw new ManagedProviderRuntimeError(
+        `Managed ${this.#displayName} removal failed; the previous private runtime was restored.`,
+        { cause },
+      );
+    }
   }
 
   async #writeState(state: ManagedProviderRuntimeState): Promise<void> {

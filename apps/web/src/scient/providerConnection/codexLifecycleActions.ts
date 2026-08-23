@@ -21,7 +21,20 @@ export async function startReviewedCodexRuntimeAction(
 export async function startCodexBrowserSignIn(
   controller: ProviderLifecycleController,
 ): Promise<ServerProvider> {
-  const provider = await controller.startConnection("codex_browser");
+  return startCodexSignIn(controller, "codex_browser");
+}
+
+export async function startCodexDeviceSignIn(
+  controller: ProviderLifecycleController,
+): Promise<ServerProvider> {
+  return startCodexSignIn(controller, "codex_device_code");
+}
+
+async function startCodexSignIn(
+  controller: ProviderLifecycleController,
+  method: "codex_browser" | "codex_device_code",
+): Promise<ServerProvider> {
+  const provider = await controller.startConnection(method);
   const authorizationUrl = provider.connection?.operation?.authorizationUrl;
   if (authorizationUrl) await controller.openAuthorizationPage(authorizationUrl);
   return provider;

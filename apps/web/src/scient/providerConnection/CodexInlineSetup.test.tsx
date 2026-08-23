@@ -80,6 +80,102 @@ function render(value: ServerProvider): string {
 }
 
 describe("CodexInlineSetup", () => {
+  it("keeps browser sign-in primary and exposes device code as a fallback", () => {
+    const markup = render(provider());
+
+    expect(markup).toContain("Sign in with ChatGPT");
+    expect(markup).toContain("Use device code");
+  });
+
+  it("shows and labels the active Codex device code", () => {
+    const markup = render(
+      provider({
+        connection: {
+          ...provider().connection!,
+          operation: {
+            operationId: "connection-device",
+            method: "codex_device_code",
+            status: "waiting_for_device_code",
+            startedAt: "2026-08-11T20:00:00.000Z",
+            finishedAt: null,
+            message: "Enter the code.",
+            authorizationUrl: "https://auth.openai.com/device",
+            userCode: "ABCD-EFGH",
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("ABCD-EFGH");
+    expect(markup).toContain('aria-label="Copy Codex device code"');
+    expect(markup).toContain("Reopen sign-in page");
+  });
+
+  it("keeps managed installation compact without synthetic progress", () => {
+    const markup = render(
+      provider({
+        connection: {
+          ...provider().connection!,
+          runtime: {
+            ...provider().connection!.runtime!,
+            operation: {
+              operationId: "runtime-install",
+              action: "install",
+              status: "downloading",
+              startedAt: "2026-08-11T20:00:00.000Z",
+              finishedAt: null,
+              message: "Downloading Codex.",
+              downloadedBytes: 1,
+              totalBytes: 2,
+            },
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("Installing Codex");
+    expect(markup).toContain("Downloading Codex…");
+    expect(markup).toContain(">Cancel<");
+    expect(markup).toContain("text-destructive/80");
+    expect(markup).not.toContain("progressbar");
+    expect(markup).toContain("space-y-3 px-6 pb-4");
+  });
+
+  it("keeps the connected account action in the ready row", () => {
+    const markup = renderToStaticMarkup(
+      <CodexInlineSetup
+        accountAction={<button type="button">Sign out</button>}
+        controller={controller()}
+        displayName="Codex"
+        provider={provider({ auth: { status: "authenticated", required: true } })}
+      />,
+    );
+
+    expect(markup).toContain("Codex is ready");
+    expect(markup).toContain('href="https://chatgpt.com/#settings/Subscription"');
+    expect(markup).toContain('aria-label="ChatGPT subscription settings (opens in browser)"');
+    expect(markup).toContain(">Sign out<");
+  });
+
+  it("offers repair only when the server advertises managed repair", () => {
+    const managed = provider({
+      auth: { status: "authenticated", required: true },
+      connection: {
+        ...provider().connection!,
+        runtime: {
+          ...provider().connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "0.147.0",
+        },
+      },
+    });
+    const system = provider({ auth: { status: "authenticated", required: true } });
+
+    expect(render(managed)).toContain("Repair</button>");
+    expect(render(system)).not.toContain("Repair</button>");
+  });
+
   it("states that Scient is confirming sign-in with Codex during account verification", () => {
     const markup = render(
       provider({

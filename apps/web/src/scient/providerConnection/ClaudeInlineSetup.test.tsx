@@ -64,6 +64,40 @@ function render(value: ServerProvider): string {
 }
 
 describe("ClaudeInlineSetup", () => {
+  it("keeps managed installation compact without synthetic progress", () => {
+    const markup = render(
+      provider({
+        connection: {
+          ...provider().connection!,
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "2.1.170",
+            previousManagedVersion: null,
+            operation: {
+              operationId: "runtime-repair",
+              action: "repair",
+              status: "verifying",
+              startedAt: "2026-08-09T08:00:00.000Z",
+              finishedAt: null,
+              message: "Verifying Claude.",
+            },
+            message: "Scient is using managed Claude.",
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("Repairing Claude");
+    expect(markup).toContain("Verifying the download…");
+    expect(markup).toContain(">Cancel<");
+    expect(markup).toContain("text-destructive/80");
+    expect(markup).not.toContain("progressbar");
+    expect(markup).toContain("space-y-3 px-6 pb-4");
+  });
+
   it("offers a managed installation with OS-specific copy", () => {
     const markup = render(
       provider({
@@ -179,7 +213,31 @@ describe("ClaudeInlineSetup", () => {
       }),
     );
     expect(readyMarkup).toContain("Claude is ready");
-    expect(readyMarkup).toContain("Claude Console is connected.");
+    expect(readyMarkup.replace(/<[^>]+>/g, "")).toContain("Claude Console is connected.");
+    expect(readyMarkup).not.toContain('href="https://claude.ai/settings/billing"');
+
+    const subscriptionReadyMarkup = render(
+      provider({
+        status: "ready",
+        auth: {
+          status: "authenticated",
+          required: true,
+          label: "Claude Enterprise Subscription",
+        },
+        models: [
+          {
+            slug: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+      }),
+    );
+    expect(subscriptionReadyMarkup).toContain('href="https://claude.ai/settings/billing"');
+    expect(subscriptionReadyMarkup).toContain(
+      'aria-label="Claude Enterprise Subscription settings (opens in browser)"',
+    );
 
     const consoleWithSubscriptionAvailableMarkup = render(
       provider({
@@ -200,7 +258,9 @@ describe("ClaudeInlineSetup", () => {
         },
       }),
     );
-    expect(consoleWithSubscriptionAvailableMarkup).toContain("Claude Console is connected.");
+    expect(consoleWithSubscriptionAvailableMarkup.replace(/<[^>]+>/g, "")).toContain(
+      "Claude Console is connected.",
+    );
     expect(consoleWithSubscriptionAvailableMarkup).not.toContain(
       "Your Claude subscription is connected.",
     );
@@ -313,6 +373,40 @@ describe("ClaudeInlineSetup", () => {
     expect(markup).toContain("Claude is installed but failed to run.");
     expect(markup).toContain("Repair Claude");
     expect(markup).not.toContain("Sign in to Claude");
+  });
+
+  it("offers optional repair for a healthy managed Claude runtime", () => {
+    const markup = render(
+      provider({
+        status: "ready",
+        auth: { status: "authenticated", required: true, label: "Claude subscription" },
+        models: [
+          {
+            slug: "claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+        connection: {
+          methods: ["claude_subscription"],
+          canDisconnect: true,
+          operation: null,
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "2.1.170",
+            previousManagedVersion: null,
+            operation: null,
+            message: "Scient is using managed Claude.",
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("Repair</button>");
   });
 
   it("retries the account type that actually failed and offers the other route", () => {

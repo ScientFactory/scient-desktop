@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedClaudeArtifact } from "./claudeManifest.ts";
 import { ManagedClaudeRuntime } from "./managedClaudeRuntime.ts";
+import type { ManagedRuntimeChecksum } from "./managedRuntimeArtifact.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -47,10 +48,10 @@ describe("ManagedClaudeRuntime", () => {
           await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
           await NodeFSP.writeFile(destination, "reviewed-asset", { flag: "wx" });
         },
-        verify: async (filePath: string, expectedDigest: string) => {
+        verify: async (filePath: string, expectedChecksum: ManagedRuntimeChecksum) => {
           expect(NodePath.basename(filePath)).toBe(artifact!.artifactName);
           expect(await NodeFSP.readFile(filePath, "utf8")).toBe("reviewed-asset");
-          expect(expectedDigest).toBe(artifact!.sha256);
+          expect(expectedChecksum).toEqual(artifact!.checksum);
           events.push("verify");
         },
         materialize: async ({

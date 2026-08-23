@@ -8,7 +8,10 @@ import * as NodeStreamPromises from "node:stream/promises";
 
 import * as Tar from "tar";
 
-import type { ManagedRuntimeArchiveFormat } from "./managedRuntimeArtifact.ts";
+import type {
+  ManagedRuntimeArchiveFormat,
+  ManagedRuntimeChecksum,
+} from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
@@ -141,14 +144,18 @@ export async function downloadManagedRuntime(input: {
   }
 }
 
-export async function verifySha256(filePath: string, expectedDigest: string): Promise<void> {
-  const expected = expectedDigest.trim().toLowerCase();
-  if (!/^[a-f0-9]{64}$/u.test(expected)) {
+export async function verifyManagedRuntimeChecksum(
+  filePath: string,
+  checksum: ManagedRuntimeChecksum,
+): Promise<void> {
+  const expected = checksum.digest.trim().toLowerCase();
+  const expectedLength = checksum.algorithm === "sha256" ? 64 : 128;
+  if (!new RegExp(`^[a-f0-9]{${expectedLength}}$`, "u").test(expected)) {
     throw new ManagedRuntimeFileError(
-      "Managed runtime catalog contains an invalid SHA-256 digest.",
+      `Managed runtime catalog contains an invalid ${checksum.algorithm.toUpperCase()} digest.`,
     );
   }
-  const hash = NodeCrypto.createHash("sha256");
+  const hash = NodeCrypto.createHash(checksum.algorithm);
   const file = await NodeFSP.open(filePath, "r");
   try {
     for await (const chunk of file.createReadStream()) hash.update(chunk);
@@ -158,6 +165,13 @@ export async function verifySha256(filePath: string, expectedDigest: string): Pr
   if (hash.digest("hex") !== expected) {
     throw new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.");
   }
+}
+
+export async function verifySha256(filePath: string, expectedDigest: string): Promise<void> {
+  return verifyManagedRuntimeChecksum(filePath, {
+    algorithm: "sha256",
+    digest: expectedDigest,
+  });
 }
 
 function safeArchivePath(root: string, entryPath: string): string {

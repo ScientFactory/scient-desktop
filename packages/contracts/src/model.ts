@@ -133,6 +133,7 @@ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const DROID_DRIVER_KIND = ProviderDriverKind.make("droid");
+const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -145,6 +146,12 @@ export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
   "gpt-5.6-sol",
   "gpt-5.6-terra",
 ];
+export const PREFERRED_DEFAULT_ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.1-pro",
+  "gemini-3.5-flash",
+];
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
@@ -154,6 +161,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [ANTIGRAVITY_DRIVER_KIND]: "gemini-3.7-flash",
 };
 
 /** Per-provider text generation model defaults. */
@@ -164,6 +172,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [ANTIGRAVITY_DRIVER_KIND]: "gemini-3.7-flash",
 };
 
 // Droid ships no static default model: its ACP catalog is authoritative and
@@ -216,9 +225,43 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [OPENCODE_DRIVER_KIND]: {},
+  [ANTIGRAVITY_DRIVER_KIND]: {
+    flash: "gemini-3.7-flash",
+    pro: "gemini-3.1-pro",
+    "gemini-flash": "gemini-3.7-flash",
+    "gemini-pro": "gemini-3.1-pro",
+    "gemini-3.7": "gemini-3.7-flash",
+    "gemini-3.6": "gemini-3.6-flash",
+    "gemini-3.5": "gemini-3.5-flash",
+  },
 };
 
 // ── Provider display names ────────────────────────────────────────────
+
+/** Canonical first-party provider order across Settings, onboarding, and pickers. */
+export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
+  CODEX_DRIVER_KIND,
+  CLAUDE_DRIVER_KIND,
+  ANTIGRAVITY_DRIVER_KIND,
+  OPENCODE_DRIVER_KIND,
+  DROID_DRIVER_KIND,
+  CURSOR_DRIVER_KIND,
+  GROK_DRIVER_KIND,
+];
+
+const PROVIDER_DISPLAY_RANK = new Map(
+  PROVIDER_DISPLAY_ORDER.map((driver, index) => [driver, index] as const),
+);
+
+/** Known first-party providers sort first; open/plugin driver kinds follow alphabetically. */
+export function compareProviderDriverKinds(
+  left: ProviderDriverKind,
+  right: ProviderDriverKind,
+): number {
+  const leftRank = PROVIDER_DISPLAY_RANK.get(left) ?? Number.MAX_SAFE_INTEGER;
+  const rightRank = PROVIDER_DISPLAY_RANK.get(right) ?? Number.MAX_SAFE_INTEGER;
+  return leftRank - rightRank || left.localeCompare(right);
+}
 
 export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "Codex",
@@ -227,4 +270,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [DROID_DRIVER_KIND]: "Droid",
+  [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };

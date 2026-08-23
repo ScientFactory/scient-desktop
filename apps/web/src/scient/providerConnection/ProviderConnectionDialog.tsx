@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type ProviderConnectionMethod,
   type ProviderConnectionOperation,
+  type ProviderManagedRuntimeAction,
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
@@ -16,6 +17,7 @@ import {
   LogOutIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -23,6 +25,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -34,16 +37,21 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import {
+  hasActiveProviderRuntimeOperation,
+  isProviderAccountConnected,
   isSafeProviderAuthorizationUrl,
   preferredProviderConnectionMethod,
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
+import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
+import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
 
-type PendingAction = "browser" | "device" | "cancel" | "disconnect" | null;
+type PendingAction = "browser" | "device" | "submit-code" | "cancel" | "disconnect" | null;
 
 function failureMessage(value: unknown, fallback: string): string {
   if (
@@ -69,19 +77,62 @@ interface ProviderConnectionDialogProps {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
+  readonly initialRuntimeAction?: ProviderManagedRuntimeAction | undefined;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }
 
 export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  const { repairSucceededRecently, reportRuntimeActionSucceeded } = useTransientRepairSuccess(
+    props.open,
+  );
+
+  const contentProps = {
+    ...props,
+    onRuntimeActionSucceeded: reportRuntimeActionSucceeded,
+    repairSucceededRecently,
+  };
   return props.provider.driver === "codex" || props.provider.driver === "claudeAgent" ? (
-    <AssistedProviderConnectionDialog key={props.provider.instanceId} {...props} />
+    <AssistedProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   ) : (
-    <GenericProviderConnectionDialog key={props.provider.instanceId} {...props} />
+    <GenericProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   );
 }
 
-function AssistedProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+interface ProviderConnectionDialogContentProps extends ProviderConnectionDialogProps {
+  readonly onRuntimeActionSucceeded: (action: ProviderManagedRuntimeAction) => void;
+  readonly repairSucceededRecently: boolean;
+}
+
+function ProviderConnectionDialogTitle(props: {
+  readonly displayName: string;
+  readonly driver: ServerProvider["driver"];
+  readonly repairSucceededRecently: boolean;
+}) {
+  return (
+    <>
+      <span aria-hidden>
+        <ProviderInstanceIcon
+          className="size-6"
+          displayName={props.displayName}
+          driverKind={props.driver}
+          iconClassName="size-6"
+        />
+      </span>
+      <span>{props.displayName}</span>
+      {props.repairSucceededRecently ? (
+        <span
+          className="ms-1 rounded-full bg-success/10 px-2 py-0.5 font-medium text-success text-xs"
+          role="status"
+        >
+          Repair successful
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContentProps) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
@@ -89,8 +140,19 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogProps) 
   });
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
-  const isConnected = providerConnectionPresentation(props.provider).kind === "connected";
+  const [isRuntimePlanOpen, setIsRuntimePlanOpen] = useState(
+    props.initialRuntimeAction !== undefined,
+  );
+  const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
+  const isConnected =
+    providerConnectionPresentation(props.provider).kind === "connected" ||
+    (isRuntimeWorking && isProviderAccountConnected(props.provider));
   const isClaude = props.provider.driver === "claudeAgent";
+  const runtime = props.provider.connection?.runtime;
+  const showManagedRuntime =
+    isConnected &&
+    runtime !== undefined &&
+    (runtime.actions.length > 0 || runtime.diagnostics !== undefined || runtime.operation !== null);
 
   const disconnect = async () => {
     setDisconnecting(true);
@@ -106,34 +168,73 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogProps) 
     }
   };
 
+  const accountAction =
+    isConnected && props.provider.connection?.canDisconnect ? (
+      <Button
+        className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+        disabled={disconnecting || isRuntimeWorking || isRuntimePlanOpen}
+        onClick={() => void disconnect()}
+        size="sm"
+        type="button"
+        variant="ghost-muted"
+      >
+        {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
+        Sign out
+      </Button>
+    ) : undefined;
+
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogPopup className="max-w-sm" initialFocus={titleRef} showCloseButton>
+      <DialogPopup className="max-w-[26rem]" initialFocus={titleRef} showCloseButton>
         <DialogHeader>
-          <DialogTitle ref={titleRef}>{isClaude ? "Claude" : "Codex"}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle ref={titleRef} className="flex flex-wrap items-center gap-2.5">
+            <ProviderConnectionDialogTitle
+              displayName={isClaude ? "Claude" : "Codex"}
+              driver={props.provider.driver}
+              repairSucceededRecently={props.repairSucceededRecently}
+            />
+          </DialogTitle>
+          <DialogDescription className="sr-only">
             {isClaude
               ? "Connect and manage your Claude account."
               : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="flex min-h-64 flex-col">
-          {isClaude ? (
+        <DialogPanel className="space-y-3">
+          {showManagedRuntime ? (
+            <ProviderRuntimeSection
+              compact
+              disabled={disconnecting}
+              displayName={isClaude ? "Claude" : "Codex"}
+              environmentId={props.environmentId}
+              initialAction={props.initialRuntimeAction}
+              onActionSucceeded={props.onRuntimeActionSucceeded}
+              onPlanOpenChange={setIsRuntimePlanOpen}
+              provider={props.provider}
+            />
+          ) : null}
+          {isRuntimePlanOpen || (showManagedRuntime && isRuntimeWorking) ? null : isClaude ? (
             <ClaudeInlineSetup
+              accountAction={accountAction}
               controller={controller}
               displayName={props.displayName}
+              managedRuntimePresentedExternally={showManagedRuntime}
+              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
               provider={props.provider}
             />
           ) : (
             <CodexInlineSetup
+              accountAction={accountAction}
               controller={controller}
               displayName={props.displayName}
+              managedRuntimePresentedExternally={showManagedRuntime}
+              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
               provider={props.provider}
             />
           )}
           {disconnectError ? (
             <div
-              className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"
+              className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"
               role="alert"
             >
               <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -141,51 +242,45 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogProps) 
             </div>
           ) : null}
         </DialogPanel>
-        <DialogFooter className="sm:justify-between">
-          {isConnected && props.provider.connection?.canDisconnect ? (
-            <Button
-              className="text-destructive hover:text-destructive focus-visible:ring-1 focus-visible:ring-destructive/40 focus-visible:ring-offset-0"
-              disabled={disconnecting}
-              onClick={() => void disconnect()}
-              type="button"
-              variant="ghost"
-            >
-              {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
-              Sign out on this computer
-            </Button>
-          ) : (
-            <span />
-          )}
-          <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-            Close
-          </Button>
-        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
 }
 
-function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentProps) {
   const startConnection = useAtomCommand(serverEnvironment.startProviderConnection, {
     reportFailure: false,
   });
   const cancelConnection = useAtomCommand(serverEnvironment.cancelProviderConnection, {
     reportFailure: false,
   });
+  const submitAuthorizationCode = useAtomCommand(
+    serverEnvironment.submitProviderAuthorizationCode,
+    { reportFailure: false },
+  );
   const disconnectProvider = useAtomCommand(serverEnvironment.disconnectProvider, {
     reportFailure: false,
   });
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localOperation, setLocalOperation] = useState<ProviderConnectionOperation | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [authorizationCode, setAuthorizationCode] = useState("");
+  const [isRuntimePlanOpen, setIsRuntimePlanOpen] = useState(
+    props.initialRuntimeAction !== undefined,
+  );
   const presentation = providerConnectionPresentation(props.provider);
-  const isConnected = presentation.kind === "connected";
+  const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
+  const isConnected =
+    presentation.kind === "connected" ||
+    (isRuntimeWorking && isProviderAccountConnected(props.provider));
   const operation = isConnected
     ? (props.provider.connection?.operation ?? null)
     : (props.provider.connection?.operation ?? localOperation);
   const availableMethods = props.provider.connection?.methods ?? [];
   const preferredMethod = preferredProviderConnectionMethod(props.provider);
-  const isWorking = pendingAction !== null;
+  const isAntigravityGoogle = preferredMethod === "antigravity_google";
+  const isAntigravity = props.provider.driver === "antigravity";
+  const isWorking = pendingAction !== null || isRuntimeWorking;
   const canCancel =
     operation !== null &&
     operation.status !== "connected" &&
@@ -196,13 +291,29 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   useEffect(() => {
     setLocalOperation(null);
     setLocalError(null);
+    setAuthorizationCode("");
     setPendingAction(null);
   }, [props.provider.instanceId]);
+
+  useEffect(() => {
+    setLocalError(null);
+  }, [
+    props.provider.auth.status,
+    props.provider.connection?.runtime?.operation?.operationId,
+    props.provider.connection?.runtime?.operation?.status,
+    props.provider.connection?.runtime?.source,
+    props.provider.installed,
+  ]);
 
   const accountLabel = useMemo(() => {
     const email = props.provider.auth.email?.trim();
     return email || props.provider.auth.label || props.provider.auth.type || null;
   }, [props.provider.auth.email, props.provider.auth.label, props.provider.auth.type]);
+  const acceptsAuthorizationCode =
+    operation?.acceptsAuthorizationCode === true ||
+    (operation?.acceptsAuthorizationCode === undefined &&
+      operation?.method === "antigravity_google" &&
+      operation.authorizationUrlKind === "primary");
 
   const openAuthorizationPage = async (url: string) => {
     if (!isSafeProviderAuthorizationUrl(url)) {
@@ -273,6 +384,35 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     setLocalOperation(returnedProvider?.connection?.operation ?? null);
   };
 
+  const submitCode = async () => {
+    if (!operation || authorizationCode.trim().length === 0) return;
+    setLocalError(null);
+    setPendingAction("submit-code");
+    const result = await submitAuthorizationCode({
+      environmentId: props.environmentId,
+      input: {
+        instanceId: props.provider.instanceId,
+        operationId: operation.operationId,
+        authorizationCode,
+      },
+    });
+    setPendingAction(null);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setLocalError(
+          failureMessage(
+            squashAtomCommandFailure(result),
+            "Scient could not return the authorization code to Antigravity.",
+          ),
+        );
+      }
+      return;
+    }
+    setAuthorizationCode("");
+    const returnedProvider = providerFromResult(result.value.providers, props.provider.instanceId);
+    setLocalOperation(returnedProvider?.connection?.operation ?? null);
+  };
+
   const disconnect = async () => {
     setLocalError(null);
     setPendingAction("disconnect");
@@ -299,179 +439,243 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-md" showCloseButton>
         <DialogHeader>
-          <DialogTitle>{props.displayName} connection</DialogTitle>
-          <DialogDescription>
-            Set up the provider tool and sign in through {props.displayName}. Scient never asks for,
-            receives, or stores your provider password.
+          <DialogTitle className="flex flex-wrap items-center gap-2.5">
+            <ProviderConnectionDialogTitle
+              displayName={props.displayName}
+              driver={props.provider.driver}
+              repairSucceededRecently={props.repairSucceededRecently}
+            />
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Manage the {props.displayName} installation and account connection.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel className="space-y-3">
           <ProviderRuntimeSection
+            compact={props.provider.driver === "antigravity"}
+            disabled={pendingAction !== null}
             environmentId={props.environmentId}
             provider={props.provider}
             displayName={props.displayName}
+            initialAction={props.initialRuntimeAction}
+            onActionSucceeded={props.onRuntimeActionSucceeded}
+            onPlanOpenChange={setIsRuntimePlanOpen}
           />
-          {isConnected ? (
-            <div className="flex items-start gap-3 rounded-lg border border-success/25 bg-success/5 p-3">
-              <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">Connected</p>
-                <p className="mt-0.5 break-all text-xs leading-relaxed text-muted-foreground">
-                  {accountLabel ?? `${props.displayName} reports an authenticated account.`}
-                </p>
-                {props.provider.connection?.canDisconnect ? (
-                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                    Signing out affects this provider credential home and any other app using the
-                    same account files.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : !props.provider.installed ? null : operation &&
-            operation.status !== "failed" &&
-            operation.status !== "cancelled" ? (
-            <div className="space-y-3">
-              <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
-                <LoaderIcon
-                  className="mt-0.5 size-5 shrink-0 animate-spin text-primary"
-                  aria-hidden
-                />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">
-                    {operation.status === "verifying" ? "Verifying connection" : "Finish sign in"}
-                  </p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    {operation.message}
-                  </p>
-                </div>
-              </div>
-              {operation.userCode ? (
-                <div className="flex items-center justify-between gap-3 rounded-lg border bg-background p-3">
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Device code
-                    </p>
-                    <code className="mt-1 block text-base font-semibold tracking-wider text-foreground">
-                      {operation.userCode}
-                    </code>
-                  </div>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    aria-label="Copy device code"
-                    onClick={() => copyToClipboard(operation.userCode!, undefined)}
-                  >
-                    <CopyIcon />
-                  </Button>
-                </div>
-              ) : null}
-              {operation.authorizationUrl ? (
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={() => void openAuthorizationPage(operation.authorizationUrl!)}
+          {!isRuntimePlanOpen && !isRuntimeWorking ? (
+            <div className="contents">
+              {isConnected ? (
+                <div
+                  className={
+                    isAntigravity
+                      ? "flex items-center justify-between gap-4 py-1"
+                      : "flex items-center justify-between gap-4 rounded-lg border p-3"
+                  }
                 >
-                  <ExternalLinkIcon />
-                  {operation.authorizationUrlKind === "manual_fallback"
-                    ? "Browser didn’t open?"
-                    : "Open secure sign-in page"}
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-start gap-3 rounded-lg border bg-muted/20 p-3">
-                <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
-                <div>
-                  <p className="text-sm font-medium text-foreground">{presentation.label}</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    {presentation.kind === "not-required"
-                      ? "This provider is ready without account sign in."
-                      : preferredMethod
-                        ? "Your browser is the fastest option. Device-code sign in is available when browser callbacks are inconvenient."
-                        : "This provider currently uses its own manual setup flow."}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <CheckCircle2Icon className="size-5 shrink-0 text-success" aria-hidden />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">Connected</p>
+                      <p className="mt-0.5 break-all text-xs text-muted-foreground">
+                        {accountLabel ?? `${props.displayName} reports an authenticated account.`}
+                      </p>
+                    </div>
+                  </div>
+                  {props.provider.connection?.canDisconnect ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost-muted"
+                      className={`me-2 shrink-0 self-end ${DESTRUCTIVE_GHOST_ACTION_CLASS}`}
+                      disabled={isWorking}
+                      onClick={() => void disconnect()}
+                    >
+                      {pendingAction === "disconnect" ? (
+                        <LoaderIcon className="animate-spin" />
+                      ) : (
+                        <LogOutIcon />
+                      )}
+                      Sign out
+                    </Button>
+                  ) : null}
                 </div>
-              </div>
-              {operation?.status === "failed" || operation?.status === "cancelled" ? (
-                <p className="text-xs leading-relaxed text-muted-foreground">{operation.message}</p>
-              ) : null}
-            </div>
-          )}
+              ) : isRuntimeWorking || !props.provider.installed ? null : operation &&
+                operation.status !== "failed" &&
+                operation.status !== "cancelled" ? (
+                <div className="space-y-3">
+                  <div
+                    className={
+                      isAntigravity
+                        ? "flex items-start gap-3 py-1"
+                        : "flex items-start gap-3 rounded-lg border bg-muted/30 p-3"
+                    }
+                  >
+                    <LoaderIcon
+                      className="mt-0.5 size-5 shrink-0 animate-spin text-primary"
+                      aria-hidden
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">
+                        {operation.status === "verifying"
+                          ? "Verifying connection"
+                          : "Finish sign in"}
+                      </p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        {isAntigravityGoogle && acceptsAuthorizationCode
+                          ? "Sign in with Google, then paste the authorization code below."
+                          : operation.message}
+                      </p>
+                    </div>
+                  </div>
+                  {operation.userCode ? (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border bg-background p-3">
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Device code
+                        </p>
+                        <code className="mt-1 block text-base font-semibold tracking-wider text-foreground">
+                          {operation.userCode}
+                        </code>
+                      </div>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label="Copy device code"
+                        onClick={() => copyToClipboard(operation.userCode!, undefined)}
+                      >
+                        <CopyIcon />
+                      </Button>
+                    </div>
+                  ) : null}
+                  {operation.authorizationUrl ? (
+                    <Button
+                      type="button"
+                      className={isAntigravity ? "w-fit" : "w-full"}
+                      onClick={() => void openAuthorizationPage(operation.authorizationUrl!)}
+                      size={isAntigravity ? "sm" : "default"}
+                      variant={isAntigravity ? "ghost-muted" : "default"}
+                    >
+                      <ExternalLinkIcon />
+                      {operation.authorizationUrlKind === "manual_fallback"
+                        ? isAntigravityGoogle
+                          ? "Open sign-in help"
+                          : "Browser didn’t open?"
+                        : isAntigravityGoogle
+                          ? "Reopen Google sign-in"
+                          : "Open secure sign-in page"}
+                    </Button>
+                  ) : null}
+                  {acceptsAuthorizationCode && operation.status !== "verifying" ? (
+                    <div className="space-y-2 pt-1">
+                      {!isAntigravityGoogle ? (
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Paste the one-time authorization code shown by the provider.
+                        </p>
+                      ) : null}
+                      <ProviderAuthorizationCodeForm
+                        authorizationCode={authorizationCode}
+                        disabled={isWorking}
+                        onAuthorizationCodeChange={setAuthorizationCode}
+                        onSubmit={() => void submitCode()}
+                        providerName={props.displayName}
+                        submitting={pendingAction === "submit-code"}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div
+                    className={
+                      isAntigravity
+                        ? "flex items-start gap-3 py-1"
+                        : "flex items-start gap-3 rounded-lg border bg-muted/20 p-3"
+                    }
+                  >
+                    <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        {isAntigravityGoogle ? "Sign in required" : presentation.label}
+                      </p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        {presentation.kind === "not-required"
+                          ? "This provider is ready without account sign in."
+                          : isAntigravityGoogle
+                            ? "Sign in with your Google account to use your existing subscription."
+                            : preferredMethod
+                              ? "Your browser is the fastest option. Device-code sign in is available when browser callbacks are inconvenient."
+                              : "This provider currently uses its own manual setup flow."}
+                      </p>
+                    </div>
+                  </div>
+                  {operation?.status === "failed" ? (
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {operation.message}
+                    </p>
+                  ) : null}
+                </div>
+              )}
 
-          {localError ? (
-            <div
-              role="alert"
-              className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
-            >
-              <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>{localError}</span>
+              {localError ? (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
+                >
+                  <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <span>{localError}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
-
-          <p className="text-[11px] leading-relaxed text-muted-foreground/80">
-            The provider owns credential storage, refresh, expiry, and revocation. Scient only
-            starts the official flow and verifies the resulting provider state.
-          </p>
         </DialogPanel>
-        <DialogFooter className="sm:justify-between">
-          {isConnected && props.provider.connection?.canDisconnect ? (
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-destructive hover:text-destructive focus-visible:ring-1 focus-visible:ring-destructive/40 focus-visible:ring-offset-0"
-              disabled={isWorking}
-              onClick={() => void disconnect()}
-            >
-              {pendingAction === "disconnect" ? (
-                <LoaderIcon className="animate-spin" />
-              ) : (
-                <LogOutIcon />
-              )}
-              Sign out on this computer
-            </Button>
-          ) : canCancel ? (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={isWorking}
-              onClick={() => void cancel()}
-            >
-              {pendingAction === "cancel" ? <LoaderIcon className="animate-spin" /> : null}
-              Cancel sign in
-            </Button>
-          ) : (
-            <span />
-          )}
-          {props.provider.installed && !isConnected && !canCancel && preferredMethod ? (
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              {availableMethods.includes("codex_device_code") ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isWorking}
-                  onClick={() => void start("codex_device_code")}
-                >
-                  {pendingAction === "device" ? <LoaderIcon className="animate-spin" /> : null}
-                  Use device code
-                </Button>
-              ) : null}
+        {!isRuntimePlanOpen &&
+        !isRuntimeWorking &&
+        !isConnected &&
+        (canCancel || (props.provider.installed && preferredMethod)) ? (
+          <DialogFooter className="sm:justify-between" variant="bare">
+            {canCancel ? (
               <Button
                 type="button"
+                variant="ghost-muted"
+                className={DESTRUCTIVE_GHOST_ACTION_CLASS}
                 disabled={isWorking}
-                onClick={() => void start(preferredMethod)}
+                onClick={() => void cancel()}
               >
-                {pendingAction === "browser" ? <LoaderIcon className="animate-spin" /> : null}
-                Continue in browser
+                {pendingAction === "cancel" ? <LoaderIcon className="animate-spin" /> : <XIcon />}
+                Cancel sign in
               </Button>
-            </div>
-          ) : (
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Close
-            </Button>
-          )}
-        </DialogFooter>
+            ) : (
+              <span />
+            )}
+            {props.provider.installed &&
+            !isConnected &&
+            !isRuntimeWorking &&
+            !canCancel &&
+            preferredMethod ? (
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                {availableMethods.includes("codex_device_code") ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isWorking}
+                    onClick={() => void start("codex_device_code")}
+                  >
+                    {pendingAction === "device" ? <LoaderIcon className="animate-spin" /> : null}
+                    Use device code
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  disabled={isWorking}
+                  onClick={() => void start(preferredMethod)}
+                >
+                  {pendingAction === "browser" ? <LoaderIcon className="animate-spin" /> : null}
+                  {isAntigravityGoogle ? "Sign in with Google" : "Continue in browser"}
+                </Button>
+              </div>
+            ) : null}
+          </DialogFooter>
+        ) : null}
       </DialogPopup>
     </Dialog>
   );
