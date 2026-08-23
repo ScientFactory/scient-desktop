@@ -443,14 +443,18 @@ export const ProviderRegistryLive = Layer.effect(
       );
 
       if (haveProvidersChanged(previousProviders, providers)) {
+        // Publish the committed in-memory state before awaiting cache I/O.
+        // Otherwise an older upsert can finish persisting after a newer one
+        // and publish its captured snapshot last, leaving live clients on
+        // stale transient state until they reconnect.
+        if (options?.publish !== false) {
+          yield* PubSub.publish(changesPubSub, providers);
+        }
         if (options?.persist !== false) {
           yield* Effect.forEach(providersToPersist, persistProvider, {
             concurrency: "unbounded",
             discard: true,
           });
-        }
-        if (options?.publish !== false) {
-          yield* PubSub.publish(changesPubSub, providers);
         }
       }
 

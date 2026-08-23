@@ -7,16 +7,20 @@ import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
 
 import * as Tar from "tar";
+import * as Yauzl from "yauzl";
 
 import type {
   ManagedRuntimeArchiveFormat,
   ManagedRuntimeChecksum,
+  ManagedRuntimeExtractionLimits,
 } from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
-const MAX_EXPANDED_BYTES = 512 * 1024 * 1024;
-const MAX_ARCHIVE_FILES = 32;
+const DEFAULT_EXTRACTION_LIMITS: ManagedRuntimeExtractionLimits = {
+  maxExpandedBytes: 512 * 1024 * 1024,
+  maxEntries: 32,
+};
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30 * 1_000;
 
@@ -174,9 +178,34 @@ export async function verifySha256(filePath: string, expectedDigest: string): Pr
   });
 }
 
-function safeArchivePath(root: string, entryPath: string): string {
+function validatedExtractionLimits(
+  limits: ManagedRuntimeExtractionLimits | undefined,
+): ManagedRuntimeExtractionLimits {
+  const resolved = limits ?? DEFAULT_EXTRACTION_LIMITS;
+  if (
+    !Number.isSafeInteger(resolved.maxEntries) ||
+    resolved.maxEntries < 1 ||
+    !Number.isSafeInteger(resolved.maxExpandedBytes) ||
+    resolved.maxExpandedBytes < 1 ||
+    resolved.maxExpandedBytes > MAX_DOWNLOAD_BYTES
+  ) {
+    throw new ManagedRuntimeFileError(
+      "Managed runtime catalog contains invalid extraction limits.",
+    );
+  }
+  return resolved;
+}
+
+export function resolveManagedRuntimeArtifactPath(root: string, entryPath: string): string {
   const normalized = entryPath.replaceAll("\\", "/");
-  if (!normalized || normalized.startsWith("/") || /^[a-zA-Z]:\//u.test(normalized)) {
+  const segments = normalized.split("/");
+  if (
+    !normalized ||
+    normalized.includes("\0") ||
+    normalized.startsWith("/") ||
+    /^[a-zA-Z]:\//u.test(normalized) ||
+    segments.includes("..")
+  ) {
     throw new ManagedRuntimeFileError(`Unsafe archive path: ${entryPath}`);
   }
   const resolved = NodePath.resolve(root, normalized);
@@ -187,14 +216,52 @@ function safeArchivePath(root: string, entryPath: string): string {
   return resolved;
 }
 
+function canonicalArchiveEntryPath(entryPath: string, platform: NodeJS.Platform): string {
+  const normalized = NodePath.posix.normalize(entryPath.replaceAll("\\", "/")).replace(/\/+$/u, "");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function validateArchiveEntry(input: {
+  readonly destination: string;
+  readonly entryPath: string;
+  readonly entrySize: number;
+  readonly platform: NodeJS.Platform;
+  readonly limits: ManagedRuntimeExtractionLimits;
+  readonly seen: Set<string>;
+  readonly counters: { entries: number; expandedBytes: number };
+}): string {
+  if (!Number.isSafeInteger(input.entrySize) || input.entrySize < 0) {
+    throw new ManagedRuntimeFileError(`Archive entry has an invalid size: ${input.entryPath}`);
+  }
+  const outputPath = resolveManagedRuntimeArtifactPath(input.destination, input.entryPath);
+  const canonical = canonicalArchiveEntryPath(input.entryPath, input.platform);
+  if (!canonical || input.seen.has(canonical)) {
+    throw new ManagedRuntimeFileError(`Archive contains a duplicate path: ${input.entryPath}`);
+  }
+  if (input.platform === "win32" && canonical.includes(":")) {
+    throw new ManagedRuntimeFileError(`Unsafe Windows archive path: ${input.entryPath}`);
+  }
+  input.seen.add(canonical);
+  input.counters.entries += 1;
+  input.counters.expandedBytes += input.entrySize;
+  if (
+    input.counters.entries > input.limits.maxEntries ||
+    input.counters.expandedBytes > input.limits.maxExpandedBytes
+  ) {
+    throw new ManagedRuntimeFileError("Managed runtime archive exceeds extraction limits.");
+  }
+  return outputPath;
+}
+
 async function extractTarGzip(input: {
   readonly archivePath: string;
   readonly destination: string;
+  readonly platform: NodeJS.Platform;
+  readonly limits: ManagedRuntimeExtractionLimits;
   readonly signal: AbortSignal;
 }): Promise<void> {
-  let files = 0;
-  let expandedBytes = 0;
   const seen = new Set<string>();
+  const counters = { entries: 0, expandedBytes: 0 };
   let validationError: Error | undefined;
   await Tar.x({
     file: input.archivePath,
@@ -208,21 +275,19 @@ async function extractTarGzip(input: {
         if (input.signal.aborted) {
           throw new DOMException("Extraction cancelled.", "AbortError");
         }
-        safeArchivePath(input.destination, entryPath);
-        const normalized = entryPath.replaceAll("\\", "/");
-        if (seen.has(normalized)) {
-          throw new ManagedRuntimeFileError(`Archive contains a duplicate path: ${entryPath}`);
-        }
-        seen.add(normalized);
         const entryType = "type" in entry ? entry.type : entry.isDirectory() ? "Directory" : "File";
         if (entryType !== "File" && entryType !== "Directory") {
           throw new ManagedRuntimeFileError(`Unsupported archive entry: ${entryPath}`);
         }
-        files += 1;
-        expandedBytes += entry.size;
-        if (files > MAX_ARCHIVE_FILES || expandedBytes > MAX_EXPANDED_BYTES) {
-          throw new ManagedRuntimeFileError("Managed runtime archive exceeds extraction limits.");
-        }
+        validateArchiveEntry({
+          destination: input.destination,
+          entryPath,
+          entrySize: entry.size,
+          platform: input.platform,
+          limits: input.limits,
+          seen,
+          counters,
+        });
         return true;
       } catch (cause) {
         validationError = cause instanceof Error ? cause : new Error(String(cause));
@@ -233,22 +298,154 @@ async function extractTarGzip(input: {
   if (validationError) throw validationError;
 }
 
+function openZipFile(archivePath: string): Promise<Yauzl.ZipFile> {
+  return new Promise((resolve, reject) => {
+    Yauzl.open(
+      archivePath,
+      {
+        autoClose: false,
+        decodeStrings: true,
+        lazyEntries: true,
+        strictFileNames: true,
+        validateEntrySizes: true,
+      },
+      (error, zipFile) => {
+        if (error) reject(error);
+        else resolve(zipFile);
+      },
+    );
+  });
+}
+
+function openZipEntryStream(
+  zipFile: Yauzl.ZipFile,
+  entry: Yauzl.Entry,
+): Promise<NodeStream.Readable> {
+  return new Promise((resolve, reject) => {
+    zipFile.openReadStream(entry, (error, stream) => {
+      if (error) reject(error);
+      else resolve(stream);
+    });
+  });
+}
+
+function zipEntryKind(entry: Yauzl.Entry): "file" | "directory" {
+  if (entry.isEncrypted()) {
+    throw new ManagedRuntimeFileError(
+      `Encrypted archive entry is not supported: ${entry.fileName}`,
+    );
+  }
+  const isDirectory = entry.fileName.endsWith("/");
+  const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
+  const unixType = unixMode & 0o170000;
+  if (unixType === 0o120000) {
+    throw new ManagedRuntimeFileError(`Unsupported archive entry: ${entry.fileName}`);
+  }
+  if (unixType !== 0 && unixType !== 0o040000 && unixType !== 0o100000) {
+    throw new ManagedRuntimeFileError(`Unsupported archive entry: ${entry.fileName}`);
+  }
+  if ((unixType === 0o040000) !== isDirectory && unixType !== 0) {
+    throw new ManagedRuntimeFileError(`Archive entry type is inconsistent: ${entry.fileName}`);
+  }
+  return isDirectory ? "directory" : "file";
+}
+
+async function extractZip(input: {
+  readonly archivePath: string;
+  readonly destination: string;
+  readonly platform: NodeJS.Platform;
+  readonly limits: ManagedRuntimeExtractionLimits;
+  readonly signal: AbortSignal;
+}): Promise<void> {
+  const zipFile = await openZipFile(input.archivePath).catch((cause) => {
+    throw new ManagedRuntimeFileError("Managed runtime ZIP archive could not be opened.", {
+      cause,
+    });
+  });
+  const seen = new Set<string>();
+  const counters = { entries: 0, expandedBytes: 0 };
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error);
+        else resolve();
+      };
+      zipFile.once("error", finish);
+      zipFile.once("end", () => finish());
+      zipFile.on("entry", (entry: Yauzl.Entry) => {
+        void (async () => {
+          if (input.signal.aborted) {
+            throw new DOMException("Extraction cancelled.", "AbortError");
+          }
+          if (entry.fileName.includes("\\")) {
+            throw new ManagedRuntimeFileError(`Unsafe ZIP archive path: ${entry.fileName}`);
+          }
+          const kind = zipEntryKind(entry);
+          const outputPath = validateArchiveEntry({
+            destination: input.destination,
+            entryPath: entry.fileName,
+            entrySize: entry.uncompressedSize,
+            platform: input.platform,
+            limits: input.limits,
+            seen,
+            counters,
+          });
+          if (kind === "directory") {
+            await NodeFSP.mkdir(outputPath, { recursive: true, mode: 0o700 });
+          } else {
+            await NodeFSP.mkdir(NodePath.dirname(outputPath), { recursive: true, mode: 0o700 });
+            const stream = await openZipEntryStream(zipFile, entry);
+            await NodeStreamPromises.pipeline(
+              stream,
+              NodeFS.createWriteStream(outputPath, { flags: "wx", mode: 0o600 }),
+              { signal: input.signal },
+            );
+          }
+          if (!settled) zipFile.readEntry();
+        })().catch(finish);
+      });
+      zipFile.readEntry();
+    });
+  } catch (cause) {
+    throw cause instanceof Error
+      ? cause
+      : new ManagedRuntimeFileError("Managed runtime ZIP extraction failed.", { cause });
+  } finally {
+    zipFile.close();
+  }
+}
+
 export async function materializeManagedRuntimeArtifact(input: {
   readonly archivePath: string;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
   readonly destination: string;
   readonly executablePath: string;
   readonly platform: NodeJS.Platform;
+  readonly extractionLimits?: ManagedRuntimeExtractionLimits | undefined;
   readonly signal: AbortSignal;
 }): Promise<string> {
   await NodeFSP.mkdir(input.destination, { recursive: true, mode: 0o700 });
-  const executable = safeArchivePath(input.destination, input.executablePath);
+  const executable = resolveManagedRuntimeArtifactPath(input.destination, input.executablePath);
   if (input.archiveFormat === "raw") {
     await NodeFSP.copyFile(input.archivePath, executable, NodeFS.constants.COPYFILE_EXCL);
-  } else {
+  } else if (input.archiveFormat === "tar.gz") {
     await extractTarGzip({
       archivePath: input.archivePath,
       destination: input.destination,
+      platform: input.platform,
+      limits: validatedExtractionLimits(input.extractionLimits),
+      signal: input.signal,
+    });
+  } else {
+    await extractZip({
+      archivePath: input.archivePath,
+      destination: input.destination,
+      platform: input.platform,
+      limits: validatedExtractionLimits(input.extractionLimits),
       signal: input.signal,
     });
   }

@@ -238,4 +238,17 @@ describe("providerConnectionPresentation", () => {
       }),
     ).toBe("droid_device_pairing");
   });
+
+  it("selects Cursor browser sign in when the driver advertises it", () => {
+    expect(
+      preferredProviderConnectionMethod({
+        ...provider,
+        driver: ProviderDriverKind.make("cursor"),
+        connection: {
+          ...provider.connection!,
+          methods: ["cursor_browser"],
+        },
+      }),
+    ).toBe("cursor_browser");
+  });
 });

@@ -20,6 +20,33 @@ const decodeProviderStatusCache = Schema.decodeUnknownEffect(
 
 const CLAUDE_AGENT_DRIVER = "claudeAgent";
 
+/**
+ * Runtime and connection operations are owned by the current server process.
+ * Persisting them can resurrect an operation that no longer exists after a
+ * restart, leaving clients permanently stuck on states such as "Removing".
+ */
+const withoutTransientOperations = (provider: ServerProvider): ServerProvider => {
+  const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
+  const connection = providerWithoutUpdateState.connection;
+  if (!connection) return providerWithoutUpdateState;
+
+  return {
+    ...providerWithoutUpdateState,
+    connection: {
+      ...connection,
+      operation: null,
+      ...(connection.runtime
+        ? {
+            runtime: {
+              ...connection.runtime,
+              operation: null,
+            },
+          }
+        : {}),
+    },
+  };
+};
+
 const mergeProviderModels = (
   provider: ServerProvider,
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
@@ -157,7 +184,9 @@ export const readProviderStatusCache = (filePath: string) =>
             path: filePath,
             errorTag: causeErrorTag(cause),
           }).pipe(Effect.as(undefined)),
-        onSuccess: Effect.succeed,
+        // Older builds could persist in-flight lifecycle operations. Never
+        // hydrate those process-local states into a new server process.
+        onSuccess: (provider) => Effect.succeed(withoutTransientOperations(provider)),
       }),
     );
   });
@@ -166,24 +195,7 @@ export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
 }) => {
-  const { updateState: _updateState, ...cacheableProvider } = input.provider;
-  const durableProvider: ServerProvider = cacheableProvider.connection
-    ? {
-        ...cacheableProvider,
-        connection: {
-          ...cacheableProvider.connection,
-          operation: null,
-          ...(cacheableProvider.connection.runtime
-            ? {
-                runtime: {
-                  ...cacheableProvider.connection.runtime,
-                  operation: null,
-                },
-              }
-            : {}),
-        },
-      }
-    : cacheableProvider;
+  const durableProvider = withoutTransientOperations(input.provider);
   return writeFileStringAtomically({
     filePath: input.filePath,
     contents: `${JSON.stringify(durableProvider, null, 2)}\n`,

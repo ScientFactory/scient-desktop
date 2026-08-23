@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -1202,6 +1203,176 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ...refreshedProvider,
               models: [...initialProvider.models],
             });
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("does not publish an older provider snapshot after terminal runtime state", () =>
+        Effect.gen(function* () {
+          const cursorDriver = ProviderDriverKind.make("cursor");
+          const cursorInstanceId = ProviderInstanceId.make("cursor");
+          const activeRuntime = {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "2026.08.11-e8db854",
+            previousManagedVersion: null,
+            operation: {
+              operationId: "runtime-cursor-install",
+              action: "install",
+              status: "activating",
+              startedAt: "2026-08-23T00:00:00.000Z",
+              finishedAt: null,
+              message: "Activating the verified Cursor runtime.",
+            },
+            message: "Scient manages this Cursor runtime.",
+          } as const;
+          const terminalRuntime = {
+            ...activeRuntime,
+            operation: {
+              ...activeRuntime.operation,
+              status: "succeeded",
+              finishedAt: "2026-08-23T00:00:01.000Z",
+              message: "The provider runtime was installed and verified.",
+            },
+          } as const;
+          const initialProvider = {
+            instanceId: cursorInstanceId,
+            driver: cursorDriver,
+            status: "warning",
+            enabled: true,
+            installed: true,
+            auth: { status: "unauthenticated" },
+            checkedAt: "2026-08-23T00:00:00.000Z",
+            version: "2026.08.11-e8db854",
+            models: [],
+            slashCommands: [],
+            skills: [],
+            connection: {
+              methods: ["cursor_browser"],
+              canDisconnect: false,
+              operation: null,
+              runtime: { ...activeRuntime, operation: null },
+            },
+          } as const satisfies ServerProvider;
+          const refreshedProvider = {
+            ...initialProvider,
+            checkedAt: "2026-08-23T00:00:00.500Z",
+          } satisfies ServerProvider;
+          const sourceChanges = yield* PubSub.unbounded<ServerProvider>();
+          const cacheWriteStarted = yield* Deferred.make<void>();
+          const releaseCacheWrite = yield* Deferred.make<void>();
+          const threeEventsObserved = yield* Deferred.make<void>();
+          const fileSystem = yield* FileSystem.FileSystem;
+          const delayedFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            writeFileString: (path, contents, options) =>
+              contents.includes(refreshedProvider.checkedAt)
+                ? Deferred.succeed(cacheWriteStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseCacheWrite)),
+                    Effect.andThen(fileSystem.writeFileString(path, contents, options)),
+                  )
+                : fileSystem.writeFileString(path, contents, options),
+          });
+          const instance = {
+            instanceId: cursorInstanceId,
+            driverKind: cursorDriver,
+            continuationIdentity: {
+              driverKind: cursorDriver,
+              continuationKey: "cursor:instance:cursor",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: cursorDriver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(initialProvider),
+              refresh: Effect.never,
+              streamChanges: Stream.fromPubSub(sourceChanges),
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
+              rebuildInstance: () => Effect.void,
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-publish-order-",
+                }),
+              ),
+              Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+              Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, delayedFileSystem)),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const observedStatuses = yield* Ref.make<ReadonlyArray<string | null>>([]);
+            yield* registry.streamChanges.pipe(
+              Stream.runForEach((providers) =>
+                Ref.updateAndGet(observedStatuses, (statuses) => [
+                  ...statuses,
+                  providers.find((provider) => provider.instanceId === cursorInstanceId)?.connection
+                    ?.runtime?.operation?.status ?? null,
+                ]).pipe(
+                  Effect.flatMap((statuses) =>
+                    statuses.length >= 3
+                      ? Deferred.succeed(threeEventsObserved, undefined)
+                      : Effect.void,
+                  ),
+                ),
+              ),
+              Effect.forkScoped,
+            );
+            yield* Effect.yieldNow;
+
+            yield* registry.setProviderManagedRuntimeSummary({
+              instanceId: cursorInstanceId,
+              runtime: activeRuntime,
+            });
+            yield* PubSub.publish(sourceChanges, refreshedProvider);
+            yield* Deferred.await(cacheWriteStarted).pipe(
+              Effect.timeout("5 seconds"),
+              TestClock.withLive,
+            );
+            yield* registry.setProviderManagedRuntimeSummary({
+              instanceId: cursorInstanceId,
+              runtime: terminalRuntime,
+            });
+            yield* Deferred.succeed(releaseCacheWrite, undefined);
+            yield* Deferred.await(threeEventsObserved).pipe(
+              Effect.timeout("5 seconds"),
+              TestClock.withLive,
+            );
+
+            assert.deepStrictEqual(yield* Ref.get(observedStatuses), [
+              "activating",
+              "activating",
+              "succeeded",
+            ]);
+            assert.strictEqual(
+              (yield* registry.getProviders)[0]?.connection?.runtime?.operation?.status,
+              "succeeded",
+            );
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

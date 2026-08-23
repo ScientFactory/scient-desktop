@@ -11,6 +11,7 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "../Layers/CursorProvider.ts";
+import { cursorCliArgs } from "../Layers/CursorCli.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 type CursorAcpRuntimeCursorSettings = Pick<CursorSettings, "apiEndpoint" | "binaryPath">;
@@ -37,10 +38,13 @@ export function buildCursorAcpSpawnInput(
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: cursorSettings?.binaryPath || "cursor-agent",
-    args: [
-      ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
-      "acp",
-    ],
+    args: cursorCliArgs(
+      [
+        ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
+        "acp",
+      ],
+      environment,
+    ),
     cwd,
     ...(environment ? { env: environment } : {}),
   };

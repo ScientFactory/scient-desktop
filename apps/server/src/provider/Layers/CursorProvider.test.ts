@@ -472,6 +472,41 @@ describe("checkCursorProviderStatus", () => {
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
   });
+
+  it("reads the Cursor channel from the injected account home", async () => {
+    const { home, wrapperPath } = await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-provider-home-",
+        });
+        const configDirectory = path.join(home, ".cursor");
+        yield* fileSystem.makeDirectory(configDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(configDirectory, "cli-config.json"),
+          '{ "channel": "stable" }',
+        );
+        return { home, wrapperPath: yield* makeMockAgentWithAboutWrapper() };
+      }),
+    );
+
+    const provider = await runNode(
+      checkCursorProviderStatus(
+        { ...baseCursorSettings, binaryPath: wrapperPath },
+        { ...process.env, HOME: home },
+      ),
+    );
+
+    expect(provider).toMatchObject({
+      installed: true,
+      status: "error",
+      auth: { status: "authenticated", email: "cursor@example.com" },
+    });
+    expect(provider.message).toContain('channel is "stable"');
+    expect(provider.message).toContain("lab channel");
+  });
 });
 
 describe("discoverCursorModelsViaAcp", () => {

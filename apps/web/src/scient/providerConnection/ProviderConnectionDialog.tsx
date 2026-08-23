@@ -49,6 +49,7 @@ import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
+import { CursorInlineSetup } from "./CursorInlineSetup";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
@@ -96,8 +97,9 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   };
   return props.provider.driver === "codex" ||
     props.provider.driver === "claudeAgent" ||
-    props.provider.driver === "grok" ||
-    props.provider.driver === "droid" ? (
+    props.provider.driver === "cursor" ||
+    props.provider.driver === "droid" ||
+    props.provider.driver === "grok" ? (
     <AssistedProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
@@ -145,9 +147,6 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   });
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
-  const [isRuntimePlanOpen, setIsRuntimePlanOpen] = useState(
-    props.initialRuntimeAction !== undefined,
-  );
   const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
   const isConnected =
     providerConnectionPresentation(props.provider).kind === "connected" ||
@@ -155,21 +154,35 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const isClaude = props.provider.driver === "claudeAgent";
   const isGrok = props.provider.driver === "grok";
   const isDroid = props.provider.driver === "droid";
-  const providerName = isClaude
-    ? "Claude"
-    : isGrok
-      ? "Grok"
-      : isDroid
-        ? props.displayName
-        : "Codex";
+  const isCursor = props.provider.driver === "cursor";
+  const assistedDisplayName = props.displayName;
   const runtime = props.provider.connection?.runtime;
   const hasActionableManagedRuntime =
     runtime?.source === "scient_managed" &&
     (runtime.actions.length > 0 || runtime.operation !== null);
+  const cursorInlineInstallIsRunning =
+    isCursor &&
+    props.initialRuntimeAction === "install" &&
+    isRuntimeWorking &&
+    runtime?.operation?.action === "install";
+  const hasRuntimeMaintenanceActions =
+    runtime?.actions.some((action) => action !== "install") ?? false;
   const showManagedRuntime =
     runtime !== undefined &&
-    (isConnected || props.initialRuntimeAction !== undefined || hasActionableManagedRuntime) &&
+    !cursorInlineInstallIsRunning &&
+    (isCursor
+      ? isConnected || hasRuntimeMaintenanceActions
+      : isConnected || props.initialRuntimeAction !== undefined || hasActionableManagedRuntime) &&
     (runtime.actions.length > 0 || runtime.diagnostics !== undefined || runtime.operation !== null);
+  const availableInitialRuntimeAction =
+    props.initialRuntimeAction !== undefined &&
+    showManagedRuntime &&
+    runtime.actions.includes(props.initialRuntimeAction)
+      ? props.initialRuntimeAction
+      : undefined;
+  const [isRuntimePlanOpen, setIsRuntimePlanOpen] = useState(
+    availableInitialRuntimeAction !== undefined,
+  );
   const isManagedRuntimeFocused =
     showManagedRuntime && (isRuntimePlanOpen || isRuntimeWorking || !props.provider.installed);
 
@@ -208,7 +221,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
         <DialogHeader>
           <DialogTitle ref={titleRef} className="flex flex-wrap items-center gap-2.5">
             <ProviderConnectionDialogTitle
-              displayName={providerName}
+              displayName={assistedDisplayName}
               driver={props.provider.driver}
               repairSucceededRecently={props.repairSucceededRecently}
             />
@@ -220,7 +233,9 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
                 ? "Install Grok and connect your existing subscription."
                 : isDroid
                   ? "Install Droid and connect your Factory account."
-                  : "Connect and manage your existing ChatGPT subscription."}
+                  : isCursor
+                    ? "Connect and manage your Cursor account."
+                    : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">
@@ -228,9 +243,9 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             <ProviderRuntimeSection
               compact
               disabled={disconnecting}
-              displayName={providerName}
+              displayName={assistedDisplayName}
               environmentId={props.environmentId}
-              initialAction={props.initialRuntimeAction}
+              initialAction={availableInitialRuntimeAction}
               onActionSucceeded={props.onRuntimeActionSucceeded}
               onPlanOpenChange={setIsRuntimePlanOpen}
               provider={props.provider}
@@ -247,6 +262,15 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             />
           ) : isClaude ? (
             <ClaudeInlineSetup
+              accountAction={accountAction}
+              controller={controller}
+              displayName={props.displayName}
+              managedRuntimePresentedExternally={showManagedRuntime}
+              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
+              provider={props.provider}
+            />
+          ) : isCursor ? (
+            <CursorInlineSetup
               accountAction={accountAction}
               controller={controller}
               displayName={props.displayName}

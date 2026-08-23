@@ -14,6 +14,7 @@ import { CodexInlineSetup } from "./CodexInlineSetup";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
+import { CursorInlineSetup } from "./CursorInlineSetup";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
@@ -347,6 +348,18 @@ function AntigravitySetupWithController(props: {
   return <AntigravityInlineSetup {...props} controller={controller} />;
 }
 
+function CursorSetupWithController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ProviderInstanceEntry["snapshot"];
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  return <CursorInlineSetup {...props} controller={controller} />;
+}
+
 function GrokSetupWithController(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ProviderInstanceEntry["snapshot"];
@@ -403,6 +416,15 @@ export function ProviderLifecycleSetupSurface(props: {
   if (props.entry.driverKind === "antigravity") {
     return (
       <AntigravitySetupWithController
+        displayName={props.entry.displayName}
+        environmentId={props.environmentId}
+        provider={props.entry.snapshot}
+      />
+    );
+  }
+  if (props.entry.driverKind === "cursor") {
+    return (
+      <CursorSetupWithController
         displayName={props.entry.displayName}
         environmentId={props.environmentId}
         provider={props.entry.snapshot}
