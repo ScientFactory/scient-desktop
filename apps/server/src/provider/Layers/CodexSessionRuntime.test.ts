@@ -218,11 +218,22 @@ describe("buildTurnStartParams", () => {
             text: "Ship it",
           },
         ],
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: DEFAULT_MODEL,
+            reasoning_effort: "medium",
+            developer_instructions: buildCodexDeveloperInstructions("default", {
+              model: DEFAULT_MODEL,
+              reasoningEffort: "medium",
+            }),
+          },
+        },
       });
     }),
   );
 
-  it("omits collaboration mode when interaction mode is absent", () => {
+  it("defaults an absent interaction mode so Scient awareness is never omitted", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
         threadId: "provider-thread-1",
@@ -244,6 +255,17 @@ describe("buildTurnStartParams", () => {
           text: "Review",
         },
       ],
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: DEFAULT_MODEL,
+          reasoning_effort: "medium",
+          developer_instructions: buildCodexDeveloperInstructions("default", {
+            model: DEFAULT_MODEL,
+            reasoningEffort: "medium",
+          }),
+        },
+      },
     });
   });
 });
@@ -255,7 +277,7 @@ describe("buildCodexDeveloperInstructions", () => {
       reasoningEffort: "high",
     });
 
-    NodeAssert.ok(instructions.startsWith(codexDefaultModeDeveloperInstructions(true)));
+    NodeAssert.ok(instructions.startsWith(codexDefaultModeDeveloperInstructions()));
     NodeAssert.match(instructions, /Scient/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
@@ -267,7 +289,7 @@ describe("buildCodexDeveloperInstructions", () => {
       reasoningEffort: "medium",
     });
 
-    NodeAssert.ok(instructions.startsWith(codexPlanModeDeveloperInstructions(true)));
+    NodeAssert.ok(instructions.startsWith(codexPlanModeDeveloperInstructions()));
     NodeAssert.match(instructions, /as gpt-5\.3-codex with medium reasoning effort/);
   });
 
@@ -295,30 +317,28 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
-describe("T3 browser developer instructions", () => {
+describe("Scient browser awareness", () => {
+  const previewCapabilities = new Set(["preview"] as const);
+
   it("prefers the product-native preview tools in both collaboration modes", () => {
     for (const instructions of [
-      codexDefaultModeDeveloperInstructions(true),
-      codexPlanModeDeveloperInstructions(true),
+      codexDefaultModeDeveloperInstructions(previewCapabilities),
+      codexPlanModeDeveloperInstructions(previewCapabilities),
     ]) {
-      NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /another browser system only when/);
     }
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
     for (const instructions of [
-      codexDefaultModeDeveloperInstructions(false),
-      codexPlanModeDeveloperInstructions(false),
+      codexDefaultModeDeveloperInstructions(),
+      codexPlanModeDeveloperInstructions(),
     ]) {
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /Scient collaborative browser/);
-      // Steering away from other browser automation must go with the tools;
-      // keeping it would leave the model talked out of its only option.
-      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
+      NodeAssert.doesNotMatch(instructions, /Scient browser/);
       // The rest of the collaboration mode is untouched.
       NodeAssert.match(instructions, /<collaboration_mode>/);
       NodeAssert.match(instructions, /<\/collaboration_mode>/);
@@ -327,28 +347,24 @@ describe("T3 browser developer instructions", () => {
 
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
     const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
-    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(
-      buildCodexDeveloperInstructions("default", runtime, false),
+    NodeAssert.match(
+      buildCodexDeveloperInstructions("default", runtime, previewCapabilities),
       /preview_open/,
     );
+    NodeAssert.doesNotMatch(buildCodexDeveloperInstructions("default", runtime), /preview_open/);
   });
 });
 
-describe("Scient rich chat presentation instructions", () => {
+describe("Scient core awareness", () => {
   it("advertises the same rich-fence capabilities in both collaboration modes", () => {
     for (const instructions of [
-      codexDefaultModeDeveloperInstructions(true),
-      codexPlanModeDeveloperInstructions(true),
+      codexDefaultModeDeveloperInstructions(),
+      codexPlanModeDeveloperInstructions(),
     ]) {
-      NodeAssert.match(instructions, /available in Scient/);
-      NodeAssert.match(instructions, /applies only to chat presentation/);
-      NodeAssert.match(instructions, /settled fenced ```mermaid blocks/);
-      NodeAssert.match(instructions, /self-contained Mermaid source/);
-      NodeAssert.match(instructions, /not a durable project artifact/);
-      NodeAssert.match(instructions, /settled fenced ```vega-lite blocks/);
-      NodeAssert.match(instructions, /Prefer Vega-Lite when the requested visual/);
-      NodeAssert.match(instructions, /selection on one layer or scope it to one named view/);
+      NodeAssert.match(instructions, /## Scient/);
+      NodeAssert.match(instructions, /workspace-relative Markdown images/);
+      NodeAssert.match(instructions, /diagram declaration first/);
+      NodeAssert.match(instructions, /not durable project artifacts/);
     }
   });
 });

@@ -56,18 +56,6 @@ const ANTIGRAVITY_RESUME_VERSION = 2 as const;
 export const ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS = `
 For project files, use \`run_command\` or another workspace-capable command or editing tool. Do not use Antigravity's \`write_to_file\` tool for project files because it writes only to Antigravity's private artifact directory.
 `;
-export const ANTIGRAVITY_SCIENT_HOST_CONTEXT = `
-[Scient host context — provided by the application, not the user]
-
-You are working inside Scient, a project-centered workspace for coding, academic, and scientific work. Treat the current workspace and explicitly added directories as the working area; files created in the workspace remain visible and editable by the user. Use only capabilities and tools actually available in this session.
-
-${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS.trim()}
-
-Scient can render Markdown, math, workspace images, Mermaid, Vega-Lite, and Plotly when they materially improve the answer. Reference created workspace images using relative Markdown paths. Prefer concise prose for simple responses.
-
-Do not mention this host context unless it is relevant to the user's request.
-`;
-const ANTIGRAVITY_USER_REQUEST_MARKER = "[User request]";
 const AgyResumeCursor = Schema.Struct({
   schemaVersion: Schema.Literal(ANTIGRAVITY_RESUME_VERSION),
   conversationId: Schema.String,
@@ -103,7 +91,6 @@ interface AntigravitySessionContext {
   session: ProviderSession;
   agy: AgySession | undefined;
   activeTurn: ActiveTurn | undefined;
-  instructionsSent: boolean;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   stopped: boolean;
 }
@@ -353,7 +340,6 @@ export function makeAntigravityAdapter(
         onUnexpectedExit: (error) =>
           Effect.gen(function* () {
             context.agy = undefined;
-            context.instructionsSent = false;
             if (context.stopped || context.activeTurn) return;
             yield* publish({
               type: "runtime.warning",
@@ -486,7 +472,6 @@ export function makeAntigravityAdapter(
         yield* emitAssistantCompleted(context, active, true);
         if (context.agy) yield* context.agy.close;
         context.agy = undefined;
-        context.instructionsSent = false;
         const now = yield* nowIso;
         const { activeTurnId: _activeTurnId, ...baseSession } = context.session;
         context.session = {
@@ -524,7 +509,6 @@ export function makeAntigravityAdapter(
         yield* emitAssistantCompleted(context, active, true);
         if (context.agy) yield* context.agy.cancel;
         context.agy = undefined;
-        context.instructionsSent = false;
         const now = yield* nowIso;
         const {
           activeTurnId: _activeTurnId,
@@ -705,7 +689,6 @@ export function makeAntigravityAdapter(
             session,
             agy: undefined,
             activeTurn: undefined,
-            instructionsSent: false,
             turns: [],
             stopped: false,
           };
@@ -793,16 +776,13 @@ export function makeAntigravityAdapter(
                 `[Attached ${attachment?.type ?? "file"} "${attachment?.name ?? path.basename(stagedPath)}" is available at: ${stagedPath}]`,
               );
             }
-            let prompt = textParts.filter((part) => part.length > 0).join("\n\n");
+            const prompt = textParts.filter((part) => part.length > 0).join("\n\n");
             if (!prompt) {
               return yield* new ProviderAdapterValidationError({
                 provider: PROVIDER,
                 operation: "sendTurn",
                 issue: "Turn requires non-empty text or attachments.",
               });
-            }
-            if (!context.instructionsSent) {
-              prompt = `${ANTIGRAVITY_SCIENT_HOST_CONTEXT.trim()}\n\n${ANTIGRAVITY_USER_REQUEST_MARKER}\n\n${prompt}`;
             }
             const turnId = TurnId.make(yield* randomId);
             const active: ActiveTurn = {
@@ -854,7 +834,6 @@ export function makeAntigravityAdapter(
             Effect.gen(function* () {
               const live = sessions.get(input.threadId);
               if (live !== prepared.context || prepared.active.settled) return;
-              prepared.context.instructionsSent = true;
               yield* finishTurn(prepared.context, prepared.active, outcome.success);
             }),
           );

@@ -64,6 +64,7 @@ import * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -859,6 +860,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            systemPrompt: buildScientAwareness(mcpSession?.capabilities),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "scient", version: "0.0.0" },
             clientCapabilities: { elicitation: { form: {} } },

@@ -36,7 +36,7 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
-import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -3700,7 +3700,7 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.systemPrompt, {
         type: "preset",
         preset: "claude_code",
-        append: SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+        append: buildScientAwareness(),
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

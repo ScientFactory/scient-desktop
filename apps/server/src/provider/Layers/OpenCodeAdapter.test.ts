@@ -24,7 +24,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { SCIENT_CHAT_PRESENTATION_INSTRUCTIONS } from "../ScientChatPresentationInstructions.ts";
+import { buildScientAwareness } from "../ScientAwareness.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
@@ -850,7 +850,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           providerID: "anthropic",
           modelID: "claude-sonnet-4-5",
         },
-        system: SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+        system: buildScientAwareness(),
         agent: "github-copilot",
         variant: "high",
         parts: [{ type: "text", text: "Fix it" }],
@@ -895,7 +895,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           providerID: "anthropic",
           modelID: "claude-sonnet-4-5",
         },
-        system: SCIENT_CHAT_PRESENTATION_INSTRUCTIONS,
+        system: buildScientAwareness(),
         parts: [{ type: "text", text: "Fix it" }],
       });
     }).pipe(Effect.provide(adapterLayer));

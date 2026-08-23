@@ -155,13 +155,11 @@ titles without replacing the author's semantic color encoding.
 
 ## Provider discovery and platform fallback
 
-The shared provider instruction tells capable agents when to choose Mermaid,
-Vega-Lite, or Plotly, how to emit accessible self-contained source, and when to
-create a durable artifact instead. It reaches Codex and Claude through their existing
-developer/system seams, OpenCode through its SDK `system` field, and Grok
-through the supported CLI `--rules` append seam. Cursor's ACP transport does
-not currently expose a per-session system extension; Scient does not inject
-hidden text into user messages or create workspace rule files as a workaround.
+Scient's compact shared awareness contract names Mermaid, Vega-Lite, and Plotly,
+requires self-contained source, and distinguishes chat representation from a
+durable artifact. Provider delivery and capability gating are governed centrally
+by [the provider architecture](./providers.md#scient-awareness), not by each
+renderer. No renderer injects hidden user text or project instruction files.
 
 Desktop and web render the rich chart. Mobile and older clients continue to
 show readable fenced JSON. No protocol negotiation or message migration is
@@ -176,9 +174,9 @@ policy, fetch/CORS diagnostics, limits, theme-state remount policy, theme
 defaults, stable tooltip deduplication, cursor preservation, export bounds,
 lazy-runtime/CSP invariants, Plotly source limits and typed arrays, runtime
 state transfer, animation lifecycle, math loading, server fallback, and the
-single T3 seam. Provider
-tests cover OpenCode and Grok injection alongside the existing Codex and Claude
-assertions. A production build must keep both engines in lazy chunks.
+single T3 seam. Provider tests cover the shared contract, its conditional
+preview block, and every built-in delivery decision. A production build must
+keep both engines in lazy chunks.
 `docs/fixtures/scient-chat-visualizations.md` and
 `docs/fixtures/scient-chat-plotly.md` are the interactive light/dark and
 recovery corpus.

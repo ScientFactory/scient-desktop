@@ -41,6 +41,29 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Scient awareness
+
+Interactive agents receive one compact, Scient-owned awareness contract from
+[`ScientAwareness.ts`][awareness]. The always-on block identifies Scient as a project workspace,
+states what the user can inspect, and names the rich Markdown representations the chat actually
+renders. A separate browser block is composed only when the exact MCP credential for that session
+grants `preview`; the same capability decision drives both authorization and awareness. Sources
+mechanics remain in tool descriptions rather than consuming every turn's instruction context.
+
+Each built-in driver has an explicit native delivery decision, guarded against `BUILT_IN_DRIVERS`:
+
+- Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
+  per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`.
+- Cursor 2026.08.11 accepts a documented `--plugin-dir`, but live CLI and ACP verification found
+  that session-local plugin rules were not applied. Antigravity 1.1.19 likewise has no verified
+  application-private system extension. Both integrations are therefore marked unsupported for
+  Scient awareness instead of rewriting the user's first message, writing rules into the project,
+  or modifying global configuration.
+
+Adding a provider requires adding a tested delivery decision. System awareness never comes from
+hidden user-message prefixes, project instruction files, credentials copied into a synthetic home,
+or undocumented ACP metadata.
+
 ### Droid (Factory) driver
 
 Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`), sharing the ACP
@@ -344,6 +367,7 @@ when a request opens (approval) or user input is requested, via
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
+[awareness]: ../../apps/server/src/provider/ScientAwareness.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts

@@ -64,20 +64,12 @@ title and a portable export filename.
 
 ## Agent capability discovery
 
-Agents do not infer renderer capabilities from the UI. The Scient server adds
-a short capability contract through supported provider-level seams:
-
-- Codex receives it in both default and plan developer instructions.
-- Claude Code receives it as an append to its preset system prompt.
-- OpenCode receives it through the SDK's supported per-prompt system field.
-- Grok receives it through the CLI's supported `--rules` system append.
-
-The instruction recommends diagrams only when a relationship is materially
-clearer visually, requires ordinary self-contained Mermaid, asks for accessible
-metadata when useful, and distinguishes inline representation from a durable
-artifact. Cursor can still render Mermaid it emits, but its ACP transport does
-not currently expose a clean system/developer seam; Scient does not silently
-inject capability text into the user's prompt.
+Agents do not infer renderer capabilities from the UI. Scient's compact shared
+awareness contract names Mermaid, requires the diagram declaration before
+accessibility metadata, and distinguishes inline representation from a durable
+artifact. Provider delivery and capability gating are governed centrally by
+[the provider architecture](./providers.md#scient-awareness); the diagram
+renderer does not inject hidden user text or project instruction files.
 
 ## Platforms and fallback
 
@@ -88,10 +80,11 @@ representation is why no protocol negotiation or message migration is needed.
 
 ## Verification and upstream maintenance
 
-Co-located unit tests cover source bounds, SVG id/reference rebasing, portable
+Co-located unit tests cover source bounds, declaration-first parsing with
+accessibility metadata, SVG id/reference rebasing, portable
 filenames, standalone export preparation, Markdown round-tripping, and the
-single `ChatMarkdown` seam. Server tests assert the capability contract reaches
-both Codex modes and Claude query options. The production build is the bundle
+single `ChatMarkdown` seam. Server tests assert the shared awareness contract,
+its capability gate, and every built-in provider delivery decision. The production build is the bundle
 gate: Mermaid must remain in lazy chunks rather than the entry bundle.
 `docs/fixtures/scient-chat-diagrams.md` is the manual light/dark corpus for the
 major diagram families, math labels, RTL/Unicode, duplicates, export, copy, and
