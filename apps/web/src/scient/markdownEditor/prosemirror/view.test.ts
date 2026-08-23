@@ -198,6 +198,35 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
+  it("retains the last valid scientific preview during invalid source edits", async () => {
+    const controller = new ScientMarkdownEditorView({
+      source: '```plotly\n{"data":[{"x":[1],"y":[2]}]}\n```\n',
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange: vi.fn(),
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("[data-scient-rich-fence-validity='valid']")).not.toBeNull();
+    });
+    const codeBlock = view.state.doc.firstChild;
+    expect(codeBlock?.type.name).toBe("code_block");
+    view.dispatch(
+      view.state.tr.replaceWith(1, codeBlock!.nodeSize - 1, view.state.schema.text('{"data":[')),
+    );
+
+    await vi.waitFor(() => {
+      const retained = view.dom.querySelector("[data-scient-rich-fence-source-state='retained']");
+      expect(retained).not.toBeNull();
+      expect(retained?.textContent).toContain("Preview kept at the last valid version.");
+    });
+  });
+
   it("runs formatting and slash commands through user transactions", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

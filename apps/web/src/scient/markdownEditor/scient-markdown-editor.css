@@ -471,6 +471,28 @@ sup.scient-markdown-reference {
   resize: vertical;
 }
 
+.scient-markdown-editable-rich-fence {
+  position: relative;
+}
+
+.scient-markdown-rich-fence-retained {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin-block: -0.5rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--warning) 28%, var(--border));
+  border-radius: 0.4rem;
+  background: color-mix(in oklab, var(--warning) 7%, var(--background));
+  padding: 0.4rem 0.55rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.scient-markdown-rich-fence-retained strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
 .scient-markdown-wiki-link.is-selected {
   outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
   outline-offset: 2px;

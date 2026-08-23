@@ -5,9 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
-import { resolveScientRichFenceKind, ScientRichFence } from "~/scient/presentation/ScientRichFence";
+import { resolveScientRichFenceKind } from "~/scient/presentation/ScientRichFence";
 
 import type { ScientNestedCodeEditor } from "./codeMirrorCodeEditor";
+import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
 function codeLanguage(node: ProseMirrorNode): string {
   return String(node.attrs.params).trim().split(/\s+/u)[0] || "text";
@@ -134,7 +135,7 @@ class ScientCodeBlockNodeView implements NodeView {
       this.reactRoot ??= createRoot(this.rendered);
       const theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
       this.reactRoot.render(
-        createElement(ScientRichFence, {
+        createElement(ScientEditableRichFence, {
           kind: richKind,
           language,
           source: code,
