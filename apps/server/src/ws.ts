@@ -362,7 +362,23 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
   );
 }
 
-const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const PROVIDER_STATUS_COALESCE_MAX_CHUNK = 256;
+const PROVIDER_STATUS_COALESCE_WINDOW = Duration.millis(200);
+
+/**
+ * Bound provider-status traffic without waiting for the entire stream to go
+ * quiet. Runtime downloads can publish progress continuously, so a trailing
+ * debounce can indefinitely hide the final succeeded/failed snapshot from
+ * connected clients. Fixed windows preserve the latest snapshot at least once
+ * per window while still collapsing noisy byte-level progress updates.
+ */
+export const coalesceProviderStatusUpdates = <E, R>(
+  updates: Stream.Stream<ReadonlyArray<ServerProvider>, E, R>,
+): Stream.Stream<ReadonlyArray<ServerProvider>, E, R> =>
+  updates.pipe(
+    Stream.groupedWithin(PROVIDER_STATUS_COALESCE_MAX_CHUNK, PROVIDER_STATUS_COALESCE_WINDOW),
+    Stream.map((batch) => batch[batch.length - 1]!),
+  );
 
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
@@ -2625,14 +2641,15 @@ const makeWsRpcLayer = (
                   },
                 })),
               );
-              const providerStatuses = providerRegistry.streamChanges.pipe(
+              const providerStatuses = coalesceProviderStatusUpdates(
+                providerRegistry.streamChanges,
+              ).pipe(
                 Stream.map(projectProvidersForCurrentSession),
                 Stream.map((providers) => ({
                   version: 1 as const,
                   type: "providerStatuses" as const,
                   payload: { providers },
                 })),
-                Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),

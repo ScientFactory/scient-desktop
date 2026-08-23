@@ -118,7 +118,11 @@ afterAll(() => {
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
-import { isThreadDetailEvent, resolveAvailableEditorsForConfig } from "./ws.ts";
+import {
+  coalesceProviderStatusUpdates,
+  isThreadDetailEvent,
+  resolveAvailableEditorsForConfig,
+} from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -4807,6 +4811,48 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         payload: { providers: nextProviders },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("coalesces sustained provider updates without starving the latest state", () =>
+    Effect.gen(function* () {
+      const updates = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+      const observed = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+      const consumer = yield* coalesceProviderStatusUpdates(Stream.fromQueue(updates)).pipe(
+        Stream.runForEach((providers) => Queue.offer(observed, providers)),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const activeProvider = {
+        instanceId: ProviderInstanceId.make("cursor"),
+        driver: ProviderDriverKind.make("cursor"),
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "warning" as const,
+        auth: { status: "unauthenticated" as const },
+        checkedAt: "2026-08-23T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const terminalProvider = {
+        ...activeProvider,
+        status: "ready" as const,
+        checkedAt: "2026-08-23T00:00:00.100Z",
+      } satisfies ServerProvider;
+
+      yield* Queue.offer(updates, [activeProvider]);
+      yield* TestClock.adjust("100 millis");
+      yield* Queue.offer(updates, [terminalProvider]);
+      yield* TestClock.adjust("101 millis");
+      yield* Effect.yieldNow;
+
+      const latest = yield* Queue.poll(observed);
+      assert.isTrue(Option.isSome(latest));
+      assert.deepEqual(Option.getOrUndefined(latest), [terminalProvider]);
+      yield* Fiber.interrupt(consumer);
+    }),
   );
 
   it.effect("redacts provider authorization material from read-only clients", () =>

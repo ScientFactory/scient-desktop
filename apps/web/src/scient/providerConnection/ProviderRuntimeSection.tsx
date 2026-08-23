@@ -25,6 +25,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
+import {
+  currentOptimisticProviderValue,
+  isManagedRuntimeActionDurablySettled,
+  type OptimisticProviderValue,
+} from "./optimisticProviderValue";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
@@ -78,10 +83,7 @@ export function resolveProviderRuntimeForPresentation(
   if (!localOperation || !ACTIVE_RUNTIME_STATUSES.has(localOperation.status)) {
     return serverRuntime;
   }
-  // A remove operation finishes by changing the durable runtime source. That
-  // is stronger evidence than an optimistic local progress snapshot, even if
-  // the terminal operation event was coalesced out of the streamed update.
-  if (localOperation.action === "remove" && serverRuntime.source !== "scient_managed") {
+  if (isManagedRuntimeActionDurablySettled(localOperation.action, serverRuntime)) {
     return serverRuntime;
   }
   return localRuntime;
@@ -144,7 +146,8 @@ export function ProviderRuntimeSection(props: {
     props.initialAction ? "plan" : null,
   );
   const [plan, setPlan] = useState<ProviderRuntimePlan | null>(null);
-  const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
+  const [localRuntimeSnapshot, setLocalRuntimeSnapshot] =
+    useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [startedOperation, setStartedOperation] = useState<StartedRuntimeOperation | null>(null);
   const providerInstanceIdRef = useRef(props.provider.instanceId);
@@ -156,7 +159,7 @@ export function ProviderRuntimeSection(props: {
     providerInstanceIdRef.current = props.provider.instanceId;
     setPendingAction(null);
     setPlan(null);
-    setLocalRuntime(null);
+    setLocalRuntimeSnapshot(null);
     setLocalError(null);
     setStartedOperation(null);
     initialPlanRequestRef.current = null;
@@ -164,6 +167,10 @@ export function ProviderRuntimeSection(props: {
   }, [props.provider.instanceId]);
 
   const serverRuntime = props.provider.connection?.runtime;
+  // A command result bridges the transport delay only while the provider prop
+  // is still the exact snapshot from which that command started. Once the
+  // provider-status stream replaces it, the canonical server snapshot wins.
+  const localRuntime = currentOptimisticProviderValue(localRuntimeSnapshot, props.provider);
   const serverOperation = serverRuntime?.operation;
   const startedOperationId = startedOperation?.operationId;
   const startedOperationAction = startedOperation?.action;
@@ -187,7 +194,6 @@ export function ProviderRuntimeSection(props: {
     startedOperationAction,
     startedOperationId,
   ]);
-
   const runtime = useMemo(
     () => resolveProviderRuntimeForPresentation(serverRuntime, localRuntime),
     [localRuntime, serverRuntime],
@@ -249,7 +255,9 @@ export function ProviderRuntimeSection(props: {
           props.onActionSucceeded?.(nextPlan.action);
         }
       }
-      setLocalRuntime(nextRuntime ?? null);
+      setLocalRuntimeSnapshot(
+        nextRuntime ? { baseProvider: props.provider, value: nextRuntime } : null,
+      );
       setPlan(null);
       props.onPlanOpenChange?.(false);
       setPendingAction(null);
@@ -260,6 +268,7 @@ export function ProviderRuntimeSection(props: {
       props.environmentId,
       props.onActionSucceeded,
       props.onPlanOpenChange,
+      props.provider,
       props.provider.instanceId,
     ],
   );
@@ -339,7 +348,10 @@ export function ProviderRuntimeSection(props: {
       }
       return;
     }
-    setLocalRuntime(runtimeFromResult(result.value.providers, props.provider.instanceId) ?? null);
+    const nextRuntime = runtimeFromResult(result.value.providers, props.provider.instanceId);
+    setLocalRuntimeSnapshot(
+      nextRuntime ? { baseProvider: props.provider, value: nextRuntime } : null,
+    );
   };
 
   if (activeOperation) {

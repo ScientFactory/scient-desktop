@@ -316,6 +316,30 @@ describe("ProviderRuntimeSection", () => {
     );
   });
 
+  it("drops stale local install progress once the server reports a managed runtime", () => {
+    const localRuntime = {
+      ...provider.connection!.runtime!,
+      source: "missing" as const,
+      operation: {
+        operationId: "install-active",
+        action: "install" as const,
+        status: "activating" as const,
+        startedAt: "2026-08-23T12:00:00.000Z",
+        finishedAt: null,
+        message: "Activating the verified provider runtime.",
+      },
+    };
+    const serverRuntime = {
+      ...provider.connection!.runtime!,
+      source: "scient_managed" as const,
+      actions: ["repair", "remove"] as const,
+      managedVersion: "1.1.17",
+      operation: null,
+    };
+
+    expect(resolveProviderRuntimeForPresentation(serverRuntime, localRuntime)).toBe(serverRuntime);
+  });
+
   it("reports repair success only after the matching streamed operation succeeds", async () => {
     const onActionSucceeded = vi.fn();
     commands.plan.mockResolvedValue({

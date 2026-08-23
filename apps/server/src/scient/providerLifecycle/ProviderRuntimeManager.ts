@@ -359,14 +359,19 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         Effect.result,
         Effect.flatMap((result) =>
           Effect.gen(function* () {
-            // Claim finalization atomically. If cancellation won, the
-            // operation must not reload providers or publish a late success.
+            // Keep successful operations cancellable while provider reloads
+            // and probes finish. Removing the active entry before this work
+            // leaves clients showing an active operation that the server can
+            // no longer cancel. Cancellation interrupts this supervisor; the
+            // atomic claim below then prevents a late terminal overwrite.
+            if (result._tag === "Success") {
+              const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+              if (current?.operationId !== operationId) return;
+              yield* refreshRuntimeInstances(target.provider);
+            }
             const claimed = yield* takeIfCurrent(input.instanceId, operationId);
             if (!claimed) return;
             yield* Effect.gen(function* () {
-              if (result._tag === "Success") {
-                yield* refreshRuntimeInstances(target.provider);
-              }
               const finishedAt = yield* nowIso;
               const latestActions =
                 result._tag === "Success"

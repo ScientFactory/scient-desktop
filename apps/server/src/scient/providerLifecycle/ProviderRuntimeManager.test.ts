@@ -77,6 +77,7 @@ function makeHarness(
   initialProviders: ReadonlyArray<ServerProvider> = [provider],
   stopProviderSessions: ProviderRegistryShape["stopProviderSessions"] = () => Effect.void,
   actionsAfterReload?: ProviderManagedRuntimeActions,
+  reloadBarrier: Effect.Effect<void> = Effect.void,
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
@@ -108,6 +109,7 @@ function makeHarness(
               ?.operation?.status ?? null;
           yield* Ref.update(reloadOperationsRef, (statuses) => [...statuses, operationStatus]);
           if (actionsAfterReload) yield* Ref.set(actionsRef, actionsAfterReload);
+          yield* reloadBarrier;
           return providers;
         }),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
@@ -383,6 +385,53 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "missing");
       yield* Effect.yieldNow;
       assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+    }),
+  );
+
+  it.effect("keeps an installed runtime cancellable while provider reload is still running", () =>
+    Effect.gen(function* () {
+      const reloadGate = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed({
+          ...missingRuntime,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "0.147.0",
+          message: "Managed Codex is ready.",
+        }),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, report) =>
+          report({
+            status: "activating",
+            message: "Activating the verified provider runtime.",
+          }),
+      };
+      const { manager, providersRef, reloadCountRef } = yield* makeHarness(
+        actions,
+        [provider],
+        () => Effect.void,
+        undefined,
+        Deferred.await(reloadGate),
+      );
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+      assert.ok(operationId);
+      yield* yieldUntil(Ref.get(reloadCountRef), (count) => count === 1);
+
+      const cancelled = yield* manager.cancel({ instanceId: INSTANCE, operationId });
+
+      assert.strictEqual(
+        cancelled.providers[0]?.connection?.runtime?.operation?.status,
+        "cancelled",
+      );
+      assert.strictEqual(
+        (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+        "cancelled",
+      );
     }),
   );
 
