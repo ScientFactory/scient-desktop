@@ -1,0 +1,134 @@
+import {
+  MarkdownSaveQueue,
+  type MarkdownDocumentMode,
+  type MarkdownSaveIntent,
+} from "@scientfactory/scient-markdown";
+import { Suspense, useEffect, useRef, useState } from "react";
+
+import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
+import { ScientMarkdownEditorView } from "./prosemirror/view";
+import { LazyScientMarkdownSourceDocument } from "./source/ScientMarkdownSourceDocumentLazy";
+
+const SAVE_DEBOUNCE_MS = 500;
+
+export interface ScientMarkdownWorkspaceSurfaceProps {
+  readonly source: string;
+  readonly revision: string;
+  readonly mode: MarkdownDocumentMode;
+  readonly ariaLabel: string;
+  readonly persist: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
+  readonly onPendingChange: (pending: boolean) => void;
+  readonly onSaveConfirmed: (source: string, revision: string) => void;
+  readonly onSaveFailure: (error: unknown) => void;
+  readonly onExternalConflict: (input: {
+    readonly source: string;
+    readonly revision: string;
+  }) => void;
+}
+
+/** Coordinates one rich view, optional source view, and one serial save lane. */
+export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
+  const persistRef = useRef(props.persist);
+  const onPendingChangeRef = useRef(props.onPendingChange);
+  const onSaveConfirmedRef = useRef(props.onSaveConfirmed);
+  const onSaveFailureRef = useRef(props.onSaveFailure);
+  const onExternalConflictRef = useRef(props.onExternalConflict);
+  persistRef.current = props.persist;
+  onPendingChangeRef.current = props.onPendingChange;
+  onSaveConfirmedRef.current = props.onSaveConfirmed;
+  onSaveFailureRef.current = props.onSaveFailure;
+  onExternalConflictRef.current = props.onExternalConflict;
+
+  const [draftSource, setDraftSource] = useState(props.source);
+  const [sourceActivated, setSourceActivated] = useState(
+    props.mode === "source" || props.mode === "split",
+  );
+  const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
+  const [saveQueue] = useState(
+    () =>
+      new MarkdownSaveQueue({
+        debounceMs: SAVE_DEBOUNCE_MS,
+        persist: (intent) => persistRef.current(intent),
+        onPendingChange: (pending) => onPendingChangeRef.current(pending),
+        onConfirmed: (intent, result) => {
+          controllerRef.current?.confirmSave(intent, result.revision);
+          onSaveConfirmedRef.current(intent.source, result.revision);
+        },
+        onFailure: (_intent, error) => onSaveFailureRef.current(error),
+      }),
+  );
+  const [controller] = useState(
+    () =>
+      new ScientMarkdownEditorView({
+        source: props.source,
+        revision: props.revision,
+        mode: props.mode,
+        ariaLabel: props.ariaLabel,
+        onUserSourceChange: (source, intent) => {
+          setDraftSource(source);
+          saveQueue.enqueue(intent);
+        },
+      }),
+  );
+  controllerRef.current = controller;
+
+  useEffect(() => {
+    if (props.mode === "source" || props.mode === "split") setSourceActivated(true);
+  }, [props.mode]);
+
+  useEffect(() => {
+    const result = controller.receiveExternalSource({
+      source: props.source,
+      revision: props.revision,
+    });
+    if (result === "adopted") {
+      setDraftSource(props.source);
+    } else if (result === "conflict") {
+      saveQueue.pause();
+      onExternalConflictRef.current({ source: props.source, revision: props.revision });
+    }
+  }, [controller, props.revision, props.source, saveQueue]);
+
+  useEffect(
+    () => () => {
+      void saveQueue.dispose({ flush: true });
+    },
+    [saveQueue],
+  );
+
+  const richVisible = props.mode !== "source";
+  const sourceVisible = props.mode === "source" || props.mode === "split";
+  return (
+    <div className="scient-markdown-workspace" data-markdown-workspace-mode={props.mode}>
+      <div className="scient-markdown-rich-pane" hidden={!richVisible}>
+        <ScientMarkdownDocument
+          source={draftSource}
+          revision={props.revision}
+          mode={props.mode}
+          ariaLabel={props.ariaLabel}
+          onUserSourceChange={() => undefined}
+          controller={controller}
+        />
+      </div>
+      {sourceActivated ? (
+        <div className="scient-markdown-source-pane" hidden={!sourceVisible}>
+          <Suspense
+            fallback={
+              <div
+                className="scient-markdown-source-loading"
+                aria-label="Loading Markdown source"
+              />
+            }
+          >
+            <LazyScientMarkdownSourceDocument
+              source={draftSource}
+              editable={sourceVisible}
+              ariaLabel={`${props.ariaLabel} source`}
+              onUserSourceChange={(source) => controller.replaceUserSource(source)}
+            />
+          </Suspense>
+        </div>
+      ) : null}
+    </div>
+  );
+}

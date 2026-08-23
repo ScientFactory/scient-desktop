@@ -1,0 +1,235 @@
+.scient-markdown-document-shell {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: var(--background);
+}
+
+.scient-markdown-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.scient-markdown-rich-pane,
+.scient-markdown-source-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+.scient-markdown-workspace[data-markdown-workspace-mode="split"] .scient-markdown-source-pane {
+  border-inline-start: 1px solid var(--border);
+}
+
+.scient-markdown-rich-pane[hidden],
+.scient-markdown-source-pane[hidden] {
+  display: none;
+}
+
+.scient-markdown-source-loading {
+  min-height: 0;
+  flex: 1;
+}
+
+.scient-markdown-document-host {
+  min-height: 100%;
+}
+
+.scient-markdown-document {
+  box-sizing: border-box;
+  width: min(100%, 56rem);
+  min-height: 100%;
+  margin-inline: auto;
+  padding: 1.25rem 1.5rem 5rem;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.72;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.scient-markdown-document > :first-child {
+  margin-block-start: 0;
+}
+
+.scient-markdown-document > :last-child {
+  margin-block-end: 0;
+}
+
+.scient-markdown-document h1,
+.scient-markdown-document h2,
+.scient-markdown-document h3,
+.scient-markdown-document h4,
+.scient-markdown-document h5,
+.scient-markdown-document h6 {
+  margin-block: 1.5em 0.55em;
+  font-weight: 650;
+  line-height: 1.24;
+  text-wrap: balance;
+}
+
+.scient-markdown-document h1 {
+  font-size: 1.75rem;
+  letter-spacing: -0.025em;
+}
+
+.scient-markdown-document h2 {
+  font-size: 1.4rem;
+  letter-spacing: -0.018em;
+}
+
+.scient-markdown-document h3 {
+  font-size: 1.15rem;
+}
+
+.scient-markdown-document p,
+.scient-markdown-document ul,
+.scient-markdown-document ol,
+.scient-markdown-document blockquote,
+.scient-markdown-document pre,
+.scient-markdown-document table {
+  margin-block: 0 1em;
+}
+
+.scient-markdown-document ul,
+.scient-markdown-document ol {
+  padding-inline-start: 1.6em;
+}
+
+.scient-markdown-document li > ul,
+.scient-markdown-document li > ol {
+  margin-block: 0.2em;
+}
+
+.scient-markdown-document blockquote {
+  padding-inline-start: 1em;
+  border-inline-start: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.scient-markdown-document code {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0.08em 0.28em;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.scient-markdown-document pre {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+  padding: 0.85rem 1rem;
+}
+
+.scient-markdown-document pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.scient-markdown-document table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.scient-markdown-document th,
+.scient-markdown-document td {
+  min-width: 5rem;
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  text-align: start;
+  vertical-align: top;
+}
+
+.scient-markdown-document th {
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  font-weight: 600;
+}
+
+.scient-markdown-document [data-alignment="center"] {
+  text-align: center;
+}
+
+.scient-markdown-document [data-alignment="right"] {
+  text-align: end;
+}
+
+.scient-markdown-document [data-scient-markdown-raw] {
+  border-style: dashed;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+}
+
+.scient-markdown-document.is-write,
+.scient-markdown-document.is-split {
+  caret-color: var(--foreground);
+}
+
+.scient-markdown-document.is-read {
+  cursor: text;
+}
+
+.scient-markdown-document .ProseMirror-selectednode {
+  outline: 2px solid color-mix(in oklab, var(--primary) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.scient-markdown-document ::selection {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+}
+
+.scient-markdown-source-document {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.scient-markdown-source-document .cm-editor {
+  height: 100%;
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.scient-markdown-source-document .cm-scroller {
+  padding-block: 0.75rem 3rem;
+  font-family: inherit;
+  line-height: 1.65;
+}
+
+.scient-markdown-source-document .cm-content {
+  width: min(100%, 56rem);
+  margin-inline: auto;
+  padding-inline: 1rem 2rem;
+  caret-color: var(--foreground);
+}
+
+.scient-markdown-source-document .cm-gutters {
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.scient-markdown-source-document .cm-activeLine,
+.scient-markdown-source-document .cm-activeLineGutter {
+  background: color-mix(in oklab, var(--muted) 45%, transparent);
+}
+
+.scient-markdown-source-document .cm-selectionBackground,
+.scient-markdown-source-document .cm-content ::selection {
+  background: color-mix(in oklab, var(--primary) 22%, transparent) !important;
+}
+
+.scient-markdown-source-document .cm-focused {
+  outline: none;
+}

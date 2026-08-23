@@ -1,5 +1,27 @@
 # Third-Party Notices
 
+## ProseMirror and markdown-it
+
+Scient's rich Markdown document surface uses unmodified, locally bundled
+[`ProseMirror`](https://prosemirror.net/) packages and
+[`markdown-it`](https://github.com/markdown-it/markdown-it). The editor,
+parser, and source-preservation policy remain Scient-owned and require no
+hosted service. ProseMirror is Copyright (C) 2015-2026 by Marijn Haverbeke and
+others; markdown-it is Copyright (C) 2014 Vitaly Puzrin and Alex Kocharin.
+Both projects are licensed under the MIT License.
+
+- <https://github.com/ProseMirror/prosemirror-view/blob/master/LICENSE>
+- <https://github.com/markdown-it/markdown-it/blob/master/LICENSE>
+
+## CodeMirror
+
+Scient's Markdown source mode and source islands use unmodified, locally
+bundled [CodeMirror 6](https://codemirror.net/) packages. CodeMirror is
+Copyright (C) 2018-2026 by Marijn Haverbeke and others and is licensed under
+the MIT License.
+
+- <https://github.com/codemirror/view/blob/main/LICENSE>
+
 ## Vega, Vega-Lite, Vega-Embed, and Vega Tooltip
 
 Scient renders interactive charts with unmodified, locally bundled
