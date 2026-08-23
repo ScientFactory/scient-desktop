@@ -5,12 +5,14 @@ class ScientTaskListItemNodeView implements NodeView {
   readonly dom = document.createElement("li");
   readonly contentDOM = document.createElement("div");
   private checkbox: HTMLInputElement | null = null;
+  private unregisterCheckbox: (() => void) | null = null;
   private node: ProseMirrorNode;
 
   constructor(
     node: ProseMirrorNode,
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
+    private readonly registerCheckbox: ((checkbox: HTMLInputElement) => () => void) | undefined,
   ) {
     this.node = node;
     this.contentDOM.className = "scient-markdown-task-content";
@@ -49,6 +51,8 @@ class ScientTaskListItemNodeView implements NodeView {
   };
 
   private removeCheckbox(): void {
+    this.unregisterCheckbox?.();
+    this.unregisterCheckbox = null;
     this.checkbox?.removeEventListener("change", this.handleChange);
     this.checkbox?.remove();
     this.checkbox = null;
@@ -68,6 +72,7 @@ class ScientTaskListItemNodeView implements NodeView {
       this.checkbox.className = "scient-markdown-task-checkbox";
       this.checkbox.setAttribute("aria-label", "Toggle task");
       this.checkbox.addEventListener("change", this.handleChange);
+      this.unregisterCheckbox = this.registerCheckbox?.(this.checkbox) ?? null;
       this.dom.prepend(this.checkbox);
     }
     this.checkbox.checked = checked;
@@ -79,6 +84,7 @@ export function createScientTaskListItemNodeView(
   node: ProseMirrorNode,
   view: EditorView,
   getPos: () => number | undefined,
+  registerCheckbox?: (checkbox: HTMLInputElement) => () => void,
 ): NodeView {
-  return new ScientTaskListItemNodeView(node, view, getPos);
+  return new ScientTaskListItemNodeView(node, view, getPos, registerCheckbox);
 }

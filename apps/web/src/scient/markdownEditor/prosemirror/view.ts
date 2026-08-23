@@ -108,6 +108,7 @@ export class ScientMarkdownEditorView {
   private editorView: EditorView | null = null;
   private mode: MarkdownDocumentMode;
   private readonly listeners = new Set<() => void>();
+  private readonly taskCheckboxes = new Set<HTMLInputElement>();
   private slashActiveIndex = 0;
   private findOpen = false;
   private findFocusRequest = 0;
@@ -425,6 +426,11 @@ export class ScientMarkdownEditorView {
         ...(this.options.resolveImageSource
           ? { resolveImageSource: this.options.resolveImageSource }
           : {}),
+        registerTaskCheckbox: (checkbox) => {
+          this.taskCheckboxes.add(checkbox);
+          checkbox.disabled = !modeIsEditable(this.mode);
+          return () => this.taskCheckboxes.delete(checkbox);
+        },
       }),
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
       handlePaste: (_view, event) => this.handleImageTransfer(event.clipboardData),
@@ -448,11 +454,9 @@ export class ScientMarkdownEditorView {
 
   private syncNodeViewEditability(): void {
     const editable = modeIsEditable(this.mode);
-    this.editorView?.dom
-      .querySelectorAll<HTMLInputElement>(".scient-markdown-task-checkbox")
-      .forEach((checkbox) => {
-        checkbox.disabled = !editable;
-      });
+    this.taskCheckboxes.forEach((checkbox) => {
+      checkbox.disabled = !editable;
+    });
   }
 
   private createSnapshot(): ScientMarkdownEditorSnapshot {

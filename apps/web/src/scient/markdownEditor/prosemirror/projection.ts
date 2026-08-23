@@ -216,8 +216,14 @@ export function serializeScientMarkdownProjection(
     const baseline = baselineId === null ? undefined : baselineById.get(baselineId);
     if (directOriginal && sourceId !== null) consumedIds.add(sourceId);
 
+    const sourceUnchanged =
+      directOriginal && baseline
+        ? baseline.eq(node)
+        : original && baseline
+          ? hasSameProjectedContent(baseline, node)
+          : false;
     output +=
-      original && baseline && hasSameProjectedContent(baseline, node)
+      sourceUnchanged && original
         ? original.source
         : ((original && baseline ? minimallyPatchedTextBlock(original, baseline, node) : null) ??
           serializeNode(node));
