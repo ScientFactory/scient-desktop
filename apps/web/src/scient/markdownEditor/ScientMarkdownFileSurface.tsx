@@ -3,7 +3,11 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { useCallback } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
-import { confirmProjectFileQueryData } from "~/components/files/projectFilesQueryState";
+import {
+  confirmProjectFileQueryData,
+  refreshProjectEntriesQuery,
+} from "~/components/files/projectFilesQueryState";
+import { toastManager } from "~/components/ui/toast";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -12,6 +16,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
+import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { resolveMarkdownSiblingPath, resolveWikiLinkPath } from "./workspacePaths";
 
@@ -98,6 +103,21 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       props.threadRef.threadId,
     ],
   );
+  const uploadImage = useCallback(
+    async (file: File) => {
+      const result = await uploadMarkdownImage(props.environmentId, {
+        cwd: props.cwd,
+        documentRelativePath: props.relativePath,
+        file,
+      });
+      refreshProjectEntriesQuery(props.environmentId, props.cwd);
+      return {
+        src: result.markdownSource,
+        alt: file.name.replace(/\.[^.]+$/u, ""),
+      };
+    },
+    [props.cwd, props.environmentId, props.relativePath],
+  );
   return (
     <ScientMarkdownWorkspaceSurface
       source={props.contents}
@@ -123,6 +143,14 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         if (path) props.onOpenFile(path);
       }}
       resolveImageSource={resolveImageSource}
+      uploadImage={uploadImage}
+      onImageUploadFailure={(error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add image",
+          description: error instanceof Error ? error.message : "The image upload failed.",
+        });
+      }}
       {...(props.saveResolution === undefined ? {} : { saveResolution: props.saveResolution })}
       {...(props.onSaveResolutionApplied
         ? { onSaveResolutionApplied: props.onSaveResolutionApplied }

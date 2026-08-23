@@ -493,6 +493,19 @@ sup.scient-markdown-reference {
   font-weight: 500;
 }
 
+.scient-markdown-image-upload {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  margin-inline: 0.25rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.45rem;
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+  padding-inline: 0.6rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
 .scient-markdown-wiki-link.is-selected {
   outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
   outline-offset: 2px;

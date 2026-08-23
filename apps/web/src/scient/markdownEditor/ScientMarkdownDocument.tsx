@@ -2,7 +2,7 @@ import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/sc
 import { useEffect, useRef, useState } from "react";
 
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
-import { ScientMarkdownEditorView } from "./prosemirror/view";
+import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
 import "./scient-markdown-editor.css";
 
 export interface ScientMarkdownDocumentProps {
@@ -17,6 +17,9 @@ export interface ScientMarkdownDocumentProps {
   }) => void;
   readonly onOpenWikiLink?: (target: string) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
+  readonly onImageUploadFailure?: (error: unknown) => void;
+  readonly selectImage?: () => void;
   /** Supplied by the owning workspace surface so rich and source share one session. */
   readonly controller?: ScientMarkdownEditorView;
 }
@@ -41,6 +44,9 @@ export function ScientMarkdownDocument(props: ScientMarkdownDocumentProps) {
         ariaLabel: props.ariaLabel,
         ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
         ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
+        ...(props.uploadImage ? { uploadImage: props.uploadImage } : {}),
+        ...(props.onImageUploadFailure ? { onImageUploadFailure: props.onImageUploadFailure } : {}),
+        ...(props.selectImage ? { selectImage: props.selectImage } : {}),
         onUserSourceChange: (source, intent) => onUserSourceChangeRef.current(source, intent),
       }),
   );

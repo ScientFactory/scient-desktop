@@ -39,6 +39,7 @@ export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
 export * from "./browserPdfExport.ts";
 export * from "./htmlPdfBuild.ts";
+export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END

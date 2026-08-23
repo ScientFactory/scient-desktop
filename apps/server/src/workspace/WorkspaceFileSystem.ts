@@ -155,6 +155,12 @@ export interface WorkspaceWriteTargetInspection {
   readonly traversesSymlink: boolean;
 }
 
+export interface WorkspaceCreateBinaryFileInput {
+  readonly cwd: string;
+  readonly relativePath: string;
+  readonly bytes: Uint8Array;
+}
+
 /** Service tag for workspace file operations. */
 export class WorkspaceFileSystem extends Context.Service<
   WorkspaceFileSystem,
@@ -190,6 +196,13 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectRenameFileInput,
     ) => Effect.Effect<
       ProjectRenameFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /** Atomically create a binary file and fail if the destination exists. */
+    readonly createBinaryFile: (
+      input: WorkspaceCreateBinaryFileInput,
+    ) => Effect.Effect<
+      ProjectWriteFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
     /** Observe native filesystem hints for one currently open file. */
@@ -559,12 +572,12 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const writeFileStringExclusively = Effect.fn("WorkspaceFileSystem.writeFileStringExclusively")(
+  const writeFileBytesExclusively = Effect.fn("WorkspaceFileSystem.writeFileBytesExclusively")(
     function* (input: {
       readonly cwd: string;
       readonly relativePath: string;
       readonly filePath: string;
-      readonly contents: string;
+      readonly bytes: Uint8Array;
     }) {
       return yield* Effect.scoped(
         Effect.gen(function* () {
@@ -588,7 +601,7 @@ export const make = Effect.gen(function* () {
               ),
             );
           const tempPath = path.join(tempDirectory, "contents.tmp");
-          yield* fileSystem.writeFileString(tempPath, input.contents).pipe(
+          yield* fileSystem.writeFile(tempPath, input.bytes).pipe(
             Effect.mapError(
               (cause) =>
                 new WorkspaceFileSystemOperationError({
@@ -601,6 +614,25 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
+          yield* Effect.tryPromise({
+            try: async () => {
+              const handle = await NodeFSP.open(tempPath, "r");
+              try {
+                await handle.sync();
+              } finally {
+                await handle.close();
+              }
+            },
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: input.filePath,
+                operationPath: tempPath,
+                operation: "write-file",
+                cause,
+              }),
+          });
           yield* Effect.tryPromise({
             try: () => NodeFSP.link(tempPath, input.filePath),
             catch: (cause) =>
@@ -618,6 +650,37 @@ export const make = Effect.gen(function* () {
                     operation: "link",
                     cause,
                   }),
+          });
+          yield* Effect.tryPromise({
+            try: async () => {
+              try {
+                const directoryHandle = await NodeFSP.open(targetDirectory, "r");
+                try {
+                  await directoryHandle.sync();
+                } finally {
+                  await directoryHandle.close();
+                }
+              } catch (cause) {
+                if (
+                  isNodeError(cause, "EINVAL") ||
+                  isNodeError(cause, "ENOTSUP") ||
+                  isNodeError(cause, "EISDIR") ||
+                  isNodeError(cause, "EPERM")
+                ) {
+                  return;
+                }
+                throw cause;
+              }
+            },
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: input.filePath,
+                operationPath: targetDirectory,
+                operation: "link",
+                cause,
+              }),
           });
         }),
       );
@@ -664,11 +727,11 @@ export const make = Effect.gen(function* () {
           ),
         );
         if (input.createOnly) {
-          yield* writeFileStringExclusively({
+          yield* writeFileBytesExclusively({
             cwd: input.cwd,
             relativePath: input.relativePath,
             filePath: writeTargetPath,
-            contents: input.contents,
+            bytes: new TextEncoder().encode(input.contents),
           });
           yield* workspaceEntries.refresh(input.cwd);
           return {
@@ -718,6 +781,48 @@ export const make = Effect.gen(function* () {
         return {
           relativePath: target.relativePath,
           revision: revisionForContents(input.contents),
+        };
+      }),
+    );
+  });
+
+  const createBinaryFile: WorkspaceFileSystem["Service"]["createBinaryFile"] = Effect.fn(
+    "WorkspaceFileSystem.createBinaryFile",
+  )(function* (input) {
+    const { exists, target, realTargetPath } = yield* resolveRealWriteTarget(input);
+    const writeSemaphore = yield* writeSemaphoreFor(realTargetPath);
+    return yield* writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if (exists) {
+          return yield* new WorkspaceFileExistsError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: realTargetPath,
+          });
+        }
+        yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: realTargetPath,
+                operationPath: path.dirname(realTargetPath),
+                operation: "make-directory",
+                cause,
+              }),
+          ),
+        );
+        yield* writeFileBytesExclusively({
+          cwd: input.cwd,
+          relativePath: input.relativePath,
+          filePath: realTargetPath,
+          bytes: input.bytes,
+        });
+        yield* workspaceEntries.refresh(input.cwd);
+        return {
+          relativePath: target.relativePath,
+          revision: revisionForBytes(input.bytes),
         };
       }),
     );
@@ -947,7 +1052,14 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return WorkspaceFileSystem.of({ inspectWriteTarget, readFile, renameFile, watchFile, writeFile });
+  return WorkspaceFileSystem.of({
+    createBinaryFile,
+    inspectWriteTarget,
+    readFile,
+    renameFile,
+    watchFile,
+    writeFile,
+  });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

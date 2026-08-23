@@ -111,6 +111,13 @@ import {
   ScientLatexToolchainRequest,
 } from "./scientLatex.ts";
 import {
+  ScientMarkdownImageConflictError,
+  ScientMarkdownImageInvalidError,
+  ScientMarkdownImageTooLargeError,
+  ScientMarkdownImageUploadRequest,
+  ScientMarkdownImageUploadResult,
+} from "./scientMarkdown.ts";
+import {
   ScientAnalyticsDeletionResult,
   ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
@@ -176,6 +183,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
   "scient_latex_install_failed",
+  "scient_markdown_operation_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
   // SCIENT-FORK:START
@@ -950,6 +958,25 @@ export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLate
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentScientMarkdownHttpApi extends HttpApiGroup.make("scientMarkdown").add(
+  HttpApiEndpoint.post("imageUpload", "/api/scient/markdown/images/upload", {
+    headers: OptionalBearerHeaders,
+    payload: ScientMarkdownImageUploadRequest,
+    success: ScientMarkdownImageUploadResult,
+    error: [
+      EnvironmentRequestInvalidError,
+      EnvironmentAuthInvalidError,
+      EnvironmentScopeRequiredError,
+      EnvironmentOperationForbiddenError,
+      EnvironmentResourceNotFoundError,
+      EnvironmentInternalError,
+      ScientMarkdownImageInvalidError,
+      ScientMarkdownImageTooLargeError,
+      ScientMarkdownImageConflictError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
   .add(
     HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
@@ -1035,6 +1062,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentScientProjectHttpApi)
   .add(EnvironmentScientSourcesHttpApi)
+  .add(EnvironmentScientMarkdownHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START

@@ -135,6 +135,7 @@ const serviceTestLayer = Effect.gen(function* () {
       }),
   };
   const workspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
+    createBinaryFile: () => Effect.die("createBinaryFile is not used by the analysis service test"),
     inspectWriteTarget: (input) =>
       Effect.succeed({
         relativePath: input.relativePath,

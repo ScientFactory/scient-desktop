@@ -1,6 +1,6 @@
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { toggleMark } from "prosemirror-commands";
-import type { Transaction } from "prosemirror-state";
+import { Selection, type Transaction } from "prosemirror-state";
 import { EditorView, type DirectEditorProps } from "prosemirror-view";
 
 import {
@@ -18,6 +18,17 @@ import {
   type ScientMarkdownCommand,
 } from "./commands";
 import { scientMarkdownSchema } from "./schema";
+import {
+  addImageUploadPlaceholder,
+  imageUploadPlaceholderPosition,
+  removeImageUploadPlaceholder,
+} from "./imageUploads";
+
+export interface ScientMarkdownUploadedImage {
+  readonly src: string;
+  readonly alt: string;
+  readonly title?: string | null;
+}
 
 export interface ScientMarkdownEditorViewOptions {
   readonly source: string;
@@ -27,6 +38,9 @@ export interface ScientMarkdownEditorViewOptions {
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent) => void;
   readonly onOpenWikiLink?: (target: string) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
+  readonly onImageUploadFailure?: (error: unknown) => void;
+  readonly selectImage?: () => void;
 }
 
 export interface ScientMarkdownEditorSnapshot {
@@ -70,6 +84,7 @@ export class ScientMarkdownEditorView {
   private mode: MarkdownDocumentMode;
   private readonly listeners = new Set<() => void>();
   private slashActiveIndex = 0;
+  private imageUploadSequence = 0;
   private snapshotVersion = 0;
   private snapshot: ScientMarkdownEditorSnapshot;
 
@@ -151,6 +166,10 @@ export class ScientMarkdownEditorView {
   execute(command: ScientMarkdownCommand): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
+    if (command === "image" && this.options.selectImage) {
+      this.options.selectImage();
+      return true;
+    }
     if (command === "task-list") {
       if (!setSelectedTaskState(view.state, view.dispatch, false)) {
         if (!runScientMarkdownCommand(command, view.state, view.dispatch)) return false;
@@ -188,6 +207,62 @@ export class ScientMarkdownEditorView {
     return true;
   }
 
+  uploadImageFile(file: File, position?: number): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode) || !this.options.uploadImage) return false;
+    this.imageUploadSequence += 1;
+    const id = `image-${this.imageUploadSequence.toString(36)}`;
+    const placeholderPosition = Math.max(
+      0,
+      Math.min(position ?? view.state.selection.from, view.state.doc.content.size),
+    );
+    view.dispatch(
+      addImageUploadPlaceholder(view.state.tr, {
+        id,
+        position: placeholderPosition,
+        fileName: file.name || "image",
+      })
+        .setMeta(scientMarkdownTransactionOriginKey, "system")
+        .setMeta("addToHistory", false),
+    );
+
+    void this.options.uploadImage(file).then(
+      (uploaded) => {
+        const currentView = this.editorView;
+        if (!currentView) return;
+        const currentPosition = imageUploadPlaceholderPosition(currentView.state, id);
+        if (currentPosition === null) return;
+        const image = scientMarkdownSchema.nodes.image?.create({
+          src: uploaded.src,
+          alt: uploaded.alt,
+          title: uploaded.title ?? null,
+        });
+        if (!image) return;
+        let transaction = removeImageUploadPlaceholder(currentView.state.tr, id);
+        const resolvedPosition = transaction.doc.resolve(
+          Math.min(currentPosition, transaction.doc.content.size),
+        );
+        transaction = transaction
+          .setSelection(Selection.near(resolvedPosition))
+          .replaceSelectionWith(image)
+          .scrollIntoView();
+        currentView.dispatch(transaction);
+      },
+      (error: unknown) => {
+        const currentView = this.editorView;
+        if (currentView) {
+          currentView.dispatch(
+            removeImageUploadPlaceholder(currentView.state.tr, id)
+              .setMeta(scientMarkdownTransactionOriginKey, "system")
+              .setMeta("addToHistory", false),
+          );
+        }
+        this.options.onImageUploadFailure?.(error);
+      },
+    );
+    return true;
+  }
+
   destroy(): void {
     this.editorView?.destroy();
     this.editorView = null;
@@ -214,7 +289,23 @@ export class ScientMarkdownEditorView {
           : {}),
       }),
       handleKeyDown: (_view, event) => this.handleSlashKeyDown(event),
+      handlePaste: (_view, event) => this.handleImageTransfer(event.clipboardData),
+      handleDrop: (view, event) => {
+        const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        return this.handleImageTransfer(event.dataTransfer, position);
+      },
     };
+  }
+
+  private handleImageTransfer(data: DataTransfer | null, position?: number): boolean {
+    if (!data || !this.options.uploadImage || !modeIsEditable(this.mode)) return false;
+    const files = [...data.files].filter(
+      (file) =>
+        file.type.startsWith("image/") || /\.(?:avif|gif|jpe?g|png|webp)$/iu.test(file.name),
+    );
+    if (files.length === 0) return false;
+    files.forEach((file) => this.uploadImageFile(file, position));
+    return true;
   }
 
   private syncNodeViewEditability(): void {

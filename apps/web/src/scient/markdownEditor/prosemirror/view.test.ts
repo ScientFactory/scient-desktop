@@ -227,6 +227,44 @@ describe("ScientMarkdownEditorView", () => {
     });
   });
 
+  it("inserts an uploaded image only after the server returns its portable path", async () => {
+    let resolveUpload: (value: { readonly src: string; readonly alt: string }) => void = () =>
+      undefined;
+    const uploadPromise = new Promise<{ readonly src: string; readonly alt: string }>((resolve) => {
+      resolveUpload = resolve;
+    });
+    const onUserSourceChange = vi.fn();
+    const onImageUploadFailure = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Before image.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+      uploadImage: () => uploadPromise,
+      onImageUploadFailure,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(controller.uploadImageFile(new File(["image"], "plot.png", { type: "image/png" }))).toBe(
+      true,
+    );
+    expect(view.dom.querySelector("[data-scient-markdown-image-upload]")).not.toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    resolveUpload({ src: "assets/plot.png", alt: "Plot" });
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("img[src='assets/plot.png']")).not.toBeNull();
+    });
+    expect(view.dom.querySelector("[data-scient-markdown-image-upload]")).toBeNull();
+    expect(controller.session.session.draftSource).toContain("![Plot](assets/plot.png)");
+    expect(onUserSourceChange).toHaveBeenCalledTimes(1);
+    expect(onImageUploadFailure).not.toHaveBeenCalled();
+  });
+
   it("runs formatting and slash commands through user transactions", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

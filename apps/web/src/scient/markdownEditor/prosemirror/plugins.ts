@@ -22,6 +22,7 @@ import { Plugin, PluginKey, type Command } from "prosemirror-state";
 import { columnResizing, tableEditing } from "prosemirror-tables";
 
 import { scientMarkdownSchema } from "./schema";
+import { imageUploadPlugin } from "./imageUploads";
 
 const sourceIdentityPluginKey = new PluginKey("scientMarkdownSourceIdentity");
 
@@ -108,6 +109,7 @@ function sourceIdentityPlugin(): Plugin {
 export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
   return [
     sourceIdentityPlugin(),
+    imageUploadPlugin(),
     inputRules({ rules: [...buildInputRules()] }),
     keymap(buildKeyBindings()),
     keymap(baseKeymap),

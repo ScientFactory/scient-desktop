@@ -7,7 +7,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
-import { ScientMarkdownEditorView } from "./prosemirror/view";
+import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
 import { LazyScientMarkdownSourceDocument } from "./source/ScientMarkdownSourceDocumentLazy";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 
@@ -28,6 +28,8 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   }) => void;
   readonly onOpenWikiLink?: (target: string) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
+  readonly onImageUploadFailure?: (error: unknown) => void;
   readonly saveResolution?: {
     readonly action: "discard" | "retry";
     readonly revision: string;
@@ -45,12 +47,17 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   const onSaveFailureRef = useRef(props.onSaveFailure);
   const onExternalConflictRef = useRef(props.onExternalConflict);
   const onSaveResolutionAppliedRef = useRef(props.onSaveResolutionApplied);
+  const uploadImageRef = useRef(props.uploadImage);
+  const onImageUploadFailureRef = useRef(props.onImageUploadFailure);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   persistRef.current = props.persist;
   onPendingChangeRef.current = props.onPendingChange;
   onSaveConfirmedRef.current = props.onSaveConfirmed;
   onSaveFailureRef.current = props.onSaveFailure;
   onExternalConflictRef.current = props.onExternalConflict;
   onSaveResolutionAppliedRef.current = props.onSaveResolutionApplied;
+  uploadImageRef.current = props.uploadImage;
+  onImageUploadFailureRef.current = props.onImageUploadFailure;
 
   const [draftSource, setDraftSource] = useState(props.source);
   const [sourceActivated, setSourceActivated] = useState(
@@ -79,6 +86,13 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         ariaLabel: props.ariaLabel,
         ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
         ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
+        ...(props.uploadImage
+          ? {
+              uploadImage: (file: File) => uploadImageRef.current!(file),
+              onImageUploadFailure: (error: unknown) => onImageUploadFailureRef.current?.(error),
+              selectImage: () => imageInputRef.current?.click(),
+            }
+          : {}),
         onUserSourceChange: (source, intent) => {
           setDraftSource(source);
           saveQueue.enqueue(intent);
@@ -128,6 +142,22 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   const sourceVisible = props.mode === "source" || props.mode === "split";
   return (
     <div className="scient-markdown-workspace" data-markdown-workspace-mode={props.mode}>
+      {props.uploadImage ? (
+        <input
+          ref={imageInputRef}
+          className="hidden"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+          aria-label="Choose image for Markdown document"
+          multiple
+          onChange={(event) => {
+            [...(event.currentTarget.files ?? [])].forEach((file) =>
+              controller.uploadImageFile(file),
+            );
+            event.currentTarget.value = "";
+          }}
+        />
+      ) : null}
       <div className="scient-markdown-rich-pane" hidden={!richVisible}>
         <ScientMarkdownControls controller={controller} />
         <ScientMarkdownDocument
