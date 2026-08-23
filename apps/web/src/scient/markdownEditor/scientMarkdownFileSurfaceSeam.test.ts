@@ -11,6 +11,10 @@ const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientMarkdownFileSurface.tsx", import.meta.url),
   "utf8",
 );
+const browserSource = NodeFS.readFileSync(
+  new URL("../../components/files/FileBrowserPanel.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("Scient Markdown file-preview seam", () => {
   it("lazily mounts exactly one owned editor and removes the old ChatMarkdown preview path", () => {
@@ -36,5 +40,12 @@ describe("Scient Markdown file-preview seam", () => {
     ]) {
       expect(panelSource).toContain(prop);
     }
+  });
+
+  it("limits workspace lifecycle UI to one owned create and rename mount", () => {
+    expect(browserSource.match(/<ScientMarkdownCreateButton\b/gu)).toHaveLength(1);
+    expect(panelSource.match(/<ScientMarkdownRenameButton\b/gu)).toHaveLength(1);
+    expect(browserSource).not.toContain("createOnly: true");
+    expect(panelSource).not.toContain("projects.renameFile");
   });
 });

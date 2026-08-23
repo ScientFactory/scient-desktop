@@ -411,6 +411,64 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect("creates a file exclusively without replacing an existing path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "notes/untitled.md",
+          contents: "# First\n",
+          createOnly: true,
+        });
+        const collision = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "notes/untitled.md",
+            contents: "# Replacement\n",
+            createOnly: true,
+          })
+          .pipe(Effect.flip);
+
+        expect(collision).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "notes/untitled.md"))).toBe(
+          "# First\n",
+        );
+      }),
+    );
+
+    it.effect("rejects new-file writes through a symlinked parent outside the workspace", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outside = yield* makeTempDir;
+        yield* fileSystem.symlink(outside, path.join(cwd, "linked"));
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "linked/escape.md",
+            contents: "# Escape\n",
+            createOnly: true,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+        expect(
+          yield* fileSystem.stat(path.join(outside, "escape.md")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
+      }),
+    );
+
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -643,6 +701,94 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(yield* fileSystem.readLink(linkPath)).toBe(targetPath);
         expect(yield* fileSystem.readFileString(targetPath)).toBe("answer = 2;\n");
+      }),
+    );
+  });
+
+  describe("renameFile", () => {
+    it.effect("renames only the expected revision and never replaces a destination", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "notes/draft.md", "# Draft\n");
+        const opened = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "notes/draft.md",
+        });
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "notes/draft.md",
+          destinationRelativePath: "papers/final.md",
+          expectedRevision: opened.revision,
+        });
+        expect(renamed).toEqual({
+          relativePath: "notes/draft.md",
+          destinationRelativePath: "papers/final.md",
+          revision: opened.revision,
+        });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "papers/final.md"))).toBe(
+          "# Draft\n",
+        );
+        expect(
+          yield* fileSystem.stat(path.join(cwd, "notes/draft.md")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
+
+        yield* writeTextFile(cwd, "notes/second.md", "# Second\n");
+        const second = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "notes/second.md",
+        });
+        const collision = yield* workspaceFileSystem
+          .renameFile({
+            cwd,
+            relativePath: "notes/second.md",
+            destinationRelativePath: "papers/final.md",
+            expectedRevision: second.revision,
+          })
+          .pipe(Effect.flip);
+        expect(collision).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "notes/second.md"))).toBe(
+          "# Second\n",
+        );
+        expect(yield* fileSystem.readFileString(path.join(cwd, "papers/final.md"))).toBe(
+          "# Draft\n",
+        );
+      }),
+    );
+
+    it.effect("refuses a rename after an external content change", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "draft.md", "# One\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "draft.md" });
+        yield* fileSystem.writeFileString(path.join(cwd, "draft.md"), "# Two\n");
+
+        const error = yield* workspaceFileSystem
+          .renameFile({
+            cwd,
+            relativePath: "draft.md",
+            destinationRelativePath: "final.md",
+            expectedRevision: opened.revision,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "draft.md"))).toBe("# Two\n");
+        expect(
+          yield* fileSystem.stat(path.join(cwd, "final.md")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
       }),
     );
   });

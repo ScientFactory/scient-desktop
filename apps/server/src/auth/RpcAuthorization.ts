@@ -91,6 +91,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsListDirectory]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsReadFile]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsRenameFile]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsSubscribeFileChanges]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSearchContents]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthOrchestrationReadScope,

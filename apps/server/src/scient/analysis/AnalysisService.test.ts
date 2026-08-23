@@ -150,6 +150,7 @@ const serviceTestLayer = Effect.gen(function* () {
         revision: sourceRevision,
       }),
     writeFile: () => Effect.die("writeFile is not used by the analysis service test"),
+    renameFile: () => Effect.die("renameFile is not used by the analysis service test"),
     watchFile: () => Stream.empty,
   });
   const workspacePaths = WorkspacePaths.WorkspacePaths.of({

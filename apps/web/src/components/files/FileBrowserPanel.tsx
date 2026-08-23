@@ -34,6 +34,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
+import { ScientMarkdownCreateButton } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
 import {
   LazyWorkspaceTreeController,
   type LazyWorkspaceTreeSnapshot,
@@ -44,6 +45,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import { setProjectFileQueryData } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -593,6 +595,16 @@ export default function FileBrowserPanel({
         <RefreshFilesButton
           isPending={treeSnapshot.isPending || isSearchPending}
           onRefresh={handleRefresh}
+        />
+        <ScientMarkdownCreateButton
+          environmentId={environmentId}
+          cwd={cwd}
+          selectedPath={selectedPath}
+          onCreated={(relativePath, contents, revision) => {
+            setProjectFileQueryData(environmentId, cwd, relativePath, contents, revision);
+            handleRefresh();
+            onOpenFile(relativePath);
+          }}
         />
         <FileSearchField
           name="project-files-search"

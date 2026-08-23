@@ -68,6 +68,7 @@ import {
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
+import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -101,7 +102,12 @@ import {
   shouldLoadFileAsText,
 } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
-import { confirmProjectFileQueryData, setProjectFileQueryData } from "./projectFilesQueryState";
+import {
+  clearProjectFileQueryData,
+  confirmProjectFileQueryData,
+  refreshProjectEntriesQuery,
+  setProjectFileQueryData,
+} from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -1180,6 +1186,29 @@ export default function FilePreviewPanel({
               openInCwd={absolutePath}
               compact
               enableShortcut={false}
+            />
+          ) : null}
+          {isMarkdown ? (
+            <ScientMarkdownRenameButton
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={relativePath}
+              revision={file.data?.revision ?? "unavailable"}
+              disabled={sourcePending || file.data === null || (file.data?.truncated ?? false)}
+              onRenamed={(destinationRelativePath, revision) => {
+                if (file.data) {
+                  setProjectFileQueryData(
+                    environmentId,
+                    cwd,
+                    destinationRelativePath,
+                    file.data.contents,
+                    revision,
+                  );
+                }
+                clearProjectFileQueryData(environmentId, cwd, relativePath);
+                refreshProjectEntriesQuery(environmentId, cwd);
+                onOpenFile(destinationRelativePath);
+              }}
             />
           ) : null}
           {isMarkdown && !file.data?.readOnly ? (
