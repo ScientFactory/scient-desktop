@@ -5,10 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as Tar from "tar";
+import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   materializeManagedRuntimeArtifact,
+  resolveManagedRuntimeArtifactPath,
   verifyManagedRuntimeChecksum,
   verifySha256,
 } from "./runtimeFiles.ts";
@@ -112,5 +114,190 @@ describe("managed runtime files", () => {
 
     expect(NodePath.basename(executable)).toBe("codex.exe");
     expect(await NodeFSP.readFile(executable, "utf8")).toBe("windows-binary");
+  });
+
+  it("extracts a bounded ZIP payload without shelling out to a host tool", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "cursor.zip");
+    const zip = new JSZip();
+    zip.file("dist-package/cursor-agent.cmd", "@echo off\r\n");
+    zip.file("dist-package/index.js", "process.stdout.write('cursor');\n");
+    await NodeFSP.writeFile(
+      archive,
+      await zip.generateAsync({ type: "nodebuffer", platform: "DOS" }),
+    );
+
+    const executable = await materializeManagedRuntimeArtifact({
+      archivePath: archive,
+      archiveFormat: "zip",
+      destination: NodePath.join(root, "destination"),
+      executablePath: "dist-package/cursor-agent.cmd",
+      platform: "win32",
+      extractionLimits: { maxEntries: 8, maxExpandedBytes: 4_096 },
+      signal: new AbortController().signal,
+    });
+
+    expect(await NodeFSP.readFile(executable, "utf8")).toContain("@echo off");
+    expect(
+      await NodeFSP.readFile(NodePath.join(root, "destination/dist-package/index.js"), "utf8"),
+    ).toContain("cursor");
+  });
+
+  it("rejects ZIP payloads that exceed their reviewed entry budget", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "oversized.zip");
+    const zip = new JSZip();
+    zip.file("cursor-agent.cmd", "@echo off\r\n");
+    zip.file("extra.js", "extra");
+    await NodeFSP.writeFile(archive, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent.cmd",
+        platform: "win32",
+        extractionLimits: { maxEntries: 1, maxExpandedBytes: 4_096 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("exceeds extraction limits");
+  });
+
+  it("rejects ZIP payloads that exceed their reviewed expanded-size budget", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "expanded.zip");
+    const zip = new JSZip();
+    zip.file("cursor-agent.cmd", "x".repeat(4_097));
+    await NodeFSP.writeFile(archive, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent.cmd",
+        platform: "win32",
+        extractionLimits: { maxEntries: 2, maxExpandedBytes: 4_096 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("exceeds extraction limits");
+  });
+
+  it("rejects ZIP symbolic links instead of materializing them", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "symlink.zip");
+    const zip = new JSZip();
+    zip.file("cursor-agent", "target", { unixPermissions: 0o120777 });
+    await NodeFSP.writeFile(
+      archive,
+      await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" }),
+    );
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent",
+        platform: "linux",
+        extractionLimits: { maxEntries: 2, maxExpandedBytes: 4_096 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Unsupported archive entry");
+  });
+
+  it("rejects case-insensitive duplicate ZIP paths on Windows", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "duplicate.zip");
+    const zip = new JSZip();
+    zip.file("Cursor-Agent.cmd", "first");
+    zip.file("cursor-agent.cmd", "second");
+    await NodeFSP.writeFile(archive, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent.cmd",
+        platform: "win32",
+        extractionLimits: { maxEntries: 3, maxExpandedBytes: 4_096 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("duplicate path");
+  });
+
+  it("honors cancellation before ZIP extraction begins", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "cancelled.zip");
+    const zip = new JSZip();
+    zip.file("cursor-agent.cmd", "@echo off\r\n");
+    await NodeFSP.writeFile(archive, await zip.generateAsync({ type: "nodebuffer" }));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent.cmd",
+        platform: "win32",
+        extractionLimits: { maxEntries: 2, maxExpandedBytes: 4_096 },
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("rejects invalid, escaping, and Windows alternate-stream payload paths", async () => {
+    const root = await temporaryRoot();
+
+    expect(() => resolveManagedRuntimeArtifactPath(root, "../cursor-agent")).toThrow(
+      "Unsafe archive path",
+    );
+    expect(() => resolveManagedRuntimeArtifactPath(root, "package/../cursor-agent")).toThrow(
+      "Unsafe archive path",
+    );
+    expect(() => resolveManagedRuntimeArtifactPath(root, "/cursor-agent")).toThrow(
+      "Unsafe archive path",
+    );
+
+    const archive = NodePath.join(root, "alternate-stream.zip");
+    const zip = new JSZip();
+    zip.file("cursor-agent.cmd", "@echo off\r\n");
+    zip.file("cursor-agent.cmd:payload", "hidden");
+    await NodeFSP.writeFile(archive, await zip.generateAsync({ type: "nodebuffer" }));
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent.cmd",
+        platform: "win32",
+        extractionLimits: { maxEntries: 4, maxExpandedBytes: 4_096 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Unsafe Windows archive path");
+  });
+
+  it("rejects invalid catalog extraction limits before extraction", async () => {
+    const root = await temporaryRoot();
+    const archive = NodePath.join(root, "cursor.zip");
+    const zip = new JSZip();
+    zip.file("cursor-agent.cmd", "@echo off\r\n");
+    await NodeFSP.writeFile(archive, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "zip",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "cursor-agent.cmd",
+        platform: "win32",
+        extractionLimits: { maxEntries: 0, maxExpandedBytes: 4_096 },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("invalid extraction limits");
   });
 });

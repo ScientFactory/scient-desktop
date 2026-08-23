@@ -7,6 +7,7 @@ import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import {
   downloadManagedRuntime,
   materializeManagedRuntimeArtifact,
+  resolveManagedRuntimeArtifactPath,
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
@@ -90,9 +91,11 @@ async function smokeExecutable(
   args: ReadonlyArray<string>,
   displayName: string,
   environment: Readonly<Record<string, string>> = {},
+  options: { readonly cwd?: string | undefined } = {},
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.spawn(executable, [...args], {
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       env: { ...managedRuntimeSmokeEnvironment(process.env), ...environment },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -152,6 +155,7 @@ export interface ManagedProviderRuntimeDependencies {
     args: ReadonlyArray<string>,
     displayName: string,
     environment?: Readonly<Record<string, string>>,
+    options?: { readonly cwd?: string | undefined },
   ) => Promise<void>;
   readonly commitState: (
     statePath: string,
@@ -325,14 +329,36 @@ export class ManagedProviderRuntime {
         destination: payloadPath,
         executablePath: artifact.executablePath,
         platform: artifact.target.platform,
+        extractionLimits: artifact.extractionLimits,
         signal,
       });
       onProgress?.({ stage: "testing" });
+      const smokeExecutablePath = artifact.smokeExecutablePath
+        ? resolveManagedRuntimeArtifactPath(payloadPath, artifact.smokeExecutablePath)
+        : stagedExecutable;
+      const smokeExecutableStat = await NodeFSP.lstat(smokeExecutablePath).catch(() => undefined);
+      if (!smokeExecutableStat?.isFile() || smokeExecutableStat.isSymbolicLink()) {
+        throw new ManagedProviderRuntimeError(
+          `Managed ${this.#displayName} payload did not contain the reviewed smoke-test executable.`,
+        );
+      }
+      const smokeWorkingDirectory = artifact.smokeWorkingDirectory
+        ? resolveManagedRuntimeArtifactPath(payloadPath, artifact.smokeWorkingDirectory)
+        : undefined;
+      if (smokeWorkingDirectory) {
+        const smokeCwdStat = await NodeFSP.lstat(smokeWorkingDirectory).catch(() => undefined);
+        if (!smokeCwdStat?.isDirectory() || smokeCwdStat.isSymbolicLink()) {
+          throw new ManagedProviderRuntimeError(
+            `Managed ${this.#displayName} payload did not contain the reviewed smoke-test directory.`,
+          );
+        }
+      }
       await this.#dependencies.smoke(
-        stagedExecutable,
+        smokeExecutablePath,
         artifact.smokeArgs,
         this.#displayName,
         artifact.smokeEnvironment,
+        smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : undefined,
       );
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       onProgress?.({ stage: "activating" });
