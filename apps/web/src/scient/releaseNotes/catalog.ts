@@ -13,21 +13,15 @@ export const SCIENT_RELEASE_NOTES = [
     publishedAt: "2026-08-23",
     kicker: "More ways to connect. Less friction once you're working.",
     headline:
-      "Bring Antigravity or Grok into Scient, preserve browser documents as PDFs, and move through projects more easily",
+      "Connect Antigravity, Cursor, or Grok; preserve browser documents as PDFs; and move through projects more easily",
     summary:
       "Scient 0.6.6 expands provider choice while tightening the desktop experience around it: onboarding stays short and optional, connection problems are easier to recover from, exported documents retain useful structure, and everyday navigation feels more direct.",
     highlights: [
       {
-        id: "antigravity-provider",
-        title: "Connect Google Antigravity",
+        id: "assisted-provider-connections",
+        title: "Connect Antigravity, Cursor, and Grok",
         description:
-          "On supported desktops, install Scient's reviewed app-private Antigravity runtime or use an existing CLI, sign in with your Google account, discover the models available to it, and keep native multi-turn conversations streaming inside Scient.",
-      },
-      {
-        id: "grok-assisted-setup",
-        title: "Set up Grok inside Scient",
-        description:
-          "Enable the Early Access Grok provider, install or repair Scient's reviewed app-private Grok Build runtime, and complete sign-in in your browser or by device code from Settings or the composer.",
+          "Install and manage Scient-reviewed app-private runtimes for Antigravity and Cursor—or keep using existing CLIs—and sign in through their supported browser flows. Early Access Grok also gains assisted installation, repair, and browser or device-code sign-in from Settings or the composer.",
       },
       {
         id: "browser-pdf-export",
