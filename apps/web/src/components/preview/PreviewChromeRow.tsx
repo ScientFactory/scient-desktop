@@ -3,7 +3,6 @@ import {
   ArrowRight,
   Camera,
   ExternalLink,
-  FileDown,
   MousePointerClick,
   PictureInPicture2,
   RotateCw,
@@ -40,9 +39,6 @@ interface Props {
   onCapture?: ((record: boolean) => void) | undefined;
   captureDisabled?: boolean | undefined;
   recording?: boolean | undefined;
-  onExportPdf?: (() => void) | undefined;
-  exportPdfDisabled?: boolean | undefined;
-  exportingPdf?: boolean | undefined;
   onPictureInPicture?: (() => void) | undefined;
   pictureInPicture?: boolean | undefined;
   pictureInPictureDisabled?: boolean | undefined;
@@ -81,9 +77,6 @@ export function PreviewChromeRow({
   onCapture,
   captureDisabled,
   recording,
-  onExportPdf,
-  exportPdfDisabled,
-  exportingPdf,
   onPictureInPicture,
   pictureInPicture,
   pictureInPictureDisabled,
@@ -285,25 +278,6 @@ export function PreviewChromeRow({
             <TooltipPopup>
               {recording ? "Stop recording" : "Screenshot · Shift-click to record"}
             </TooltipPopup>
-          </Tooltip>
-        ) : null}
-        {onExportPdf ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={exportingPdf ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  onClick={onExportPdf}
-                  aria-label="Export PDF"
-                  type="button"
-                  disabled={exportPdfDisabled || exportingPdf}
-                />
-              }
-            >
-              <FileDown className={cn(exportingPdf && "animate-pulse")} />
-            </TooltipTrigger>
-            <TooltipPopup>{exportingPdf ? "Exporting PDF…" : "Export PDF"}</TooltipPopup>
           </Tooltip>
         ) : null}
         {onPictureInPicture ? (

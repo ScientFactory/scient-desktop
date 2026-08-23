@@ -1,5 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2";
 
+import {
+  trackedHtmlLogicalDocumentKey,
+  type TrackedHtmlSource,
+} from "../documentExport/htmlPdfSource";
+
 function sha256Hex(value: string): string {
   return [...sha256(new TextEncoder().encode(value))]
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -17,7 +22,11 @@ function redactSignedAssetCapability(url: URL): boolean {
   return true;
 }
 
-export function browserExportLogicalDocumentKey(url: string): string {
+export function browserExportLogicalDocumentKey(
+  url: string,
+  trackedSource?: TrackedHtmlSource | null,
+): string {
+  if (trackedSource) return trackedHtmlLogicalDocumentKey(trackedSource);
   try {
     const parsed = new URL(url);
     if (redactSignedAssetCapability(parsed)) parsed.search = "";

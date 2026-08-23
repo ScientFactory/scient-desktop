@@ -8,7 +8,6 @@ describe("presentPdfSaveCopyResult", () => {
       _tag: "notice",
       type: "success",
       title: "PDF saved",
-      description: "/tmp/report.pdf",
       refreshSource: false,
     });
     expect(presentPdfSaveCopyResult({ _tag: "download-started" })).toEqual({

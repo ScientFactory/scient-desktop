@@ -17,7 +17,6 @@ export function presentPdfSaveCopyResult(result: AssetCopyResult): PdfSaveCopyPr
         _tag: "notice",
         type: "success",
         title: "PDF saved",
-        description: result.path,
         refreshSource: false,
       };
     case "download-started":

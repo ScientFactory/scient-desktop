@@ -302,6 +302,18 @@ the contract and client export points. Future T3 merges should preserve those
 narrow mounts rather than moving build coordination or toolchain discovery into
 inherited T3 components. See [Scient LaTeX build](docs/internals/scient-latex.md).
 
+Browser HTML-to-PDF export keeps rendering under
+`apps/desktop/src/scient/documentExport`, publication under
+`apps/server/src/scient/documentArtifacts`, and the browser action plus reader
+adapters under `apps/web/src/scient`. Inherited-host seams are limited to the
+verified preview-tab lease in `PreviewManager`, one browser-chrome action slot,
+typed IPC/preload and RPC/authorization registration, source binding after an
+inherited file-open succeeds, one global lifecycle-host mount, one generated-PDF
+right-panel mount, and contract export points. Printing, readiness, exact-file
+observation, update coordination, validation, publication, Save Copy, and
+receipt behavior must remain outside inherited T3 components. See
+[Scient browser HTML to PDF export](docs/internals/scient-browser-pdf-export.md).
+
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient
 gates even when inherited T3 code contains the capability.

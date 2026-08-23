@@ -1,4 +1,5 @@
 import { describe, it } from "@effect/vitest";
+import { BROWSER_PDF_EXPORT_MAX_BYTES } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { expect, vi } from "vite-plus/test";
@@ -121,6 +122,70 @@ describe("BrowserPdfRenderer", () => {
       });
       const exit = yield* Effect.exit(render({ isDestroyed: () => true } as never));
       expect(exit._tag).toBe("Failure");
+    }),
+  );
+
+  it.effect("rejects oversized output before it crosses the desktop IPC boundary", () =>
+    Effect.gen(function* () {
+      const webContents = {
+        isDestroyed: () => false,
+        isLoading: () => false,
+        getURL: () => "https://example.test/report.html",
+        on: vi.fn(),
+        off: vi.fn(),
+        insertCSS: vi.fn(async () => "pagination-css"),
+        removeInsertedCSS: vi.fn(async () => undefined),
+        printToPDF: vi.fn(async () => ({ byteLength: BROWSER_PDF_EXPORT_MAX_BYTES + 1 })),
+      };
+      const render = createBrowserPdfRenderer({
+        waitForReadiness: async () => ({
+          sourceUrl: "https://example.test/report.html",
+          title: "Report",
+          sourceSignals: signals,
+          warnings: [],
+        }),
+      });
+
+      const exit = yield* Effect.exit(render(webContents as never));
+
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(String(exit.cause)).toContain("exportPdf.tooLarge");
+      }
+      expect(webContents.removeInsertedCSS).toHaveBeenCalledWith("pagination-css");
+    }),
+  );
+
+  it.effect("cleans up readiness listeners when bounded preparation stops waiting", () =>
+    Effect.gen(function* () {
+      let readinessSource = "";
+      const webContents = {
+        isDestroyed: () => false,
+        isLoading: () => false,
+        getURL: () => "https://example.test/report.html",
+        on: vi.fn(),
+        off: vi.fn(),
+        insertCSS: vi.fn(async () => "pagination-css"),
+        removeInsertedCSS: vi.fn(async () => undefined),
+        executeJavaScript: vi.fn(async (source: string) => {
+          readinessSource = source;
+          return {
+            settled: true,
+            sourceUrl: "https://example.test/report.html",
+            title: "Report",
+            sourceSignals: signals,
+          };
+        }),
+        printToPDF: vi.fn(async () => Buffer.from("%PDF-1.7\nsynthetic")),
+      };
+      const render = createBrowserPdfRenderer({});
+
+      yield* render(webContents as never);
+
+      expect(readinessSource).toContain('image.removeEventListener("load", finish)');
+      expect(readinessSource).toContain('image.removeEventListener("error", finish)');
+      expect(readinessSource).toContain("active = false");
+      expect(readinessSource).toContain("clearTimeout(timeoutId)");
     }),
   );
 

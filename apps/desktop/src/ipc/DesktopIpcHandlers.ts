@@ -7,7 +7,7 @@ import {
   getConnectionCatalog,
   setConnectionCatalog,
 } from "./methods/connectionCatalog.ts";
-import { saveAssetCopy } from "./methods/documentArtifacts.ts";
+import { revealSavedAsset, saveAssetCopy } from "./methods/documentArtifacts.ts";
 import {
   getAdvertisedEndpoints,
   getServerExposureState,
@@ -88,6 +88,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(saveAssetCopy);
+  yield* ipc.handle(revealSavedAsset);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
   yield* ipc.handle(copyPngToClipboard);

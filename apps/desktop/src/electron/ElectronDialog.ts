@@ -36,21 +36,6 @@ export class ElectronDialogPickFilesError extends Schema.TaggedErrorClass<Electr
   }
 }
 
-export class ElectronDialogSaveFileError extends Schema.TaggedErrorClass<ElectronDialogSaveFileError>()(
-  "ElectronDialogSaveFileError",
-  {
-    ownerWindowId: Schema.NullOr(Schema.Number),
-    defaultPath: Schema.NullOr(Schema.String),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    const owner = this.ownerWindowId === null ? "the application" : `window ${this.ownerWindowId}`;
-    const defaultPath = this.defaultPath === null ? "no default path" : this.defaultPath;
-    return `Failed to open the Electron save dialog for ${owner} with ${defaultPath}.`;
-  }
-}
-
 export class ElectronDialogShowMessageBoxError extends Schema.TaggedErrorClass<ElectronDialogShowMessageBoxError>()(
   "ElectronDialogShowMessageBoxError",
   {
@@ -84,7 +69,6 @@ export class ElectronDialogShowErrorBoxError extends Schema.TaggedErrorClass<Ele
 export const ElectronDialogError = Schema.Union([
   ElectronDialogPickFolderError,
   ElectronDialogPickFilesError,
-  ElectronDialogSaveFileError,
   ElectronDialogShowMessageBoxError,
   ElectronDialogShowErrorBoxError,
 ]);
@@ -103,12 +87,6 @@ export interface ElectronDialogPickFilesInput {
   readonly multiple: boolean;
 }
 
-export interface ElectronDialogSaveFileInput {
-  readonly owner: Option.Option<Electron.BrowserWindow>;
-  readonly defaultPath: Option.Option<string>;
-  readonly filters: readonly Electron.FileFilter[];
-}
-
 export class ElectronDialog extends Context.Service<
   ElectronDialog,
   {
@@ -118,9 +96,6 @@ export class ElectronDialog extends Context.Service<
     readonly pickFiles: (
       input: ElectronDialogPickFilesInput,
     ) => Effect.Effect<readonly string[], ElectronDialogPickFilesError>;
-    readonly saveFile: (
-      input: ElectronDialogSaveFileInput,
-    ) => Effect.Effect<Option.Option<string>, ElectronDialogSaveFileError>;
     readonly showMessageBox: (
       options: Electron.MessageBoxOptions,
     ) => Effect.Effect<Electron.MessageBoxReturnValue, ElectronDialogShowMessageBoxError>;
@@ -188,34 +163,6 @@ export const make = ElectronDialog.of({
         }),
     });
     return result.canceled ? [] : result.filePaths;
-  }),
-  saveFile: Effect.fn("desktop.electron.dialog.saveFile")(function* (input) {
-    const ownerWindowId = Option.match(input.owner, {
-      onNone: () => null,
-      onSome: (owner) => owner.id,
-    });
-    const defaultPath = Option.getOrNull(input.defaultPath);
-    const saveDialogOptions: Electron.SaveDialogOptions = {
-      filters: [...input.filters],
-      properties: ["showOverwriteConfirmation", "createDirectory"],
-      ...(defaultPath === null ? {} : { defaultPath }),
-    };
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        Option.match(input.owner, {
-          onNone: () => Electron.dialog.showSaveDialog(saveDialogOptions),
-          onSome: (owner) => Electron.dialog.showSaveDialog(owner, saveDialogOptions),
-        }),
-      catch: (cause) =>
-        new ElectronDialogSaveFileError({
-          ownerWindowId,
-          defaultPath,
-          cause,
-        }),
-    });
-    return result.canceled || result.filePath.length === 0
-      ? Option.none()
-      : Option.some(result.filePath);
   }),
   showMessageBox: (options) =>
     Effect.tryPromise({

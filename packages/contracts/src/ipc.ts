@@ -1178,6 +1178,8 @@ export interface DesktopBridge {
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
   saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
+  /** Optional while older desktop shells can host a newer web client. */
+  revealSavedAsset?: (path: string) => Promise<void>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
@@ -1359,6 +1361,7 @@ export interface LocalApi {
   };
   documents: {
     saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
+    revealSavedAsset?: (path: string) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(

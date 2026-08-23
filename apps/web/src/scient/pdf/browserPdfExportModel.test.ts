@@ -1,3 +1,4 @@
+import { EnvironmentFilePath, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { browserExportLogicalDocumentKey, browserExportReceiptUrl } from "./browserPdfExportModel";
@@ -19,6 +20,26 @@ describe("browser PDF export page identity", () => {
     expect(
       browserExportLogicalDocumentKey("https://example.test/assets/report-a/index.html"),
     ).not.toBe(browserExportLogicalDocumentKey("https://example.test/assets/report-b/index.html"));
+  });
+
+  it("uses tracked source identity instead of a renewable local URL", () => {
+    const first = {
+      _tag: "environment-html" as const,
+      environmentId: EnvironmentId.make("environment-1"),
+      canonicalPath: EnvironmentFilePath.make("/tmp/one/report.html"),
+    };
+    const second = {
+      ...first,
+      canonicalPath: EnvironmentFilePath.make("/tmp/two/report.html"),
+    };
+    const renewableUrl = "http://127.0.0.1:16491/api/assets/token/report.html";
+
+    expect(browserExportLogicalDocumentKey(renewableUrl, first)).not.toBe(
+      browserExportLogicalDocumentKey(renewableUrl, second),
+    );
+    expect(browserExportLogicalDocumentKey("https://irrelevant.test", first)).toBe(
+      browserExportLogicalDocumentKey(renewableUrl, first),
+    );
   });
 
   it("removes credentials and receipt-only URL state", () => {

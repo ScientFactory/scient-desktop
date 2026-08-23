@@ -410,8 +410,7 @@
  */
 @container scient-pdf-reader (max-width: 439px) {
   .scient-pdf-toolbar-separator,
-  .scient-pdf-zoom-label,
-  .scient-pdf-action-rotate {
+  .scient-pdf-zoom-label {
     display: none;
   }
 

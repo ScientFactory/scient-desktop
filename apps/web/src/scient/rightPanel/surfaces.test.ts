@@ -4,6 +4,7 @@ import {
   normalizeScientRightPanelSurface,
   scientArtifactSurface,
   scientEnvironmentFileSurface,
+  scientGeneratedPdfSurface,
   scientRightPanelSurfaceTitle,
   scientSourcePdfSurface,
   scientSourcesSurface,
@@ -137,6 +138,21 @@ describe("Scient right-panel surfaces", () => {
         attachmentId: "pdf 1",
       }),
     ).toBeNull();
+  });
+
+  it("keeps generated PDF tabs stable while immutable revisions advance", () => {
+    const nextRevision = PdfSourceDescriptor.make({
+      ...generatedPdf,
+      revisionId: ArtifactRevisionId.make("revision-2"),
+      bindingGeneration: BindingGeneration.make(2),
+      pageCount: 2,
+    });
+    if (nextRevision._tag !== "generated-pdf") throw new Error("expected generated PDF fixture");
+
+    expect(scientGeneratedPdfSurface(nextRevision).id).toBe(
+      scientGeneratedPdfSurface(generatedPdf).id,
+    );
+    expect(scientGeneratedPdfSurface(nextRevision).source.revisionId).toBe("revision-2");
   });
 
   it("keeps user-visible titles inside the Scient-owned registry", () => {

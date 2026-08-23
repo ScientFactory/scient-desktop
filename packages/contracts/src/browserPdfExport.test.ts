@@ -9,6 +9,7 @@ import { Schema } from "effect";
 import * as Encoding from "effect/Encoding";
 
 import {
+  BROWSER_PDF_EXPORT_MAX_BASE64_LENGTH,
   BROWSER_PDF_EXPORT_MAX_BYTES,
   BrowserPdfExportInput,
   BrowserPdfExportResult,
@@ -47,7 +48,8 @@ describe("browser PDF export contracts", () => {
   });
 
   it("keeps the shared export size budget aligned with PDF validation", () => {
-    expect(BROWSER_PDF_EXPORT_MAX_BYTES).toBe(256 * 1_024 * 1_024);
+    expect(BROWSER_PDF_EXPORT_MAX_BYTES).toBe(64 * 1_024 * 1_024);
+    expect(BROWSER_PDF_EXPORT_MAX_BASE64_LENGTH).toBeLessThan(100 * 1_024 * 1_024);
   });
 
   it("rejects malformed publication results", () => {

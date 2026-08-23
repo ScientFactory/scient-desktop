@@ -35,6 +35,17 @@ export const EnvironmentFilePrepareInput = Schema.Struct({
 });
 export type EnvironmentFilePrepareInput = typeof EnvironmentFilePrepareInput.Type;
 
+/** Exact-file invalidation hints; consumers always reinspect after a hint. */
+export const EnvironmentFileChangeEvent = Schema.Union([
+  Schema.TaggedStruct("watch-ready", {
+    path: EnvironmentFilePath,
+  }),
+  Schema.TaggedStruct("file-changed", {
+    path: EnvironmentFilePath,
+  }),
+]);
+export type EnvironmentFileChangeEvent = typeof EnvironmentFileChangeEvent.Type;
+
 export const EnvironmentFilePrepareResult = Schema.Struct({
   canonicalPath: EnvironmentFilePath,
   fileName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_024)),

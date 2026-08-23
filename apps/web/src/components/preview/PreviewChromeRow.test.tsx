@@ -21,25 +21,4 @@ describe("PreviewChromeRow", () => {
 
     expect(markup).toContain('value="https://example.com/dashboard?mode=edit&amp;tab=1#notes"');
   });
-
-  it("exposes an explicit disabled state while PDF export is in progress", () => {
-    const markup = renderToStaticMarkup(
-      <PreviewChromeRow
-        url="https://example.com/report"
-        loading={false}
-        canGoBack={false}
-        canGoForward={false}
-        refreshDisabled={false}
-        onBack={vi.fn()}
-        onForward={vi.fn()}
-        onRefresh={vi.fn()}
-        onSubmit={vi.fn()}
-        onExportPdf={vi.fn()}
-        exportingPdf
-      />,
-    );
-
-    expect(markup).toContain('aria-label="Export PDF"');
-    expect(markup).toContain("disabled");
-  });
 });

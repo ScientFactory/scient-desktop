@@ -23,6 +23,7 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  EnvironmentFileChangeEvent,
   EnvironmentFilePrepareError,
   EnvironmentFilePrepareInput,
   EnvironmentFilePrepareResult,
@@ -273,6 +274,7 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   filesystemPrepareFileOpen: "filesystem.prepareFileOpen",
+  filesystemSubscribeFileChanges: "filesystem.subscribeFileChanges",
   assetsCreateUrl: "assets.createUrl",
   documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
 
@@ -873,6 +875,16 @@ export const WsFilesystemPrepareFileOpenRpc = Rpc.make(WS_METHODS.filesystemPrep
   error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
 });
 
+export const WsFilesystemSubscribeFileChangesRpc = Rpc.make(
+  WS_METHODS.filesystemSubscribeFileChanges,
+  {
+    payload: EnvironmentFilePrepareInput,
+    success: EnvironmentFileChangeEvent,
+    error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -1287,6 +1299,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemPrepareFileOpenRpc,
+  WsFilesystemSubscribeFileChangesRpc,
   WsAssetsCreateUrlRpc,
   WsDocumentsPublishBrowserPdfExportRpc,
   WsSubscribeVcsStatusRpc,

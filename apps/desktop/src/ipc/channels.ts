@@ -1,6 +1,7 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const SAVE_ASSET_COPY_CHANNEL = "desktop:save-asset-copy";
+export const REVEAL_SAVED_ASSET_CHANNEL = "desktop:reveal-saved-asset";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
 export const SET_THEME_CHANNEL = "desktop:set-theme";
 export const COPY_PNG_TO_CLIPBOARD_CHANNEL = "desktop:copy-png-to-clipboard";

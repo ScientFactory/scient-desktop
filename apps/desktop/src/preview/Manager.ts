@@ -67,7 +67,7 @@ import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
-import { createBrowserPdfRenderer } from "./BrowserPdfRenderer.ts";
+import { createBrowserPdfRenderer } from "../scient/documentExport/BrowserPdfRenderer.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }

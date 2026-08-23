@@ -3,17 +3,20 @@ import type { DesktopAssetCopyRequest, DesktopAssetCopyResult } from "@t3tools/c
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import * as Electron from "electron";
 
-import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 
 class AssetCopyReadError extends Error {}
 class AssetCopyWriteError extends Error {}
+class AssetCopyOperationError extends Data.TaggedError("AssetCopyOperationError")<{
+  readonly cause: unknown;
+}> {}
 
 function failed(
   reason: Extract<DesktopAssetCopyResult, { _tag: "failed" }>["reason"],
@@ -150,18 +153,37 @@ export async function copyAssetToPath(
 export const saveAssetCopy = Effect.fn("desktop.scient.documentArtifacts.saveAssetCopy")(function* (
   request: DesktopAssetCopyRequest,
 ) {
-  const dialog = yield* ElectronDialog.ElectronDialog;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const selection = yield* dialog
-    .saveFile({
-      owner: yield* electronWindow.focusedMainOrFirst,
-      defaultPath: Option.some(request.suggestedFileName),
-      filters: fileFilters(request.suggestedFileName),
-    })
-    .pipe(Effect.result);
+  const owner = yield* electronWindow.focusedMainOrFirst;
+  const selection = yield* Effect.tryPromise({
+    try: () => {
+      const options: Electron.SaveDialogOptions = {
+        defaultPath: request.suggestedFileName,
+        filters: fileFilters(request.suggestedFileName),
+        properties: ["showOverwriteConfirmation", "createDirectory"],
+      };
+      return Option.match(owner, {
+        onNone: () => Electron.dialog.showSaveDialog(options),
+        onSome: (window) => Electron.dialog.showSaveDialog(window, options),
+      });
+    },
+    catch: (cause) => new AssetCopyOperationError({ cause }),
+  }).pipe(Effect.result);
 
   if (Result.isFailure(selection)) return failed("dialog-failed");
-  const destinationPath = Option.getOrUndefined(selection.success);
-  if (destinationPath === undefined) return { _tag: "cancelled" } as const;
-  return yield* Effect.promise(() => copyAssetToPath(request, destinationPath));
+  if (selection.success.canceled || selection.success.filePath.length === 0) {
+    return { _tag: "cancelled" } as const;
+  }
+  const destinationPath = selection.success.filePath;
+  const copy = yield* Effect.tryPromise({
+    try: () => copyAssetToPath(request, destinationPath),
+    catch: (cause) => new AssetCopyOperationError({ cause }),
+  }).pipe(Effect.result);
+  return Result.isSuccess(copy) ? copy.success : failed("write-failed");
 });
+
+export const revealSavedAsset = Effect.fn("desktop.scient.documentArtifacts.revealSavedAsset")(
+  function* (path: string) {
+    yield* Effect.sync(() => Electron.shell.showItemInFolder(path));
+  },
+);

@@ -41,7 +41,7 @@ import { cn } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
-import { presentPdfSaveCopyResult } from "./pdfSaveCopyModel";
+import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { PdfThumbnail } from "./PdfThumbnail";
 import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
 import {
@@ -262,17 +262,8 @@ function LoadedScientPdfReader(props: {
         expiresAt: props.sourceExpiresAt,
         refresh: props.refreshSource,
       });
-      const presentation = presentPdfSaveCopyResult(result);
+      const presentation = announcePdfSaveCopyResult(result);
       if (presentation.refreshSource) props.refreshSource();
-      if (presentation._tag === "notice") {
-        toastManager.add({
-          type: presentation.type,
-          title: presentation.title,
-          ...(presentation.description === undefined
-            ? {}
-            : { description: presentation.description }),
-        });
-      }
     } catch {
       toastManager.add({
         type: "error",
@@ -474,14 +465,6 @@ function LoadedScientPdfReader(props: {
         >
           <Maximize2 />
         </ReaderButton>
-        <ReaderButton
-          className="scient-pdf-action-rotate"
-          label="Rotate clockwise"
-          disabled={state.phase !== "ready"}
-          onClick={reader.rotate}
-        >
-          <RotateCw />
-        </ReaderButton>
         <div className="min-w-1 flex-1" />
         <ReaderButton
           className="scient-pdf-action-search"
@@ -525,7 +508,11 @@ function LoadedScientPdfReader(props: {
             >
               <Maximize2 /> Fit width
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={state.phase !== "ready"} onClick={reader.rotate}>
+            <DropdownMenuItem
+              closeOnClick={false}
+              disabled={state.phase !== "ready"}
+              onClick={reader.rotate}
+            >
               <RotateCw /> Rotate clockwise
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setSearchOpen(true)}>

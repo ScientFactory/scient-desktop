@@ -1,4 +1,7 @@
-import type { DesktopPreviewPdfExportArtifact } from "@t3tools/contracts";
+import {
+  BROWSER_PDF_EXPORT_MAX_BYTES,
+  type DesktopPreviewPdfExportArtifact,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type { WebContents } from "electron";
@@ -27,6 +30,10 @@ class BrowserPdfSurfaceChangedError extends Error {
   override readonly name = "BrowserPdfSurfaceChangedError";
 }
 
+class BrowserPdfOutputTooLargeError extends Error {
+  override readonly name = "BrowserPdfOutputTooLargeError";
+}
+
 export interface BrowserPdfRendererError {
   readonly _tag: "BrowserPdfRendererError";
   readonly operation: string;
@@ -44,22 +51,51 @@ export interface BrowserPdfPageSignals {
   readonly warnings: ReadonlyArray<string>;
 }
 
+interface BrowserPdfReadinessResult {
+  readonly settled: boolean;
+  readonly sourceUrl: string;
+  readonly title: string;
+  readonly sourceSignals: DesktopPreviewPdfExportArtifact["sourceSignals"];
+}
+
 const readinessScript = `
   (async () => {
-    const timeout = new Promise((resolve) => setTimeout(() => resolve(false), ${READINESS_TIMEOUT_MS}));
+    let active = true;
+    let timeoutId;
+    const imageCleanups = [];
+    const timeout = new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve(false), ${READINESS_TIMEOUT_MS});
+    });
     const settle = (async () => {
       try {
         if (document.fonts?.ready) await document.fonts.ready;
+        if (!active) return false;
         const images = Array.from(document.images);
-        await Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => {
-          image.addEventListener("load", resolve, { once: true });
-          image.addEventListener("error", resolve, { once: true });
-        })));
+        await Promise.all(images.map((image) => {
+          if (image.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            const finish = () => {
+              image.removeEventListener("load", finish);
+              image.removeEventListener("error", finish);
+              resolve();
+            };
+            image.addEventListener("load", finish);
+            image.addEventListener("error", finish);
+            imageCleanups.push(() => {
+              image.removeEventListener("load", finish);
+              image.removeEventListener("error", finish);
+            });
+          });
+        }));
       } catch {}
+      if (!active) return false;
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return true;
     })();
     const settled = await Promise.race([settle, timeout]);
+    active = false;
+    clearTimeout(timeoutId);
+    for (const cleanup of imageCleanups) cleanup();
     const images = Array.from(document.images);
     const body = document.body;
     return {
@@ -80,7 +116,7 @@ const readinessScript = `
   })()
 `;
 
-function isSignals(value: unknown): value is BrowserPdfPageSignals {
+function isReadinessResult(value: unknown): value is BrowserPdfReadinessResult {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   const signals = candidate.sourceSignals;
@@ -96,6 +132,7 @@ function isSignals(value: unknown): value is BrowserPdfPageSignals {
     "scrollHeight",
   ] as const;
   return (
+    typeof candidate.settled === "boolean" &&
     typeof candidate.sourceUrl === "string" &&
     typeof candidate.title === "string" &&
     numericKeys.every((key) => {
@@ -143,18 +180,14 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
     options.waitForReadiness ??
     (async (webContents: WebContents): Promise<BrowserPdfPageSignals> => {
       const value = await webContents.executeJavaScript(readinessScript, true);
-      if (!isSignals(value)) {
+      if (!isReadinessResult(value)) {
         throw new Error("The browser page returned invalid export readiness signals.");
       }
-      const settled =
-        typeof value === "object" && value !== null && "settled" in value
-          ? (value as { settled?: unknown }).settled === true
-          : false;
       return {
         sourceUrl: value.sourceUrl,
         title: value.title,
         sourceSignals: value.sourceSignals,
-        warnings: warningsForSignals(value.sourceSignals, settled),
+        warnings: warningsForSignals(value.sourceSignals, value.settled),
       };
     });
 
@@ -214,6 +247,11 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
           // settle under the global print permit, then discard raced output.
           assertStableSurface(page.sourceUrl);
           if (data.byteLength === 0) throw new Error("Chromium returned an empty PDF.");
+          if (data.byteLength > BROWSER_PDF_EXPORT_MAX_BYTES) {
+            throw new BrowserPdfOutputTooLargeError(
+              "The generated PDF exceeds the current 64 MiB HTML export limit.",
+            );
+          }
           return {
             data: new Uint8Array(data),
             sourceUrl: page.sourceUrl,
@@ -237,7 +275,9 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
         operation:
           cause instanceof BrowserPdfSurfaceChangedError
             ? "exportPdf.surfaceChanged"
-            : "printToPDF",
+            : cause instanceof BrowserPdfOutputTooLargeError
+              ? "exportPdf.tooLarge"
+              : "printToPDF",
         cause,
       }),
     });

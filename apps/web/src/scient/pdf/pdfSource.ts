@@ -5,6 +5,7 @@ import {
   type PdfSourceActions,
   type PdfSourceDescriptor as PdfSourceDescriptorType,
   type PdfSourceResolver,
+  type ResolvedPdfSource,
 } from "@scientfactory/document-artifacts";
 import { sha256 } from "@noble/hashes/sha2";
 import {
@@ -168,9 +169,12 @@ export function pdfSourceAssetResource(source: PdfSourceDescriptorType): AssetRe
 }
 
 export const webPdfSourceActions: PdfSourceActions = {
-  saveCopy: (source, resolved) =>
-    ensureLocalApi().documents.saveAssetCopy({
-      url: resolved.url,
-      suggestedFileName: source.fileName,
-    }),
+  saveCopy: saveResolvedPdfCopy,
 };
+
+export function saveResolvedPdfCopy(source: PdfSourceDescriptorType, resolved: ResolvedPdfSource) {
+  return ensureLocalApi().documents.saveAssetCopy({
+    url: resolved.url,
+    suggestedFileName: source.fileName,
+  });
+}

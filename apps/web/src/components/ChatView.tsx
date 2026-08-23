@@ -7075,7 +7075,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeRightPanelSurface.module === "generated-pdf" &&
       activeThreadRef ? (
       <Suspense fallback={null}>
-        <GeneratedPdfPreview source={activeRightPanelSurface.source} />
+        <GeneratedPdfPreview source={activeRightPanelSurface.source} threadRef={activeThreadRef} />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "scient" &&
       activeRightPanelSurface.module === "source-pdf" &&

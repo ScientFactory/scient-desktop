@@ -16,6 +16,7 @@ import {
   type OpenPreviewMutation,
 } from "~/browser/openFileInPreview";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { useHtmlPdfSourceStore } from "../documentExport/htmlPdfSourceStore";
 
 export function environmentFileAssetResource(input: {
   readonly path: string;
@@ -67,5 +68,17 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     threadRef: input.threadRef,
     url: assetUrl,
     openPreview: input.openPreview,
+    onOpened: (snapshot) => {
+      useHtmlPdfSourceStore.getState().bind({
+        threadRef: input.threadRef,
+        tabId: snapshot.tabId,
+        authorizedUrl: assetUrl,
+        source: {
+          _tag: "environment-html",
+          environmentId: input.threadRef.environmentId,
+          canonicalPath: EnvironmentFilePath.make(assetResult.value.sourcePath ?? input.path),
+        },
+      });
+    },
   });
 }

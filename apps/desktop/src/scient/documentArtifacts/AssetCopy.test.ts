@@ -7,16 +7,22 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type { BrowserWindow } from "electron";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
 
-import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { copyAssetToPath, saveAssetCopy } from "./AssetCopy.ts";
+import { copyAssetToPath, revealSavedAsset, saveAssetCopy } from "./AssetCopy.ts";
 
-const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
+const { fetchMock, showItemInFolderMock, showSaveDialogMock } = vi.hoisted(() => ({
+  fetchMock: vi.fn(),
+  showItemInFolderMock: vi.fn(),
+  showSaveDialogMock: vi.fn(),
+}));
 
 vi.mock("electron", () => ({
+  dialog: { showSaveDialog: showSaveDialogMock },
   net: { fetch: fetchMock },
+  shell: { showItemInFolder: showItemInFolderMock },
 }));
 
 const request = DesktopAssetCopyRequestSchema.make({
@@ -29,6 +35,8 @@ describe("AssetCopy", () => {
 
   beforeEach(async () => {
     fetchMock.mockReset();
+    showItemInFolderMock.mockReset();
+    showSaveDialogMock.mockReset();
     temporaryDirectory = await NodeFSP.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "scient-asset-copy-"),
     );
@@ -128,40 +136,29 @@ describe("AssetCopy", () => {
   });
 
   it.effect("treats native dialog cancellation as a normal result", () => {
-    const dialogLayer = Layer.succeed(
-      ElectronDialog.ElectronDialog,
-      ElectronDialog.ElectronDialog.of({
-        saveFile: () => Effect.succeed(Option.none()),
-      } as unknown as ElectronDialog.ElectronDialog["Service"]),
-    );
+    const owner = { id: 11 } as BrowserWindow;
+    showSaveDialogMock.mockResolvedValue({ canceled: true, filePath: "" });
     const windowLayer = Layer.succeed(
       ElectronWindow.ElectronWindow,
       ElectronWindow.ElectronWindow.of({
-        focusedMainOrFirst: Effect.succeed(Option.none()),
+        focusedMainOrFirst: Effect.succeed(Option.some(owner)),
       } as ElectronWindow.ElectronWindow["Service"]),
     );
 
     return Effect.gen(function* () {
       const result = yield* saveAssetCopy(request);
       assert.deepStrictEqual(result, { _tag: "cancelled" });
+      expect(showSaveDialogMock).toHaveBeenCalledWith(owner, {
+        defaultPath: "report.pdf",
+        filters: [{ name: "PDF document", extensions: ["pdf"] }],
+        properties: ["showOverwriteConfirmation", "createDirectory"],
+      });
       expect(fetchMock).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(Layer.merge(dialogLayer, windowLayer)));
+    }).pipe(Effect.provide(windowLayer));
   });
 
   it.effect("returns a typed failure when the native dialog cannot open", () => {
-    const dialogLayer = Layer.succeed(
-      ElectronDialog.ElectronDialog,
-      ElectronDialog.ElectronDialog.of({
-        saveFile: () =>
-          Effect.fail(
-            new ElectronDialog.ElectronDialogSaveFileError({
-              ownerWindowId: null,
-              defaultPath: "report.pdf",
-              cause: new Error("dialog unavailable"),
-            }),
-          ),
-      } as unknown as ElectronDialog.ElectronDialog["Service"]),
-    );
+    showSaveDialogMock.mockRejectedValue(new Error("dialog unavailable"));
     const windowLayer = Layer.succeed(
       ElectronWindow.ElectronWindow,
       ElectronWindow.ElectronWindow.of({
@@ -173,6 +170,16 @@ describe("AssetCopy", () => {
       const result = yield* saveAssetCopy(request);
       assert.deepStrictEqual(result, { _tag: "failed", reason: "dialog-failed" });
       expect(fetchMock).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(Layer.merge(dialogLayer, windowLayer)));
+    }).pipe(Effect.provide(windowLayer));
   });
+
+  it.effect("reveals the exact saved destination with the native file manager", () =>
+    Effect.gen(function* () {
+      const destinationPath = NodePath.join(temporaryDirectory, "report.pdf");
+
+      yield* revealSavedAsset(destinationPath);
+
+      expect(showItemInFolderMock).toHaveBeenCalledWith(destinationPath);
+    }),
+  );
 });

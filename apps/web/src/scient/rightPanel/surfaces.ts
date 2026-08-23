@@ -84,7 +84,8 @@ export function scientGeneratedPdfSurface(
   source: GeneratedPdfSourceDescriptor,
 ): Extract<ScientRightPanelSurface, { module: "generated-pdf" }> {
   return {
-    id: `scient:generated-pdf:${encodeURIComponent(source.authority)}:${encodeURIComponent(source.artifactId)}:${encodeURIComponent(source.revisionId)}`,
+    // Immutable revisions advance within one stable logical artifact tab.
+    id: `scient:generated-pdf:${encodeURIComponent(source.authority)}:${encodeURIComponent(source.artifactId)}`,
     kind: "scient",
     module: "generated-pdf",
     source,

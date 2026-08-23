@@ -13,8 +13,12 @@ export type BrowserPdfExportProfile = typeof BrowserPdfExportProfile.Type;
 export const BrowserPdfExportMedia = Schema.Literal("print");
 export type BrowserPdfExportMedia = typeof BrowserPdfExportMedia.Type;
 
-/** Keep JSON-RPC payloads bounded while carrying bytes as URL-safe Base64. */
-export const BROWSER_PDF_EXPORT_MAX_BYTES = 256 * 1_024 * 1_024;
+/**
+ * Keep JSON-RPC payloads below the Node WebSocket transport's 100 MiB default
+ * after URL-safe Base64 expansion and JSON framing. A future binary upload can
+ * raise this without changing the renderer or generated-document contracts.
+ */
+export const BROWSER_PDF_EXPORT_MAX_BYTES = 64 * 1_024 * 1_024;
 export const BROWSER_PDF_EXPORT_MAX_BASE64_LENGTH =
   Math.ceil((BROWSER_PDF_EXPORT_MAX_BYTES * 4) / 3) + 4;
 

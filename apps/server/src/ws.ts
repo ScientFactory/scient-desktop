@@ -1,15 +1,12 @@
 import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
-import * as Encoding from "effect/Encoding";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as Result from "effect/Result";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -57,8 +54,6 @@ import {
   AssetGeneratedDocumentAuthorityMismatchError,
   AssetGeneratedDocumentNotFoundError,
   AssetGeneratedDocumentResolutionError,
-  BROWSER_PDF_EXPORT_MAX_BYTES,
-  BrowserPdfExportError,
   AssetAnalysisArtifactNotFoundError,
   AssetAnalysisArtifactResolutionError,
   RpcClientId,
@@ -102,8 +97,12 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
-import { prepareEnvironmentFileOpen } from "./scient/fileOpening/EnvironmentFileOpen.ts";
+import {
+  prepareEnvironmentFileOpen,
+  watchEnvironmentFile,
+} from "./scient/fileOpening/EnvironmentFileOpen.ts";
 import { SCIENT_QUICK_CHAT_SERVER_CAPABILITIES } from "./scient/quickChat/ServerCapability.ts";
 import { ensureScientQuickChatMoveHasNoRunningTerminals } from "./scient/quickChat/MoveCoordinator.ts";
 import { validateScientQuickChatTerminalOpen } from "./scient/quickChat/TerminalPolicy.ts";
@@ -2148,80 +2147,14 @@ const makeWsRpcLayer = (
             prepareEnvironmentFileOpen(input),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>
+          observeRpcStream(WS_METHODS.filesystemSubscribeFileChanges, watchEnvironmentFile(input), {
+            "rpc.aggregate": "workspace",
+          }),
         [WS_METHODS.documentsPublishBrowserPdfExport]: (input) =>
           observeRpcEffect(
             WS_METHODS.documentsPublishBrowserPdfExport,
-            Effect.gen(function* () {
-              const bytes = yield* Effect.try({
-                try: () => Result.getOrThrow(Encoding.decodeBase64Url(input.bytesBase64)),
-                catch: () =>
-                  new BrowserPdfExportError({
-                    reason: "failed",
-                    detail: "The browser PDF export bytes were not valid Base64.",
-                  }),
-              });
-              if (bytes.byteLength > BROWSER_PDF_EXPORT_MAX_BYTES) {
-                return yield* new BrowserPdfExportError({
-                  reason: "too-large",
-                  detail: `The browser PDF export exceeds the ${BROWSER_PDF_EXPORT_MAX_BYTES} byte limit.`,
-                });
-              }
-              const handle = yield* generatedDocuments.beginProduction({
-                logicalDocumentKey: input.logicalDocumentKey,
-                operationId: input.operationId,
-                producerId: input.producerId,
-              });
-              const source = yield* generatedDocuments
-                .publishPdf({
-                  ...handle,
-                  bytes,
-                  title: input.title,
-                  provenanceKind: "browser-export",
-                  validationProfile: "browser-export",
-                })
-                .pipe(
-                  Effect.catchTag("GeneratedDocumentStoreError", (cause) =>
-                    generatedDocuments
-                      .failProduction({
-                        ...handle,
-                        reason: cause.detail,
-                      })
-                      .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
-                  ),
-                );
-              return {
-                source,
-                receipt: {
-                  operationId: input.operationId,
-                  producerId: input.producerId,
-                  logicalDocumentKey: input.logicalDocumentKey,
-                  sourceUrl: input.sourceUrl,
-                  title: input.title,
-                  profile: input.profile,
-                  media: input.media,
-                  warnings: input.warnings,
-                  sourceSignals: input.sourceSignals,
-                  pageCount: source.pageCount ?? 1,
-                  byteLength: bytes.byteLength,
-                  exportedAtEpochMs: yield* Clock.currentTimeMillis,
-                },
-              };
-            }).pipe(
-              Effect.mapError((cause) => {
-                if (cause._tag === "BrowserPdfExportError") return cause;
-                const reason =
-                  cause.reason === "validation-rejected"
-                    ? cause.detail.includes("exceeds")
-                      ? "too-large"
-                      : "invalid-pdf"
-                    : cause.reason === "superseded"
-                      ? "superseded"
-                      : cause.reason === "filesystem"
-                        ? "storage"
-                        : "failed";
-                return new BrowserPdfExportError({ reason, detail: cause.detail });
-              }),
-            ),
+            publishBrowserPdfExport(generatedDocuments, input),
             { "rpc.aggregate": "documents" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>

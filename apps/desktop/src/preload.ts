@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   saveAssetCopy: (request) => ipcRenderer.invoke(IpcChannels.SAVE_ASSET_COPY_CHANNEL, request),
+  revealSavedAsset: (path) => ipcRenderer.invoke(IpcChannels.REVEAL_SAVED_ASSET_CHANNEL, path),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   getPathForFile: (file: File) => {
     try {
