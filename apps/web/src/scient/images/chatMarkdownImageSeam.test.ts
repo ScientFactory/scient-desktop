@@ -23,9 +23,9 @@ describe("ChatMarkdown workspace-image seam", () => {
   it("uses a stable local-image card while streaming and preserves ordinary images", () => {
     expect(chatMarkdownSource).toContain("resolveInlineWorkspaceImage({ alt, cwd, src })");
     expect(chatMarkdownSource).toContain('reason={isStreaming ? "streaming" : "unavailable"}');
-    expect(chatMarkdownSource).toContain(
-      '<img {...props} alt={alt} decoding="async" loading="lazy" src={src} />',
-    );
+    expect(chatMarkdownSource).toContain("classifyMarkdownImageSource(srcString, cwd)");
+    expect(chatMarkdownSource).toContain("<ChatMarkdownWorkspaceImage");
+    expect(chatMarkdownSource).toContain("<ChatMarkdownImageFallback");
   });
 
   it("uses authorized asset URLs and never executes SVG as document markup", () => {

@@ -107,6 +107,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemSubscribeFileChanges]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.documentsPublishBrowserPdfExport]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthOrchestrationReadScope,

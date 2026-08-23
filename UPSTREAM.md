@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-22-upstream-sync-dedcd99a9d.md`](docs/internals/2026-08-22-upstream-sync-dedcd99a9d.md)
+[`docs/internals/2026-08-23-upstream-sync-b1670ac7d9.md`](docs/internals/2026-08-23-upstream-sync-b1670ac7d9.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `dedcd99a9d16240327ce763b885b326aff607bdb` into the refresh
+checkpoint `b1670ac7d9b5b7bb9d7ebd969f27384daee22813` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`be7d35aaeb49a04483ec5e0d2284e8b5b70a3b6e`. Later observed T3
+`dedcd99a9d16240327ce763b885b326aff607bdb`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -247,6 +247,19 @@ real merge's fifteen conflicts and all thirty-two auto-merged overlapping
 files were audited against both parents with zero Scient seam losses. The
 trust list remains the owner-set two-entry list; upstream's range touched no
 governance files.
+
+The 2026-08-23 sync through `b1670ac7d9` receives 16 official commits covering
+workspace images, chat timeline and work-log recovery, appearance contrast,
+Codex and Claude lifecycle fixes, provider-update recovery, remote default
+branch discovery, explicit Codex feedback upload, settled pinned threads, and
+faster release packaging. Eleven textual conflicts were composed. Scient keeps
+its release authority, Quick Chat, fork serialization, browser-export RPC, and
+rich relative-workspace image card while adopting T3's generic behavior around
+those seams. The single semantic auto-merge conflict in `ChatMarkdown.tsx` was
+collapsed to one renderer: T3 owns classification and generic loading, while
+Scient's card remains only where its extra workspace actions apply. The exact
+record distinguishes verified ancestry from the separately recorded upstream
+review cursor.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this

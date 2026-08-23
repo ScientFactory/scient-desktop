@@ -81,6 +81,11 @@ import {
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
+import {
+  ProviderUploadFeedbackError,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
+} from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
@@ -277,6 +282,9 @@ export const WS_METHODS = {
   filesystemSubscribeFileChanges: "filesystem.subscribeFileChanges",
   assetsCreateUrl: "assets.createUrl",
   documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
+
+  // Provider methods
+  providerUploadFeedback: "provider.uploadFeedback",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -899,6 +907,11 @@ export const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
     error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
   },
 );
+export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
+  payload: ProviderUploadFeedbackInput,
+  success: ProviderUploadFeedbackResult,
+  error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
+});
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
@@ -1302,6 +1315,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemSubscribeFileChangesRpc,
   WsAssetsCreateUrlRpc,
   WsDocumentsPublishBrowserPdfExportRpc,
+  WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
