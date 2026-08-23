@@ -148,6 +148,7 @@ import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
 import { useRecordScientAnalytics } from "../../scient/analytics/client";
+import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -1908,6 +1909,7 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
+        <ScientGettingStartedSettingsRow />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
