@@ -506,6 +506,87 @@ sup.scient-markdown-reference {
   font-size: 0.75rem;
 }
 
+.scient-markdown-search-match {
+  border-radius: 0.15rem;
+  background: color-mix(in oklab, var(--warning) 36%, transparent);
+}
+
+.scient-markdown-search-match.is-active {
+  background: color-mix(in oklab, var(--warning) 72%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--warning) 65%, var(--foreground));
+}
+
+.scient-markdown-find-control {
+  position: relative;
+}
+
+.scient-markdown-find-popover {
+  position: absolute;
+  z-index: 20;
+  inset-block-start: calc(100% + 0.35rem);
+  inset-inline-end: 0;
+  display: flex;
+  width: min(24rem, calc(100vw - 2rem));
+  flex-direction: column;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: color-mix(in oklab, var(--background) 94%, transparent);
+  padding: 0.55rem;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(14px);
+}
+
+.scient-markdown-find-row,
+.scient-markdown-find-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.scient-markdown-find-row input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--background);
+  padding: 0.35rem 0.45rem;
+  color: var(--foreground);
+  outline: none;
+}
+
+.scient-markdown-find-row button,
+.scient-markdown-find-actions button {
+  min-height: 1.75rem;
+  border-radius: 0.35rem;
+  padding-inline: 0.45rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.scient-markdown-find-row button:hover:not(:disabled),
+.scient-markdown-find-row button.is-active,
+.scient-markdown-find-actions button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.scient-markdown-find-row button:disabled,
+.scient-markdown-find-actions button:disabled {
+  opacity: 0.45;
+}
+
+.scient-markdown-find-count {
+  min-width: 2.6rem;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.scient-markdown-find-actions {
+  justify-content: flex-end;
+}
+
 .scient-markdown-wiki-link.is-selected {
   outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
   outline-offset: 2px;

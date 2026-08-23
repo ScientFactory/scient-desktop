@@ -265,6 +265,74 @@ describe("ScientMarkdownEditorView", () => {
     expect(onImageUploadFailure).not.toHaveBeenCalled();
   });
 
+  it("finds rich text across formatting boundaries without producing a save", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "alpha Alpha alphabet al**pha**\n",
+      revision: "sha256:before",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    const shortcut = new KeyboardEvent("keydown", {
+      key: "f",
+      metaKey: true,
+      cancelable: true,
+    });
+    const handled = view.someProp("handleKeyDown", (handler) => handler(view, shortcut));
+    expect(handled).toBe(true);
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(controller.getSnapshot().findOpen).toBe(true);
+
+    controller.configureFind({ query: "alpha", caseSensitive: false, wholeWord: false });
+    expect(controller.getSnapshot().findMatchCount).toBe(4);
+    controller.configureFind({ query: "alpha", caseSensitive: false, wholeWord: true });
+    expect(controller.getSnapshot().findMatchCount).toBe(3);
+    controller.navigateFind(1);
+    expect(controller.getSnapshot().findActiveIndex).toBe(1);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    controller.configureFind({ query: "Alpha", caseSensitive: true, wholeWord: true });
+    expect(controller.getSnapshot().findMatchCount).toBe(1);
+    expect(controller.replaceFind("Omega", false)).toBe(false);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    controller.setFindOpen(false);
+    expect(controller.getSnapshot().findOpen).toBe(false);
+    expect(controller.getSnapshot().findQuery).toBe("");
+    expect(controller.getSnapshot().findMatchCount).toBe(0);
+  });
+
+  it("replaces the current or every rich-view match as one user edit", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "alpha and alpha\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    controller.mount(host);
+
+    controller.configureFind({ query: "alpha", caseSensitive: true, wholeWord: true });
+    expect(controller.replaceFind("beta", false)).toBe(true);
+    expect(onUserSourceChange).toHaveBeenCalledTimes(1);
+    expect(onUserSourceChange.mock.lastCall?.[0]).toBe("beta and alpha\n");
+    expect(controller.getSnapshot().findMatchCount).toBe(1);
+
+    expect(controller.replaceFind("gamma", true)).toBe(true);
+    expect(onUserSourceChange).toHaveBeenCalledTimes(2);
+    expect(onUserSourceChange.mock.lastCall?.[0]).toBe("beta and gamma\n");
+    expect(controller.getSnapshot().findMatchCount).toBe(0);
+  });
+
   it("runs formatting and slash commands through user transactions", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

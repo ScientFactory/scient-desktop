@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
@@ -101,6 +101,138 @@ function InsertMenu({ controller }: { readonly controller: ScientMarkdownEditorV
   );
 }
 
+function FindControl({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ReturnType<ScientMarkdownEditorView["getSnapshot"]>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [replacement, setReplacement] = useState("");
+  useEffect(() => {
+    if (snapshot.findOpen) inputRef.current?.focus();
+  }, [snapshot.findFocusRequest, snapshot.findOpen]);
+  const configure = (input: {
+    readonly query?: string;
+    readonly caseSensitive?: boolean;
+    readonly wholeWord?: boolean;
+  }) => {
+    controller.configureFind({
+      query: input.query ?? snapshot.findQuery,
+      caseSensitive: input.caseSensitive ?? snapshot.findCaseSensitive,
+      wholeWord: input.wholeWord ?? snapshot.findWholeWord,
+    });
+  };
+  return (
+    <details
+      className="scient-markdown-find-control"
+      open={snapshot.findOpen}
+      onToggle={(event) => controller.setFindOpen(event.currentTarget.open)}
+    >
+      <summary className="scient-markdown-command-button" aria-label="Find in document">
+        ⌕
+      </summary>
+      <div className="scient-markdown-find-popover" role="search" aria-label="Find and replace">
+        <div className="scient-markdown-find-row">
+          <input
+            ref={inputRef}
+            type="search"
+            aria-label="Find text"
+            placeholder="Find"
+            value={snapshot.findQuery}
+            onChange={(event) => configure({ query: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                controller.navigateFind(event.shiftKey ? -1 : 1);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                controller.setFindOpen(false);
+                controller.view?.focus();
+              }
+            }}
+          />
+          <span aria-live="polite" className="scient-markdown-find-count">
+            {snapshot.findMatchCount === 0
+              ? "0"
+              : `${snapshot.findActiveIndex + 1}/${snapshot.findMatchCount}`}
+          </span>
+          <button
+            type="button"
+            aria-label="Previous match"
+            disabled={snapshot.findMatchCount === 0}
+            onClick={() => controller.navigateFind(-1)}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            aria-label="Next match"
+            disabled={snapshot.findMatchCount === 0}
+            onClick={() => controller.navigateFind(1)}
+          >
+            ↓
+          </button>
+        </div>
+        <div className="scient-markdown-find-row">
+          <button
+            type="button"
+            className={snapshot.findCaseSensitive ? "is-active" : undefined}
+            aria-label="Match case"
+            aria-pressed={snapshot.findCaseSensitive}
+            onClick={() => configure({ caseSensitive: !snapshot.findCaseSensitive })}
+          >
+            Aa
+          </button>
+          <button
+            type="button"
+            className={snapshot.findWholeWord ? "is-active" : undefined}
+            aria-label="Match whole word"
+            aria-pressed={snapshot.findWholeWord}
+            onClick={() => configure({ wholeWord: !snapshot.findWholeWord })}
+          >
+            W
+          </button>
+          {snapshot.editable ? (
+            <input
+              type="text"
+              aria-label="Replacement text"
+              placeholder="Replace"
+              value={replacement}
+              onChange={(event) => setReplacement(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  controller.replaceFind(replacement, false);
+                }
+              }}
+            />
+          ) : null}
+        </div>
+        {snapshot.editable ? (
+          <div className="scient-markdown-find-actions">
+            <button
+              type="button"
+              disabled={snapshot.findMatchCount === 0}
+              onClick={() => controller.replaceFind(replacement, false)}
+            >
+              Replace
+            </button>
+            <button
+              type="button"
+              disabled={snapshot.findMatchCount === 0}
+              onClick={() => controller.replaceFind(replacement, true)}
+            >
+              Replace all
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 export function ScientMarkdownControls({
   controller,
 }: {
@@ -111,18 +243,22 @@ export function ScientMarkdownControls({
     controller.getSnapshot,
     controller.getSnapshot,
   );
-  if (!snapshot.editable) return null;
   const active = new Set(snapshot.activeMarks);
   const slashItems =
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
   return (
     <>
       <div className="scient-markdown-editor-dock" role="toolbar" aria-label="Document actions">
-        <InsertMenu controller={controller} />
-        <CommandButton controller={controller} command="undo" label="Undo" text="↶" />
-        <CommandButton controller={controller} command="redo" label="Redo" text="↷" />
+        {snapshot.editable ? <InsertMenu controller={controller} /> : null}
+        {snapshot.editable ? (
+          <CommandButton controller={controller} command="undo" label="Undo" text="↶" />
+        ) : null}
+        {snapshot.editable ? (
+          <CommandButton controller={controller} command="redo" label="Redo" text="↷" />
+        ) : null}
+        <FindControl controller={controller} snapshot={snapshot} />
       </div>
-      {!snapshot.selectionEmpty ? (
+      {snapshot.editable && !snapshot.selectionEmpty ? (
         <div
           className="scient-markdown-selection-toolbar"
           role="toolbar"
@@ -159,7 +295,7 @@ export function ScientMarkdownControls({
           <LinkEditor controller={controller} />
         </div>
       ) : null}
-      {snapshot.inTable ? (
+      {snapshot.editable && snapshot.inTable ? (
         <div className="scient-markdown-table-toolbar" role="toolbar" aria-label="Table actions">
           <CommandButton
             controller={controller}
@@ -187,7 +323,7 @@ export function ScientMarkdownControls({
           />
         </div>
       ) : null}
-      {snapshot.slashQuery !== null && slashItems.length > 0 ? (
+      {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (
         <div className="scient-markdown-slash-menu" role="listbox" aria-label="Insert block">
           {slashItems.map((item, index) => (
             <button

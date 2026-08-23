@@ -1,6 +1,6 @@
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { toggleMark } from "prosemirror-commands";
-import { Selection, type Transaction } from "prosemirror-state";
+import { Selection, TextSelection, type Transaction } from "prosemirror-state";
 import { EditorView, type DirectEditorProps } from "prosemirror-view";
 
 import {
@@ -23,6 +23,12 @@ import {
   imageUploadPlaceholderPosition,
   removeImageUploadPlaceholder,
 } from "./imageUploads";
+import {
+  clearScientMarkdownSearch,
+  configureScientMarkdownSearch,
+  navigateScientMarkdownSearch,
+  scientMarkdownSearchState,
+} from "./search";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -48,6 +54,13 @@ export interface ScientMarkdownEditorSnapshot {
   readonly blockType: string;
   readonly editable: boolean;
   readonly headingLevel: number | null;
+  readonly findActiveIndex: number;
+  readonly findCaseSensitive: boolean;
+  readonly findFocusRequest: number;
+  readonly findMatchCount: number;
+  readonly findOpen: boolean;
+  readonly findQuery: string;
+  readonly findWholeWord: boolean;
   readonly inTable: boolean;
   readonly selectionEmpty: boolean;
   readonly slashActiveIndex: number;
@@ -84,6 +97,8 @@ export class ScientMarkdownEditorView {
   private mode: MarkdownDocumentMode;
   private readonly listeners = new Set<() => void>();
   private slashActiveIndex = 0;
+  private findOpen = false;
+  private findFocusRequest = 0;
   private imageUploadSequence = 0;
   private snapshotVersion = 0;
   private snapshot: ScientMarkdownEditorSnapshot;
@@ -207,6 +222,86 @@ export class ScientMarkdownEditorView {
     return true;
   }
 
+  setFindOpen(open: boolean): void {
+    if (this.findOpen === open) return;
+    this.findOpen = open;
+    if (!open && this.editorView) {
+      this.clearFind();
+      return;
+    }
+    this.publishSnapshot();
+  }
+
+  requestFind(): void {
+    this.findOpen = true;
+    this.findFocusRequest += 1;
+    this.publishSnapshot();
+  }
+
+  configureFind(input: {
+    readonly query: string;
+    readonly caseSensitive: boolean;
+    readonly wholeWord: boolean;
+  }): void {
+    const view = this.editorView;
+    if (!view) return;
+    view.dispatch(
+      configureScientMarkdownSearch(view.state.tr, input)
+        .setMeta(scientMarkdownTransactionOriginKey, "system")
+        .setMeta("addToHistory", false),
+    );
+  }
+
+  clearFind(): void {
+    const view = this.editorView;
+    if (!view) return;
+    view.dispatch(
+      clearScientMarkdownSearch(view.state.tr)
+        .setMeta(scientMarkdownTransactionOriginKey, "system")
+        .setMeta("addToHistory", false),
+    );
+  }
+
+  navigateFind(direction: -1 | 1): void {
+    const view = this.editorView;
+    if (!view) return;
+    view.dispatch(
+      navigateScientMarkdownSearch(view.state.tr, direction)
+        .setMeta(scientMarkdownTransactionOriginKey, "system")
+        .setMeta("addToHistory", false),
+    );
+    const search = scientMarkdownSearchState(view.state);
+    const match = search.matches[search.activeIndex];
+    if (!match) return;
+    view.dispatch(
+      view.state.tr
+        .setSelection(TextSelection.create(view.state.doc, match.from, match.to))
+        .setMeta(scientMarkdownTransactionOriginKey, "system")
+        .setMeta("addToHistory", false)
+        .scrollIntoView(),
+    );
+  }
+
+  replaceFind(replacement: string, all: boolean): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const search = scientMarkdownSearchState(view.state);
+    if (search.matches.length === 0) return false;
+    let transaction = view.state.tr;
+    if (all) {
+      for (let index = search.matches.length - 1; index >= 0; index -= 1) {
+        const match = search.matches[index];
+        if (match) transaction = transaction.insertText(replacement, match.from, match.to);
+      }
+    } else {
+      const match = search.matches[search.activeIndex];
+      if (!match) return false;
+      transaction = transaction.insertText(replacement, match.from, match.to);
+    }
+    view.dispatch(transaction.scrollIntoView());
+    return true;
+  }
+
   uploadImageFile(file: File, position?: number): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode) || !this.options.uploadImage) return false;
@@ -288,7 +383,7 @@ export class ScientMarkdownEditorView {
           ? { resolveImageSource: this.options.resolveImageSource }
           : {}),
       }),
-      handleKeyDown: (_view, event) => this.handleSlashKeyDown(event),
+      handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
       handlePaste: (_view, event) => this.handleImageTransfer(event.clipboardData),
       handleDrop: (view, event) => {
         const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
@@ -340,11 +435,19 @@ export class ScientMarkdownEditorView {
       }
     }
     const slashQuery = this.slashQuery();
+    const find = scientMarkdownSearchState(state);
     const slashItems = slashQuery === null ? [] : filterScientMarkdownSlashCommands(slashQuery);
     return {
       activeMarks,
       blockType,
       editable: modeIsEditable(this.mode),
+      findActiveIndex: find.activeIndex,
+      findCaseSensitive: find.caseSensitive,
+      findFocusRequest: this.findFocusRequest,
+      findMatchCount: find.matches.length,
+      findOpen: this.findOpen,
+      findQuery: find.query,
+      findWholeWord: find.wholeWord,
       headingLevel,
       inTable,
       selectionEmpty: selection.empty,
@@ -386,6 +489,20 @@ export class ScientMarkdownEditorView {
     const item = items[Math.min(this.slashActiveIndex, items.length - 1)];
     if (!item) return false;
     return this.executeSlashCommand(item.command);
+  }
+
+  private handleEditorKeyDown(event: KeyboardEvent): boolean {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "f") {
+      event.preventDefault();
+      this.requestFind();
+      return true;
+    }
+    if (event.key === "Escape" && this.findOpen) {
+      event.preventDefault();
+      this.setFindOpen(false);
+      return true;
+    }
+    return this.handleSlashKeyDown(event);
   }
 
   executeSlashCommand(command: ScientMarkdownCommand): boolean {
