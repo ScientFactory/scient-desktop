@@ -11,6 +11,13 @@ const MAX_TITLE_LENGTH = 512;
 // printToPDF margins are measured in inches. One sixth of an inch is 16 CSS
 // pixels at Chromium's 96 px/in reference ratio.
 const DOCUMENT_MARGIN_INCHES = 1 / 6;
+// Chromium lays an un-sized PDF onto Letter paper at scale 1, leaving only
+// about 784 CSS pixels for content. Repeated page canvases authored for a
+// desktop viewport can consequently reflow and spill onto a second PDF page.
+// A 0.75 scale gives those canvases a roughly 1,045 CSS-pixel print viewport.
+// Apply it only to repeated, explicitly paginated HTML without an authored
+// paper size; ordinary flowing documents and @page-sized documents stay at 1.
+const SCREEN_AUTHORED_PAGE_SCALE = 0.75;
 const PAGINATION_CSS = `
   :where(table, thead, tfoot, tr, figure, blockquote, pre, details, .box, .card, [data-scient-pdf-keep-together]) {
     break-inside: avoid-page;
@@ -49,6 +56,12 @@ export interface BrowserPdfPageSignals {
   readonly title: string;
   readonly sourceSignals: DesktopPreviewPdfExportArtifact["sourceSignals"];
   readonly warnings: ReadonlyArray<string>;
+  readonly documentLayout?: BrowserPdfDocumentLayoutSignals;
+}
+
+interface BrowserPdfDocumentLayoutSignals {
+  readonly hasAuthoredPageSize: boolean;
+  readonly repeatedPageCanvases: boolean;
 }
 
 interface BrowserPdfReadinessResult {
@@ -56,6 +69,7 @@ interface BrowserPdfReadinessResult {
   readonly sourceUrl: string;
   readonly title: string;
   readonly sourceSignals: DesktopPreviewPdfExportArtifact["sourceSignals"];
+  readonly documentLayout?: BrowserPdfDocumentLayoutSignals;
 }
 
 const readinessScript = `
@@ -98,6 +112,80 @@ const readinessScript = `
     for (const cleanup of imageCleanups) cleanup();
     const images = Array.from(document.images);
     const body = document.body;
+    const explicitPageContainers = new Set();
+    const pageCanvasSelectors = [];
+    let hasAuthoredPageSize = false;
+    let inspectedRuleCount = 0;
+    const maxInspectedRules = 10_000;
+    const hasPageCanvasSize = (style) => [
+      "height",
+      "min-height",
+      "block-size",
+      "min-block-size",
+    ].some((property) => {
+      const value = style?.getPropertyValue(property).trim().toLowerCase();
+      return value && value !== "auto" && !/^0(?:[a-z%]+)?$/.test(value);
+    });
+    const visitRules = (rules) => {
+      if (!rules || inspectedRuleCount >= maxInspectedRules) return;
+      for (const rule of Array.from(rules)) {
+        inspectedRuleCount += 1;
+        if (inspectedRuleCount > maxInspectedRules) return;
+        const style = rule.style;
+        if (rule.constructor?.name === "CSSPageRule") {
+          const pageSize = style?.getPropertyValue("size").trim();
+          if (pageSize && pageSize !== "auto") hasAuthoredPageSize = true;
+        }
+        const breakAfter = style?.getPropertyValue("break-after").trim();
+        const legacyBreakAfter = style?.getPropertyValue("page-break-after").trim();
+        const selector = rule.selectorText;
+        if (selector && hasPageCanvasSize(style)) pageCanvasSelectors.push(selector);
+        if (
+          explicitPageContainers.size < 2 &&
+          (breakAfter === "page" || legacyBreakAfter === "always")
+        ) {
+          if (selector) {
+            try {
+              for (const element of document.querySelectorAll(selector)) {
+                explicitPageContainers.add(element);
+                if (explicitPageContainers.size >= 2) break;
+              }
+            } catch {}
+          }
+        }
+        try {
+          if (rule.cssRules) visitRules(rule.cssRules);
+        } catch {}
+      }
+    };
+    for (const sheet of [...Array.from(document.styleSheets), ...Array.from(document.adoptedStyleSheets || [])]) {
+      try {
+        visitRules(sheet.cssRules);
+      } catch {}
+    }
+    for (const element of document.querySelectorAll("[style]")) {
+      if (explicitPageContainers.size >= 2) break;
+      const breakAfter = element.style.getPropertyValue("break-after").trim();
+      const legacyBreakAfter = element.style.getPropertyValue("page-break-after").trim();
+      if (breakAfter === "page" || legacyBreakAfter === "always") {
+        explicitPageContainers.add(element);
+      }
+    }
+    let sizedExplicitPageCount = 0;
+    for (const element of explicitPageContainers) {
+      let isPageCanvas = hasPageCanvasSize(element.style);
+      if (!isPageCanvas) {
+        for (const selector of pageCanvasSelectors) {
+          try {
+            if (element.matches(selector)) {
+              isPageCanvas = true;
+              break;
+            }
+          } catch {}
+        }
+      }
+      if (isPageCanvas) sizedExplicitPageCount += 1;
+    }
     return {
       settled: settled === true,
       sourceUrl: location.href,
@@ -112,6 +200,10 @@ const readinessScript = `
         scrollWidth: Math.max(document.documentElement?.scrollWidth || 0, body?.scrollWidth || 0),
         scrollHeight: Math.max(document.documentElement?.scrollHeight || 0, body?.scrollHeight || 0),
       },
+      documentLayout: {
+        hasAuthoredPageSize,
+        repeatedPageCanvases: sizedExplicitPageCount >= 2,
+      },
     };
   })()
 `;
@@ -120,7 +212,14 @@ function isReadinessResult(value: unknown): value is BrowserPdfReadinessResult {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   const signals = candidate.sourceSignals;
+  const documentLayout = candidate.documentLayout;
   if (typeof signals !== "object" || signals === null) return false;
+  if (
+    documentLayout !== undefined &&
+    (typeof documentLayout !== "object" || documentLayout === null)
+  ) {
+    return false;
+  }
   const numericKeys = [
     "bodyTextLength",
     "imageCount",
@@ -135,6 +234,9 @@ function isReadinessResult(value: unknown): value is BrowserPdfReadinessResult {
     typeof candidate.settled === "boolean" &&
     typeof candidate.sourceUrl === "string" &&
     typeof candidate.title === "string" &&
+    (documentLayout === undefined ||
+      (typeof (documentLayout as Record<string, unknown>).hasAuthoredPageSize === "boolean" &&
+        typeof (documentLayout as Record<string, unknown>).repeatedPageCanvases === "boolean")) &&
     numericKeys.every((key) => {
       const number = (signals as Record<string, unknown>)[key];
       return typeof number === "number" && Number.isInteger(number) && number >= 0;
@@ -142,7 +244,7 @@ function isReadinessResult(value: unknown): value is BrowserPdfReadinessResult {
   );
 }
 
-export function buildDocumentLayoutPrintOptions() {
+export function buildDocumentLayoutPrintOptions(scale = 1) {
   return {
     printBackground: true,
     displayHeaderFooter: false,
@@ -155,8 +257,15 @@ export function buildDocumentLayoutPrintOptions() {
     preferCSSPageSize: true,
     generateTaggedPDF: true,
     generateDocumentOutline: true,
-    scale: 1,
+    scale,
   } as const;
+}
+
+function scaleForDocumentLayout(signals: BrowserPdfDocumentLayoutSignals | undefined): number {
+  if (signals?.repeatedPageCanvases && !signals.hasAuthoredPageSize) {
+    return SCREEN_AUTHORED_PAGE_SCALE;
+  }
+  return 1;
 }
 
 export function warningsForSignals(
@@ -188,6 +297,7 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
         title: value.title,
         sourceSignals: value.sourceSignals,
         warnings: warningsForSignals(value.sourceSignals, value.settled),
+        ...(value.documentLayout === undefined ? {} : { documentLayout: value.documentLayout }),
       };
     });
 
@@ -242,7 +352,9 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
           });
           const page = await waitForReadiness(webContents);
           assertStableSurface(page.sourceUrl);
-          const data = await webContents.printToPDF(buildDocumentLayoutPrintOptions());
+          const data = await webContents.printToPDF(
+            buildDocumentLayoutPrintOptions(scaleForDocumentLayout(page.documentLayout)),
+          );
           // Chromium cannot cancel an in-flight print safely. Wait for it to
           // settle under the global print permit, then discard raced output.
           assertStableSurface(page.sourceUrl);

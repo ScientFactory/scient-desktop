@@ -113,6 +113,45 @@ describe("BrowserPdfRenderer", () => {
     ]);
   });
 
+  it.effect("fits only repeated screen-authored page sets to the paper viewport", () =>
+    Effect.gen(function* () {
+      const printedScales: number[] = [];
+      const webContents = {
+        isDestroyed: () => false,
+        isLoading: () => false,
+        getURL: () => "https://example.test/report.html",
+        on: vi.fn(),
+        off: vi.fn(),
+        insertCSS: vi.fn(async () => "pagination-css"),
+        removeInsertedCSS: vi.fn(async () => undefined),
+        printToPDF: vi.fn(async (options: { readonly scale: number }) => {
+          printedScales.push(options.scale);
+          return Buffer.from("%PDF-1.7\nsynthetic");
+        }),
+      };
+      const layouts = [
+        { repeatedPageCanvases: true, hasAuthoredPageSize: false },
+        { repeatedPageCanvases: true, hasAuthoredPageSize: true },
+        { repeatedPageCanvases: false, hasAuthoredPageSize: false },
+      ] as const;
+
+      for (const documentLayout of layouts) {
+        const render = createBrowserPdfRenderer({
+          waitForReadiness: async () => ({
+            sourceUrl: "https://example.test/report.html",
+            title: "Report",
+            sourceSignals: signals,
+            warnings: [],
+            documentLayout,
+          }),
+        });
+        yield* render(webContents as never);
+      }
+
+      expect(printedScales).toEqual([0.75, 1, 1]);
+    }),
+  );
+
   it.effect("does not call print when the guest is already destroyed", () =>
     Effect.gen(function* () {
       const render = createBrowserPdfRenderer({
@@ -174,6 +213,10 @@ describe("BrowserPdfRenderer", () => {
             sourceUrl: "https://example.test/report.html",
             title: "Report",
             sourceSignals: signals,
+            documentLayout: {
+              hasAuthoredPageSize: false,
+              repeatedPageCanvases: true,
+            },
           };
         }),
         printToPDF: vi.fn(async () => Buffer.from("%PDF-1.7\nsynthetic")),
@@ -186,6 +229,10 @@ describe("BrowserPdfRenderer", () => {
       expect(readinessSource).toContain('image.removeEventListener("error", finish)');
       expect(readinessSource).toContain("active = false");
       expect(readinessSource).toContain("clearTimeout(timeoutId)");
+      expect(readinessSource).toContain('rule.constructor?.name === "CSSPageRule"');
+      expect(readinessSource).toContain('getPropertyValue("break-after")');
+      expect(readinessSource).toContain("document.adoptedStyleSheets");
+      expect(webContents.printToPDF).toHaveBeenCalledWith(expect.objectContaining({ scale: 0.75 }));
     }),
   );
 
