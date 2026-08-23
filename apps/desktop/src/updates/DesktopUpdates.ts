@@ -29,7 +29,7 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -229,8 +229,8 @@ function getAutoUpdateDisabledReason(args: {
   hasUpdateFeedConfig: boolean;
   safetyEnvelopeEnabled: boolean;
 }): string | null {
-  if (args.safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.autoUpdateEnabled) {
-    return "Automatic updates are disabled for this Scient candidate during the D4 bootstrap.";
+  if (args.safetyEnvelopeEnabled && !SCIENT_DESKTOP_IDENTITY.autoUpdateEnabled) {
+    return "Automatic updates are disabled by the current Scient safety policy.";
   }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
@@ -742,7 +742,7 @@ export const make = Effect.gen(function* () {
 
       if (
         config.mockUpdates &&
-        !(environment.safetyEnvelopeEnabled && !SCIENT_NEXT_IDENTITY.autoUpdateEnabled)
+        !(environment.safetyEnvelopeEnabled && !SCIENT_DESKTOP_IDENTITY.autoUpdateEnabled)
       ) {
         yield* electronUpdater.setFeedURL({
           provider: "generic",

@@ -66,8 +66,8 @@ worktree's data.
 
 The visible name and icon may evolve without weakening isolation. The
 development protocol, bundle identifier, state root, and launcher-ownership
-marker remain candidate-specific until the cutover audit explicitly changes
-them.
+marker remain development-specific compatibility values unless a separate
+migration explicitly changes them.
 
 To deliberately transfer launcher ownership after selecting a new stable
 checkout:

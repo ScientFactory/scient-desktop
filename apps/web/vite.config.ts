@@ -11,7 +11,7 @@ import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { scientPdfAssets } from "./scripts/scientPdfAssets";
@@ -33,25 +33,25 @@ const explicitHost = process.env.HOST?.trim();
 const host = explicitHost || "localhost";
 const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
 const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
-const configuredRelayUrl = SCIENT_NEXT_IDENTITY.cloudEnabled
+const configuredRelayUrl = SCIENT_DESKTOP_IDENTITY.cloudEnabled
   ? repoEnv.VITE_T3CODE_RELAY_URL?.trim() || ""
   : "";
-const configuredClerkPublishableKey = SCIENT_NEXT_IDENTITY.cloudEnabled
+const configuredClerkPublishableKey = SCIENT_DESKTOP_IDENTITY.cloudEnabled
   ? repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || ""
   : "";
-const configuredClerkJwtTemplate = SCIENT_NEXT_IDENTITY.cloudEnabled
+const configuredClerkJwtTemplate = SCIENT_DESKTOP_IDENTITY.cloudEnabled
   ? repoEnv.VITE_CLERK_JWT_TEMPLATE?.trim() || ""
   : "";
-const configuredClerkCliOAuthClientId = SCIENT_NEXT_IDENTITY.cloudEnabled
+const configuredClerkCliOAuthClientId = SCIENT_DESKTOP_IDENTITY.cloudEnabled
   ? repoEnv.VITE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || ""
   : "";
-const configuredRelayTracingUrl = SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled
+const configuredRelayTracingUrl = SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled
   ? repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || ""
   : "";
-const configuredRelayTracingDataset = SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled
+const configuredRelayTracingDataset = SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled
   ? repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || ""
   : "";
-const configuredRelayTracingToken = SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled
+const configuredRelayTracingToken = SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled
   ? repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || ""
   : "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";

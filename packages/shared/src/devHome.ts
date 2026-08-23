@@ -102,8 +102,8 @@ export const resolveWorktreeT3Home = (
     return path.join(worktreePath, ".t3");
   });
 
-/** Candidate-specific worktree home used by the Scient Next D4 runner. */
-export const resolveWorktreeScientNextHome = (
+/** Worktree-specific home used by the isolated Scient development runner. */
+export const resolveWorktreeScientDevHome = (
   cwd: string,
 ): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {

@@ -42,7 +42,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -87,19 +87,19 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
-export const isCandidateCloudIntegrationDisabled = (
+export const isScientCloudIntegrationDisabled = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ) => {
   const explicitCloudOptIn =
     env.SCIENT_NEXT_CLOUD_ENABLED === "true" ||
     (env.NODE_ENV === "test" && env.SCIENT_NEXT_CLOUD_ROUTE_TEST === "true");
-  return SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled && !explicitCloudOptIn;
+  return SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && !explicitCloudOptIn;
 };
 
 const cloudIntegrationDisabled = () =>
   Effect.fail(
     new EnvironmentHttpInternalServerError({
-      message: "Cloud integration is disabled in this Scient candidate.",
+      message: "Cloud integration is disabled by the current Scient safety policy.",
     }),
   );
 
@@ -1088,7 +1088,7 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "connect",
   Effect.fnUntraced(function* (handlers) {
-    if (isCandidateCloudIntegrationDisabled()) {
+    if (isScientCloudIntegrationDisabled()) {
       return handlers
         .handle("linkProof", () => cloudIntegrationDisabled())
         .handle("relayConfig", () => cloudIntegrationDisabled())

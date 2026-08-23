@@ -33,7 +33,7 @@ import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./config.ts";
 import {
   consumeCloudReplayGuards,
-  isCandidateCloudIntegrationDisabled,
+  isScientCloudIntegrationDisabled,
   isSupportedLinkProviderKind,
   linkProofScopes,
   pendingServiceUpdateExists,
@@ -56,27 +56,27 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
 
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
 
-it("keeps D4 cloud integration disabled unless explicitly opted in", () => {
-  expect(isCandidateCloudIntegrationDisabled({ SCIENT_NEXT_SAFETY_ENVELOPE: "true" })).toBe(true);
+it("keeps Scient cloud integration disabled unless explicitly opted in", () => {
+  expect(isScientCloudIntegrationDisabled({ SCIENT_NEXT_SAFETY_ENVELOPE: "true" })).toBe(true);
   expect(
-    isCandidateCloudIntegrationDisabled({
+    isScientCloudIntegrationDisabled({
       SCIENT_NEXT_SAFETY_ENVELOPE: "true",
       SCIENT_NEXT_CLOUD_ENABLED: "true",
     }),
   ).toBe(false);
   expect(
-    isCandidateCloudIntegrationDisabled({
+    isScientCloudIntegrationDisabled({
       NODE_ENV: "test",
       SCIENT_NEXT_CLOUD_ROUTE_TEST: "true",
     }),
   ).toBe(false);
   expect(
-    isCandidateCloudIntegrationDisabled({
+    isScientCloudIntegrationDisabled({
       NODE_ENV: "production",
       SCIENT_NEXT_CLOUD_ROUTE_TEST: "true",
     }),
   ).toBe(true);
-  expect(isCandidateCloudIntegrationDisabled({})).toBe(true);
+  expect(isScientCloudIntegrationDisabled({})).toBe(true);
 });
 
 function makeSecretStore(

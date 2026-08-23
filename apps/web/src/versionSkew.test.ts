@@ -99,7 +99,7 @@ describe("versionSkew", () => {
 
   it("matches version-drift guidance to the advertised update path", () => {
     expect(manualServerUpdateCommand("0.6.0")).toBe(
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop-next/releases/download/v0.6.0/scient-server-0.6.0.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz t3",
     );
     expect(serverUpdateGuidance("respawn", "Remote server")).toBe(
       "Update the Remote server so they stay in sync.",

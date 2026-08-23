@@ -9,7 +9,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
@@ -142,7 +142,7 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
   ),
 );
 
-export const serviceOnboardingDisabled = SCIENT_NEXT_IDENTITY.safetyEnvelopeEnabled;
+export const serviceOnboardingDisabled = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled;
 
 const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
   const service = yield* BootService.BootService;

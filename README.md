@@ -1,15 +1,16 @@
 # Scient desktop
 
-This repository is ScientFactory's T3-derived desktop application. It preserves
-the official T3 history while keeping Scient-owned product behavior behind
-explicit seams. Release machinery is implemented but does not itself authorize
-publication: every release still requires an exact-tree promotion, green source
-CI, native packaging and signing proof, and an explicit publishing run.
+This repository is the active Scient Desktop application and the sole source of
+current desktop releases. It preserves the official T3 history while keeping
+Scient-owned product behavior behind explicit seams. Release machinery does
+not itself authorize publication: every release still requires an exact-tree
+promotion, green source CI, native packaging and signing proof, and an explicit
+publishing run.
 
-Production packages use the canonical Scient installation identity so the
-legacy updater can install the replacement. The new application keeps its own
-`scient-next` data directory; installing it does not silently open or mutate
-legacy Scient data. Development builds remain independently named and isolated.
+Production packages use the canonical Scient installation identity. Existing
+installations keep their `scient-next` data directory as a compatibility value;
+the directory name is not current product branding and must not be changed by a
+repository rename. Development builds remain independently named and isolated.
 
 The exact donor base, safety envelope, verification, limitations, and rollback
 are recorded in the
@@ -59,8 +60,8 @@ git diff --check
 ```
 
 The remainder of this README is inherited T3 product documentation. It remains
-useful for understanding the host platform but does not describe the
-candidate's current public product or release status.
+useful for understanding the host platform but does not describe Scient's
+current public product or release status.
 
 ---
 

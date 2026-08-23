@@ -35,6 +35,9 @@ concurrency:
   group: scient-stable-release
   cancel-in-progress: false
 
+env:
+  SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop
+
 jobs:
   preflight:
     name: Exact-commit release preflight
@@ -147,6 +150,10 @@ jobs:
           set -euo pipefail
           if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" && "$PUBLISH_RELEASE" != "true" ]]; then
             echo "allow_unsigned_windows is only valid for an explicitly publishing run." >&2
+            exit 1
+          fi
+          if [[ "$PUBLISH_RELEASE" == "true" && "$GITHUB_REPOSITORY" != "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" ]]; then
+            echo "Publishing is allowed only from $SCIENT_DESKTOP_CANONICAL_REPOSITORY, not $GITHUB_REPOSITORY." >&2
             exit 1
           fi
           version="$RELEASE_VERSION"
@@ -439,7 +446,7 @@ jobs:
           RELEASE_ARCH: ${{ matrix.arch }}
           PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
           ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
-          T3CODE_DESKTOP_UPDATE_REPOSITORY: ScientFactory/scient-desktop-next
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.CSC_KEY_PASSWORD || '' }}
           APPLE_API_KEY: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY || '' }}
@@ -710,6 +717,7 @@ jobs:
           node scripts/create-scient-release-handoff.ts \
             --assets-dir release-assets \
             --version "$RELEASE_VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
             --source-sha "$SOURCE_SHA" \
             --source-tree "$SOURCE_TREE" \
             --output "release-assets/scient-release-handoff.json"
@@ -798,10 +806,11 @@ jobs:
             <<<"$artifact_metadata" >/dev/null
           jq -e \
             --arg commit "$EXPECTED_SOURCE_SHA" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --arg tag "$EXPECTED_TAG" \
             --arg tree "$EXPECTED_SOURCE_TREE" \
             --arg version "$EXPECTED_VERSION" \
-            '.schemaVersion == 1 and .product == "Scient" and .version == $version and .tag == $tag and .source.repository == "ScientFactory/scient-desktop-next" and .source.commit == $commit and .source.tree == $tree' \
+            '.schemaVersion == 1 and .product == "Scient" and .version == $version and .tag == $tag and .source.repository == $repository and .source.commit == $commit and .source.tree == $tree' \
             release-assets/scient-release-handoff.json >/dev/null
           (cd release-assets && sha256sum --check SHA256SUMS.txt)
           jq -r '.assets[] | "\(.sha256)  \(.name)"' \

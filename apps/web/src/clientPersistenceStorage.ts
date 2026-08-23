@@ -2,9 +2,9 @@ import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
-export const CLIENT_SETTINGS_STORAGE_KEY = SCIENT_NEXT_IDENTITY.clientSettingsStorageKey;
+export const CLIENT_SETTINGS_STORAGE_KEY = SCIENT_DESKTOP_IDENTITY.clientSettingsStorageKey;
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";

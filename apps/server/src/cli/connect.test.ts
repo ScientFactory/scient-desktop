@@ -82,7 +82,7 @@ it.effect("keeps a successful connection when a remote service update is pending
   }),
 );
 
-it.effect("does not offer the inherited global service during Scient Next onboarding", () =>
+it.effect("does not offer the inherited global service during Scient onboarding", () =>
   Effect.gen(function* () {
     const result = yield* offerServiceDuringOnboarding;
     const output = (yield* TestConsole.logLines).join("\n");

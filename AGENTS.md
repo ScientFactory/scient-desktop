@@ -1,40 +1,37 @@
-# Scient desktop candidate instructions
+# Scient desktop instructions
 
-Status: post-D4 migration candidate. These instructions override the
+Status: active released application. These instructions override the
 inherited T3 guidance below when the two conflict.
 
-ScientFactory owns this repository and the candidate product direction. Yaacov
-is the accountable D4 owner. The implementation operator for the bootstrap is
-OpenAI Codex task `019fbc83-7f59-7050-a16c-7b63686016ce`, acting under Yaacov's
-authorization.
+ScientFactory owns this repository and the product direction. Yaacov is the
+accountable owner.
 
 ## Current boundary
 
-- This repository is the fresh, literal-ancestry T3-derived successor
-  candidate. `ScientFactory/scient-desktop` remains the supported continuity
-  application until a later cutover gate.
+- This repository is the active, literal-ancestry T3-derived Scient Desktop
+  application and the only source for current desktop releases.
 - The product label is `Scient`. The canonical local baseline is named
   `Scient (Dev) Stable`; disposable feature-worktree instances remain
   `Scient (Dev)`. Production packages now use the canonical Scient install
-  identity so the legacy updater can replace the installed application. The
-  new app's data, development identity, state root, and browser persistence
-  deliberately remain isolated under `scient-next` boundaries.
-- The integrated D4 envelope establishes identity/state isolation and
-  fail-closed telemetry, cloud, updater, service, signing, and publication
-  guards. Later work must follow the currently authorized parent migration
-  gate; D4 itself did not authorize scientific features, legacy-data import,
-  cloud or mobile enablement, signing, release, or public distribution.
-- Never read, copy, seed, migrate, or write T3 or current-Scient live user data
-  for D4. This overrides the inherited donor test-data guidance below. Use only
-  synthetic fixtures in candidate-owned temporary directories.
+  identity. Existing data, development identity, state root, and browser
+  persistence deliberately retain their established `scient-next`
+  compatibility values; those values are storage addresses, not product
+  branding, and must not be changed without a separate data-migration gate.
+- The integrated safety envelope keeps telemetry, cloud, updater, service,
+  signing, and publication behavior fail closed unless its owning release or
+  operations gate explicitly enables it.
+- Never read, copy, seed, migrate, or write live Scient or T3 user data for
+  ordinary development. Use synthetic fixtures in worktree-owned temporary
+  directories unless a separately authorized migration rehearsal says
+  otherwise.
 - Do not use production credentials or point `SCIENT_NEXT_HOME`/`--home-dir`/
   `--base-dir` at `.t3` or a current Scient data root.
-- No browser automation, screenshots, visual regression, geometry checks, or
-  manual UI acceptance belong to D4. A later user-facing gate owns that proof.
+- User-facing changes require proportional integrated and human review; process
+  readiness or automated tests alone do not establish product acceptance.
 
 ## Repository and upstream rules
 
-- `origin` is the writable `ScientFactory/scient-desktop-next` remote.
+- `origin` is the writable `ScientFactory/scient-desktop` remote.
 - `upstream` is the official `pingdotgg/t3code` remote and must remain
   fetch-only with push URL `DISABLED`. Never add Synara as a remote.
 - Preserve literal T3 ancestry. Receive upstream work through dedicated,
@@ -57,7 +54,7 @@ authorization.
 ## Verification
 
 Use Node `^24.13.1` and pnpm `11.10.0`. Run focused checks while iterating. A
-final D4 candidate change must pass the applicable focused tests plus:
+final Scient Desktop change must pass the applicable focused tests plus:
 
 ```text
 pnpm exec vp fmt --check
@@ -70,8 +67,8 @@ git diff --check
 ```
 
 These commands are the repository-specific baseline established from the exact
-official T3 integration base. Do not substitute commands from the current
-Synara-derived Scient repository.
+official T3 integration base. Do not substitute commands from the retired
+Synara-derived repository.
 
 User-facing desktop, web, server, provider, and release copy belongs to Scient.
 Keep T3 package names, CLI names, file formats, environment variables, remote

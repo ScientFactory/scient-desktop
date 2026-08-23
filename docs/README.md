@@ -1,11 +1,11 @@
-# Scient desktop candidate docs
+# Scient Desktop documentation
 
-The current application surfaces use the Scient product identity. Most user
-and internal documents below remain inherited T3 host documentation until each
-owner is reconciled through the migration; they must not be mistaken for
-Scient release authority.
+This is the documentation index for the active Scient Desktop application.
+Some internal documents retain inherited T3 terminology where it describes the
+host platform or historical ancestry; that terminology is not product identity
+or release authority.
 
-## Using T3 Code
+## Using Scient Desktop
 
 - [Install and first run](./user/install.md)
 - [Permission modes](./user/permission-modes.md)
@@ -33,7 +33,7 @@ Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 
 ---
 
-## Working on T3 Code
+## Working on Scient Desktop
 
 Everything below is for maintainers. Setup lives in the [root README](../README.md);
 policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
@@ -60,7 +60,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient rich chat visualizations](./internals/scient-chat-visualizations.md)
 - [D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
-- [Candidate upstream maintenance](../UPSTREAM.md)
+- [Upstream maintenance](../UPSTREAM.md)
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)
 

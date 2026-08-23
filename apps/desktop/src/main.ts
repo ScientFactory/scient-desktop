@@ -64,12 +64,12 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 // The candidate's safety envelope is fail-closed even when launched directly
 // from a packaged Electron bundle rather than through a dev helper. Do not
 // allow an ambient false value to re-enable telemetry or updater behavior.
-process.env.SCIENT_NEXT_SAFETY_ENVELOPE = SCIENT_NEXT_IDENTITY.safetyEnvelopeMarker;
+process.env.SCIENT_NEXT_SAFETY_ENVELOPE = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker;
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {

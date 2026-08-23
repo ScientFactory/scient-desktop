@@ -71,7 +71,7 @@ export function createScientServerPackageJson(input: {
     license: input.source.license,
     repository: {
       type: "git",
-      url: "https://github.com/ScientFactory/scient-desktop-next.git",
+      url: "https://github.com/ScientFactory/scient-desktop.git",
       directory: "apps/server",
     },
     bin: input.source.bin,

@@ -9,6 +9,40 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.6",
+    publishedAt: "2026-08-23",
+    kicker: "Antigravity, clearer provider recovery, and smoother threads",
+    headline: "Connect Antigravity and stay in flow",
+    summary:
+      "Scient adds first-class Google Antigravity support, makes provider setup and recovery clearer, and brings focused reliability improvements to chats, projects, remote work, and terminals.",
+    highlights: [
+      {
+        id: "antigravity-provider",
+        title: "Connect Google Antigravity",
+        description:
+          "Install a reviewed private copy or use your existing Antigravity CLI, sign in with your Google account, discover the models available to it, and keep native multi-turn conversations streaming inside Scient.",
+      },
+      {
+        id: "provider-setup-recovery",
+        title: "Recover provider setup with less guesswork",
+        description:
+          "Codex, Claude, and Antigravity setup now distinguish installation, sign-in, repair, removal, and account actions more clearly, with direct recovery when a browser or authorization-code step needs attention.",
+      },
+      {
+        id: "thread-workflow-refinements",
+        title: "Keep everyday thread work moving",
+        description:
+          "Follow-up messages keep their order, background thread creation is more reliable, chat titles can be renamed directly, and project icons can use an image outside the project folder.",
+      },
+      {
+        id: "remote-terminal-reliability",
+        title: "Work more reliably across remotes and terminals",
+        description:
+          "Remote servers restore the expected user PATH, advertised endpoints survive Tailscale launch defects, and terminal rendering and high-frequency mouse input are more resilient.",
+      },
+    ],
+  },
+  {
     version: "0.6.5",
     publishedAt: "2026-08-22",
     kicker: "New agent providers, a message queue, and effortless LaTeX navigation",

@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 
 import {
   resolveGitWorktreePath,
-  resolveWorktreeScientNextHome,
+  resolveWorktreeScientDevHome,
   resolveWorktreeT3Home,
 } from "./devHome.ts";
 
@@ -109,11 +109,11 @@ describe("resolveWorktreeT3Home", () => {
   );
 });
 
-describe("resolveWorktreeScientNextHome", () => {
+describe("resolveWorktreeScientDevHome", () => {
   it.effect("answers with .scient-next before the dev runner creates it", () =>
     Effect.gen(function* () {
       const { root, nested } = yield* makeRepo("worktree");
-      const home = yield* resolveWorktreeScientNextHome(nested);
+      const home = yield* resolveWorktreeScientDevHome(nested);
       assert.equal(home, NodePath.join(NodePath.resolve(root), ".scient-next"));
       assert.isFalse(NodeFS.existsSync(home ?? ""));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

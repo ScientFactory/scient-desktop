@@ -7,8 +7,8 @@ on:
 jobs:
   preview:
     name: EAS Preview
-    # D4 candidate: do not publish mobile artifacts or OTA branches from the
-    # migration candidate. Keep the inherited workflow for later re-evaluation.
+    # Mobile artifacts and OTA branches remain disabled until the mobile
+    # release owner explicitly enables them.
     if: ${{ false }}
     runs-on: ubuntu-24.04
     concurrency:

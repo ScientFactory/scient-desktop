@@ -5,7 +5,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 
@@ -14,14 +14,14 @@ import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
 import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
 
 function configuredRelayUrl(): string {
-  return SCIENT_NEXT_IDENTITY.cloudEnabled
+  return SCIENT_DESKTOP_IDENTITY.cloudEnabled
     ? (resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid")
     : "http://relay.invalid";
 }
 
 const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
 const relayTracingLayer = makeRelayClientTracingLayer(
-  SCIENT_NEXT_IDENTITY.outboundTelemetryEnabled ? resolveRelayTracingConfig() : null,
+  SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled ? resolveRelayTracingConfig() : null,
   {
     serviceName: "t3-web-relay-client",
     serviceVersion: import.meta.env.APP_VERSION,

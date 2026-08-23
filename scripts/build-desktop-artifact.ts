@@ -17,7 +17,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { SCIENT_NEXT_IDENTITY } from "@t3tools/shared/scientNextIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
@@ -55,7 +55,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = SCIENT_NEXT_IDENTITY.appId;
+const DESKTOP_APP_ID = SCIENT_DESKTOP_IDENTITY.appId;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2124,7 +2124,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   void version;
-  return SCIENT_NEXT_IDENTITY.baseName;
+  return SCIENT_DESKTOP_IDENTITY.baseName;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2176,8 +2176,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: SCIENT_NEXT_IDENTITY.baseName,
-          schemes: [SCIENT_NEXT_IDENTITY.productionScheme],
+          name: SCIENT_DESKTOP_IDENTITY.baseName,
+          schemes: [SCIENT_DESKTOP_IDENTITY.productionScheme],
         },
       ],
       ...(macPasskeySigning
@@ -2223,13 +2223,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // scient:// OAuth callbacks to the app.
       protocols: [
         {
-          name: SCIENT_NEXT_IDENTITY.baseName,
-          schemes: [SCIENT_NEXT_IDENTITY.productionScheme],
+          name: SCIENT_DESKTOP_IDENTITY.baseName,
+          schemes: [SCIENT_DESKTOP_IDENTITY.productionScheme],
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: SCIENT_NEXT_IDENTITY.linuxWmClass,
+          StartupWMClass: SCIENT_DESKTOP_IDENTITY.linuxWmClass,
         },
       },
     };
@@ -3021,7 +3021,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed && SCIENT_NEXT_IDENTITY.cloudEnabled
+    options.platform === "mac" && options.signed && SCIENT_DESKTOP_IDENTITY.cloudEnabled
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
