@@ -16,6 +16,11 @@ contracts and settings are language-neutral so later languages can remain indepe
    `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or newer. Install missing requirements with
    your own environment tooling, then refresh again.
 
+Prefer a project `.venv` or another virtual environment you control. Scient detects a project's
+`.venv` when that project is open. The isolated compute bridge does not load packages installed
+with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
+runtime discovery succeed.
+
 The settings inventory is environment-wide. When a project is open, its Compute panel also checks
 that project's `.venv`. A configured interpreter that is missing or unusable remains visible as a
 problem; Scient does not silently replace it with another interpreter.

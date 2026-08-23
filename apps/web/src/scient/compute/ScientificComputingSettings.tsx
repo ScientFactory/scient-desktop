@@ -31,7 +31,7 @@ function readinessLabel(language: ComputeLanguageRuntimeInspection, enabled: boo
     : "Runtime requirements are missing";
 }
 
-function RuntimeDetails({
+export function RuntimeDetails({
   language,
   enabled,
 }: {
@@ -42,31 +42,35 @@ function RuntimeDetails({
   return (
     <div className="mt-3 space-y-1 border-t border-border/50 py-2">
       {language.runtimes.map(({ profile, verification }) => (
-        <div
-          key={`${profile.source}:${profile.executable}`}
-          className="flex min-w-0 items-start justify-between gap-4 py-1.5 text-xs"
-        >
-          <div className="min-w-0">
-            <div className="truncate font-medium text-foreground/90">{profile.displayName}</div>
-            <div className="truncate font-mono text-muted-foreground">{profile.executable}</div>
-            <div className="text-muted-foreground">
-              {profile.source}
-              {profile.architecture ? ` · ${profile.architecture}` : ""}
+        <div key={`${profile.source}:${profile.executable}`} className="min-w-0 py-1.5 text-xs">
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="truncate font-medium text-foreground/90">{profile.displayName}</div>
+              <div className="truncate font-mono text-muted-foreground">{profile.executable}</div>
+              <div className="text-muted-foreground">
+                {profile.source}
+                {profile.architecture ? ` · ${profile.architecture}` : ""}
+              </div>
+            </div>
+            <div
+              className={
+                verification.readiness === "ready"
+                  ? "shrink-0 text-success"
+                  : "max-w-64 shrink-0 text-right text-warning"
+              }
+            >
+              {verification.readiness === "ready"
+                ? "Ready"
+                : verification.missingRequirements.length > 0
+                  ? `Missing: ${verification.missingRequirements.join(", ")}`
+                  : (verification.message ?? verification.readiness.replaceAll("-", " "))}
             </div>
           </div>
-          <div
-            className={
-              verification.readiness === "ready"
-                ? "shrink-0 text-success"
-                : "max-w-64 shrink-0 text-right text-warning"
-            }
-          >
-            {verification.readiness === "ready"
-              ? "Ready"
-              : verification.missingRequirements.length > 0
-                ? `Missing: ${verification.missingRequirements.join(", ")}`
-                : (verification.message ?? verification.readiness.replaceAll("-", " "))}
-          </div>
+          {verification.readiness === "missing-requirement" && verification.message !== null ? (
+            <p className="mt-2 max-w-2xl text-[11px] leading-snug text-muted-foreground">
+              {verification.message}
+            </p>
+          ) : null}
         </div>
       ))}
     </div>

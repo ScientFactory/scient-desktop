@@ -198,6 +198,20 @@ export function checkReadiness(probe: ProbeResult): {
   return { readiness: "ready", missing: [] };
 }
 
+function verificationMessage(
+  readiness: ComputeRuntimeReadiness,
+  missing: ReadonlyArray<string>,
+): string | null {
+  if (readiness === "ready") return null;
+  if (readiness !== "missing-requirement") return missing.join(", ");
+
+  return [
+    `Create or select a Python environment that satisfies: ${missing.join(", ")}.`,
+    "Project .venv environments are detected when that project is open.",
+    "Scient's isolated compute bridge does not load packages installed with pip --user.",
+  ].join(" ");
+}
+
 /**
  * Builds a `ComputeRuntimeProfile` from a probe result.
  */
@@ -475,7 +489,7 @@ export function makePythonRuntimeAdapter(
         profile: launchRequest.profile,
         readiness,
         missingRequirements: missing,
-        message: readiness === "ready" ? null : missing.join(", "),
+        message: verificationMessage(readiness, missing),
       } satisfies ComputeRuntimeVerification;
     });
 

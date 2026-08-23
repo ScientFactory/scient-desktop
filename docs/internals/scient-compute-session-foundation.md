@@ -2158,6 +2158,10 @@ directory imports from changing bridge code resolution. The selected
 environment still supplies `jupyter_client`, `ipykernel`, and the kernel's
 normal site packages. The bridge starts `sys.executable -m ipykernel_launcher`
 directly through `jupyter_client`; it does not select a global kernelspec.
+Packages installed with `pip --user` therefore do not satisfy bridge
+readiness. Missing-requirement diagnostics direct users to a selected or
+project virtual environment rather than suggesting mutation of a
+package-manager-owned Python installation.
 
 `ComputeEnvironmentPolicy` builds a complete environment and the process layer
 uses `extendEnv: false`. It:

@@ -368,6 +368,7 @@ describe("python runtime adapter", () => {
         environment: {},
       });
       expect(verification.readiness).toBe("ready");
+      expect(verification.message).toBeNull();
     }),
   );
 
@@ -395,6 +396,11 @@ describe("python runtime adapter", () => {
       });
       expect(verification.readiness).toBe("missing-requirement");
       expect(verification.missingRequirements).toContain("jupyter_client");
+      expect(verification.message).toBe(
+        "Create or select a Python environment that satisfies: jupyter_client, ipykernel. " +
+          "Project .venv environments are detected when that project is open. " +
+          "Scient's isolated compute bridge does not load packages installed with pip --user.",
+      );
     }),
   );
 
