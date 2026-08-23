@@ -206,6 +206,10 @@ compute capabilities, not a Python-specific installer:
 - Enabling a language does not install packages, download a runtime, accept a
   license, or mutate an environment. Any supported acquisition, repair, update,
   or removal action is explicit, language-scoped, and separately gated.
+- A managed-runtime action operates only on an app-owned installation. A
+  configured, project, PATH, Conda, system, or vendor environment may be
+  selected and verified, but is never presented as repairable or removable by
+  Scient merely because it is missing a requirement.
 - Disabling a language stops offering it for new sessions without deleting its
   runtime or making prior executions and results unreadable.
 
@@ -637,6 +641,14 @@ computeDir: <stateDir>/compute
 ```
 
 Created at boot alongside `analysisDir` and `latexDir`.
+
+A later managed-runtime capability uses a sibling app-owned root such as
+`scientificRuntimeDir: <stateDir>/scientific-runtimes`. Runtime binaries,
+package environments, downloads, and activation receipts never live under
+`computeDir`: trimming operational history must not remove a runtime, and
+removing a managed runtime must not rewrite execution history. The exact
+directory name is introduced with the accepted managed-runtime implementation,
+not retrofitted into the Phase 1-4 store.
 
 ### 5.5 Dependency direction
 
@@ -1074,13 +1086,28 @@ The roadmap includes these important representation families:
 - stateful widgets and comm-backed views through a separate capability and
   lifecycle contract rather than by treating them as ordinary HTML.
 
+One logical display owns an ordered, bounded set of representation descriptors.
+Each retained representation records its media type, content hash, byte length,
+approved bounded metadata, authorized resource reference, validation result,
+and immutable execution provenance. Payload bytes, including JSON or text
+alternatives inside a display, are content-addressed and fetched lazily through
+the authenticated resource boundary rather than embedded in transcripts or
+client state. Plain stdout/stderr and diagnostics remain their own output
+members; they are not disguised as representation bundles.
+
+Renderer selection is contextual. Compact immutable history may prefer a safe
+static fallback while an explicitly opened viewer offers a validated
+interactive alternative. Changing the selected renderer does not change the
+retained result. The registry owns validation, size and complexity bounds,
+authority, fallback, actions, and disposal; the compute UI does not branch on
+Python or Jupyter media choices.
+
 The contract also reserves display updates (`update_display_data` with a stable
 display identity), clear-output semantics (including delayed clear), and input
-requests. A representation bundle records media type, bounded bytes or a signed
-resource, content hash, validation status, and immutable execution provenance.
-Unknown or unsupported representations retain a truthful bounded fallback when
-available; they must not cause execution failure or silently gain script
-authority.
+requests. Updates and clears are appended as facts and folded into a visible
+projection; they never rewrite earlier transcript entries. Unknown or
+unsupported representations retain a truthful bounded fallback when available;
+they must not cause execution failure or silently gain script authority.
 
 First-class HTML support does not mean unsandboxed HTML. Inert or sanitized
 HTML may ship before active documents. Any executable HTML or widget support
@@ -2553,6 +2580,15 @@ Acquisition is explicit and removable. Installing Python must not install R,
 Julia, MATLAB, their transports, or proprietary licenses, and adding a language
 must not enlarge the base application for users who did not choose it.
 
+Acquisition is implemented by a setup service adjacent to compute, not by
+`ComputeSessionService` or `ComputeLanguageAdapter`. It stages a new app-owned
+generation, verifies the exact environment with the ordinary adapter and a
+real-kernel probe, then atomically publishes an activation receipt. Failure or
+cancellation preserves the previously active generation and never reruns user
+code. External environments remain read-only to this lifecycle; a missing
+requirement offers selection of another runtime or an app-owned setup, not a
+silent package install into the candidate that happened to be discovered.
+
 **Exit gate:** A user with no ready Python runtime can deliberately obtain or
 select one, understand its ownership and disk cost, repair or remove a
 Scient-managed installation, and run the product loop without Scient mutating
@@ -2611,6 +2647,18 @@ must define:
   remote behavior; and
 - agent-readable project files without a hidden notebook database or a second
   private execution history.
+
+A notebook execution uses a stable notebook-cell source identity containing
+the ordinary project path, cell ID, base document revision, saved-versus-dirty
+truth, and cell source hash. The execution request continues to store the exact
+submitted bytes and hash once rather than duplicating them in the source
+locator. A script `# %%` range is not a substitute for this identity. Running a
+notebook cell updates the in-memory document output projection and therefore
+makes that ordinary file buffer dirty; saving the file deliberately
+materializes those output snapshots into the notebook document. Clearing or
+discarding notebook output changes the document buffer, never immutable compute
+history. Notebook trust is tied to the exact saved content revision and does
+not grant active HTML or widget authority after the file changes.
 
 `# %%` source cells remain useful for ordinary scripts; they are not a
 substitute for native notebook documents. Notebook support must reuse
@@ -2722,6 +2770,15 @@ to support a different adapter or transport. Every language is independently
 optional, registers with the same Scientific Computing settings model, and does
 not make its runtime, packages, transport host, or license a prerequisite for
 Scient or another language.
+
+The first real transport proof must record the optional bridge host and the
+selected scientific runtime as different identities when they are different
+installations. A named Jupyter kernelspec is a transport selector, not runtime
+provenance: an adapter must bind it to an exact verified executable and must not
+install or mutate a user-global kernelspec as a side effect of discovery. The
+proof may justify a typed transport-specific launch extension or a server-side
+runtime binding that closes over it; it must not introduce an unvalidated
+string-keyed options bag into the shared coordinator.
 
 **Exit gate:** A real non-Python adapter passes the shared conformance suite and
 delivers an honest end-to-end workflow without Python-specific changes to the
