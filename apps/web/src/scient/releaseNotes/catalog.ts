@@ -11,10 +11,11 @@ export const SCIENT_RELEASE_NOTES = [
   {
     version: "0.6.6",
     publishedAt: "2026-08-23",
-    kicker: "Antigravity, assisted Grok setup, and browser-to-PDF export",
-    headline: "Connect Antigravity, set up Grok, and export PDFs",
+    kicker: "More ways to connect. Less friction once you're working.",
+    headline:
+      "Bring Antigravity or Grok into Scient, preserve browser documents as PDFs, and move through projects more easily",
     summary:
-      "Scient adds Google Antigravity support, assisted setup for the Early Access Grok provider, a short optional Getting Started flow, PDF export from integrated-browser HTML, and focused improvements across files, chats, remotes, and terminals.",
+      "Scient 0.6.6 expands provider choice while tightening the desktop experience around it: onboarding stays short and optional, connection problems are easier to recover from, exported documents retain useful structure, and everyday navigation feels more direct.",
     highlights: [
       {
         id: "antigravity-provider",
