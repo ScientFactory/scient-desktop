@@ -1,19 +1,17 @@
 import {
   type EnvironmentId,
   type EditorId,
-  type ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { SCIENT_QUICK_CHAT_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
-import { ChevronDownIcon, MessageSquareIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -41,7 +39,6 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { ScientQuickChatMoveMenu } from "../scient-quick-chat/ScientQuickChatMoveMenu";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -61,15 +58,6 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
-  isQuickChat: boolean;
-  quickChatMoveTargets: ReadonlyArray<{
-    readonly id: ProjectId;
-    readonly title: string;
-    readonly workspaceRoot: string;
-    readonly faviconPath?: string | null | undefined;
-  }>;
-  isMovingQuickChat: boolean;
-  quickChatMoveDisabledReason: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -79,7 +67,6 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
-  onMoveQuickChatToProject: (projectId: ProjectId) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -140,10 +127,6 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
-  isQuickChat,
-  quickChatMoveTargets,
-  isMovingQuickChat,
-  quickChatMoveDisabledReason,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -153,7 +136,6 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   onOpenPullRequest,
   onNewThreadInProject,
-  onMoveQuickChatToProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -337,16 +319,6 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
           </>
-        ) : isQuickChat ? (
-          <>
-            <WorkspaceBreadcrumbItem>
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <MessageSquareIcon aria-hidden className="size-3.5" />
-                <span className="max-w-40 truncate">{SCIENT_QUICK_CHAT_LABEL}</span>
-              </span>
-            </WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbSeparator />
-          </>
         ) : null}
         <WorkspaceBreadcrumbItem current className="flex-1">
           {renamingTitle !== null ? (
@@ -408,15 +380,6 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        {isQuickChat && isServerThread ? (
-          <ScientQuickChatMoveMenu
-            environmentId={activeThreadEnvironmentId}
-            targets={quickChatMoveTargets}
-            isMoving={isMovingQuickChat}
-            disabledReason={quickChatMoveDisabledReason}
-            onMove={onMoveQuickChatToProject}
-          />
-        ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

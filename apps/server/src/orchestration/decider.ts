@@ -25,7 +25,6 @@ import { projectEvent } from "./projector.ts";
 import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
 import { forkThread } from "./scient-fork/forkDecider.ts";
 // SCIENT-FORK:END
-import { validateScientQuickChatMove } from "../scient/quickChat/Policy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -362,18 +361,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      const hasProject = command.projectId !== null;
-      const hasProjectlessRoot = command.workspaceRoot != null;
-      if (hasProject === hasProjectlessRoot) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail:
-            "A thread must target either a project or an environment workspace root, but not both.",
-        });
-      }
-      if (command.projectId !== null) {
-        yield* requireProject({ readModel, command, projectId: command.projectId });
-      }
+      yield* requireProject({ readModel, command, projectId: command.projectId });
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -390,7 +378,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
-          workspaceRoot: command.workspaceRoot,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
@@ -832,34 +819,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      // SCIENT-FORK:START — relocate one projectless Quick Chat without
-      // changing its identity or replaying its conversation. A stopped
-      // provider session is an authoritative workspace boundary: the client
-      // asks the provider reactor to stop first, and this invariant closes the
-      // race if the reassignment arrives before that stop has completed.
-      const moveTarget =
-        command.moveToProjectId === undefined
-          ? undefined
-          : yield* requireProject({
-              readModel,
-              command,
-              projectId: command.moveToProjectId,
-            });
-      const moveRejection =
-        moveTarget === undefined
-          ? null
-          : validateScientQuickChatMove({
-              thread,
-              target: moveTarget,
-              hasQueuedTurnStart: threadHasQueuedTurnStart(thread, occurredAt),
-            });
-      if (moveRejection !== null) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: moveRejection.detail,
-        });
-      }
-      // SCIENT-FORK:END
       const branch =
         command.branch !== undefined &&
         command.expectedBranch !== undefined &&
@@ -895,18 +854,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
-          // SCIENT-FORK:START — project threads derive their workspace from
-          // the project, so clear the projectless root and any workspace-bound
-          // branch/worktree metadata at the ownership transition.
-          ...(moveTarget !== undefined
-            ? {
-                projectId: moveTarget.id,
-                workspaceRoot: null,
-                branch: null,
-                worktreePath: null,
-              }
-            : {}),
-          // SCIENT-FORK:END
           updatedAt: occurredAt,
         },
       };

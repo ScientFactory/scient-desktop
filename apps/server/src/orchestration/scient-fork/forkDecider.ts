@@ -213,6 +213,11 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       `Origin thread '${command.originThreadId}' is deleted and cannot be forked.`,
     );
   }
+  if (origin.projectId === null) {
+    return yield* invariant(
+      `Origin thread '${command.originThreadId}' has no project and cannot be forked.`,
+    );
+  }
 
   // The new thread id must be free.
   yield* requireThreadAbsent({
@@ -351,10 +356,6 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     payload: {
       threadId: command.newThreadId,
       projectId: origin.projectId,
-      // A Quick Chat owns its environment root directly because there is no
-      // project row to recover it from. Preserve that root across a fork so the
-      // new conversation remains runnable in the same environment.
-      workspaceRoot: origin.projectId === null ? (origin.workspaceRoot ?? null) : null,
       // Resolved above: an explicit user title, or server-allocated automatic
       // numbering when the command omits an override.
       title: forkTitle,

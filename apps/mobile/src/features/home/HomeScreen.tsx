@@ -7,7 +7,6 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { SCIENT_QUICK_CHAT_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
@@ -352,13 +351,12 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProjectRefKeys === null
-        ? props.threads
-        : props.threads.filter(
-            (thread) =>
-              thread.projectId !== null &&
-              selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
-          ),
+      props.threads.filter(
+        (thread) =>
+          thread.projectId !== null &&
+          (selectedProjectRefKeys === null ||
+            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId))),
+      ),
     [props.threads, selectedProjectRefKeys],
   );
   const scopedPendingTasks = useMemo(
@@ -803,6 +801,8 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
+      if (thread.projectId === null) return null;
+      const projectKey = scopedProjectKey(thread.environmentId, thread.projectId);
       return (
         <ThreadListV2Row
           thread={thread}
@@ -812,18 +812,8 @@ export function HomeScreen(props: HomeScreenProps) {
           snoozePresetMinute={nowMinute}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           showTrailingDivider={showTrailingDivider}
-          project={
-            thread.projectId === null
-              ? null
-              : (projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null)
-          }
-          projectTitle={
-            thread.projectId === null
-              ? SCIENT_QUICK_CHAT_LABEL
-              : v2ProjectTitleByProjectKey.get(
-                  scopedProjectKey(thread.environmentId, thread.projectId),
-                )
-          }
+          project={projectByKey.get(projectKey) ?? null}
+          projectTitle={v2ProjectTitleByProjectKey.get(projectKey)}
           providerDriver={
             serverConfigs
               .get(thread.environmentId)
@@ -867,12 +857,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onUnpinThread={handleUnpinThread}
           onMovePinnedThread={handleMovePinnedThread}
           onChangeRequestState={handleChangeRequestState}
-          projectCwd={
-            thread.projectId === null
-              ? (thread.workspaceRoot ?? null)
-              : (projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
-                null)
-          }
+          projectCwd={projectCwdByKey.get(projectKey) ?? null}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
         />
@@ -990,6 +975,7 @@ export function HomeScreen(props: HomeScreenProps) {
           );
         case "thread": {
           const thread = item.thread;
+          if (thread.projectId === null) return null;
           return (
             <ThreadListRow
               variant="compact"
@@ -998,11 +984,8 @@ export function HomeScreen(props: HomeScreenProps) {
                 props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
               projectCwd={
-                thread.projectId === null
-                  ? (thread.workspaceRoot ?? null)
-                  : (projectCwdByKey.get(
-                      scopedProjectKey(thread.environmentId, thread.projectId),
-                    ) ?? null)
+                projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
+                null
               }
               isLast={item.isLast}
               searchMatch={threadSearchMatchByKey.get(

@@ -3,10 +3,6 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
-import {
-  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
-  SCIENT_QUICK_CHATS_LABEL,
-} from "@t3tools/client-runtime/scient/quick-chat";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -30,7 +26,7 @@ import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import type { ScientThreadGroupContext } from "../scient-quick-chat/threadGroupContext";
+import type { ProjectThreadGroupContext } from "../threads/projectThreadGroupContext";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
@@ -152,7 +148,7 @@ const RECENT_THREAD_FALLBACK_COUNT = 3;
 export interface HomeThreadGroup {
   readonly key: string;
   readonly title: string;
-  readonly context: ScientThreadGroupContext;
+  readonly context: ProjectThreadGroupContext;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   /** Full sorted thread history for the group (revealed when expanded / searching). */
@@ -164,15 +160,15 @@ export interface HomeThreadGroup {
    * groups (same repo on several machines) this is the member that owns the
    * group's most recent thread — the machine the user last worked on — rather
    * than the arbitrary first member; the draft's computer picker covers
-   * switching from there. Null for Quick Chat and synthetic pending-project
-   * groups because neither owns a real destination project.
+   * switching from there. Null for synthetic pending-project groups because
+   * they do not own a real destination project.
    */
   readonly newThreadTarget: EnvironmentProject | null;
 }
 
 interface MutableHomeThreadGroup {
   readonly key: string;
-  readonly context: ScientThreadGroupContext;
+  readonly context: ProjectThreadGroupContext;
   readonly projects: EnvironmentProject[];
   readonly pendingTasks: PendingNewTask[];
   readonly threads: EnvironmentThreadShell[];
@@ -288,25 +284,7 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    if (thread.projectId === null) {
-      const groupKey = `projectless:${thread.environmentId}`;
-      if (!groups.has(groupKey)) {
-        groupTitleByKey.set(groupKey, SCIENT_QUICK_CHATS_LABEL);
-        groups.set(groupKey, {
-          key: groupKey,
-          context: {
-            kind: "quick-chat",
-            environmentId: thread.environmentId,
-            workspaceRoot: thread.workspaceRoot ?? "",
-          },
-          projects: [],
-          pendingTasks: [],
-          threads: [],
-        });
-      }
-      groups.get(groupKey)?.threads.push(thread);
-      continue;
-    }
+    if (thread.projectId === null) continue;
     const physicalKey = scopedProjectKey(thread.environmentId, thread.projectId);
     const groupKey = groupKeyByProjectKey.get(physicalKey);
     if (!groupKey) {
@@ -324,18 +302,14 @@ export function buildHomeThreadGroups(input: {
     }
 
     const title =
-      group.context.kind === "quick-chat"
-        ? SCIENT_QUICK_CHATS_LABEL
-        : (groupTitleByKey.get(group.key) ??
-          deriveProjectGroupLabel({
-            representative: group.context.project,
-            members: group.projects,
-          }));
+      groupTitleByKey.get(group.key) ??
+      deriveProjectGroupLabel({
+        representative: group.context.project,
+        members: group.projects,
+      });
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||
-      (group.context.kind === "quick-chat" &&
-        SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS.some((term) => term.includes(query))) ||
       group.projects.some((project) => project.title.toLocaleLowerCase().includes(query));
     const matchingThreads = groupMatches
       ? group.threads
@@ -395,11 +369,9 @@ export function buildHomeThreadGroups(input: {
       pendingTasks: matchingPendingTasks,
       threads: sortedThreads,
       recentThreads,
-      newThreadTarget:
-        group.key.startsWith("pending-project:") || group.context.kind === "quick-chat"
-          ? null
-          : (lastActiveProject ??
-            (group.context.kind === "project" ? group.context.project : null)),
+      newThreadTarget: group.key.startsWith("pending-project:")
+        ? null
+        : (lastActiveProject ?? group.context.project),
     });
   }
 

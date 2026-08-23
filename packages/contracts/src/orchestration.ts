@@ -35,13 +35,6 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-// SCIENT-FORK:START — stable discriminator for the one relocation race the
-// client may retry: an accepted provider stop request reaching the command
-// projection just before the authoritative stopped session.
-export const QUICK_CHAT_MOVE_SESSION_STOP_PENDING = "SCIENT_QUICK_CHAT_MOVE_SESSION_STOP_PENDING";
-export const QUICK_CHAT_MOVE_TERMINALS_OPEN = "SCIENT_QUICK_CHAT_MOVE_TERMINALS_OPEN";
-// SCIENT-FORK:END
-
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
@@ -721,8 +714,7 @@ const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
-  projectId: Schema.NullOr(ProjectId),
-  workspaceRoot: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -826,32 +818,12 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  // SCIENT-FORK:START — a Quick Chat can be relocated into one project.
-  // The server owns the target workspace lookup and only permits the
-  // projectless -> project transition after the provider session has stopped.
-  moveToProjectId: Schema.optional(ProjectId),
-  // SCIENT-FORK:END
 }).check(
   Schema.makeFilter(
     (input) =>
       !(input.title !== undefined && input.regenerateTitle === true) ||
       "title and regenerateTitle cannot be specified together",
   ),
-  // SCIENT-FORK:START — keep relocation a single-purpose mutation. This
-  // prevents an unrelated rename/model/branch write from being coupled to a
-  // workspace ownership transition.
-  Schema.makeFilter(
-    (input) =>
-      input.moveToProjectId === undefined ||
-      (input.title === undefined &&
-        input.regenerateTitle === undefined &&
-        input.modelSelection === undefined &&
-        input.branch === undefined &&
-        input.expectedBranch === undefined &&
-        input.worktreePath === undefined) ||
-      "moveToProjectId cannot be combined with other metadata changes",
-  ),
-  // SCIENT-FORK:END
 );
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -871,8 +843,7 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
 });
 
 const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
-  projectId: Schema.NullOr(ProjectId),
-  workspaceRoot: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -1291,13 +1262,13 @@ export const ProjectDeletedPayload = Schema.Struct({
 
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
+  /**
+   * Nullable only to decode immutable events written by the retired
+   * projectless-thread experiment. Current commands always require a project.
+   */
   projectId: Schema.NullOr(ProjectId),
-  // SCIENT-FORK:START — pending upstream projectless-thread events may decode
-  // with an explicit undefined as well as an omitted legacy key.
-  // Accept both an omitted key from historical events and the explicit
-  // `undefined` produced while decoding the backward-compatible event union.
+  /** Decode-only residue for those same historical events. */
   workspaceRoot: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  // SCIENT-FORK:END
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -1388,10 +1359,9 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  // SCIENT-FORK:START — optional for backward-compatible event decoding.
+  /** Decode-only compatibility for historical projectless-to-project moves. */
   projectId: Schema.optional(ProjectId),
   workspaceRoot: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  // SCIENT-FORK:END
   updatedAt: IsoDateTime,
 });
 

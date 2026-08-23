@@ -3,10 +3,6 @@ import {
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
-import {
-  SCIENT_QUICK_CHAT_LABEL,
-  SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS,
-} from "@t3tools/client-runtime/scient/quick-chat";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
@@ -143,11 +139,8 @@ export function enumerateCommandPaletteItems(
 export function shouldOpenNewThreadTargetPicker(input: {
   readonly legacySidebarEnabled: boolean;
   readonly projectGroupCount: number;
-  readonly supportsProjectlessThreads: boolean;
 }): boolean {
-  return (
-    input.supportsProjectlessThreads || (!input.legacySidebarEnabled && input.projectGroupCount > 1)
-  );
+  return !input.legacySidebarEnabled && input.projectGroupCount > 1;
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
@@ -267,7 +260,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   limit?: number;
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
-    input.threads.filter((thread) => thread.archivedAt === null),
+    input.threads.filter((thread) => thread.archivedAt === null && thread.projectId !== null),
     input.sortOrder,
   );
   const visibleThreads =
@@ -275,9 +268,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 
   return visibleThreads.map((thread) => {
     const projectTitle =
-      thread.projectId === null
-        ? SCIENT_QUICK_CHAT_LABEL
-        : input.projectTitleById.get(thread.projectId);
+      thread.projectId === null ? undefined : input.projectTitleById.get(thread.projectId);
     const descriptionParts: string[] = [];
 
     if (projectTitle) {
@@ -304,7 +295,6 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         searchTerms: [
           thread.title,
           projectTitle ?? ``,
-          ...(thread.projectId === null ? SCIENT_QUICK_CHAT_LEGACY_SEARCH_TERMS : []),
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,
         ],

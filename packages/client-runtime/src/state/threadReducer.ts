@@ -219,8 +219,8 @@ export function applyThreadDetailEvent(
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
             : {}),
-          // SCIENT-FORK:START — update the open chat immediately when it is
-          // relocated from Quick Chat into a project.
+          // SCIENT-FORK:START — replay immutable historical project
+          // reassignment fields into an already-open thread.
           ...(event.payload.projectId !== undefined ? { projectId: event.payload.projectId } : {}),
           ...(event.payload.workspaceRoot !== undefined
             ? { workspaceRoot: event.payload.workspaceRoot }

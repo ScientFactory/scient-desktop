@@ -39,7 +39,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "provider-setup-recovery",
         title: "Start and recover setup more clearly",
         description:
-          "A short, skippable flow helps a new empty workspace connect an AI, save optional local preferences, and start with a project or Quick Chat. Provider screens also distinguish installation, sign-in, repair, removal, and account actions more clearly.",
+          "A short, skippable flow helps a new empty workspace connect an AI, save optional local preferences, and start with a project. Provider screens also distinguish installation, sign-in, repair, removal, and account actions more clearly.",
       },
       {
         id: "thread-workflow-refinements",
@@ -194,22 +194,16 @@ export const SCIENT_RELEASE_NOTES = [
   {
     version: "0.6.1",
     publishedAt: "2026-08-12",
-    kicker: "Pull requests, Quick Chat improvements, and reliability fixes",
+    kicker: "Pull requests and reliability fixes",
     headline: "Scient 0.6.1",
     summary:
-      "This release adds pull-request tools and improves Quick Chat, Codex sign-in, themes, and platform reliability.",
+      "This release adds pull-request tools and improves Codex sign-in, themes, and platform reliability.",
     highlights: [
       {
         id: "pull-requests",
         title: "Pull requests",
         description:
           "Browse and manage pull requests from GitHub, GitLab, Bitbucket, and Azure DevOps. View code and timelines, submit reviews, and create local checkouts.",
-      },
-      {
-        id: "quick-chat-improvements",
-        title: "Quick Chat improvements",
-        description:
-          "Quick Chat now has direct creation controls, persistent sidebar state, better workspace tools, and safer movement into a project.",
       },
       {
         id: "codex-setup-and-sign-in",

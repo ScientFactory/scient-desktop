@@ -111,27 +111,12 @@ describe("GettingStartedPreferencesStep", () => {
 });
 
 describe("GettingStartedStartStep", () => {
-  it("shows only truthful start actions for the current server", () => {
-    const withoutQuickChat = renderToStaticMarkup(
-      <GettingStartedStartStep
-        canStartQuickChat={false}
-        onAddProject={() => undefined}
-        onStartQuickChat={() => undefined}
-        startingQuickChat={false}
-      />,
-    );
-    const withQuickChat = renderToStaticMarkup(
-      <GettingStartedStartStep
-        canStartQuickChat
-        onAddProject={() => undefined}
-        onStartQuickChat={() => undefined}
-        startingQuickChat={false}
-      />,
-    );
+  it("requires a project before starting work", () => {
+    const markup = renderToStaticMarkup(<GettingStartedStartStep onAddProject={() => undefined} />);
 
-    expect(withoutQuickChat).toContain("Add project");
-    expect(withoutQuickChat).not.toContain("Start a quick chat");
-    expect(withQuickChat).toContain("Start a quick chat");
-    expect(withQuickChat).not.toContain(">Back</button>");
+    expect(markup).toContain("Add project");
+    expect(markup).toContain("give your tasks a workspace");
+    expect(markup).not.toContain("quick chat");
+    expect(markup).not.toContain(">Back</button>");
   });
 });

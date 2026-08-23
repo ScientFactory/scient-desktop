@@ -10,6 +10,10 @@ import { ServerConfig } from "../../config.ts";
 // SCIENT-FORK:START — independent schema ledger; never consumes a T3 migration number.
 import { runScientMigrations } from "../../orchestration/scient-fork/schema.ts";
 // SCIENT-FORK:END
+import {
+  cleanupRetiredThreadFilesystem,
+  type RetiredThreadFilesystemPaths,
+} from "../RetiredThreadAttachmentCleanup.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -33,19 +37,23 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   return clientModule.layer(config);
 }, Layer.unwrap);
 
-const setup = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
-    yield* sql`PRAGMA busy_timeout = 5000;`;
-    yield* sql`PRAGMA foreign_keys = ON;`;
-    yield* sql`PRAGMA journal_mode = WAL;`;
-    yield* runMigrations();
-    // SCIENT-FORK:START
-    yield* runScientMigrations(sql);
-    // SCIENT-FORK:END
-  }),
-);
+const setup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
+      yield* sql`PRAGMA busy_timeout = 5000;`;
+      yield* sql`PRAGMA foreign_keys = ON;`;
+      yield* sql`PRAGMA journal_mode = WAL;`;
+      yield* runMigrations();
+      // SCIENT-FORK:START
+      yield* runScientMigrations(sql);
+      // SCIENT-FORK:END
+      if (filesystemPaths !== undefined) {
+        yield* cleanupRetiredThreadFilesystem(filesystemPaths);
+      }
+    }),
+  );
 
 export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(function* (
   dbPath: string,
@@ -54,8 +62,14 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
+  const stateDir = path.dirname(dbPath);
   return Layer.provideMerge(
-    setup,
+    setup({
+      stateDir,
+      attachmentsDir: path.join(stateDir, "attachments"),
+      terminalLogsDir: path.join(stateDir, "logs", "terminals"),
+      providerLogsDir: path.join(stateDir, "logs", "provider"),
+    }),
     makeRuntimeSqliteLayer({
       filename: dbPath,
       spanAttributes: {
@@ -67,7 +81,7 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
 }, Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(
-  setup,
+  setup(),
   makeRuntimeSqliteLayer({ filename: ":memory:" }),
 );
 

@@ -178,13 +178,6 @@ import {
   resolveFilePathCopyValue,
   type FilePathCopyFormat,
 } from "./files/filePathClipboard";
-import { ScientQuickChatMoveMenu } from "./scient-quick-chat/ScientQuickChatMoveMenu";
-import { resolveScientQuickChatMovePlacement } from "./scient-quick-chat/movePlacement";
-import {
-  isScientQuickChatRightPanelKindAllowed,
-  scientThreadAllowsCapability,
-  shouldCloseSurfaceAfterScientQuickChatMove,
-} from "../scient/quickChat/policy";
 import { AgentsPanel } from "./AgentsPanel";
 import {
   deriveAgentPanelModel,
@@ -315,7 +308,6 @@ import {
   resolveTimelineIsAtEnd,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
-import { useScientQuickChatMove } from "./scient-quick-chat/useScientQuickChatMove";
 import { restoreForkPdfContinuity } from "./scient-fork/forkViewContinuity";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -357,6 +349,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
+  buildProjectThreadTerminalOpenInput,
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
@@ -383,20 +376,16 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
   resolveForkTargetAfterAttempt,
+  resolveProjectThreadTerminalTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveThreadWorkspaceRoot,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
+  startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
-import { startNewThreadForTarget } from "../scient/quickChat/projectlessDraftTarget";
-import {
-  buildScientThreadTerminalOpenInput,
-  resolveScientThreadTerminalTarget,
-  SCIENT_QUICK_CHAT_LABEL,
-} from "../scient/quickChat/policy";
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -780,18 +769,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
-  const serverConfigs = useServerConfigs();
   const projectRef = serverThread?.projectId
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread?.projectId
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useProject(projectRef);
-  const projectlessWorkspaceRoot =
-    serverThread?.workspaceRoot ??
-    (serverThread?.projectId === null || draftThread?.projectId === null
-      ? (serverConfigs.get(threadRef.environmentId)?.cwd ?? null)
-      : null);
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
@@ -910,8 +893,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
             project: { cwd: project.workspaceRoot },
             worktreePath: effectiveWorktreePath,
           })
-        : projectlessWorkspaceRoot),
-    [effectiveWorktreePath, launchContext?.cwd, project, projectlessWorkspaceRoot],
+        : null),
+    [effectiveWorktreePath, launchContext?.cwd, project],
   );
   const runtimeEnv = useMemo(
     () =>
@@ -1153,18 +1136,12 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
 }: PersistentThreadTerminalPanelProps) {
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
-  const serverConfigs = useServerConfigs();
   const projectRef = serverThread?.projectId
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread?.projectId
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useProject(projectRef);
-  const projectlessWorkspaceRoot =
-    serverThread?.workspaceRoot ??
-    (serverThread?.projectId === null || draftThread?.projectId === null
-      ? (serverConfigs.get(threadRef.environmentId)?.cwd ?? null)
-      : null);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
@@ -1184,8 +1161,8 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
             project: { cwd: project.workspaceRoot },
             worktreePath,
           })
-        : projectlessWorkspaceRoot),
-    [activeSummary?.cwd, launchContext?.cwd, project, projectlessWorkspaceRoot, worktreePath],
+        : null),
+    [activeSummary?.cwd, launchContext?.cwd, project, worktreePath],
   );
   const runtimeEnv = useMemo(
     () =>
@@ -1230,7 +1207,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
               project: { cwd: project.workspaceRoot },
               worktreePath: terminalWorktreePath,
             })
-          : projectlessWorkspaceRoot);
+          : null);
       if (!terminalCwd) continue;
       locations.set(terminalId, {
         cwd: terminalCwd,
@@ -1249,7 +1226,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     launchContext?.cwd,
     launchContext?.worktreePath,
     project,
-    projectlessWorkspaceRoot,
     surface.terminalIds,
     threadWorktreePath,
   ]);
@@ -1667,20 +1643,7 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
-  const isQuickChat = activeThread?.projectId === null;
-  const terminalCapabilityAllowed = scientThreadAllowsCapability(
-    activeThread?.projectId,
-    "terminal",
-  );
-  const diffCapabilityAllowed = scientThreadAllowsCapability(activeThread?.projectId, "diff");
-  const checkpointCapabilityAllowed = scientThreadAllowsCapability(
-    activeThread?.projectId,
-    "checkpoints",
-  );
-  const pullRequestCapabilityAllowed = scientThreadAllowsCapability(
-    activeThread?.projectId,
-    "pullRequests",
-  );
+  const hasProjectWorkspace = activeThread?.projectId != null;
   const {
     errorUpdate: forkErrorUpdate,
     isForking: isForkingThread,
@@ -1861,25 +1824,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const quickChatMovePlacement = resolveScientQuickChatMovePlacement({
-    isQuickChat,
-    isServerThread,
-    rightPanelOpen,
-  });
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
-
-  useEffect(() => {
-    if (!activeThreadRef || activeThread?.projectId !== null) return;
-    const panel = useRightPanelStore.getState();
-    for (const surface of rightPanelState.surfaces) {
-      if (!isScientQuickChatRightPanelKindAllowed(surface.kind)) {
-        panel.closeSurface(activeThreadRef, surface.id);
-      }
-    }
-  }, [activeThread?.projectId, activeThreadRef, rightPanelState.surfaces]);
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -1957,8 +1905,8 @@ function ChatViewContent(props: ChatViewProps) {
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeThreadTargetRef = useMemo(
     () =>
-      activeThread
-        ? { environmentId: activeThread.environmentId, projectId: activeThread.projectId }
+      activeThread?.projectId
+        ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
         : null,
     [activeThread?.environmentId, activeThread?.projectId],
   );
@@ -1971,7 +1919,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const activeProject = useProject(activeProjectRef);
   const handleNewThreadInActiveProject = useCallback(() => {
-    startNewThreadForTarget(activeThreadTargetRef, handleNewThread);
+    startNewThreadForProject(activeThreadTargetRef, handleNewThread);
   }, [activeThreadTargetRef, handleNewThread]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
@@ -1980,11 +1928,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkspaceKeyRoot = resolveThreadWorkspaceRoot({
     worktreePath: activeThread?.worktreePath,
     projectCwd: activeProject?.workspaceRoot,
-    threadWorkspaceRoot: activeThread?.workspaceRoot,
-    environmentCwd:
-      activeThread?.projectId === null
-        ? serverConfigs.get(activeThread.environmentId)?.cwd
-        : undefined,
   });
   const activeWorkspaceKey =
     activeThread && activeWorkspaceKeyRoot
@@ -2031,37 +1974,6 @@ function ChatViewContent(props: ChatViewProps) {
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
   const allProjects = useProjects();
-  const quickChatMoveTargets = useMemo(
-    () =>
-      activeServerThread?.projectId === null
-        ? allProjects
-            .filter((project) => project.environmentId === activeServerThread.environmentId)
-            .toSorted((left, right) => left.title.localeCompare(right.title))
-        : [],
-    [activeServerThread, allProjects],
-  );
-  const handleQuickChatMoved = useCallback(() => {
-    if (!activeThreadRef) return;
-    const panel = useRightPanelStore.getState();
-    for (const surface of panel.byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces ?? []) {
-      if (shouldCloseSurfaceAfterScientQuickChatMove(surface.kind)) {
-        panel.closeSurface(activeThreadRef, surface.id);
-      }
-    }
-    useTerminalUiStateStore.getState().clearTerminalUiState(activeThreadRef);
-  }, [activeThreadRef]);
-  const { isMoving: isMovingQuickChat, moveToProject: moveQuickChatToProject } =
-    useScientQuickChatMove({
-      environmentId: activeServerThread?.environmentId ?? null,
-      threadId: activeServerThread?.id ?? null,
-      currentProjectId: activeServerThread?.projectId ?? null,
-      sessionStatus: activeServerThread?.session?.status ?? null,
-      hasOpenTerminals:
-        activeKnownTerminalIds.length > 0 ||
-        panelTerminalIds.size > 0 ||
-        terminalUiState.terminalIds.length > 0,
-      onMoved: handleQuickChatMoved,
-    });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {
     if (!activeThreadRef || !activeProjectRef) return;
@@ -2927,7 +2839,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [turnDiffSummaries]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
-    if (!checkpointCapabilityAllowed) return byUserMessageId;
+    if (!hasProjectWorkspace) return byUserMessageId;
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const entry = timelineEntries[index];
       if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
@@ -2958,7 +2870,7 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [
-    checkpointCapabilityAllowed,
+    hasProjectWorkspace,
     inferredCheckpointTurnCountByTurnId,
     timelineEntries,
     turnDiffSummaryByAssistantMessageId,
@@ -3054,11 +2966,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkspaceRoot = resolveThreadWorkspaceRoot({
     worktreePath: activeThreadWorktreePath,
     projectCwd: activeProjectCwd,
-    threadWorkspaceRoot: activeThread?.workspaceRoot,
-    environmentCwd:
-      activeThread?.projectId === null && activeThread.environmentId
-        ? serverConfigs.get(activeThread.environmentId)?.cwd
-        : undefined,
   });
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -3070,28 +2977,19 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, activeWorkspaceRoot]);
   const activeTerminalTarget = useMemo(
     () =>
-      terminalCapabilityAllowed
-        ? resolveScientThreadTerminalTarget({
-            activeWorkspaceRoot,
+      hasProjectWorkspace
+        ? resolveProjectThreadTerminalTarget({
             projectWorkspaceRoot: activeProjectCwd,
             gitCwd,
             worktreePath: activeThreadWorktreePath,
           })
         : null,
-    [
-      activeProjectCwd,
-      activeThreadWorktreePath,
-      activeWorkspaceRoot,
-      gitCwd,
-      terminalCapabilityAllowed,
-    ],
+    [activeProjectCwd, activeThreadWorktreePath, gitCwd, hasProjectWorkspace],
   );
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
-  // Project threads retain T3's loading behavior. A workspace-backed General
-  // Chat never gains Git authority merely because no status query ran.
-  const isGitRepo = !isQuickChat && (gitStatusQuery.data?.isRepo ?? true);
-  const diffAvailable = diffCapabilityAllowed && isServerThread && isGitRepo;
+  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
   const forkWorktreeAvailability: ForkWorktreeAvailability = useMemo(() => {
     if (!isGitRepo) {
       return { available: false, reason: "no-git-repository" };
@@ -3272,7 +3170,7 @@ function ChatViewContent(props: ChatViewProps) {
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
       void openTerminal({
         environmentId,
-        input: buildScientThreadTerminalOpenInput({
+        input: buildProjectThreadTerminalOpenInput({
           target: activeTerminalTarget,
           threadId: activeThreadId,
           terminalId,
@@ -3312,7 +3210,7 @@ function ChatViewContent(props: ChatViewProps) {
       setTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId,
-        input: buildScientThreadTerminalOpenInput({
+        input: buildProjectThreadTerminalOpenInput({
           target: activeTerminalTarget,
           threadId: activeThreadId,
           terminalId,
@@ -3338,7 +3236,7 @@ function ChatViewContent(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId,
-      input: buildScientThreadTerminalOpenInput({
+      input: buildProjectThreadTerminalOpenInput({
         target: activeTerminalTarget,
         threadId: activeThreadId,
         terminalId,
@@ -3781,7 +3679,7 @@ function ChatViewContent(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId: activeThreadRef.environmentId,
-      input: buildScientThreadTerminalOpenInput({
+      input: buildProjectThreadTerminalOpenInput({
         target: activeTerminalTarget,
         threadId: activeThreadId,
         terminalId,
@@ -3812,7 +3710,7 @@ function ChatViewContent(props: ChatViewProps) {
       setTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
-        input: buildScientThreadTerminalOpenInput({
+        input: buildProjectThreadTerminalOpenInput({
           target: activeTerminalTarget,
           threadId: activeThreadId,
           terminalId,
@@ -4618,7 +4516,7 @@ function ChatViewContent(props: ChatViewProps) {
     openThreadPullRequest(activeThreadPr.number);
   }, [activeThreadPr, openThreadPullRequest]);
   const pullRequestSurfaceAvailable =
-    pullRequestCapabilityAllowed &&
+    hasProjectWorkspace &&
     supportsPullRequests &&
     activeThreadPr !== null &&
     threadRepository !== null;
@@ -5355,7 +5253,7 @@ function ChatViewContent(props: ChatViewProps) {
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
       const localApi = readLocalApi();
-      if (!checkpointCapabilityAllowed || !localApi || !activeThread || isRevertingCheckpoint) {
+      if (!hasProjectWorkspace || !localApi || !activeThread || isRevertingCheckpoint) {
         return;
       }
 
@@ -5402,7 +5300,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeThread,
-      checkpointCapabilityAllowed,
+      hasProjectWorkspace,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
       environmentId,
@@ -5947,14 +5845,14 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const shouldCreateThread = isLocalDraftThread && activeThread.projectId !== null;
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        shouldCreateThread || baseBranchForWorktree
           ? {
-              ...(isLocalDraftThread
+              ...(shouldCreateThread
                 ? {
                     createThread: {
                       projectId: activeThread.projectId,
-                      workspaceRoot: null,
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
@@ -6015,22 +5913,16 @@ function ChatViewContent(props: ChatViewProps) {
         if (backgroundThreadRef) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
           try {
-            // SCIENT-FORK:START — Scient's DraftThreadTargetRef carries a
-            // nullable projectId (projectless threads), so the promotion
-            // handoff reuses activeThreadTargetRef instead of upstream's
-            // non-null project access. A background submission only exists
-            // for an active thread, whose target ref is non-null here.
-            const nextDraft = await handleNewThread(
-              activeThreadTargetRef ?? {
-                environmentId,
-                projectId: null,
-              },
-              resolveBackgroundDraftWorkspaceOptions({
-                envMode: sendEnvMode,
-                branch: activeThreadBranch,
-                startFromOrigin,
-              }),
-            );
+            const nextDraft = activeThreadTargetRef
+              ? await handleNewThread(
+                  activeThreadTargetRef,
+                  resolveBackgroundDraftWorkspaceOptions({
+                    envMode: sendEnvMode,
+                    branch: activeThreadBranch,
+                    startFromOrigin,
+                  }),
+                )
+              : null;
             if (nextDraft) {
               finalizePromotedDraftThreadByRef(backgroundThreadRef);
               toastManager.add(
@@ -6111,9 +6003,6 @@ function ChatViewContent(props: ChatViewProps) {
         if (isLocalDraftThread && draftId && wasBootstrapThreadDeleted(error)) {
           const failedDraftSession = getDraftSession(draftId);
           if (failedDraftSession?.threadId === threadIdForSend) {
-            // Draft sessions can be projectless (Scient Quick Chat), so the
-            // target ref is built directly instead of via the project-scoped
-            // helper, which requires a non-null project id.
             setLogicalProjectDraftThreadId(
               failedDraftSession.logicalProjectKey,
               {
@@ -7053,17 +6942,6 @@ function ChatViewContent(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const quickChatMoveDisabledReason =
-    quickChatMoveTargets.length === 0
-      ? "Add a project before moving this chat"
-      : activeKnownTerminalIds.length > 0 ||
-          panelTerminalIds.size > 0 ||
-          terminalUiState.terminalIds.length > 0
-        ? "Close every terminal before moving this chat"
-        : isWorking
-          ? "Wait for the current response to finish"
-          : null;
-
   const panelToggleControls = (
     <PanelLayoutControls
       terminalAvailable={activeTerminalTarget !== null}
@@ -7081,22 +6959,7 @@ function ChatViewContent(props: ChatViewProps) {
       onToggleRightPanel={toggleRightPanel}
     />
   );
-  const rightPanelHeaderControls = (
-    <>
-      {quickChatMovePlacement.panel ? (
-        <ScientQuickChatMoveMenu
-          environmentId={activeThread.environmentId}
-          targets={quickChatMoveTargets}
-          isMoving={isMovingQuickChat}
-          disabledReason={quickChatMoveDisabledReason}
-          onMove={(projectId) => {
-            void moveQuickChatToProject(projectId);
-          }}
-        />
-      ) : null}
-      {panelToggleControls}
-    </>
-  );
+  const rightPanelHeaderControls = <>{panelToggleControls}</>;
   const panelLayoutControls = (
     <div
       className={cn(
@@ -7266,7 +7129,7 @@ function ChatViewContent(props: ChatViewProps) {
           key={`${activeThread.environmentId}:${activeWorkspaceRoot}`}
           environmentId={activeThread.environmentId}
           cwd={activeWorkspaceRoot}
-          projectName={activeProject?.title ?? SCIENT_QUICK_CHAT_LABEL}
+          projectName={activeProject?.title ?? "Project"}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
@@ -7322,10 +7185,6 @@ function ChatViewContent(props: ChatViewProps) {
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
-            isQuickChat={isQuickChat}
-            quickChatMoveTargets={quickChatMoveTargets}
-            isMovingQuickChat={isMovingQuickChat}
-            quickChatMoveDisabledReason={quickChatMoveDisabledReason}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             preferredScriptId={
@@ -7336,9 +7195,6 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
-            onMoveQuickChatToProject={(projectId) => {
-              void moveQuickChatToProject(projectId);
-            }}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}

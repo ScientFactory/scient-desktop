@@ -1,5 +1,4 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { supportsScientQuickChat } from "@t3tools/client-runtime/scient/quick-chat";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,10 +13,9 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
-  useServerConfigs,
   useThreadShells,
 } from "../state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { ScientGettingStartedGate } from "~/scient/onboarding/ScientGettingStartedGate";
@@ -43,8 +41,6 @@ function IndexDraftLanding() {
   const threads = useThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const serverConfigs = useServerConfigs();
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
@@ -85,20 +81,7 @@ function IndexDraftLanding() {
       />
     ) : null;
   }
-  return (
-    <NoProjectsHero
-      onStartWithoutProject={
-        primaryEnvironmentId && supportsScientQuickChat(serverConfigs.get(primaryEnvironmentId))
-          ? async () => {
-              await handleNewThread(
-                { environmentId: primaryEnvironmentId, projectId: null },
-                { replace: true },
-              );
-            }
-          : null
-      }
-    />
-  );
+  return <NoProjectsHero />;
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
@@ -122,11 +105,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
   );
 }
 
-function NoProjectsHero({
-  onStartWithoutProject,
-}: {
-  readonly onStartWithoutProject: (() => Promise<void>) | null;
-}) {
+function NoProjectsHero() {
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   return (
@@ -139,18 +118,13 @@ function NoProjectsHero({
                 What should we work on?
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project, or start a quick chat.
+                Add a project to give your tasks a workspace.
               </EmptyDescription>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
                   Add project
                 </Button>
-                {onStartWithoutProject ? (
-                  <Button size="sm" variant="outline" onClick={() => void onStartWithoutProject()}>
-                    Start a quick chat
-                  </Button>
-                ) : null}
               </div>
             </EmptyHeader>
           </div>

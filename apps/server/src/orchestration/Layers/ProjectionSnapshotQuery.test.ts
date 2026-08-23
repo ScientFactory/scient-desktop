@@ -1207,8 +1207,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
         VALUES (
           'thread-1',
+          'project-1',
           NULL,
-          '/tmp/projectless',
           'Thread 1',
           '{"provider":"codex","model":"gpt-5-codex"}',
           'full-access',
@@ -1282,8 +1282,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
       assert.equal(threadShell._tag, "Some");
       if (threadShell._tag === "Some") {
-        assert.equal(threadShell.value.projectId, null);
-        assert.equal(threadShell.value.workspaceRoot, "/tmp/projectless");
+        assert.equal(threadShell.value.projectId, "project-1");
+        assert.equal(threadShell.value.workspaceRoot, null);
         assert.equal(threadShell.value.latestTurn?.turnId, asTurnId("turn-running"));
         assert.equal(threadShell.value.latestTurn?.state, "running");
         assert.equal(threadShell.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
@@ -1292,8 +1292,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
-        assert.equal(threadDetail.value.projectId, null);
-        assert.equal(threadDetail.value.workspaceRoot, "/tmp/projectless");
+        assert.equal(threadDetail.value.projectId, "project-1");
+        assert.equal(threadDetail.value.workspaceRoot, null);
         assert.equal(threadDetail.value.latestTurn?.turnId, asTurnId("turn-running"));
         assert.equal(threadDetail.value.latestTurn?.state, "running");
         assert.equal(threadDetail.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
@@ -1305,8 +1305,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.equal(fullDiffContext._tag, "Some");
       if (fullDiffContext._tag === "Some") {
-        assert.equal(fullDiffContext.value.projectId, null);
-        assert.equal(fullDiffContext.value.workspaceRoot, "/tmp/projectless");
+        assert.equal(fullDiffContext.value.projectId, "project-1");
+        assert.equal(fullDiffContext.value.workspaceRoot, "/tmp/project-1");
         assert.equal(fullDiffContext.value.latestCheckpointTurnCount, 5);
         assert.equal(fullDiffContext.value.toCheckpointRef, asCheckpointRef("checkpoint-5"));
       }

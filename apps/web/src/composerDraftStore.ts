@@ -312,7 +312,7 @@ export function composerDraftHasUserContent(
 export interface DraftSessionState {
   threadId: ThreadId;
   environmentId: EnvironmentId;
-  projectId: ProjectId | null;
+  projectId: ProjectId;
   logicalProjectKey: string;
   createdAt: string;
   runtimeMode: RuntimeMode;
@@ -326,11 +326,8 @@ export interface DraftSessionState {
 
 export type DraftThreadState = DraftSessionState;
 
-/** The environment and optional project a draft will run in on first send. */
-export interface DraftThreadTargetRef {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId | null;
-}
+/** The project a draft will run in on first send. */
+export type DraftThreadTargetRef = ScopedProjectRef;
 
 /**
  * Draft session metadata paired with its stable draft-session identity.
@@ -1242,15 +1239,9 @@ function projectDraftKey(projectRef: ScopedProjectRef): string {
   return scopedProjectKey(projectRef);
 }
 
-export function projectlessDraftKey(environmentId: EnvironmentId): string {
-  return `environment:${environmentId}:projectless`;
-}
-
 function logicalDraftEnvironmentId(logicalKey: string): EnvironmentId | null {
   const projectRef = parseScopedProjectKey(logicalKey);
-  if (projectRef) return projectRef.environmentId;
-  const match = /^environment:(.+):projectless$/.exec(logicalKey);
-  return match?.[1] ? (match[1] as EnvironmentId) : null;
+  return projectRef?.environmentId ?? null;
 }
 
 function logicalProjectDraftKey(logicalProjectKey: string): string {
@@ -1575,26 +1566,21 @@ function normalizePersistedDraftThreads(
               promotedToRecord.threadId as ThreadId,
             )
           : null;
-      if (
-        (projectId !== null && (typeof projectId !== "string" || projectId.length === 0)) ||
-        environmentId === undefined
-      ) {
+      if (typeof projectId !== "string" || projectId.length === 0 || environmentId === undefined) {
         continue;
       }
       const normalizedEnvironmentId = environmentId as EnvironmentId;
       draftThreadsByThreadKey[threadKey] = {
         threadId,
         environmentId: normalizedEnvironmentId,
-        projectId: projectId === null ? null : (projectId as ProjectId),
+        projectId: projectId as ProjectId,
         logicalProjectKey:
           typeof candidateDraftThread.logicalProjectKey === "string" &&
           candidateDraftThread.logicalProjectKey.length > 0
             ? candidateDraftThread.logicalProjectKey
-            : parsedThreadRef && projectId !== null
+            : parsedThreadRef
               ? projectDraftKey(scopeProjectRef(normalizedEnvironmentId, projectId as ProjectId))
-              : projectId === null
-                ? projectlessDraftKey(normalizedEnvironmentId)
-                : threadKeyOrId,
+              : threadKeyOrId,
         createdAt:
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
@@ -2239,7 +2225,7 @@ function toHydratedThreadDraft(
 }
 
 function toHydratedDraftThreadState(
-  persistedDraftThread: PersistedDraftThreadState,
+  persistedDraftThread: PersistedDraftThreadState & { readonly projectId: ProjectId },
 ): DraftThreadState {
   return {
     threadId: persistedDraftThread.threadId,
@@ -2247,14 +2233,12 @@ function toHydratedDraftThreadState(
     projectId: persistedDraftThread.projectId,
     logicalProjectKey:
       persistedDraftThread.logicalProjectKey ??
-      (persistedDraftThread.projectId === null
-        ? projectlessDraftKey(persistedDraftThread.environmentId as EnvironmentId)
-        : projectDraftKey(
-            scopeProjectRef(
-              persistedDraftThread.environmentId as EnvironmentId,
-              persistedDraftThread.projectId,
-            ),
-          )),
+      projectDraftKey(
+        scopeProjectRef(
+          persistedDraftThread.environmentId as EnvironmentId,
+          persistedDraftThread.projectId,
+        ),
+      ),
     createdAt: persistedDraftThread.createdAt,
     runtimeMode: persistedDraftThread.runtimeMode,
     interactionMode: persistedDraftThread.interactionMode,
@@ -3583,17 +3567,41 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             toHydratedThreadDraft(draft),
           ]),
         );
-        const draftThreadsByThreadKey = Object.fromEntries(
-          Object.entries(normalizedPersisted.draftThreadsByThreadKey).map(
-            ([threadKey, draftThread]) => [threadKey, toHydratedDraftThreadState(draftThread)],
+        const retainedDraftThreadEntries = Object.entries(
+          normalizedPersisted.draftThreadsByThreadKey,
+        ).filter(
+          (
+            entry,
+          ): entry is [string, PersistedDraftThreadState & { readonly projectId: ProjectId }] =>
+            entry[1].projectId !== null,
+        );
+        const retainedDraftIds = new Set(retainedDraftThreadEntries.map(([draftId]) => draftId));
+        const retiredDraftIds = new Set(
+          Object.keys(normalizedPersisted.draftThreadsByThreadKey).filter(
+            (draftId) => !retainedDraftIds.has(draftId),
           ),
+        );
+        const draftThreadsByThreadKey = Object.fromEntries(
+          retainedDraftThreadEntries.map(([threadKey, draftThread]) => [
+            threadKey,
+            toHydratedDraftThreadState(draftThread),
+          ]),
         ) as Record<string, DraftThreadState>;
+        const retainedDraftsByThreadKey = Object.fromEntries(
+          Object.entries(draftsByThreadKey).filter(
+            ([threadKey]) => !retiredDraftIds.has(threadKey),
+          ),
+        );
+        const retainedLogicalMappings = Object.fromEntries(
+          Object.entries(
+            normalizedPersisted.logicalProjectDraftThreadKeyByLogicalProjectKey,
+          ).filter(([, draftId]) => retainedDraftIds.has(draftId)),
+        );
         return {
           ...currentState,
-          draftsByThreadKey,
+          draftsByThreadKey: retainedDraftsByThreadKey,
           draftThreadsByThreadKey,
-          logicalProjectDraftThreadKeyByLogicalProjectKey:
-            normalizedPersisted.logicalProjectDraftThreadKeyByLogicalProjectKey,
+          logicalProjectDraftThreadKeyByLogicalProjectKey: retainedLogicalMappings,
           stickyModelSelectionByProvider: normalizedPersisted.stickyModelSelectionByProvider ?? {},
           stickyActiveProvider: normalizedPersisted.stickyActiveProvider ?? null,
         };

@@ -229,17 +229,19 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
-  it.effect("rejects Quick Chat and credentials without Sources capability", () =>
+  it.effect("rejects a legacy projectless thread and credentials without Sources capability", () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-quick-chat");
+      const threadId = ThreadId.make("thread-legacy-projectless");
       const thread = makeThread({ threadId, projectId: null });
       const query = makeQuery({ project: null, thread });
-      const quickChat = yield* provideContext(resolveScientSourcesProject(), {
+      const projectlessThread = yield* provideContext(resolveScientSourcesProject(), {
         invocation: makeInvocation(threadId),
         query,
       }).pipe(Effect.result);
-      expect(quickChat._tag).toBe("Failure");
-      if (quickChat._tag === "Failure") expect(quickChat.failure.code).toBe("project-required");
+      expect(projectlessThread._tag).toBe("Failure");
+      if (projectlessThread._tag === "Failure") {
+        expect(projectlessThread.failure.code).toBe("project-required");
+      }
 
       const missingCapability = yield* provideContext(resolveScientSourcesProject(), {
         invocation: makeInvocation(threadId, new Set(["preview"])),

@@ -11,8 +11,7 @@ The automatic flow has at most three steps:
 1. **Choose an AI** appears only when no provider instance is canonically ready. It reuses the
    provider registry, readiness projection, permissions, and lifecycle setup surfaces.
 2. **Preferences** stores optional local work kinds and a custom answer when **Other** is selected.
-3. **Start working** hands off to the existing Add Project command or Quick Chat when the connected
-   server advertises that capability.
+3. **Start working** hands off to the existing Add Project command.
 
 Already-satisfied steps are omitted when the journey starts, then that short journey stays stable so
 Back remains predictable while readiness changes. **Skip** stays visible on every step, dismissal is
@@ -32,9 +31,9 @@ Only presentation state and optional preferences are new:
 - `scient:personalization:v1` stores versioned work-kind and optional custom-answer values on the current
   device.
 
-Provider readiness, installation, authentication, model discovery, authorization, projects,
-threads, and Quick Chat support are always derived from their existing canonical services. The
-onboarding state never claims those capabilities are ready.
+Provider readiness, installation, authentication, model discovery, authorization, projects, and
+threads are always derived from their existing canonical services. The onboarding state never
+claims those capabilities are ready.
 
 The local profile is deliberately small and versioned. A future synchronized profile can migrate
 these values behind the storage hook without changing the flow components or treating browser

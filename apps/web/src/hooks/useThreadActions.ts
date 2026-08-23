@@ -241,13 +241,12 @@ export function useThreadActions() {
       opts.onArchived?.();
 
       if (shouldNavigateToDraft) {
-        const navigationResult = await settlePromise(() =>
-          handleNewThreadRef.current(
-            thread.projectId === null
-              ? { environmentId: thread.environmentId, projectId: null }
-              : scopeProjectRef(thread.environmentId, thread.projectId),
-          ),
-        );
+        if (thread.projectId === null) {
+          await router.navigate({ to: "/", replace: true });
+          return archiveResult;
+        }
+        const projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
+        const navigationResult = await settlePromise(() => handleNewThreadRef.current(projectRef));
         if (navigationResult._tag === "Failure") {
           return navigationResult;
         }
@@ -256,7 +255,13 @@ export function useThreadActions() {
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+    [
+      archiveThreadMutation,
+      getCurrentRouteThreadRef,
+      markThreadVisited,
+      resolveThreadTarget,
+      router,
+    ],
   );
 
   const unarchiveThread = useCallback(

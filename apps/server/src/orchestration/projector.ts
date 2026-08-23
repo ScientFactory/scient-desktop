@@ -458,8 +458,8 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-            // SCIENT-FORK:START — Quick Chat relocation preserves the
-            // thread while changing its owning project/workspace seam.
+            // SCIENT-FORK:START — replay immutable historical project
+            // reassignment fields without changing the thread identity.
             ...(payload.projectId !== undefined ? { projectId: payload.projectId } : {}),
             ...(payload.workspaceRoot !== undefined
               ? { workspaceRoot: payload.workspaceRoot }

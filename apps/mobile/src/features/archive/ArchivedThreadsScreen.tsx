@@ -1,5 +1,4 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { SCIENT_QUICK_CHATS_LABEL } from "@t3tools/client-runtime/scient/quick-chat";
 import { LegendList } from "@legendapp/list/react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -27,9 +26,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import {
-  scientThreadGroupEnvironmentId,
-  type ScientThreadGroupContext,
-} from "../scient-quick-chat/threadGroupContext";
+  projectThreadGroupEnvironmentId,
+  type ProjectThreadGroupContext,
+} from "../threads/projectThreadGroupContext";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
   createNativeMailSearchToolbarItem,
@@ -47,7 +46,7 @@ type ArchivedThreadListItem =
       readonly kind: "project";
       readonly key: string;
       readonly environmentLabel: string | null;
-      readonly context: ScientThreadGroupContext;
+      readonly context: ProjectThreadGroupContext;
     }
   | {
       readonly kind: "thread";
@@ -364,24 +363,18 @@ function ArchivedThreadsHeader(props: {
 
 function ProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
-  readonly context: ScientThreadGroupContext;
+  readonly context: ProjectThreadGroupContext;
 }) {
-  const iconColor = useThemeColor("--color-icon-muted");
-  const title =
-    props.context.kind === "project" ? props.context.project.title : SCIENT_QUICK_CHATS_LABEL;
+  const title = props.context.project.title;
   return (
     <View className="flex-row items-center gap-2.5 px-1 pb-2">
-      {props.context.kind === "project" ? (
-        <ProjectFavicon
-          environmentId={props.context.project.environmentId}
-          faviconPath={props.context.project.faviconPath}
-          projectTitle={props.context.project.title}
-          size={18}
-          workspaceRoot={props.context.project.workspaceRoot}
-        />
-      ) : (
-        <SymbolView name="text.bubble" size={18} tintColor={iconColor} type="monochrome" />
-      )}
+      <ProjectFavicon
+        environmentId={props.context.project.environmentId}
+        faviconPath={props.context.project.faviconPath}
+        projectTitle={props.context.project.title}
+        size={18}
+        workspaceRoot={props.context.project.workspaceRoot}
+      />
       <Text
         className="flex-1 text-xs font-t3-medium tracking-[0.5px] uppercase text-foreground-muted"
         numberOfLines={1}
@@ -533,7 +526,7 @@ export function ArchivedThreadsScreen(props: {
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
     const items: ArchivedThreadListItem[] = [];
     for (const group of props.groups) {
-      const environmentId = scientThreadGroupEnvironmentId(group.context);
+      const environmentId = projectThreadGroupEnvironmentId(group.context);
       const environmentLabel = environmentLabelsById.get(environmentId) ?? null;
       items.push({
         kind: "project",

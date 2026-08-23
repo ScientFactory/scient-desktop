@@ -289,36 +289,17 @@ describe("enumerateCommandPaletteItems", () => {
 });
 
 describe("shouldOpenNewThreadTargetPicker", () => {
-  it("opens the picker whenever projectless threads are supported", () => {
-    expect(
-      shouldOpenNewThreadTargetPicker({
-        legacySidebarEnabled: true,
-        projectGroupCount: 0,
-        supportsProjectlessThreads: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldOpenNewThreadTargetPicker({
-        legacySidebarEnabled: false,
-        projectGroupCount: 1,
-        supportsProjectlessThreads: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("preserves the existing multi-project behavior on older servers", () => {
+  it("opens only for the multi-project modern sidebar", () => {
     expect(
       shouldOpenNewThreadTargetPicker({
         legacySidebarEnabled: false,
         projectGroupCount: 2,
-        supportsProjectlessThreads: false,
       }),
     ).toBe(true);
     expect(
       shouldOpenNewThreadTargetPicker({
         legacySidebarEnabled: true,
         projectGroupCount: 2,
-        supportsProjectlessThreads: false,
       }),
     ).toBe(false);
   });
@@ -519,8 +500,8 @@ describe("buildThreadActionItems", () => {
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
   });
 
-  it("keeps the former General Chat term as a search alias for Quick Chat threads", () => {
-    const [item] = buildThreadActionItems({
+  it("does not surface legacy projectless threads", () => {
+    const items = buildThreadActionItems({
       threads: [makeThread({ projectId: null, title: "Unsorted idea" })],
       projectTitleById: new Map(),
       sortOrder: "updated_at",
@@ -528,8 +509,7 @@ describe("buildThreadActionItems", () => {
       runThread: async (_thread) => undefined,
     });
 
-    expect(item?.description).toBe("Quick chat");
-    expect(item?.searchTerms).toContain("general chat");
+    expect(items).toEqual([]);
   });
 });
 

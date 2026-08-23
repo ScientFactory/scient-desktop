@@ -43,7 +43,6 @@ import {
 } from "../cloud/config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { SCIENT_QUICK_CHAT_SERVER_LABEL } from "../scient/quickChat/ServerCapability.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -250,19 +249,6 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
     };
   }
   if (Option.isNone(input.project)) {
-    if (input.thread.value.projectId === null) {
-      return {
-        projectId: null,
-        state: sanitizeRelayAgentActivityState(
-          projectThreadAwareness({
-            environmentId: input.environmentId,
-            project: { title: SCIENT_QUICK_CHAT_SERVER_LABEL },
-            thread: input.thread.value,
-          }),
-        ),
-        reason: "snapshot",
-      };
-    }
     return {
       projectId: input.thread.value.projectId,
       state: null,
@@ -290,10 +276,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
     .filter((thread) => {
-      const project =
-        thread.projectId === null
-          ? { title: SCIENT_QUICK_CHAT_SERVER_LABEL }
-          : projectById.get(thread.projectId);
+      const project = thread.projectId === null ? undefined : projectById.get(thread.projectId);
       if (!project) {
         return false;
       }

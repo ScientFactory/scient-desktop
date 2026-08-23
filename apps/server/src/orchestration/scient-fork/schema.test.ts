@@ -65,7 +65,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 );
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
-const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
   "durable-provider-bootstrap",
@@ -76,6 +76,7 @@ const SCIENT_MIGRATION_NAMES = [
   "analysis-run-storage-status",
   "fork-delivery-and-seed",
   "copied-fork-boundary-manifest",
+  "retire-projectless-thread-lineage",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -495,6 +496,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [7, "analysis-run-storage-status"],
           [8, "fork-delivery-and-seed"],
           [9, "copied-fork-boundary-manifest"],
+          [10, "retire-projectless-thread-lineage"],
         ] as const,
       );
 
@@ -743,7 +745,7 @@ it.effect("migration 4 repairs databases that already recorded migration 3", () 
       const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
         executed.map(([id]) => id),
-        [4, 5, 6, 7, 8, 9],
+        [4, 5, 6, 7, 8, 9, 10],
       );
 
       const active = yield* sql<{ readonly thread_id: string }>`
@@ -1908,7 +1910,10 @@ it.effect("migration 9 converges a development database that already recorded mi
 
       const executed = yield* runScientMigrations(sql);
 
-      assert.deepStrictEqual(executed, [[9, "copied-fork-boundary-manifest"]]);
+      assert.deepStrictEqual(executed, [
+        [9, "copied-fork-boundary-manifest"],
+        [10, "retire-projectless-thread-lineage"],
+      ]);
       const columns = yield* sql<{
         readonly name: string;
       }>`PRAGMA table_info(scient_thread_lineage)`;
@@ -1937,7 +1942,8 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (7, 'analysis-run-storage-status')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (8, 'fork-delivery-and-seed')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (9, 'copied-fork-boundary-manifest')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (10, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (10, 'retire-projectless-thread-lineage')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (11, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -1945,7 +1951,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 10"),
+          error.message.includes("unknown migration 11"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -1956,7 +1962,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
       );
     }),
   ),

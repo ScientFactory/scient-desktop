@@ -147,39 +147,22 @@ describe("buildArchivedThreadGroups", () => {
     expect(result).toEqual([]);
   });
 
-  it("groups archived Quick Chats without inventing a project identity", () => {
-    const quickChat = makeThread({
-      id: ThreadId.make("thread-quick-chat"),
+  it("does not surface archived legacy projectless threads", () => {
+    const legacyThread = makeThread({
+      id: ThreadId.make("thread-legacy"),
       projectId: null,
       title: "Archived notes",
-      workspaceRoot: "/workspaces/quick-chat",
+      workspaceRoot: "/workspaces/legacy",
     });
 
     const result = buildArchivedThreadGroups({
-      snapshots: [makeSnapshot([], [quickChat])],
+      snapshots: [makeSnapshot([], [legacyThread])],
       environmentLabels: {},
       environmentId: null,
-      searchQuery: "quick chat",
+      searchQuery: "",
       sortOrder: "newest",
     });
 
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      context: {
-        kind: "quick-chat",
-        environmentId,
-        workspaceRoot: "/workspaces/quick-chat",
-      },
-    });
-
-    expect(
-      buildArchivedThreadGroups({
-        snapshots: [makeSnapshot([], [quickChat])],
-        environmentLabels: {},
-        environmentId: null,
-        searchQuery: "general chat",
-        sortOrder: "newest",
-      }),
-    ).toHaveLength(1);
+    expect(result).toEqual([]);
   });
 });

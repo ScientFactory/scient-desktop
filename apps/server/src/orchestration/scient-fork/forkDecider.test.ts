@@ -1021,27 +1021,23 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
-  it.effect("preserves a Quick Chat environment root on a local fork", () =>
+  it.effect("rejects a legacy projectless fork origin", () =>
     Effect.gen(function* () {
       const origin = makeOriginThread({
         projectId: null,
-        workspaceRoot: "/tmp/quick-chat-environment",
+        workspaceRoot: "/tmp/legacy-environment",
         branch: null,
         worktreePath: null,
         checkpoints: [],
       });
-      const events = yield* forkThreadForTest({
+      const error = yield* forkThreadForTest({
         command: forkCommand({ workspaceMode: "local" }),
         readModel: makeReadModel({ origin }),
-      });
-      const created = events.find((event) => event.type === "thread.created");
+      }).pipe(Effect.flip);
 
-      expect(created?.type).toBe("thread.created");
-      if (created?.type === "thread.created") {
-        expect(created.payload.projectId).toBeNull();
-        expect(created.payload.workspaceRoot).toBe("/tmp/quick-chat-environment");
-        expect(created.payload.branch).toBeNull();
-        expect(created.payload.worktreePath).toBeNull();
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      if (error._tag === "OrchestrationCommandInvariantError") {
+        expect(error.detail).toContain("has no project and cannot be forked");
       }
     }),
   );

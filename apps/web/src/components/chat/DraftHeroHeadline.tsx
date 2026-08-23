@@ -1,22 +1,17 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import {
-  SCIENT_QUICK_CHAT_LABEL,
-  supportsScientQuickChat,
-} from "@t3tools/client-runtime/scient/quick-chat";
-import { FolderPlusIcon, MessageCircleIcon } from "lucide-react";
+import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import type { DraftThreadTargetRef } from "~/composerDraftStore";
 import { useClientSettings } from "~/hooks/useSettings";
 import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "~/sidebarProjectGrouping";
-import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
+import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
@@ -31,7 +26,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface DraftHeroHeadlineProps {
-  readonly activeProjectRef: DraftThreadTargetRef | null;
+  readonly activeProjectRef: ScopedProjectRef | null;
   readonly activeProjectTitle: string | null;
 }
 
@@ -41,7 +36,6 @@ export function DraftHeroHeadline({
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
-  const serverConfigs = useServerConfigs();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -104,20 +98,12 @@ export function DraftHeroHeadline({
           ),
         ) ?? null);
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName =
-    activeProjectRef?.projectId === null
-      ? SCIENT_QUICK_CHAT_LABEL
-      : (activeProjectGroup?.displayName ?? activeProjectTitle);
+  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject =
     activeProjectRef?.projectId != null &&
     (activeProjectGroup !== null || activeProjectTitle !== null);
   const canChooseProject = projectPickerEntries.length > 0;
-  const projectlessEnvironmentId: EnvironmentId | null =
-    activeProjectRef?.environmentId ?? primaryEnvironmentId;
-  const canCreateProjectlessThread =
-    projectlessEnvironmentId !== null &&
-    supportsScientQuickChat(serverConfigs.get(projectlessEnvironmentId));
-  const shouldShowProjectMenu = projectlessEnvironmentId !== null;
+  const shouldShowProjectMenu = activeProjectRef !== null || canChooseProject;
 
   const projectSelector = shouldShowProjectMenu ? (
     <Menu>
@@ -175,20 +161,6 @@ export function DraftHeroHeadline({
           <FolderPlusIcon />
           New project
         </MenuItem>
-        {canCreateProjectlessThread ? (
-          <MenuItem
-            onClick={() => {
-              if (projectlessEnvironmentId === null) return;
-              void handleNewThread(
-                { environmentId: projectlessEnvironmentId, projectId: null },
-                { replace: true },
-              );
-            }}
-          >
-            <MessageCircleIcon />
-            {SCIENT_QUICK_CHAT_LABEL}
-          </MenuItem>
-        ) : null}
       </MenuPopup>
     </Menu>
   ) : (
@@ -203,9 +175,7 @@ export function DraftHeroHeadline({
 
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-      {activeProjectRef?.projectId === null ? (
-        <>What would you like to explore?</>
-      ) : hasResolvedProject ? (
+      {hasResolvedProject ? (
         <>What should we build in {projectSelector}?</>
       ) : canChooseProject ? (
         <>{projectSelector} to start</>

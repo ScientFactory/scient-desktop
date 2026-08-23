@@ -9,8 +9,10 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
+  type TerminalOpenInput,
   type TurnId,
 } from "@t3tools/contracts";
+import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -133,16 +135,45 @@ export function startNewThreadForProject(
 export function resolveThreadWorkspaceRoot(input: {
   readonly worktreePath: string | null | undefined;
   readonly projectCwd: string | null | undefined;
-  readonly threadWorkspaceRoot: string | null | undefined;
-  readonly environmentCwd?: string | null | undefined;
 }): string | undefined {
-  return (
-    input.worktreePath ??
-    input.projectCwd ??
-    input.threadWorkspaceRoot ??
-    input.environmentCwd ??
-    undefined
-  );
+  return input.worktreePath ?? input.projectCwd ?? undefined;
+}
+
+export interface ProjectThreadTerminalTarget {
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+  readonly env: Record<string, string>;
+}
+
+export function resolveProjectThreadTerminalTarget(input: {
+  readonly projectWorkspaceRoot: string | null | undefined;
+  readonly gitCwd: string | null | undefined;
+  readonly worktreePath: string | null | undefined;
+}): ProjectThreadTerminalTarget | null {
+  if (!input.projectWorkspaceRoot) return null;
+  const worktreePath = input.worktreePath ?? null;
+  return {
+    cwd: input.gitCwd ?? input.projectWorkspaceRoot,
+    worktreePath,
+    env: projectScriptRuntimeEnv({
+      project: { cwd: input.projectWorkspaceRoot },
+      worktreePath,
+    }),
+  };
+}
+
+export function buildProjectThreadTerminalOpenInput(input: {
+  readonly target: ProjectThreadTerminalTarget;
+  readonly threadId: string;
+  readonly terminalId: string;
+}): TerminalOpenInput {
+  return {
+    threadId: input.threadId,
+    terminalId: input.terminalId,
+    cwd: input.target.cwd,
+    ...(input.target.worktreePath !== null ? { worktreePath: input.target.worktreePath } : {}),
+    env: input.target.env,
+  };
 }
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {

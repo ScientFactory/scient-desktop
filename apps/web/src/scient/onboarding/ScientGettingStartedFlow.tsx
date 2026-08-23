@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { supportsScientQuickChat } from "@t3tools/client-runtime/scient/quick-chat";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -7,7 +6,6 @@ import { openCommandPalette } from "../../commandPaletteBus";
 import { PROVIDER_CLIENT_DEFINITIONS } from "../../components/settings/providerDriverMeta";
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
 import { usePrimarySessionState } from "../../environments/primary";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import {
   deriveProviderInstanceEntries,
   isProviderInstancePickerReady,
@@ -15,7 +13,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { primaryServerConfigAtom, primaryServerProvidersAtom } from "../../state/server";
+import { primaryServerProvidersAtom } from "../../state/server";
 import { providerOnboardingStatusLabel } from "../providerConnection/ProviderOnboardingPicker";
 import { hasSavedScientPreferences, type ScientWorkKind } from "./model";
 import {
@@ -38,10 +36,8 @@ const PRIMARY_ONBOARDING_PROVIDER_COUNT = 3;
 export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "manual" }) {
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const primaryServerConfig = useAtomValue(primaryServerConfigAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const sessionState = usePrimarySessionState();
-  const handleNewThread = useNewThreadHandler();
   const {
     state: onboardingState,
     profile,
@@ -56,7 +52,6 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   const [workKinds, setWorkKinds] = useState<ReadonlyArray<ScientWorkKind>>(profile.workKinds);
   const [otherSelected, setOtherSelected] = useState(profile.fieldOrTopic.trim().length > 0);
   const [otherWork, setOtherWork] = useState(profile.fieldOrTopic);
-  const [startingQuickChat, setStartingQuickChat] = useState(false);
 
   const instanceEntries = useMemo(
     () => sortProviderInstanceEntries(deriveProviderInstanceEntries(serverProviders)),
@@ -183,19 +178,6 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     void finishBefore(() => openCommandPalette({ open: "add-project" }));
   }, [finishBefore]);
 
-  const startQuickChat = useCallback(() => {
-    if (!primaryEnvironmentId || startingQuickChat) return;
-    setStartingQuickChat(true);
-    void handleNewThread(
-      { environmentId: primaryEnvironmentId, projectId: null },
-      { replace: true },
-    )
-      .then((result) => {
-        if (result) completeOnboarding();
-      })
-      .finally(() => setStartingQuickChat(false));
-  }, [completeOnboarding, handleNewThread, primaryEnvironmentId, startingQuickChat]);
-
   if (!primaryEnvironmentId) return null;
 
   const canGoBack = selectedEntryId !== null || previousStep !== null;
@@ -250,12 +232,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
           workKinds={workKinds}
         />
       ) : (
-        <GettingStartedStartStep
-          canStartQuickChat={supportsScientQuickChat(primaryServerConfig)}
-          onAddProject={addProject}
-          onStartQuickChat={startQuickChat}
-          startingQuickChat={startingQuickChat}
-        />
+        <GettingStartedStartStep onAddProject={addProject} />
       )}
     </ScientGettingStartedShell>
   );

@@ -1,6 +1,6 @@
 import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, LoaderIcon, PlusIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { type ComponentType, type ReactNode, useEffect, useRef } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -300,39 +300,17 @@ export function GettingStartedPreferencesStep(props: {
   );
 }
 
-export function GettingStartedStartStep(props: {
-  readonly canStartQuickChat: boolean;
-  readonly startingQuickChat: boolean;
-  readonly onAddProject: () => void;
-  readonly onStartQuickChat: () => void;
-}) {
+export function GettingStartedStartStep(props: { readonly onAddProject: () => void }) {
   return (
     <div>
       <GettingStartedStepHeading
-        description="Open a project, or begin without one."
+        description="Add a project to give your tasks a workspace."
         title="Start working"
       />
       <div className="mt-7 flex flex-wrap items-center gap-2">
-        <Button
-          disabled={props.startingQuickChat}
-          onClick={props.onAddProject}
-          size="sm"
-          type="button"
-        >
+        <Button onClick={props.onAddProject} size="sm" type="button">
           <PlusIcon aria-hidden /> Add project
         </Button>
-        {props.canStartQuickChat ? (
-          <Button
-            disabled={props.startingQuickChat}
-            onClick={props.onStartQuickChat}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            {props.startingQuickChat ? <LoaderIcon aria-hidden className="animate-spin" /> : null}
-            Start a quick chat
-          </Button>
-        ) : null}
       </div>
     </div>
   );

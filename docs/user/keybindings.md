@@ -67,10 +67,6 @@ at. To keep a worktree, use the explicit "new thread in this worktree" action in
 toolbar. The only difference between the two commands: with the current sidebar and more than one
 project, `chat.new` opens a project chooser first.
 
-The new-thread picker and Command Palette also offer **Don't work in a project**. This creates an
-environment-scoped thread with no project association; the provider runs from that environment's
-default working directory.
-
 Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
