@@ -2666,23 +2666,64 @@ application authority through their content.
 reusing the same compute sessions, execution records, renderers, provenance,
 and runtime settings as source-file execution.
 
-The initial notebook format is `.ipynb`, but the architecture is a notebook
-document capability rather than a Jupyter Server dependency. The implementation
-must define:
+The first interchange format is `.ipynb`. Compatibility is defined against the
+official [nbformat 4 document
+model](https://nbformat.readthedocs.io/en/latest/format_description.html) and
+the versioned [Jupyter messaging
+protocol](https://jupyter-client.readthedocs.io/en/latest/messaging.html), not
+against one JupyterLab release or its extension ecosystem. Scient implements a
+native notebook document capability; it does not embed a JupyterLab application
+or adopt Jupyter Server, Contents Manager, Session Manager, workspace, renderer,
+or extension-manager authority.
 
-- lossless round-trip of cell IDs, order, source, supported metadata, and
-  unknown metadata that Scient does not understand;
-- code, Markdown, and raw cells, with clear selection and editing behavior;
-- run cell, run all, run above/below, interrupt, restart, clear output, and
-  kernel/runtime selection through the existing compute service;
-- the exact relationship between immutable compute history and output snapshots
-  saved in the notebook document;
-- dirty-buffer, external-edit, merge/conflict, autosave, and crash-recovery
-  semantics using the ordinary workspace authority model;
-- notebook trust, HTML/widget authority, attachments, large-output bounds, and
-  remote behavior; and
-- agent-readable project files without a hidden notebook database or a second
-  private execution history.
+A complete first-party notebook experience includes:
+
+- semantic lossless round-trip for nbformat 4 notebooks, including cell IDs,
+  order, string/array source form, attachments, execution counts, supported and
+  unknown metadata, unknown future cell/output fields, and kernelspec/language
+  hints;
+- code, Markdown, and raw cells; add/delete/copy/cut/paste/move/split/merge;
+  multi-cell selection; cell and document undo/redo; search; table of contents;
+  collapse/scroll state; and accessible keyboard and pointer operation;
+- run cell, run-and-advance, run above/below/all, restart-and-run, cancel queued
+  work, interrupt, restart, stop, clear output, and explicit runtime selection
+  through the existing compute service;
+- stream, error, execute-result, display-data, display-update, clear-output,
+  attachment, and ordered execution-count semantics through the shared
+  representation pipeline rather than a notebook-only renderer;
+- completion, completeness checks, inspection/documentation, bounded
+  interactive standard input including password prompts, and capability-gated
+  debugging for kernels that implement the corresponding protocols;
+- common packaged Jupyter widget models and views through an explicit
+  session-scoped comm manager, including bounded state, disconnect/reconnect,
+  close, restart, persisted widget-state, version compatibility, and an honest
+  fallback for unavailable or unapproved custom widget modules;
+- notebook trust, sanitized versus isolated-active HTML, output/widget
+  authority, attachments, local-resource resolution, and exact-content trust
+  invalidation;
+- HTML and PDF export through ordinary generated-document and Browser
+  boundaries, without making an exported rendering a second notebook source;
+- dirty-buffer, external-edit, revision-conflict, autosave, crash-recovery,
+  large-notebook, long-output, remote, multi-client, and packaged-app behavior
+  using ordinary workspace authority; and
+- agent-readable project files and later structured cell operations without a
+  hidden notebook database or a second private execution history.
+
+This target deliberately does not promise the entire JupyterLab shell,
+arbitrary frontend extensions, a general package marketplace, or real-time
+collaboration. Those are separate product capabilities. Standard notebook
+files must preserve unsupported extension data, and unsupported interactive
+views must fail truthfully without damaging the document or hiding a static or
+text fallback.
+
+The notebook document model is a pure, bounded Scient-owned model over the
+ordinary project file. It preserves opaque JSON fields and applies narrow cell,
+metadata, and output edits. A narrow upstream nbformat type/schema dependency
+may be adopted after an evidence and bundle-size review, but a library that
+silently upgrades format versions, inserts cells or metadata, or brings its own
+filesystem, collaborative document, kernel, or renderer authority cannot own
+the document. The notebook surface mounts through the existing file-presentation
+boundary and uses the revision-checked atomic workspace read/write lifecycle.
 
 A notebook execution uses a stable notebook-cell source identity containing
 the ordinary project path, cell ID, base document revision, saved-versus-dirty
@@ -2696,14 +2737,66 @@ discarding notebook output changes the document buffer, never immutable compute
 history. Notebook trust is tied to the exact saved content revision and does
 not grant active HTML or widget authority after the file changes.
 
+Full notebooks are also the first accepted reason to move beyond Phase 4's
+single live project-session UI policy. Ordinary source files may continue to use
+one default project session, while each notebook binds explicitly to one bounded
+live `ComputeSession`, by default a notebook-specific session. A user may later
+attach another notebook to an existing compatible session only through an
+explicit action. The binding is operational state, not hidden notebook source;
+the notebook's kernelspec remains a reviewed hint. Closing a notebook does not
+silently destroy its runtime, and every live notebook session remains visible
+and stoppable through the project compute surface. Resource limits and idle
+retention must be accepted before enabling several live sessions.
+
+Notebook output projection is document state, not execution authority.
+Append-only compute facts retain MIME bundles and display/update/clear events;
+the notebook materializer writes the final bounded nbformat output projection
+for the cell. Transient `display_id` values and comm messages are not serialized
+as if they were durable notebook outputs. Saved notebook output may be cleared
+or replaced without rewriting compute history, and reopening a notebook never
+starts a kernel, replays code, or trusts active content implicitly.
+
 `# %%` source cells remain useful for ordinary scripts; they are not a
 substitute for native notebook documents. Notebook support must reuse
 `ComputeSession` rather than introducing a second kernel/session coordinator.
 
-**Exit gate:** A scientist can open, edit, execute, save, close, reopen, diff,
-and share a real notebook without losing unsupported metadata, confusing saved
-document output with live namespace state, or bypassing compute provenance and
-security boundaries.
+Deliver this capability in a named product phase rather than leaving it as an
+architecture spike:
+
+1. **Phase 5C-N0 — notebook contract proof:** prove lossless document edits,
+   cell identity, saved-source validation, one real cell execution, output
+   materialization, and trust invalidation before the shared Phase 5 contracts
+   freeze.
+2. **Phase 6A — document and authoring core:** add the specialized `.ipynb`
+   presenter, cell editor/selection/structure operations, Markdown/raw cells,
+   attachments, metadata preservation, search/TOC, undo/redo, and ordinary
+   save/conflict/crash recovery. This may begin after 5C-N0 and does not depend
+   on managed Python setup.
+3. **Phase 6B — session binding and execution:** add bounded notebook-specific
+   live sessions, cell/document run commands, execution order/count/state,
+   restart/interrupt/stop, exact source navigation, and durable history. It
+   requires the representation-bundle and display-update/clear foundations,
+   not every later renderer.
+4. **Phase 6C — rich output and trust parity:** consume supported Phase 5B
+   representations, render saved and live output consistently, materialize
+   standard nbformat outputs, handle attachments and active/inert HTML, and
+   qualify trust and large-output behavior.
+5. **Phase 6D — interactive kernel parity:** add completion, inspection,
+   completeness, bounded stdin, common packaged widgets/comms, and
+   capability-gated debugging without granting arbitrary frontend modules
+   ambient app authority.
+6. **Phase 6E — interchange and product qualification:** add HTML/PDF export,
+   cell-aware review/diff behavior, compatibility fixtures from major notebook
+   producers, large/long notebook performance, remote and multi-client
+   recovery, accessibility, packaged-platform evidence, and manual acceptance.
+
+**Exit gate:** A scientist can create, open, edit, navigate, execute, inspect,
+save, close, reopen, export, review, and share a standard notebook with common
+rich outputs and widgets without losing unsupported data, confusing saved
+document output with live namespace state, or bypassing compute provenance,
+workspace authority, trust, or resource bounds. Unsupported JupyterLab
+extensions remain preserved or visibly unavailable rather than being counted as
+notebook corruption or silently executed.
 
 #### Track D: Structured scientific data and language intelligence
 
@@ -2719,8 +2812,9 @@ Add incrementally:
 - variable editing only if a later proposal can make mutation explicit,
   attributable, reversible where possible, and truthful in execution history;
   and
-- multiple visible sessions only after product workflows justify the added
-  session-selection and resource complexity.
+- multiple visible sessions only after a product workflow justifies the added
+  session-selection and resource complexity; Phase 6 notebook-specific
+  sessions are the first accepted case and remain bounded by project controls.
 
 **Exit gate:** Large values remain bounded and responsive, inspection does not
 silently execute arbitrary user code, and any namespace mutation is represented
@@ -2852,13 +2946,19 @@ The capability tracks are not a license to build everything concurrently or to
 hide priorities. Choose one bounded product slice at a time while maintaining
 continuous reliability and mainline-integration evidence:
 
-- runtime acquisition, the neutral representation bundle, and a
-  second-language transport spike may begin from the accepted Phase 4
-  foundation;
-- native notebook implementation begins only after its document/output/trust
-  contract is accepted, but it does not wait for every future renderer;
-- Plotly/Vega and safe HTML require the representation bundle, while widgets
-  additionally require the comm lifecycle and isolated-authority model;
+- runtime acquisition, the neutral representation bundle, the 5C-N0 notebook
+  contract proof, and a second-language transport proof may begin from the
+  accepted Phase 4 foundation;
+- Phase 6A notebook authoring may begin as soon as 5C-N0 accepts the document,
+  source-identity, output-projection, and trust contract. It does not depend on
+  managed Python setup or every future renderer;
+- Phase 6B notebook execution requires the representation bundle plus durable
+  display-update/clear projection and an accepted bounded multiple-session
+  policy. It does not require every later representation;
+- Plotly/Vega and safe HTML require the representation bundle. Notebook rich
+  output adopts each accepted renderer incrementally, while common widgets also
+  require the comm lifecycle, packaged-module policy, and isolated-authority
+  model;
 - each managed language runtime requires its own acquisition decision and does
   not inherit approval from Python;
 - portable result promotion can proceed independently once its publication and
@@ -2869,11 +2969,13 @@ continuous reliability and mainline-integration evidence:
   platform evidence regardless of how many product tracks are implemented.
 
 The current planning recommendation after closing the Phase 4 candidate is to
-investigate runtime acquisition and the neutral rich-representation contract
-first, then choose the first implementation slice from measured user value.
-Native notebooks and a real second-language adapter should receive early
-architecture spikes in parallel so Python/file-view assumptions cannot harden
-into permanent shared contracts.
+advance managed Python setup and the neutral rich-representation foundation as
+separate bounded Phase 5 product lanes, while running the 5C-N0 notebook and
+second-language proofs before those shared contracts freeze. Phase 6 is the
+named native-notebook product, not an indefinitely deferred follow-up: its
+document/authoring slice can start after 5C-N0, its execution slice follows the
+representation and display-projection foundations, and its richer output and
+interactive slices consume accepted capabilities incrementally.
 
 ---
 
@@ -2994,6 +3096,7 @@ encoding it into the architecture status.
 | Phase 4 implementation candidate               | Rebased commit `84adc8270a` contains Scientific Computing settings, RPC/authorization, server-derived project identity, saved-source validation, bounded client folding/gap recovery, Code/Split/Results with explicit caret-aware `# %%` cells, focused run history, bounded transient live variables, inline signed PNG/SVG viewing, secondary project history, and workspace refresh                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Committed locally                             |
 | Combined backend and client qualification      | The rebased candidate passed the complete repository suite, including 418 web files/3,659 tests and 336 passing server files/3,712 passing tests with 7 files/32 tests explicitly skipped. It also passed 83 bridge tests and 8 explicitly enabled real-kernel/product tests covering state and safe variables after success/failure/restart, ordinary `plt.show()` PNG, explicit SVG display, interruption, restart, loss, output flood, 40 rapid executions, restart storms, durable history, bounded generated-project-image capture, and immutable retained bytes. All 26 typecheck boundaries, formatting, lint, seam, and brand gates passed; lint emitted only pre-existing warnings outside the compute diff.                                                                                                                                                                                                                                                                                                                                                                                                                      | Passed locally on rebased macOS tree          |
 | Phase 4 visual product acceptance              | The owner rejected the initial composer/history-first surface, then manually tested and accepted the replacement file-first Code/Split/Results workflow. The owner subsequently tested and accepted figure following, floating presentation, direct figure actions, and side-by-side/stacked layouts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Accepted locally                              |
+| Phase 5 and Phase 6 roadmap                    | Phase 5A managed Python, Phase 5B shared representations, the bounded 5C proofs, and the complete Phase 6A-6E native-notebook product are specified by dependency and acceptance gates in this ADR. The roadmap change is architectural planning only; no Phase 5 or Phase 6 product implementation is claimed by this row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Accepted roadmap; implementation not begun    |
 | Stable rebased candidate                       | Product checkpoint `580b31eac8` contains current `origin/main` snapshot `ad8566cbd4`, including the current upstream T3 sync. It passes 100 compute, 328 contract, 678 client-runtime, 83 bridge, 3,767 web, and 3,760 server tests plus all 26 typecheck boundaries, formatting/lint/seam/brand gates, production builds, byte-identical bridge staging, release and Electron smoke, and 8 explicitly enabled real-kernel/product tests. Published predecessor `99fe3419e0` passed every configured hosted check, including all three server shards and the macOS/Linux real-kernel matrix on Python 3.10 and 3.12. Immutable PR checks remain authoritative for each later published head.                                                                                                                                                                                                                                                                                                                                                                                                                                               | Stable and locally requalified; see PR checks |
 | Post-Phase 4 UI extension candidate            | Rebased figure-follow and interaction hardening through `b955ebef5f` provides stable project-file and saved full-file runtime references, immutable historical snapshots, explicit full and floating presentation destinations, passive no-resurrection updates, deterministic cross-session revision ordering, gap recovery, same-content zoom continuity, decode-before-swap image transitions, and bounded keyboard move/resize/Escape controls. Commit `158a05635a` adds producer-neutral static-image actions, `a652181437` adds persisted side-by-side/stacked Results layouts through a shared axis-neutral split hook, and `414e46f961` exposes direct open, float, copy, and download actions consistently across result, viewer, and floating surfaces. Commit `578a0613a1` keeps the implementation in the generic preview layer while restoring the inherited viewer's existing compatibility seam. The rebased source passed exact-diff seam checks, focused image coverage through the complete web suite, web typecheck, production web and desktop/server builds, exact bridge staging, release smoke, and Electron smoke. | Owner-accepted and locally qualified          |
 | Phase 2 real-kernel portability                | ADR requires macOS, Windows, and Linux. Exact head `fcf7c22fab` passed hosted macOS 15 and Ubuntu 24.04 real-kernel jobs on Python 3.10 and 3.12; Windows is absent from the current workflow matrix and remains incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | macOS/Linux passed; Windows pending           |
@@ -3028,8 +3131,10 @@ Implement and qualify the following architectural direction:
    never a second project filesystem.
 9. Compute-owned initial outputs and explicit provenance-preserving promotion,
    without premature shared artifact migration.
-10. At most one live project session in the first UI, with a fresh durable ID
-    for each lifetime and inspectable prior histories.
+10. At most one live project session in the first source-file UI, with a fresh
+    durable ID for each lifetime and inspectable prior histories. Phase 6 may
+    add bounded notebook-specific sessions through the same coordinator and
+    project control surface.
 11. Human and later agent operations in the same scientific system and review
     surface, with actor-specific authorization and ownership.
 12. No agent execution before the operation envelope and minimum reliability
@@ -3037,14 +3142,18 @@ Implement and qualify the following architectural direction:
 13. Native notebooks are ordinary project documents that reuse the same
     compute sessions, provenance, representations, and workspace authority;
     they do not create a second kernel coordinator or hidden source database.
-14. Rich output is a language-neutral representation platform covering
+14. Deliver native notebooks as a named Phase 6 product: standard `.ipynb`
+    authoring and execution, common rich outputs and packaged widgets,
+    interoperability, export, and qualification—not merely a parser proof and
+    not an embedded JupyterLab application.
+15. Rich output is a language-neutral representation platform covering
     important static, document, structured-data, interactive, HTML, media, and
     later widget formats, each with explicit validation and authority.
-15. No managed runtime or shared artifact migration without separate evidence
+16. No managed runtime or shared artifact migration without separate evidence
     and explicit user choice.
-16. Prove the foundation with Python, then validate transport-host/kernel
+17. Prove the foundation with Python, then validate transport-host/kernel
     separation and shared Results behavior with a real second-language adapter.
-17. Extract broader shared abstractions only after real duplication is
+18. Extract broader shared abstractions only after real duplication is
     demonstrated.
 
 Complete the smallest human vertical slice (Phases 0–4) before expanding the
