@@ -2,23 +2,9 @@ name: Documentation
 
 on:
   pull_request:
-    paths:
-      - "docs/**"
-      - "**/*.md"
-      - ".github/oxfmt-documentation.json"
-      - ".github/workflows/documentation.yml"
-      - "scripts/check-markdown-links.mjs"
-      - "scripts/check-markdown-links.node-tests.mjs"
   push:
     branches:
       - main
-    paths:
-      - "docs/**"
-      - "**/*.md"
-      - ".github/oxfmt-documentation.json"
-      - ".github/workflows/documentation.yml"
-      - "scripts/check-markdown-links.mjs"
-      - "scripts/check-markdown-links.node-tests.mjs"
 
 concurrency:
   group: documentation-${{ github.ref }}
