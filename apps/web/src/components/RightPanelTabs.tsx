@@ -866,6 +866,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <div
                   key={surface.id}
                   data-active-tab={active}
+                  dir="auto"
                   onMouseDown={handleTabMouseDown}
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
@@ -932,14 +933,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       render={
                         <button
                           type="button"
-                          className="cursor-pointer flex min-w-0 items-center"
+                          className="cursor-pointer flex min-w-0 flex-1 items-center"
                           onClick={() => props.onActivate(surface)}
                         >
-                          <span className="truncate">{title}</span>
+                          <span className="min-w-0 flex-1 truncate text-start" dir="auto">
+                            {title}
+                          </span>
                         </button>
                       }
                     />
-                    <TooltipPopup>{title}</TooltipPopup>
+                    <TooltipPopup className="text-start" dir="auto">
+                      {title}
+                    </TooltipPopup>
                   </Tooltip>
                 </div>
               );

@@ -1,5 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import Mime from "@effect/platform-node/Mime";
 import {
+  type EnvironmentFileChangeEvent,
   EnvironmentFilePath,
   EnvironmentFilePrepareError,
   type EnvironmentFilePrepareInput,
@@ -7,11 +10,14 @@ import {
   type EnvironmentFilePresentation,
   type EnvironmentFileTextEncoding,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 
 const INSPECTION_BYTE_LIMIT = 64 * 1_024;
 
@@ -285,3 +291,86 @@ export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare
     }),
   };
 });
+
+/**
+ * Watch one exact host file through its parent directory so atomic replacement
+ * does not detach the watcher. Events are invalidation hints, never contents.
+ */
+export function watchEnvironmentFile(
+  input: EnvironmentFilePrepareInput,
+): Stream.Stream<EnvironmentFileChangeEvent, EnvironmentFilePrepareError, Path.Path> {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      if (!path.isAbsolute(input.path)) {
+        return Stream.fail(
+          new EnvironmentFilePrepareError({ path: input.path, failure: "path_not_absolute" }),
+        );
+      }
+
+      const targetPath = path.resolve(input.path);
+      const watchDirectory = path.dirname(targetPath);
+      return Stream.callback<EnvironmentFileChangeEvent, EnvironmentFilePrepareError>((queue) =>
+        Effect.acquireRelease(
+          Effect.try({
+            try: () => {
+              const watcher = NodeFS.watch(watchDirectory, (_event, reportedPath) => {
+                if (reportedPath !== null) {
+                  const reportedAbsolutePath = path.isAbsolute(reportedPath)
+                    ? path.resolve(reportedPath)
+                    : path.resolve(watchDirectory, reportedPath);
+                  if (reportedAbsolutePath !== targetPath) return;
+                }
+                Queue.offerUnsafe(queue, {
+                  _tag: "file-changed",
+                  path: EnvironmentFilePath.make(targetPath),
+                });
+              });
+              watcher.on("error", () => {
+                Queue.failCauseUnsafe(
+                  queue,
+                  Cause.fail(
+                    new EnvironmentFilePrepareError({
+                      path: input.path,
+                      failure: "inspection_failed",
+                    }),
+                  ),
+                );
+              });
+              watcher.on("close", () => Queue.endUnsafe(queue));
+              Queue.offerUnsafe(queue, {
+                _tag: "watch-ready",
+                path: EnvironmentFilePath.make(targetPath),
+              });
+              return watcher;
+            },
+            catch: () =>
+              new EnvironmentFilePrepareError({
+                path: input.path,
+                failure: "inspection_failed",
+              }),
+          }),
+          (watcher) => Effect.sync(() => watcher.close()),
+        ),
+      ).pipe(
+        Stream.groupedWithin(256, "100 millis"),
+        Stream.flatMap((events) => {
+          const coalesced: EnvironmentFileChangeEvent[] = [];
+          if (events.some((event) => event._tag === "watch-ready")) {
+            coalesced.push({
+              _tag: "watch-ready",
+              path: EnvironmentFilePath.make(targetPath),
+            });
+          }
+          if (events.some((event) => event._tag === "file-changed")) {
+            coalesced.push({
+              _tag: "file-changed",
+              path: EnvironmentFilePath.make(targetPath),
+            });
+          }
+          return Stream.fromIterable(coalesced);
+        }),
+      );
+    }),
+  );
+}

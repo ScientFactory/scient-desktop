@@ -82,7 +82,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v12 adds a generic Scient-owned module surface; the feature state remains outside this store.
 // v13 lets a source PDF open beside, rather than replace, the Sources library.
 // v14 adds stable direct artifact surfaces without persisting signed asset URLs.
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+// v15 keys generated-PDF surfaces by stable artifact identity instead of revision.
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
  * state: reopening the app should show the list, not last session's tabs and detail fetches.
@@ -109,6 +110,10 @@ interface RightPanelStoreState {
     target: { environmentId?: string; projectId: string; repository: string; number: number },
   ) => void;
   openScient: (ref: ScopedThreadRef, surface: ScientRightPanelSurface) => void;
+  updateScientGeneratedPdf: (
+    ref: ScopedThreadRef,
+    surface: Extract<ScientRightPanelSurface, { readonly module: "generated-pdf" }>,
+  ) => void;
   openScientArtifact: (ref: ScopedThreadRef, artifact: PreviewStaticImageSurfaceDescriptor) => void;
   updateScientArtifact: (
     ref: ScopedThreadRef,
@@ -358,11 +363,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   })
                 : [];
               const rawActiveSurfaceId = validThreadState?.activeSurfaceId;
+              const rawActiveSurface = Array.isArray(validThreadState?.surfaces)
+                ? validThreadState.surfaces.find((surface) => surface.id === rawActiveSurfaceId)
+                : undefined;
+              const normalizedActiveSurfaceId =
+                rawActiveSurface?.kind === "scient"
+                  ? (normalizeScientRightPanelSurface(rawActiveSurface)?.id ?? rawActiveSurfaceId)
+                  : rawActiveSurfaceId;
               const persistedActiveSurfaceId = surfaces.some(
-                (surface) => surface.id === rawActiveSurfaceId,
+                (surface) => surface.id === normalizedActiveSurfaceId,
               )
-                ? (rawActiveSurfaceId ?? null)
-                : rawActiveSurfaceId === "pull-request"
+                ? (normalizedActiveSurfaceId ?? null)
+                : normalizedActiveSurfaceId === "pull-request"
                   ? (surfaces.find((surface) => surface.kind === "pull-request")?.id ?? null)
                   : null;
               // A migration that dropped every surface (e.g. plan-only panels
@@ -425,6 +437,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (!current.surfaces.some((entry) => entry.id === surface.id)) return next;
             return {
               ...next,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === surface.id ? surface : entry,
+              ),
+            };
+          }),
+        })),
+      updateScientGeneratedPdf: (ref, surface) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            if (!current.surfaces.some((entry) => entry.id === surface.id)) return current;
+            return {
+              ...current,
               surfaces: current.surfaces.map((entry) =>
                 entry.id === surface.id ? surface : entry,
               ),

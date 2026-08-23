@@ -161,6 +161,8 @@ const PdfSourceBase = {
     Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
   ),
   capabilities: PdfSourceCapabilities,
+  /** Producer-known page count; existing file sources may omit it. */
+  pageCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 } as const;
 
 const WorkspacePdfLegacyLocator = Schema.Struct({
@@ -208,7 +210,40 @@ export interface PdfSourceResolver {
   readonly useResolve: (source: PdfSourceDescriptor) => PdfSourceResolution;
 }
 
+export const AssetCopyRequest = Schema.Struct({
+  url: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32_768)),
+  suggestedFileName: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(255),
+    // eslint-disable-next-line no-control-regex -- Cross-process filenames must reject NUL explicitly.
+    Schema.isPattern(/^[^/\\\0]+$/u),
+  ),
+});
+export type AssetCopyRequest = typeof AssetCopyRequest.Type;
+
+export const AssetCopyFailureReason = Schema.Literals([
+  "dialog-failed",
+  "source-unavailable",
+  "source-changed",
+  "network-failed",
+  "write-failed",
+]);
+export type AssetCopyFailureReason = typeof AssetCopyFailureReason.Type;
+
+export const AssetCopyResult = Schema.Union([
+  Schema.TaggedStruct("saved", {
+    path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  }),
+  Schema.TaggedStruct("download-started", {}),
+  Schema.TaggedStruct("cancelled", {}),
+  Schema.TaggedStruct("failed", { reason: AssetCopyFailureReason }),
+]);
+export type AssetCopyResult = typeof AssetCopyResult.Type;
+
 export interface PdfSourceActions {
-  readonly saveCopy: (source: PdfSourceDescriptor, resolved: ResolvedPdfSource) => void;
+  readonly saveCopy: (
+    source: PdfSourceDescriptor,
+    resolved: ResolvedPdfSource,
+  ) => Promise<AssetCopyResult>;
   readonly revealSource?: (source: PdfSourceDescriptor, resolved: ResolvedPdfSource) => void;
 }

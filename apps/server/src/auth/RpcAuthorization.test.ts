@@ -30,8 +30,11 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("treats file preparation as a read-only environment operation", () => {
+  it("treats file preparation and observation as read-only environment operations", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.filesystemPrepareFileOpen)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.filesystemSubscribeFileChanges)).toBe(
       AuthOrchestrationReadScope,
     );
   });

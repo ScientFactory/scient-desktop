@@ -4,6 +4,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
   isBrowserPreviewFile,
+  isTrackableWorkspaceHtml,
   resolveWorkspaceFileLinkOpenTarget,
   workspaceFilePreviewAssetResource,
 } from "./openFileInPreview";
@@ -23,6 +24,11 @@ describe("workspace file link routing", () => {
       expect(resolveWorkspaceFileLinkOpenTarget(path)).toBe("browser");
     },
   );
+
+  it("tracks HTML source updates without treating Browser-opened PDFs as HTML", () => {
+    expect(isTrackableWorkspaceHtml("reports/result.html")).toBe(true);
+    expect(isTrackableWorkspaceHtml("papers/heavy.pdf")).toBe(false);
+  });
 
   it("keeps ordinary workspace files on the file surface", () => {
     expect(resolveWorkspaceFileLinkOpenTarget("notes.md")).toBe("file");

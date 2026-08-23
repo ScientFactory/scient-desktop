@@ -2,11 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentFileChangeEvent,
   EnvironmentFilePath,
   EnvironmentFilePrepareError,
   EnvironmentFilePrepareResult,
 } from "./fileOpening.ts";
 
+const decodeEnvironmentFileChangeEvent = Schema.decodeUnknownSync(EnvironmentFileChangeEvent);
 const decodeEnvironmentFilePrepareResult = Schema.decodeUnknownSync(EnvironmentFilePrepareResult);
 
 describe("environment file opening contracts", () => {
@@ -35,6 +37,21 @@ describe("environment file opening contracts", () => {
         mtimeMs: null,
         presentation: { kind: "text", mediaType: "" },
       }),
+    ).toThrow();
+  });
+
+  it("keeps exact-file invalidation hints path-scoped", () => {
+    expect(
+      decodeEnvironmentFileChangeEvent({
+        _tag: "file-changed",
+        path: "/Users/researcher/results/figure.svg",
+      }),
+    ).toEqual({
+      _tag: "file-changed",
+      path: "/Users/researcher/results/figure.svg",
+    });
+    expect(() =>
+      decodeEnvironmentFileChangeEvent({ _tag: "file-changed", path: "bad\0path" }),
     ).toThrow();
   });
 

@@ -85,6 +85,38 @@ const operation = (generation: number) => ({
 });
 
 describe("GeneratedDocumentStore", () => {
+  it.effect("publishes browser exports through the browser validation profile", () =>
+    Effect.gen(function* () {
+      const store = yield* GeneratedDocumentStore;
+      const production = yield* store.beginProduction({
+        logicalDocumentKey: LogicalDocumentKey.make("browser-export:fixture"),
+        operationId: ProducingOperationId.make("browser-export-fixture"),
+        producerId: ArtifactProducerId.make("browser.export"),
+      });
+      const descriptor = yield* store.publishPdf({
+        ...production,
+        bytes: minimalPdf("browser-export"),
+        title: "Browser fixture",
+        provenanceKind: "browser-export",
+        validationProfile: "browser-export",
+      });
+      expect(descriptor).toMatchObject({
+        _tag: "generated-pdf",
+        title: "Browser fixture",
+        pageCount: 1,
+      });
+    }).pipe(
+      Effect.provide(
+        makeStoreLayer(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), {
+            prefix: "scient-document-store-browser-export-",
+          }),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("publishes immutable revisions and preserves the last success after failure", () =>
     Effect.gen(function* () {
       const store = yield* GeneratedDocumentStore;

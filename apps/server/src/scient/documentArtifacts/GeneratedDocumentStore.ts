@@ -23,6 +23,7 @@ import {
 import {
   PDF_VALIDATION_MAX_BYTES,
   createPdfValidationRuntime,
+  type PdfValidationProfile,
   type PdfValidationResult,
 } from "@scientfactory/pdf-validation";
 import * as NodeCrypto from "node:crypto";
@@ -176,6 +177,8 @@ export interface PublishGeneratedPdfInput extends GeneratedDocumentProductionHan
   readonly bytes: Uint8Array;
   readonly title: string;
   readonly provenanceKind: ArtifactProvenance["kind"];
+  /** Browser export has a distinct validation profile; all other producers keep the historical default. */
+  readonly validationProfile?: PdfValidationProfile;
 }
 
 export interface FailGeneratedDocumentProductionInput extends GeneratedDocumentProductionHandle {
@@ -824,6 +827,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         title: stored.title,
         fileName: stored.fileName,
         capabilities: { canSaveCopy: true, canRevealSource: false },
+        pageCount: stored.pageCount,
       });
     },
   );
@@ -846,7 +850,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
       const ownedBytes =
         input.bytes.byteLength > PDF_VALIDATION_MAX_BYTES ? input.bytes : input.bytes.slice();
       const validation = yield* Effect.promise(() =>
-        validator.validate(ownedBytes, "producer-registration"),
+        validator.validate(ownedBytes, input.validationProfile ?? "producer-registration"),
       );
       if (!validation.accepted) {
         return yield* lock.withPermit(recordRejectedValidation(input, validation));

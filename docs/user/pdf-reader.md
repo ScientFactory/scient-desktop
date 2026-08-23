@@ -26,7 +26,9 @@ The reader supports:
 - optional virtualized page thumbnails and the document outline;
 - password-protected files, progress, invalid-file errors, and a scanned-page
   notice; and
-- saving a copy of the original PDF from the secondary actions menu.
+- saving a copy from the secondary actions menu. In the desktop app, Scient
+  opens a native Save dialog and confirms when the copy has been written;
+  cancelling the dialog leaves the PDF unchanged.
 
 The reader does not yet add Scient annotations or OCR. Scanned PDFs without a
 text layer can be read visually, but text selection and search may be limited.

@@ -60,6 +60,7 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -687,16 +688,27 @@ export function PreviewView({
         }
         trailingActions={
           previewBridge ? (
-            <PreviewMoreMenu
-              tabId={runtimeTabId}
-              hasWebContents={desktopOverlay?.hasWebContents ?? false}
-              zoomFactor={desktopOverlay?.zoomFactor ?? 1}
-              colorScheme={desktopOverlay?.colorScheme ?? "system"}
-              deviceToolbarVisible={viewport._tag !== "fill"}
-              onToggleDeviceToolbar={handleToggleDeviceToolbar}
-              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
-              onNativePictureInPicture={handleNativePictureInPicture}
-            />
+            <>
+              {tabId ? (
+                <ScientPreviewExportActions
+                  disabled={!desktopOverlay?.hasWebContents || isUnreachable || loading}
+                  pageUrl={url}
+                  tabId={tabId}
+                  runtimeTabId={runtimeTabId}
+                  threadRef={threadRef}
+                />
+              ) : null}
+              <PreviewMoreMenu
+                tabId={runtimeTabId}
+                hasWebContents={desktopOverlay?.hasWebContents ?? false}
+                zoomFactor={desktopOverlay?.zoomFactor ?? 1}
+                colorScheme={desktopOverlay?.colorScheme ?? "system"}
+                deviceToolbarVisible={viewport._tag !== "fill"}
+                onToggleDeviceToolbar={handleToggleDeviceToolbar}
+                nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+                onNativePictureInPicture={handleNativePictureInPicture}
+              />
+            </>
           ) : null
         }
       />

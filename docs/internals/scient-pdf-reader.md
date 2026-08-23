@@ -43,6 +43,15 @@ maintain a second text index.
 External outline URLs are accepted only for `http` and `https` and are opened
 through Scient's desktop shell. Internal destinations remain inside the reader.
 
+Save Copy is a local-shell operation rather than a renderer navigation. The
+desktop host fetches the current authorized asset through Chromium's network
+stack, streams it to a sibling temporary file at the user-selected destination,
+flushes it, and publishes it with a same-filesystem rename. The renderer never
+buffers PDF bytes or sends them over IPC. Expected cancellation, source renewal,
+network, and write outcomes return through a producer-neutral typed contract;
+temporary files are removed on every non-success path. The browser-only host
+retains a Blob download fallback because it has no native filesystem dialog.
+
 ## Durable reading state
 
 The reader stores page, PDF scroll coordinates, zoom or fit mode, rotation, and

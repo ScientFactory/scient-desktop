@@ -16,6 +16,7 @@ import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
   DesktopPreviewScreenshotArtifact,
+  DesktopPreviewPdfExportArtifact,
   DesktopPreviewTabDefaults,
   PreviewAutomationClickInput,
   PreviewAutomationActionEvent,
@@ -66,6 +67,7 @@ import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
+import { createBrowserPdfRenderer } from "../scient/documentExport/BrowserPdfRenderer.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -525,6 +527,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
+  // PDF production is globally serialized. Chromium print jobs compete for
+  // renderer resources even when they target different preview tabs.
+  const browserPdfExportSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
   let frameCaptureWindowOpen = true;
   let currentMainWindow: BrowserWindow | undefined;
@@ -534,6 +539,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  const browserPdfRenderer = createBrowserPdfRenderer({});
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -2499,6 +2505,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
   });
 
+  const exportPdf = Effect.fn("PreviewManager.exportPdf")(function* (tabId: string) {
+    return yield* browserPdfExportSemaphore.withPermit(
+      withTabLifecycleLock(
+        tabId,
+        Effect.gen(function* () {
+          const wc = yield* requireWebContents(tabId);
+          // printToPDF uses Chromium's native print media. This preserves
+          // author-defined @media print, @page, and fragmentation rules
+          // without borrowing or disturbing the Browser debugger session.
+          return yield* browserPdfRenderer(wc).pipe(
+            Effect.mapError(
+              (cause) =>
+                new PreviewOperationError({
+                  operation: cause.operation,
+                  tabId,
+                  webContentsId: wc.id,
+                  cause: cause.cause ?? cause,
+                }),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
   const capturePreviewFrame = Effect.fn("PreviewManager.capturePreviewFrame")(function* (
     tabId: string,
   ) {
@@ -3727,6 +3758,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     automationWaitFor,
     cancelPickElement,
     captureScreenshot,
+    exportPdf,
     closeTab,
     copyArtifactToClipboard,
     createTab,
@@ -4076,6 +4108,9 @@ export class PreviewManager extends Context.Service<
     readonly captureScreenshot: (
       tabId: string,
     ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
+    readonly exportPdf: (
+      tabId: string,
+    ) => Effect.Effect<DesktopPreviewPdfExportArtifact, PreviewManagerError>;
     readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -4191,6 +4226,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     pickElement: operations.pickElement,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
+    exportPdf: operations.exportPdf,
     revealArtifact: operations.revealArtifact,
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
     openPictureInPicture: operations.openPictureInPicture,

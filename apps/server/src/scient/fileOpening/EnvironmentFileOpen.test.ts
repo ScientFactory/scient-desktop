@@ -3,10 +3,17 @@ import { EnvironmentFilePath } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
-import { classifyEnvironmentFile, prepareEnvironmentFileOpen } from "./EnvironmentFileOpen.ts";
+import {
+  classifyEnvironmentFile,
+  prepareEnvironmentFileOpen,
+  watchEnvironmentFile,
+} from "./EnvironmentFileOpen.ts";
 
 const TestLayer = NodeServices.layer;
 const bytes = (value: string) => new TextEncoder().encode(value);
@@ -138,5 +145,78 @@ describe("EnvironmentFileOpen", () => {
       expect(prepared.byteLength).toBe(bytes(contents).byteLength);
       expect(prepared.presentation.kind).toBe("markdown");
     }).pipe(Effect.provide(TestLayer), Effect.scoped),
+  );
+
+  it.effect("watches only the selected file and refreshes after an external write", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-watch-" });
+      const selectedPath = path.join(root, "selected.txt");
+      const otherPath = path.join(root, "other.txt");
+      yield* fileSystem.writeFileString(selectedPath, "before\n");
+      yield* fileSystem.writeFileString(otherPath, "unrelated\n");
+
+      const event = yield* watchEnvironmentFile({
+        path: EnvironmentFilePath.make(selectedPath),
+      }).pipe(
+        Stream.tap((event) =>
+          event._tag === "watch-ready"
+            ? Effect.gen(function* () {
+                yield* fileSystem.writeFileString(otherPath, "still unrelated\n");
+                yield* Effect.sleep("150 millis");
+                yield* fileSystem.writeFileString(selectedPath, "after\n");
+              })
+            : Effect.void,
+        ),
+        Stream.filter((event) => event._tag === "file-changed"),
+        Stream.runHead,
+      );
+
+      expect(event).toEqual(
+        Option.some({
+          _tag: "file-changed",
+          path: EnvironmentFilePath.make(selectedPath),
+        }),
+      );
+      expect(yield* fileSystem.readFileString(selectedPath)).toBe("after\n");
+    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
+  );
+
+  it.effect("keeps watching when an atomic save replaces the selected file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-replace-" });
+      const selectedPath = path.join(root, "report.html");
+      yield* fileSystem.writeFileString(selectedPath, "<p>before</p>\n");
+
+      const event = yield* watchEnvironmentFile({
+        path: EnvironmentFilePath.make(selectedPath),
+      }).pipe(
+        Stream.tap((event) =>
+          event._tag === "watch-ready"
+            ? Effect.gen(function* () {
+                yield* fileSystem.remove(selectedPath);
+                yield* fileSystem.writeFileString(selectedPath, "<p>after</p>\n");
+              })
+            : Effect.void,
+        ),
+        Stream.filter((event) => event._tag === "file-changed"),
+        Stream.runHead,
+      );
+
+      expect(event).toEqual(
+        Option.some({
+          _tag: "file-changed",
+          path: EnvironmentFilePath.make(selectedPath),
+        }),
+      );
+      const refreshed = yield* prepareEnvironmentFileOpen({
+        path: EnvironmentFilePath.make(selectedPath),
+      });
+      expect(refreshed.presentation.kind).toBe("html");
+      expect(yield* fileSystem.readFileString(selectedPath)).toBe("<p>after</p>\n");
+    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
   );
 });

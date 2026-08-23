@@ -516,6 +516,11 @@ const ScientArtifactPreview = lazy(() =>
     default: module.ScientArtifactPreview,
   })),
 );
+const GeneratedPdfPreview = lazy(() =>
+  import("../scient/pdf/GeneratedPdfPreview").then((module) => ({
+    default: module.GeneratedPdfPreview,
+  })),
+);
 const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/EnvironmentFilePreview"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -7060,6 +7065,12 @@ function ChatViewContent(props: ChatViewProps) {
           threadRef={activeThreadRef}
           artifact={activeRightPanelSurface.artifact}
         />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "scient" &&
+      activeRightPanelSurface.module === "generated-pdf" &&
+      activeThreadRef ? (
+      <Suspense fallback={null}>
+        <GeneratedPdfPreview source={activeRightPanelSurface.source} threadRef={activeThreadRef} />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "scient" &&
       activeRightPanelSurface.module === "source-pdf" &&

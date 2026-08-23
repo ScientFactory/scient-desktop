@@ -97,8 +97,12 @@ import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderC
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
-import { prepareEnvironmentFileOpen } from "./scient/fileOpening/EnvironmentFileOpen.ts";
+import {
+  prepareEnvironmentFileOpen,
+  watchEnvironmentFile,
+} from "./scient/fileOpening/EnvironmentFileOpen.ts";
 import { SCIENT_QUICK_CHAT_SERVER_CAPABILITIES } from "./scient/quickChat/ServerCapability.ts";
 import { ensureScientQuickChatMoveHasNoRunningTerminals } from "./scient/quickChat/MoveCoordinator.ts";
 import { validateScientQuickChatTerminalOpen } from "./scient/quickChat/TerminalPolicy.ts";
@@ -2142,6 +2146,16 @@ const makeWsRpcLayer = (
             WS_METHODS.filesystemPrepareFileOpen,
             prepareEnvironmentFileOpen(input),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>
+          observeRpcStream(WS_METHODS.filesystemSubscribeFileChanges, watchEnvironmentFile(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.documentsPublishBrowserPdfExport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.documentsPublishBrowserPdfExport,
+            publishBrowserPdfExport(generatedDocuments, input),
+            { "rpc.aggregate": "documents" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
           observeRpcEffect(

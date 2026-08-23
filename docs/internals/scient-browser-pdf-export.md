@@ -1,0 +1,101 @@
+# Scient browser HTML → PDF export
+
+This slice adds a first-party export action to the desktop integrated Browser. Its compact menu
+offers **Open PDF** and **Save PDF…**. Both print the currently loaded Chromium guest with
+`webContents.printToPDF()`; neither reloads, serializes, nor reconstructs the page. The browser tab
+remains intact while an immutable PDF revision is published to the existing generated-document
+store. Open activates that revision in the existing Scient PDF reader. Save keeps the reader closed,
+resolves the published revision through the same authorized asset boundary, and opens the native
+destination picker.
+
+## Current contract
+
+- Profile: `document-layout`.
+- Chromium print is serialized globally so concurrent tabs cannot compete for print resources.
+- Export is leased to the exact live main-frame URL selected by the user. A page that is already
+  loading is rejected, and navigation, tab closure, or renderer loss before printing finishes
+  invalidates the operation. Any bytes produced after invalidation are discarded; the in-flight
+  Chromium print is still allowed to settle before the global print slot is released.
+- Fonts, images, and two animation frames are given a bounded readiness window. The exporter never
+  waits for network-idle, because interactive pages and long-polling applications may never become
+  idle.
+- Chromium's native print media is used without borrowing the Browser debugger session. This honors
+  the page's `@media print`, `@page`, and native fragmentation rules. Content that the author
+  explicitly hides for print is omitted; visible anchors remain PDF link annotations and headings
+  remain available to Chromium's generated document outline.
+- A reversible, zero-specificity pagination stylesheet supplies conservative defaults for tables,
+  rows, figures, blockquotes, code blocks, details, common box/card containers, headings, widows, and
+  orphans. Source-authored rules retain precedence. A keep-together element taller than a complete
+  page must still fragment rather than overflow or disappear. The stylesheet is removed after every
+  successful, failed, or navigation-raced export.
+- Background graphics, CSS page size, tagged PDF, and document outline generation are enabled;
+  headers and footers are disabled. A deterministic one-sixth-inch margin (16 CSS px at Chromium's
+  96 px/in reference ratio) on every edge replaces Chromium's larger implicit margin, leaving a
+  small readable boundary while source styles control the document's internal spacing. Electron's
+  `printToPDF` margin values are inches, even though its printer-margin type declarations describe
+  pixels.
+- Chromium prints the live DOM rather than a screenshot. For ordinary HTML, Chromium retains text as
+  selectable/searchable text, lays out RTL and mixed-direction runs with its bidi engine, and carries
+  surviving anchors into PDF link annotations. Author CSS, font behavior, and browser engine changes
+  can still affect those properties, so the RTL fixture corpus must qualify visual order and PDF.js
+  logical-text order independently. Canvas, video, and WebGL remain flattened content and carry the
+  warnings below.
+- The server structurally validates the complete PDF before publication using the `browser-export`
+  profile: PDF.js must parse the document and every page operator list. It does not yet reject a
+  visually blank but structurally valid PDF. Screen-mode DOM counts are not sufficient evidence for
+  that decision because valid `@media print` and `beforeprint` behavior can intentionally change or
+  remove content. A future hard blank-output gate must compare print-time source evidence with
+  bounded PDF rasters; until then, source warnings cover missing images, canvas/WebGL-like
+  flattening, video frame capture, embedded frames, and readiness timeout without risking a false
+  rejection.
+- Local-file exports use a stable source identity derived from the environment authority and the
+  normalized canonical source path. Authorizing thread IDs and renewable asset URLs never enter
+  that identity, while same-named files in different directories and identical paths in different
+  environments remain separate. Ordinary web pages retain canonical URL identity. Receipt URLs
+  never retain query credentials or signed asset capabilities.
+- The existing JSON-RPC boundary carries the PDF as URL-safe Base64 only for the publication
+  command; bytes do not enter React state or persisted atoms. Raw browser exports are capped at 64
+  MiB so Base64 plus JSON framing stays below the current 100 MiB WebSocket payload ceiling. This is
+  an export-transport limit, not a reader limit: general PDF validation remains 256 MiB, Sources PDF
+  storage remains 512 MiB, and the reader keeps its range-capable asset path. A future binary upload
+  capability can remove the 64 MiB ceiling without changing the renderer, artifact, or reader
+  contracts.
+
+For local HTML, Scient retains a small source relation after the Browser opens the file. The server
+watches the exact file (through its parent directory so atomic editor saves remain observable),
+coalesces invalidation hints, renews the authorized asset URL, and reloads the existing Browser tab.
+After a PDF has been exported once, a successful reload publishes a new immutable revision into the
+same artifact and replaces the already-open PDF surface without stealing focus. Concurrent changes
+are serialized per logical document; a revision rendered from an overtaken source generation is not
+presented. Failure leaves the last successful PDF readable and exposes a compact manual Update action
+beside the generated document title. Automatic updating stops rather than redirecting a Browser tab
+that the user has navigated away from the tracked file. External web pages remain explicit one-shot
+exports because Scient has no authoritative local source to watch.
+
+The generated revision is immutable, authority-bound, retained by the existing 500 MiB / 100
+revision policy, and resolved through the existing signed `generated-document` asset path. The PDF
+reader therefore keeps its normal refresh, download, search, navigation, and session-resume
+behavior. The generated-document surface mounts that reader directly as the remaining flex child,
+so the PDF canvas receives the full available pane height rather than a zero-height nested region.
+On desktop, Save Copy uses the reader's shared native asset-copy capability: a modal Save dialog,
+streamed main-process transfer, and atomic destination publication. It does not navigate the app or
+open the authorized asset URL in an external browser. HTML Save PDF and reader Save Copy use that
+same capability and the same result presenter. A confirmed native save shows one compact success
+notice with **Show in Finder**, **Show in Explorer**, or **Show in Files**, as appropriate; the
+action reveals the exact destination selected by the user. Browser-only downloads truthfully report
+that the download started but cannot offer a reveal action because the browser does not disclose the
+final filesystem path. Generated document and right-panel titles use content-derived text direction,
+so Hebrew and Arabic titles align and truncate naturally. PDF rotation remains available under the
+reader's More menu rather than appearing as a second ambiguous refresh-like icon.
+
+Substantive implementation stays in Scient-owned modules. The Browser action reuses the inherited
+chrome's existing trailing-action slot; it does not add PDF-specific state or props to that component.
+Inherited Browser, server, desktop IPC, and right-panel files contain only the narrow mounts recorded
+in `UPSTREAM.md` and enforced by the browser-export seam audit.
+
+## Explicitly deferred
+
+Current-appearance capture, controlled-document adapters, page-range and paper controls, Attach to
+Chat, a binary upload transport for exports above 64 MiB, and packaged cross-platform acceptance
+remain later slices. They must extend this contract rather than bypass the generated-document store
+or the PDF reader.

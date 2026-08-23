@@ -84,6 +84,7 @@ function renderTabs(
   second?: DesktopPreviewFavicon,
   audio?: { audible?: boolean; audioMuted?: boolean },
   previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
+  previewSessions: Readonly<Record<string, PreviewSessionSnapshot>> = sessions,
 ) {
   return renderToStaticMarkup(
     <RightPanelTabs
@@ -91,7 +92,7 @@ function renderTabs(
       surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
       activeSurfaceId={previewSurface.id}
       pendingSurfaceIds={new Set()}
-      previewSessions={sessions}
+      previewSessions={previewSessions}
       desktopByTabId={{
         "tab-1": overlay(first, audio),
         ...(second ? { "tab-2": overlay(second) } : {}),
@@ -126,6 +127,19 @@ function renderTabs(
 }
 
 describe("RightPanelTabs preview favicon", () => {
+  it("applies automatic direction to the complete tab layout", () => {
+    const html = renderTabs(null, undefined, undefined, undefined, {
+      ...sessions,
+      "tab-1": {
+        ...sessions["tab-1"]!,
+        navStatus: { _tag: "Success", url: "http://24x.xf.local/", title: "דוח תוצאות" },
+      },
+    });
+
+    expect(html).toMatch(/data-active-tab="true"[^>]*dir="auto"/u);
+    expect(html).toContain('<span class="min-w-0 flex-1 truncate text-start" dir="auto">');
+  });
+
   it("prefers a live capture and never asks Google about a private hostname", () => {
     const captured = renderTabs(favicon("data:image/png;base64,AAAA", "http://24x.xf.local/"));
     expect(captured).toContain("data:image/png;base64,AAAA");

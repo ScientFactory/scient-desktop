@@ -1,3 +1,11 @@
+import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactRevisionId,
+  BindingGeneration,
+  LogicalDocumentKey,
+  PdfSourceDescriptor,
+} from "@scientfactory/document-artifacts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -15,12 +23,32 @@ import {
 } from "./rightPanelStore";
 import {
   scientEnvironmentFileSurface,
+  scientGeneratedPdfSurface,
   scientSourcePdfSurface,
   scientSourcesSurface,
 } from "./scient/rightPanel/surfaces";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
+
+const generatedPdf = (revision: number) => {
+  const source = PdfSourceDescriptor.make({
+    _tag: "generated-pdf",
+    authority: ArtifactAuthority.make("env-1"),
+    logicalDocumentKey: LogicalDocumentKey.make("browser-export:fixture"),
+    title: "Fixture export",
+    fileName: "Fixture export.pdf",
+    capabilities: { canSaveCopy: true, canRevealSource: false },
+    artifactId: ArtifactId.make("artifact-1"),
+    revisionId: ArtifactRevisionId.make(`revision-${revision}`),
+    bindingGeneration: BindingGeneration.make(revision),
+    bindingStatus: "current",
+    staleReason: null,
+    pageCount: revision,
+  });
+  if (source._tag !== "generated-pdf") throw new Error("expected generated PDF fixture");
+  return source;
+};
 
 const staticImage = (runId: string): PreviewStaticImageSurfaceDescriptor => ({
   surfaceId: "project-a:script.m:figure-001",
@@ -42,6 +70,31 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("migrates an active revision-keyed PDF tab to stable artifact identity", () => {
+    const source = generatedPdf(1);
+    const legacyId = "scient:generated-pdf:env-1:artifact-1:revision-1";
+
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: legacyId,
+            surfaces: [{ id: legacyId, kind: "scient", module: "generated-pdf", source }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "scient:generated-pdf:env-1:artifact-1",
+          surfaces: [scientGeneratedPdfSurface(source)],
+        },
+      },
+    });
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
@@ -837,6 +890,21 @@ describe("rightPanelStore", () => {
       activeSurfaceId: null,
       surfaces: [],
     });
+  });
+
+  it("updates an open generated PDF revision without stealing focus", () => {
+    useRightPanelStore.getState().openScient(refA, scientGeneratedPdfSurface(generatedPdf(1)));
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+
+    useRightPanelStore
+      .getState()
+      .updateScientGeneratedPdf(refA, scientGeneratedPdfSurface(generatedPdf(2)));
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("browser:tab-a");
+    expect(state.surfaces.filter((surface) => surface.kind === "scient")).toEqual([
+      scientGeneratedPdfSurface(generatedPdf(2)),
+    ]);
   });
 
   it("closing other surfaces keeps the selected surface active", () => {

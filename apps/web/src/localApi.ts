@@ -4,10 +4,12 @@ import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
+import { saveAssetCopyInBrowser } from "./scient/documentArtifacts/browserAssetCopy";
 
 let cachedApi: LocalApi | undefined;
 
 function createBrowserLocalApi(): LocalApi {
+  const revealSavedAsset = window.desktopBridge?.revealSavedAsset;
   return {
     dialogs: {
       pickFolder: async (options) => {
@@ -30,6 +32,15 @@ function createBrowserLocalApi(): LocalApi {
 
         window.open(url, "_blank", "noopener,noreferrer");
       },
+    },
+    documents: {
+      saveAssetCopy: async (request) => {
+        if (window.desktopBridge) return window.desktopBridge.saveAssetCopy(request);
+        return saveAssetCopyInBrowser(request);
+      },
+      ...(revealSavedAsset
+        ? { revealSavedAsset: async (path: string) => revealSavedAsset(path) }
+        : {}),
     },
     contextMenu: {
       show: async <T extends string>(
