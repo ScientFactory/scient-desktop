@@ -19,6 +19,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "~/components/ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 
@@ -116,11 +117,13 @@ function FileBreadcrumbPickerMenu(props: {
       sideOffset={6}
     >
       <MenuGroup>
-        <MenuGroupLabel
-          className="flex min-w-0 items-center gap-1.5"
-          title={directoryPath || props.cwd}
-        >
-          <span className="truncate">{directoryLabel}</span>
+        <MenuGroupLabel className="flex min-w-0 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+              {directoryLabel}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{directoryPath || props.cwd}</TooltipPopup>
+          </Tooltip>
         </MenuGroupLabel>
         {backTarget !== null ? (
           <>
@@ -155,9 +158,12 @@ function FileBreadcrumbPickerMenu(props: {
                   }}
                 >
                   <PierreEntryIcon pathValue={entry.path} kind={entry.kind} theme={resolvedTheme} />
-                  <span className="min-w-0 flex-1 truncate" title={entry.path}>
-                    {entry.label}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                      {entry.label}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{entry.path}</TooltipPopup>
+                  </Tooltip>
                   {entry.kind === "directory" ? (
                     <ChevronRight aria-hidden className="ms-auto" />
                   ) : currentFile ? (
@@ -217,30 +223,41 @@ export function FileBreadcrumbNavigator({
               <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
             ) : null}
             {currentFile ? (
-              <span className="max-w-40 truncate font-medium text-foreground" title={crumb.path}>
-                {crumb.label}
-              </span>
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="max-w-40 truncate font-medium text-foreground" />}
+                >
+                  {crumb.label}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{crumb.path}</TooltipPopup>
+              </Tooltip>
             ) : (
               <Menu
                 open={openCrumbPath === crumb.path}
                 onOpenChange={(open) => setOpenCrumbPath(open ? crumb.path : null)}
               >
-                <MenuTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={crumbBrowseLabel(crumb, projectName)}
-                      className={cn(
-                        "-mx-1 max-w-40 cursor-pointer truncate rounded-sm px-1 py-0.5 text-muted-foreground outline-none",
-                        "hover:bg-accent/60 hover:text-foreground data-popup-open:bg-accent/60 data-popup-open:text-foreground",
-                        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                      )}
-                      title={crumb.path || projectName}
-                    />
-                  }
-                >
-                  {crumb.label}
-                </MenuTrigger>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label={crumbBrowseLabel(crumb, projectName)}
+                            className={cn(
+                              "-mx-1 max-w-40 cursor-pointer truncate rounded-sm px-1 py-0.5 text-muted-foreground outline-none",
+                              "hover:bg-accent/60 hover:text-foreground data-popup-open:bg-accent/60 data-popup-open:text-foreground",
+                              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                            )}
+                          />
+                        }
+                      />
+                    }
+                  >
+                    {crumb.label}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{crumb.path || projectName}</TooltipPopup>
+                </Tooltip>
                 {openCrumbPath === crumb.path ? (
                   <FileBreadcrumbPickerMenu
                     key={crumb.path}

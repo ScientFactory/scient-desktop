@@ -42,6 +42,30 @@ describe("file path clipboard", () => {
     ).toBeNull();
   });
 
+  it("treats workspace-relative names as paths rather than terminal-link syntax", () => {
+    expect(
+      resolveFilePathCopyValue({
+        relativePath: "~/notes.md",
+        workspaceRoot: "/Users/alice/project",
+        format: "full",
+      }),
+    ).toBe("/Users/alice/project/~/notes.md");
+    expect(
+      resolveFilePathCopyValue({
+        relativePath: "C:/notes.md",
+        workspaceRoot: "/Users/alice/project",
+        format: "full",
+      }),
+    ).toBe("/Users/alice/project/C:/notes.md");
+    expect(
+      resolveFilePathCopyValue({
+        relativePath: "docs/notes.md",
+        workspaceRoot: "C:\\repo\\",
+        format: "full",
+      }),
+    ).toBe("C:\\repo\\docs\\notes.md");
+  });
+
   it("copies the supplied path and reports the matching success", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("window", {});

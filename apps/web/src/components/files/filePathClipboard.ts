@@ -3,7 +3,7 @@ import {
   ClipboardWriteError,
   writeTextToClipboard,
 } from "~/hooks/useCopyToClipboard";
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -17,6 +17,15 @@ export function filePathCopyTitle(format: FilePathCopyFormat): "Relative path" |
   return format === "relative" ? "Relative path" : "Full path";
 }
 
+function joinWorkspacePath(workspaceRoot: string, relativePath: string): string {
+  if (isWindowsAbsolutePath(workspaceRoot)) {
+    const root = workspaceRoot.replace(/[\\/]+$/u, "");
+    const path = relativePath.replace(/^[\\/]+/u, "").replaceAll("/", "\\");
+    return `${root}\\${path}`;
+  }
+  return `${workspaceRoot.replace(/\/+$/u, "")}/${relativePath.replace(/^\/+/u, "")}`;
+}
+
 export function resolveFilePathCopyValue(input: {
   readonly relativePath: string;
   readonly workspaceRoot: string | null | undefined;
@@ -24,7 +33,7 @@ export function resolveFilePathCopyValue(input: {
 }): string | null {
   if (input.format === "relative") return input.relativePath;
   if (!input.workspaceRoot) return null;
-  return resolvePathLinkTarget(input.relativePath, input.workspaceRoot);
+  return joinWorkspacePath(input.workspaceRoot, input.relativePath);
 }
 
 function filePathCopyErrorDescription(error: unknown): string {
