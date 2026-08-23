@@ -80,6 +80,7 @@ import {
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
+  shouldOpenMarkdownFileLinkInEditor,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
@@ -202,22 +203,24 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
 }
 
 /**
- * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits two-digit
- * decimal markers. Once a list's last item reaches three digits (item 100+),
- * `list-style-position: outside` paints the marker wider than that gutter and
- * the leading digit gets clipped by the item's own overflow. Rather than
- * widening the gutter for every list, only lists whose last marker is 3+
- * digits get a wider `--list-gutter`, sized to that marker's digit count.
+ * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits markers up to
+ * two characters wide. Once a marker reaches three characters (item 100+),
+ * `list-style-position: outside` paints it wider than that gutter and clips
+ * the leading character against the item's own overflow. Rather than widening
+ * the gutter for every list, only lists whose widest marker is 3+ characters
+ * get a wider `--list-gutter`. The width includes a negative marker's minus
+ * sign.
  */
 export function orderedListGutterStyle(
   itemCount: number,
-  start: number | undefined,
+  start: unknown,
 ): { "--list-gutter": string } | undefined {
-  const firstNumber = typeof start === "number" && Number.isFinite(start) ? start : 1;
+  const parsedStart = Number.parseInt(String(start ?? 1), 10);
+  const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
-  const digits = String(Math.abs(lastNumber)).length;
-  if (digits <= 2) return undefined;
-  return { "--list-gutter": `${digits + 1}ch` };
+  const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
+  if (markerWidth <= 2) return undefined;
+  return { "--list-gutter": `${markerWidth + 1}ch` };
 }
 
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
@@ -962,10 +965,14 @@ function extractInlineCodeSpans(text: string): string[] {
   return spans;
 }
 
-function normalizeMarkdownLinkHref(href: string): string {
+// SCIENT-FORK: kept as an alias — identical body to upstream's
+// normalizeMarkdownLinkHrefKey; used at the file-link map build site.
+function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
+
+const normalizeMarkdownLinkHref = normalizeMarkdownLinkHrefKey;
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
@@ -1367,6 +1374,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              if (shouldOpenMarkdownFileLinkInEditor(event)) {
+                handleOpenInEditor();
+                return;
+              }
               if (onOpenInBrowser) {
                 handleOpenInBrowser();
                 return;
@@ -1787,9 +1798,10 @@ function ChatMarkdown({
         );
       },
       a({ node, href, children, title: _title, ...props }) {
-        const normalizedHref = href ? normalizeMarkdownLinkHref(href) : "";
+        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref
-          ? markdownFileLinkMetaByHref.get(markdownLinkLookupKey(normalizedHref))
+          ? (markdownFileLinkMetaByHref.get(markdownLinkLookupKey(normalizedHref)) ??
+            resolveMarkdownFileLinkMeta(normalizedHref, cwd, fileLinkWorkspaceRoot))
           : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
