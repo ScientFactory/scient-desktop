@@ -24,7 +24,7 @@ import type { NormalizedVoiceClip } from "./errors.ts";
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const STARTUP_TIMEOUT_MS = 30_000;
 const DEFAULT_INFERENCE_TIMEOUT_MS = 45_000;
-const MAX_INFERENCE_TIMEOUT_MS = 6 * 60_000;
+const MAX_INFERENCE_TIMEOUT_MS = 9 * 60_000;
 const STOP_TIMEOUT_MS = 5_000;
 const FORCE_STOP_TIMEOUT_MS = 2_000;
 const MAX_THREADS = 4;

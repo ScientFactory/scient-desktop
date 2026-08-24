@@ -44,6 +44,7 @@ export type VoiceAudioMimeType = typeof VoiceAudioMimeType.Type;
 export const VoiceModelId = Schema.Literals([
   "whisper-small-multilingual-q5_1",
   "whisper-medium-multilingual-q5_0",
+  "whisper-large-v3-turbo-multilingual-q5_0",
 ]);
 export type VoiceModelId = typeof VoiceModelId.Type;
 
