@@ -55,11 +55,11 @@ function render(source: "scient_managed" | "system" | "missing"): string {
 }
 
 describe("CodexProviderLifecycleAction", () => {
-  it("offers managed installation after removal falls back to a system runtime", () => {
+  it("opens management when a healthy system runtime is available", () => {
     const markup = render("system");
 
-    expect(markup).toContain(">Install<");
-    expect(markup).not.toContain(">Manage<");
+    expect(markup).toContain(">Manage<");
+    expect(markup).not.toContain(">Install<");
   });
 
   it("offers installation when no runtime remains", () => {

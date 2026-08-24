@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Managed Codex capability checks must verify the provider-owned companion executable beside the selected binary.
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import {
   ManagedCodexRuntime,
   detectManagedRuntimeTarget,
@@ -27,6 +31,29 @@ import type {
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
+
+export function resolveCodexCodeModeHostPath(
+  binaryPath: string,
+  platform: NodeJS.Platform,
+): string {
+  const path = platform === "win32" ? NodePath.win32 : NodePath;
+  return path.join(
+    path.dirname(binaryPath),
+    platform === "win32" ? "codex-code-mode-host.exe" : "codex-code-mode-host",
+  );
+}
+
+export const hasManagedCodexCodeModeHost = Effect.fn("CodexManagedRuntime.hasCodeModeHost")(
+  function* (binaryPath: string, platform: NodeJS.Platform) {
+    const hostPath = resolveCodexCodeModeHostPath(binaryPath, platform);
+    return yield* Effect.tryPromise(async () => {
+      const stat = await NodeFSP.lstat(hostPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) return false;
+      if (platform !== "win32") await NodeFSP.access(hostPath, NodeFSP.constants.X_OK);
+      return true;
+    }).pipe(Effect.orElseSucceed(() => false));
+  },
+);
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -241,13 +268,17 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         },
         input.spawner,
       ).pipe(Effect.catchCause(() => Effect.succeed(false)));
+    const probeManagedRuntime = (binaryPath: string) =>
+      hasManagedCodexCodeModeHost(binaryPath, platform).pipe(
+        Effect.flatMap((complete) => (complete ? probeRuntime(binaryPath) : Effect.succeed(false))),
+      );
     const shouldProbeManagedRuntime = shouldProbeManagedCodexRuntime({
       hasCustomRuntime,
       managedInstalled,
     });
     const initialManagedRuntimeHealthy =
       shouldProbeManagedRuntime && Option.isSome(managedStatus)
-        ? yield* probeRuntime(managedStatus.value.launchPath)
+        ? yield* probeManagedRuntime(managedStatus.value.launchPath)
         : false;
     const managedHealthCache = yield* Ref.make<{
       readonly launchPath: string;
@@ -266,7 +297,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       if (!status?.installed) return false;
       const cached = yield* Ref.get(managedHealthCache);
       if (cached?.launchPath === status.launchPath) return cached.healthy;
-      const healthy = yield* probeRuntime(status.launchPath);
+      const healthy = yield* probeManagedRuntime(status.launchPath);
       yield* Ref.set(managedHealthCache, { launchPath: status.launchPath, healthy });
       return healthy;
     });
@@ -374,12 +405,12 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
           ? "Scient is preserving the custom Codex runtime configured for this account."
           : latestSource === "system"
             ? latestManagedInstalled
-              ? "Scient is using healthy PATH Codex because the private copy failed its app-server capability check. Repair or remove the private copy when convenient."
+              ? "Scient is using healthy PATH Codex because the private copy failed its runtime capability check. Repair or remove the private copy when convenient."
               : "Scient is using the healthy Codex runtime already installed on this computer."
             : latestSource === "scient_managed"
               ? latestManagedRuntimeHealthy
                 ? "Scient is using an app-private, verified Codex runtime."
-                : "Scient selected its app-private Codex runtime, but the app-server capability check failed. Repair the private runtime before signing in."
+                : "Scient selected its app-private Codex runtime, but its runtime capability check failed. Repair the private runtime before signing in."
               : hasCustomRuntime
                 ? "Scient could not launch the custom Codex runtime configured for this account. Update or clear the custom path in advanced provider settings."
                 : artifact

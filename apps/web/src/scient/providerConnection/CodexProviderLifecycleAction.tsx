@@ -45,11 +45,6 @@ export function CodexProviderLifecycleAction(props: {
       ));
   const installFailed = !props.provider.installed && runtime?.operation?.status === "failed";
   const canInstallManaged = runtime?.actions.includes("install") ?? false;
-  const shouldOfferManagedInstall =
-    canInstallManaged &&
-    (runtime?.source === "missing" ||
-      props.provider.auth.status === "authenticated" ||
-      props.provider.auth.required === false);
   const signInFailed =
     props.provider.installed &&
     props.provider.auth.status !== "authenticated" &&
@@ -93,7 +88,7 @@ export function CodexProviderLifecycleAction(props: {
     );
   }
 
-  if (presentation.kind === "not-installed" || installFailed || shouldOfferManagedInstall) {
+  if (presentation.kind === "not-installed" || installFailed) {
     if (!canInstallManaged) return null;
     return (
       <Button

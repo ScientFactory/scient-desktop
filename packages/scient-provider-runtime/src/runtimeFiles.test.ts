@@ -78,6 +78,53 @@ describe("managed runtime files", () => {
     expect((await NodeFSP.stat(executable)).mode & 0o111).not.toBe(0);
   });
 
+  it("validates and makes reviewed companion executables runnable on Unix", async () => {
+    const root = await temporaryRoot();
+    const source = NodePath.join(root, "source");
+    const archive = NodePath.join(root, "codex-package.tar.gz");
+    const destination = NodePath.join(root, "destination");
+    await NodeFSP.mkdir(NodePath.join(source, "bin"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(source, "bin/codex"), "codex");
+    await NodeFSP.writeFile(NodePath.join(source, "bin/codex-code-mode-host"), "host");
+    await Tar.c({ cwd: source, file: archive, gzip: true }, ["bin"]);
+
+    await materializeManagedRuntimeArtifact({
+      archivePath: archive,
+      archiveFormat: "tar.gz",
+      destination,
+      executablePath: "bin/codex",
+      auxiliaryExecutablePaths: ["bin/codex-code-mode-host"],
+      platform: "darwin",
+      signal: new AbortController().signal,
+    });
+
+    expect((await NodeFSP.stat(NodePath.join(destination, "bin/codex"))).mode & 0o111).not.toBe(0);
+    expect(
+      (await NodeFSP.stat(NodePath.join(destination, "bin/codex-code-mode-host"))).mode & 0o111,
+    ).not.toBe(0);
+  });
+
+  it("rejects a package that omits a reviewed companion executable", async () => {
+    const root = await temporaryRoot();
+    const source = NodePath.join(root, "source");
+    const archive = NodePath.join(root, "incomplete-codex-package.tar.gz");
+    await NodeFSP.mkdir(NodePath.join(source, "bin"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(source, "bin/codex"), "codex");
+    await Tar.c({ cwd: source, file: archive, gzip: true }, ["bin"]);
+
+    await expect(
+      materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "tar.gz",
+        destination: NodePath.join(root, "destination"),
+        executablePath: "bin/codex",
+        auxiliaryExecutablePaths: ["bin/codex-code-mode-host"],
+        platform: "darwin",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("bin/codex-code-mode-host");
+  });
+
   it("rejects links instead of extracting them into managed storage", async () => {
     const root = await temporaryRoot();
     const source = NodePath.join(root, "source");

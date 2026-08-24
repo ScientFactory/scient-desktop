@@ -1,10 +1,7 @@
-import type {
-  ManagedRuntimeArchiveFormat,
-  ManagedRuntimeArtifact,
-} from "./managedRuntimeArtifact.ts";
+import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import type { ManagedRuntimeTarget } from "./target.ts";
 
-const VERSION = "0.147.0";
+const VERSION = "0.149.1";
 const RELEASE_TAG = `rust-v${VERSION}`;
 const RELEASE_BASE = `https://github.com/openai/codex/releases/download/${RELEASE_TAG}`;
 const ALLOWED_HOSTS = [
@@ -17,58 +14,86 @@ interface ArtifactRecord {
   readonly name: string;
   readonly sha256: string;
   readonly size: number;
-  readonly archiveFormat: ManagedRuntimeArchiveFormat;
   readonly executablePath: string;
+  readonly auxiliaryExecutablePaths: ReadonlyArray<string>;
   readonly fullyAssisted: boolean;
 }
 
 const ARTIFACTS = {
   "darwin-arm64": {
-    name: "codex-aarch64-apple-darwin.tar.gz",
-    sha256: "75984b81f92a71b0c0f4b3b5cad80e5c57177e4d8c8b4b1e13db703b20dc4358",
-    size: 87_984_231,
-    archiveFormat: "tar.gz",
-    executablePath: "codex-aarch64-apple-darwin",
+    name: "codex-package-aarch64-apple-darwin.tar.gz",
+    sha256: "4cbb17468b5d86b4b182a28c016d62e9d273a241cec04885ccfae76e6983ae3f",
+    size: 110_095_583,
+    executablePath: "bin/codex",
+    auxiliaryExecutablePaths: [
+      "bin/codex-code-mode-host",
+      "codex-path/rg",
+      "codex-resources/zsh/bin/zsh",
+    ],
     fullyAssisted: true,
   },
   "darwin-x64": {
-    name: "codex-x86_64-apple-darwin.tar.gz",
-    sha256: "36e782f71d8164cc37c2b89c64948f2180e9a2f8456b27e660da75bc6b5574e2",
-    size: 95_851_149,
-    archiveFormat: "tar.gz",
-    executablePath: "codex-x86_64-apple-darwin",
+    name: "codex-package-x86_64-apple-darwin.tar.gz",
+    sha256: "4c50fb92bb238a4067009d4a99c13351325c8840da91edd0ce4e5b7a21d53bc3",
+    size: 119_660_659,
+    executablePath: "bin/codex",
+    auxiliaryExecutablePaths: [
+      "bin/codex-code-mode-host",
+      "codex-path/rg",
+      "codex-resources/zsh/bin/zsh",
+    ],
     fullyAssisted: true,
   },
   "linux-arm64": {
-    name: "codex-aarch64-unknown-linux-musl.tar.gz",
-    sha256: "eb677c80f666b1ab8b4b1d083b66e8d614b1281d960bb6f9fd8ca98f58b38b90",
-    size: 91_607_658,
-    archiveFormat: "tar.gz",
-    executablePath: "codex-aarch64-unknown-linux-musl",
+    name: "codex-package-aarch64-unknown-linux-musl.tar.gz",
+    sha256: "57095f9f4ced36d8e173f67e26c5c142d5b3e1e1984bbcae35684209ed236a9b",
+    size: 113_760_656,
+    executablePath: "bin/codex",
+    auxiliaryExecutablePaths: [
+      "bin/codex-code-mode-host",
+      "codex-path/rg",
+      "codex-resources/bwrap",
+      "codex-resources/zsh/bin/zsh",
+    ],
     fullyAssisted: true,
   },
   "linux-x64": {
-    name: "codex-x86_64-unknown-linux-musl.tar.gz",
-    sha256: "0246e2e773834e07f0fb5249ed6ebad12e4591e608f8c7bb97dd6a9690544c36",
-    size: 98_970_270,
-    archiveFormat: "tar.gz",
-    executablePath: "codex-x86_64-unknown-linux-musl",
+    name: "codex-package-x86_64-unknown-linux-musl.tar.gz",
+    sha256: "1e8531ae5f6dea3c6e11e53e74cc5ac81bf1ba597f9b296fb112d6ea30fdaf5d",
+    size: 122_578_702,
+    executablePath: "bin/codex",
+    auxiliaryExecutablePaths: [
+      "bin/codex-code-mode-host",
+      "codex-path/rg",
+      "codex-resources/bwrap",
+      "codex-resources/zsh/bin/zsh",
+    ],
     fullyAssisted: true,
   },
   "win32-arm64": {
-    name: "codex-aarch64-pc-windows-msvc.exe",
-    sha256: "1f0e8c2dd3c6b471e985fac76908366c1cf31155094fde606fb2d3052cf00584",
-    size: 250_102_064,
-    archiveFormat: "raw",
-    executablePath: "codex.exe",
+    name: "codex-package-aarch64-pc-windows-msvc.tar.gz",
+    sha256: "caba0a92e2bb74f7c5ce71cbcc1271aceba1c11e67997ee278162b0fa4ee74dc",
+    size: 124_885_100,
+    executablePath: "bin/codex.exe",
+    auxiliaryExecutablePaths: [
+      "bin/codex-code-mode-host.exe",
+      "codex-path/rg.exe",
+      "codex-resources/codex-command-runner.exe",
+      "codex-resources/codex-windows-sandbox-setup.exe",
+    ],
     fullyAssisted: true,
   },
   "win32-x64": {
-    name: "codex-x86_64-pc-windows-msvc.exe",
-    sha256: "935a1911ed2556e4ffcec995f4886ac2ac425863ba26fed264df62e30272ad9d",
-    size: 298_668_336,
-    archiveFormat: "raw",
-    executablePath: "codex.exe",
+    name: "codex-package-x86_64-pc-windows-msvc.tar.gz",
+    sha256: "e302697785b0761833779fe2d7b65614d6d156e8e6b8b9fa9725b6503d552613",
+    size: 134_545_938,
+    executablePath: "bin/codex.exe",
+    auxiliaryExecutablePaths: [
+      "bin/codex-code-mode-host.exe",
+      "codex-path/rg.exe",
+      "codex-resources/codex-command-runner.exe",
+      "codex-resources/codex-windows-sandbox-setup.exe",
+    ],
     fullyAssisted: true,
   },
 } as const satisfies Readonly<Record<string, ArtifactRecord>>;
@@ -93,8 +118,9 @@ export function resolveReviewedCodexArtifact(
     allowedHosts: ALLOWED_HOSTS,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
-    archiveFormat: artifact.archiveFormat,
+    archiveFormat: "tar.gz",
     executablePath: artifact.executablePath,
+    auxiliaryExecutablePaths: artifact.auxiliaryExecutablePaths,
     smokeArgs: ["--version"],
     catalogRevision: `openai-codex:${RELEASE_TAG}:${artifact.sha256}`,
     supportTier: artifact.fullyAssisted ? "fully_assisted" : "external_runtime_supported",

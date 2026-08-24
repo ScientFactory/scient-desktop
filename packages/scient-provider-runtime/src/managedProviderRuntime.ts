@@ -328,6 +328,7 @@ export class ManagedProviderRuntime {
         archiveFormat: artifact.archiveFormat,
         destination: payloadPath,
         executablePath: artifact.executablePath,
+        auxiliaryExecutablePaths: artifact.auxiliaryExecutablePaths,
         platform: artifact.target.platform,
         extractionLimits: artifact.extractionLimits,
         signal,

@@ -20,12 +20,22 @@ describe("reviewed Codex runtime manifest", () => {
     }
   });
 
-  it("uses raw official executables on Windows and reviewed archives elsewhere", () => {
+  it("uses the complete official Codex package on every target", () => {
     const windows = resolveReviewedCodexArtifact({ platform: "win32", arch: "arm64" });
     const mac = resolveReviewedCodexArtifact({ platform: "darwin", arch: "arm64" });
 
-    expect(windows?.archiveFormat).toBe("raw");
-    expect(windows?.artifactName).toBe("codex-aarch64-pc-windows-msvc.exe");
+    expect(windows?.archiveFormat).toBe("tar.gz");
+    expect(windows?.artifactName).toBe("codex-package-aarch64-pc-windows-msvc.tar.gz");
+    expect(windows?.executablePath).toBe("bin/codex.exe");
+    expect(windows?.auxiliaryExecutablePaths).toContain("bin/codex-code-mode-host.exe");
+    expect(mac?.version).toBe("0.149.1");
+    expect(mac?.artifactName).toBe("codex-package-aarch64-apple-darwin.tar.gz");
+    expect(mac?.executablePath).toBe("bin/codex");
+    expect(mac?.auxiliaryExecutablePaths).toEqual([
+      "bin/codex-code-mode-host",
+      "codex-path/rg",
+      "codex-resources/zsh/bin/zsh",
+    ]);
     expect(mac?.archiveFormat).toBe("tar.gz");
     expect(mac?.checksum).toEqual({
       algorithm: "sha256",
