@@ -12,6 +12,7 @@ import {
   MicIcon,
   XIcon,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import { ComposerControl, ComposerControlIcon } from "../../components/chat/ComposerControl.tsx";
 import { Button } from "../../components/ui/button.tsx";
@@ -39,8 +40,12 @@ export interface ScientVoiceComposerControlProps {
   readonly className?: string;
 }
 
-export const MODEL_DOWNLOAD_LABEL = "Set up voice (~182 MB)";
+export const MODEL_DOWNLOAD_LABEL = "Set up voice";
 export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
+
+function formatModelSize(byteSize: number): string {
+  return `~${Math.round(byteSize / 1024 / 1024)} MiB`;
+}
 
 function barHeight(level: number): number {
   return Math.max(3, Math.min(26, Math.round(level * 110)));
@@ -193,15 +198,26 @@ export function ScientVoiceComposerControl({
   return (
     <div className={cn("flex items-center gap-2", className)}>
       {controller.phase === "setup-prompt" ? (
-        <>
-          <Button
-            disabled={disabled}
-            onClick={() => void controller.setupModel()}
-            size="sm"
-            variant="ghost"
-          >
-            <DownloadIcon />
-            {MODEL_DOWNLOAD_LABEL}
+        <div className="flex min-w-0 items-center gap-1.5">
+          {(controller.modelSnapshot?.models ?? []).map((model) => (
+            <Button
+              key={model.id}
+              disabled={disabled}
+              onClick={() => void controller.setupModel(model.id)}
+              size="sm"
+              variant={
+                model.id === controller.modelSnapshot?.recommendation?.modelId ? "default" : "ghost"
+              }
+              title={`${model.displayName} · ${formatModelSize(model.byteSize)}`}
+            >
+              <DownloadIcon />
+              {model.id === controller.modelSnapshot?.recommendation?.modelId
+                ? `${MODEL_DOWNLOAD_LABEL} · ${model.displayName}`
+                : model.displayName}
+            </Button>
+          ))}
+          <Button render={<Link to="/settings/voice" />} size="sm" variant="ghost">
+            Manage
           </Button>
           <Button
             aria-label="Dismiss voice setup"
@@ -211,7 +227,7 @@ export function ScientVoiceComposerControl({
           >
             <XIcon />
           </Button>
-        </>
+        </div>
       ) : controller.phase === "downloading" ? (
         <div className="flex items-center gap-2">
           <div aria-live="polite" className="flex items-center gap-2" role="status">

@@ -14,12 +14,14 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  Mic2Icon,
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { isElectron } from "~/env";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -54,6 +56,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/archived": ArchiveIcon,
+  "/settings/voice": Mic2Icon,
 };
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
@@ -265,7 +268,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))
-              : SETTINGS_NAV_ITEMS.map((item) => {
+              : SETTINGS_NAV_ITEMS.filter(
+                  (item) => isElectron || item.to !== "/settings/voice",
+                ).map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                   return (

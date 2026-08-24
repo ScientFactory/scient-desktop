@@ -20,7 +20,7 @@ const MODEL_BYTES = NodeBuffer.Buffer.concat([
 ]);
 const MODEL_SHA256 = NodeCrypto.createHash("sha256").update(MODEL_BYTES).digest("hex");
 
-function manifest(): VoiceModelDefinition {
+function manifest(overrides: Partial<VoiceModelDefinition> = {}): VoiceModelDefinition {
   return {
     id: "engine-model",
     fileName: "engine-model.bin",
@@ -31,6 +31,7 @@ function manifest(): VoiceModelDefinition {
     sourceRevision: "rev-1",
     downloadUrl: "https://example.invalid/engine-model.bin",
     license: "MIT",
+    ...overrides,
   };
 }
 
@@ -110,6 +111,24 @@ afterEach(async () => {
 });
 
 describe("createLocalWhisperEngine", () => {
+  it("tracks every model in a shared catalog", async () => {
+    const modelDir = await tmp("scient-voice-eng-model-");
+    const runtimeDir = await makeRuntimeDir();
+    const small = manifest({ id: "catalog-small", fileName: "catalog-small.bin" });
+    const medium = manifest({ id: "catalog-medium", fileName: "catalog-medium.bin" });
+    await installReadyModel(modelDir, medium);
+    const engine = createLocalWhisperEngine({
+      runtimeDir,
+      modelDir,
+      manifests: [small, medium],
+    });
+
+    expect(Object.keys(await engine.getModelStates())).toEqual(["catalog-small", "catalog-medium"]);
+    expect((await engine.getModelStateForModel("catalog-medium")).state).toBe("ready");
+    expect((await engine.getModelStateForModel("catalog-small")).state).toBe("missing");
+    await engine.dispose();
+  });
+
   it("reports the engine id and model state", async () => {
     const modelDir = await tmp("scient-voice-eng-model-");
     const runtimeDir = await makeRuntimeDir();

@@ -15,7 +15,7 @@ import * as NodePath from "node:path";
 import type { VoiceModelDefinition } from "./modelManifest.ts";
 
 export type VoiceModelState =
-  | { readonly state: "missing" }
+  | { readonly state: "missing"; readonly partialBytes?: number }
   | {
       readonly state: "downloading";
       readonly downloadedBytes: number;
@@ -91,13 +91,18 @@ export class VoiceModelManager {
     }
 
     const ready = await this.hasVerifiedReceipt();
-    return ready
-      ? {
-          state: "ready",
-          modelPath: this.modelPath,
-          byteSize: this.manifest.byteSize,
-        }
-      : { state: "missing" };
+    if (ready) {
+      return {
+        state: "ready",
+        modelPath: this.modelPath,
+        byteSize: this.manifest.byteSize,
+      };
+    }
+    const partialBytes = Math.max(
+      await fileSize(this.partialPath),
+      await fileSize(this.repairPartialPath),
+    );
+    return partialBytes > 0 ? { state: "missing", partialBytes } : { state: "missing" };
   }
 
   isDownloading(): boolean {

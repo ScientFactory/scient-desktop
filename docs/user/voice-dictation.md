@@ -4,9 +4,10 @@ Scient desktop can turn a short voice recording into composer text entirely on
 the local computer.
 
 1. Select the microphone in the chat composer.
-2. On first use, choose **Set up voice**. Scient downloads and verifies the
-   pinned multilingual model (about 182 MB). You can cancel setup and resume
-   the download later.
+2. On first use, choose **Multilingual Small** for faster setup or
+   **Multilingual Medium** for higher expected accuracy. Scient downloads and
+   verifies the selected local model. You can cancel setup and resume the
+   download later.
 3. Allow microphone access when macOS, Windows, or Linux asks.
 4. While recording, choose cancel, insert the transcript, or transcribe and
    send. `Esc` cancels and `Enter` inserts.
@@ -20,3 +21,7 @@ clients do not show the microphone because they do not have a local desktop
 runtime. The macOS voice runtime requires macOS 12 or newer. A recording is
 limited to two minutes. If no speech is detected, Scient leaves the draft
 unchanged.
+
+To change models later, open **Settings → Voice**. The page shows which model
+is recommended for the current machine, which model is in use, download
+progress, and removal controls.

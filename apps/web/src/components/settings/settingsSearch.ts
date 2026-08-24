@@ -8,7 +8,8 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/voice";
 
 export interface SettingsSearchItem {
   readonly id: string;
@@ -33,6 +34,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  "/settings/voice": "Voice",
 };
 
 /**
@@ -213,6 +215,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+  },
+  {
+    id: "voice-models",
+    title: "Voice models",
+    to: "/settings/voice",
+    desktopOnly: true,
   },
   {
     id: "agent-browser-access",

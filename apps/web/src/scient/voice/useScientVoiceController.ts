@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   VoiceModelDownloadProgress,
-  VoiceModelState,
+  VoiceModelId,
+  VoiceModelsSnapshot,
   VoiceTranscribeRequest,
 } from "@t3tools/contracts";
 
@@ -58,8 +59,9 @@ export interface ScientVoiceController {
   readonly elapsedMs: number;
   readonly errorMessage: string | null;
   readonly downloadPercent: number;
+  readonly modelSnapshot: VoiceModelsSnapshot | null;
   activate: () => Promise<void>;
-  setupModel: () => Promise<void>;
+  setupModel: (modelId?: VoiceModelId) => Promise<void>;
   dismissSetup: () => void;
   stop: (send: boolean) => Promise<void>;
   cancel: () => Promise<void>;
@@ -122,10 +124,12 @@ export function useScientVoiceController({
   const [phase, setPhaseState] = useState<VoicePhase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<VoiceModelDownloadProgress | null>(null);
+  const [modelSnapshot, setModelSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const phaseRef = useRef<VoicePhase>("idle");
   const operationRef = useRef(0);
   const recordingStartedAtRef = useRef(0);
+  const downloadModelIdRef = useRef<VoiceModelId | null>(null);
   const autoStopRef = useRef<(clip: VoiceWavClip | null) => void>(() => undefined);
   const completionCallbacksRef = useRef<VoiceCompletionCallbacks>({
     onTranscript,
@@ -225,51 +229,72 @@ export function useScientVoiceController({
     if (!client) return;
     const operation = (operationRef.current += 1);
     setErrorMessage(null);
-    let state: VoiceModelState;
+    let state: VoiceModelsSnapshot;
     try {
-      state = await client.getModelState();
+      state = await client.getModelsState();
+      setModelSnapshot(state);
       if (operation !== operationRef.current) return;
     } catch (error) {
       if (operation !== operationRef.current) return;
       setErrorMessage(describeTranscriptionError(error));
       return;
     }
-    if (state?.state === "ready") await beginRecording();
-    else if (state?.state === "unavailable" || state?.state === "error") {
-      setErrorMessage(state.message);
+    const selectedModel = state.models.find((model) => model.id === state.selectedModelId);
+    if (selectedModel?.state.state === "ready") await beginRecording();
+    else if (!state.runtimeAvailable) {
+      setErrorMessage(state.runtimeMessage ?? "Offline voice is unavailable.");
     } else {
       setPhase("setup-prompt");
     }
   }, [beginRecording, client, setPhase]);
 
-  const setupModel = useCallback(async (): Promise<void> => {
-    if (!client) return;
-    const operation = (operationRef.current += 1);
-    setErrorMessage(null);
-    setDownloadProgress(null);
-    setPhase("downloading");
-    const unsubscribe = client.onModelDownloadProgress(setDownloadProgress);
-    try {
-      const state = await client.downloadModel();
-      if (operation !== operationRef.current) return;
-      if (state.state === "ready") await beginRecording();
-      else {
+  const setupModel = useCallback(
+    async (requestedModelId?: VoiceModelId): Promise<void> => {
+      if (!client) return;
+      const operation = (operationRef.current += 1);
+      setErrorMessage(null);
+      setDownloadProgress(null);
+      setPhase("downloading");
+      let modelId: VoiceModelId | null = null;
+      let unsubscribe: () => void = () => undefined;
+      try {
+        const snapshot = modelSnapshot ?? (await client.getModelsState());
+        if (operation !== operationRef.current) return;
+        setModelSnapshot(snapshot);
+        modelId =
+          requestedModelId ?? snapshot.recommendation?.modelId ?? snapshot.models[0]?.id ?? null;
+        if (!modelId) {
+          setPhase("idle");
+          setErrorMessage(MODEL_SETUP_FAILED_MESSAGE);
+          return;
+        }
+        downloadModelIdRef.current = modelId;
+        unsubscribe = client.onModelDownloadProgress(setDownloadProgress);
+        const nextSnapshot = await client.downloadModel({ modelId, selectOnSuccess: true });
+        setModelSnapshot(nextSnapshot);
+        if (operation !== operationRef.current) return;
+        const state = nextSnapshot.models.find((model) => model.id === modelId)?.state;
+        if (state?.state === "ready") await beginRecording();
+        else {
+          setPhase("idle");
+          setErrorMessage(
+            state?.state === "error" || state?.state === "unavailable"
+              ? state.message
+              : MODEL_SETUP_FAILED_MESSAGE,
+          );
+        }
+      } catch (error) {
+        if (operation !== operationRef.current) return;
         setPhase("idle");
-        setErrorMessage(
-          state.state === "error" || state.state === "unavailable"
-            ? state.message
-            : MODEL_SETUP_FAILED_MESSAGE,
-        );
+        setErrorMessage(describeTranscriptionError(error));
+      } finally {
+        unsubscribe();
+        if (downloadModelIdRef.current === modelId) downloadModelIdRef.current = null;
+        if (operation === operationRef.current) setDownloadProgress(null);
       }
-    } catch (error) {
-      if (operation !== operationRef.current) return;
-      setPhase("idle");
-      setErrorMessage(describeTranscriptionError(error));
-    } finally {
-      unsubscribe();
-      if (operation === operationRef.current) setDownloadProgress(null);
-    }
-  }, [beginRecording, client, setPhase]);
+    },
+    [beginRecording, client, modelSnapshot, setPhase],
+  );
 
   const stop = useCallback(
     async (send: boolean): Promise<void> => {
@@ -291,7 +316,11 @@ export function useScientVoiceController({
     const operation = (operationRef.current += 1);
     const cancelDownload =
       phaseRef.current === "downloading"
-        ? client?.cancelModelDownload().catch(() => undefined)
+        ? client
+            ?.cancelModelDownload({
+              modelId: downloadModelIdRef.current ?? "whisper-small-multilingual-q5_1",
+            })
+            .catch(() => undefined)
         : undefined;
     const cancelHost =
       phaseRef.current === "transcribing"
@@ -374,6 +403,7 @@ export function useScientVoiceController({
     elapsedMs,
     errorMessage,
     downloadPercent: percent(downloadProgress),
+    modelSnapshot,
     activate,
     setupModel,
     dismissSetup,

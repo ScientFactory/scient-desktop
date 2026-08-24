@@ -189,7 +189,7 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
 
-const desktopVoiceLayer = DesktopVoice.layer.pipe(Layer.provide(desktopEnvironmentLayer));
+const desktopVoiceLayer = DesktopVoice.layer.pipe(Layer.provideMerge(desktopFoundationLayer));
 
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
@@ -197,8 +197,8 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
-  desktopVoiceLayer,
 ).pipe(
+  Layer.provideMerge(desktopVoiceLayer),
   Layer.provideMerge(DesktopUpdates.layer),
   Layer.provideMerge(desktopWslBackendLayer),
   Layer.provideMerge(desktopLocalEnvironmentAuthLayer),

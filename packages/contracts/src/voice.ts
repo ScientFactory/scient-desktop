@@ -32,12 +32,20 @@ export const VoiceTranscriptionErrorKind = Schema.Literals([
   "malformed-response",
   "backend-unavailable",
   "model-missing",
+  "insufficient-storage",
 ]);
 export type VoiceTranscriptionErrorKind = typeof VoiceTranscriptionErrorKind.Type;
 
 /** The only accepted recorded-audio container. */
 export const VoiceAudioMimeType = Schema.Literal("audio/wav");
 export type VoiceAudioMimeType = typeof VoiceAudioMimeType.Type;
+
+/** Built-in local model identifiers. The desktop catalog is authoritative. */
+export const VoiceModelId = Schema.Literals([
+  "whisper-small-multilingual-q5_1",
+  "whisper-medium-multilingual-q5_0",
+]);
+export type VoiceModelId = typeof VoiceModelId.Type;
 
 /**
  * Untrusted transcribe request as it crosses the IPC boundary. Audio is
@@ -60,11 +68,13 @@ export const VoiceTranscript = Schema.Struct({
   text: Schema.String,
   engine: VoiceEngineId,
   language: Schema.optionalKey(TrimmedNonEmptyString),
+  modelId: Schema.optionalKey(VoiceModelId),
 });
 export type VoiceTranscript = typeof VoiceTranscript.Type;
 
 /** Progress of a resumable model download. */
 export const VoiceModelDownloadProgress = Schema.Struct({
+  modelId: VoiceModelId,
   downloadedBytes: NonNegativeInt,
   totalBytes: NonNegativeInt,
 });
@@ -72,7 +82,10 @@ export type VoiceModelDownloadProgress = typeof VoiceModelDownloadProgress.Type;
 
 /** Lifecycle state of a locally installed model. */
 export const VoiceModelState = Schema.Union([
-  Schema.Struct({ state: Schema.Literal("missing") }),
+  Schema.Struct({
+    state: Schema.Literal("missing"),
+    partialBytes: Schema.optionalKey(NonNegativeInt),
+  }),
   Schema.Struct({
     state: Schema.Literal("downloading"),
     downloadedBytes: NonNegativeInt,
@@ -86,3 +99,45 @@ export const VoiceModelState = Schema.Union([
   Schema.Struct({ state: Schema.Literal("error"), message: TrimmedNonEmptyString }),
 ]);
 export type VoiceModelState = typeof VoiceModelState.Type;
+
+/** Safe metadata and lifecycle state for one installed/catalog model. */
+export const VoiceModelSummary = Schema.Struct({
+  id: VoiceModelId,
+  displayName: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  byteSize: NonNegativeInt,
+  state: VoiceModelState,
+});
+export type VoiceModelSummary = typeof VoiceModelSummary.Type;
+
+export const VoiceModelRecommendation = Schema.Struct({
+  modelId: VoiceModelId,
+  reason: TrimmedNonEmptyString,
+});
+export type VoiceModelRecommendation = typeof VoiceModelRecommendation.Type;
+
+/** Complete authoritative snapshot consumed by setup and Settings → Voice. */
+export const VoiceModelsSnapshot = Schema.Struct({
+  runtimeAvailable: Schema.Boolean,
+  runtimeMessage: Schema.optionalKey(TrimmedNonEmptyString),
+  selectedModelId: Schema.NullOr(VoiceModelId),
+  recommendation: Schema.NullOr(VoiceModelRecommendation),
+  activeDownloadModelId: Schema.NullOr(VoiceModelId),
+  models: Schema.Array(VoiceModelSummary),
+});
+export type VoiceModelsSnapshot = typeof VoiceModelsSnapshot.Type;
+
+export const VoiceModelOperationRequest = Schema.Struct({ modelId: VoiceModelId });
+export type VoiceModelOperationRequest = typeof VoiceModelOperationRequest.Type;
+
+export const VoiceModelDownloadRequest = Schema.Struct({
+  modelId: VoiceModelId,
+  selectOnSuccess: Schema.optionalKey(Schema.Boolean),
+});
+export type VoiceModelDownloadRequest = typeof VoiceModelDownloadRequest.Type;
+
+export const VoiceModelRemoveRequest = Schema.Struct({
+  modelId: VoiceModelId,
+  replacementModelId: Schema.optionalKey(Schema.NullOr(VoiceModelId)),
+});
+export type VoiceModelRemoveRequest = typeof VoiceModelRemoveRequest.Type;

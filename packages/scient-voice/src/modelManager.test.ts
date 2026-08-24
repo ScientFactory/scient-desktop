@@ -233,6 +233,9 @@ describe("VoiceModelManager", () => {
       manager.ensureInstalled(controller.signal, () => controller.abort()),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect((await NodeFSP.stat(manager.partialPath)).size).toBeGreaterThan(0);
+    const paused = await manager.getStatus();
+    expect(paused).toMatchObject({ state: "missing" });
+    if (paused.state === "missing") expect(paused.partialBytes).toBeGreaterThan(0);
 
     await manager.ensureInstalled(new AbortController().signal);
     expect((await manager.getStatus()).state).toBe("ready");

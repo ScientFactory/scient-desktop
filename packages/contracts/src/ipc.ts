@@ -1,6 +1,9 @@
 import type {
+  VoiceModelDownloadRequest,
   VoiceModelDownloadProgress,
-  VoiceModelState,
+  VoiceModelOperationRequest,
+  VoiceModelRemoveRequest,
+  VoiceModelsSnapshot,
   VoiceTranscribeRequest,
   VoiceTranscript,
 } from "./voice.ts";
@@ -1235,20 +1238,22 @@ export interface DesktopBridge {
  * model download performed by the main process.
  */
 export interface DesktopVoiceBridge {
-  /** Current install/download state of the local model. */
-  getModelState: () => Promise<VoiceModelState>;
-  /** Download + verify the local model. Resolves with the resulting state. */
-  downloadModel: () => Promise<VoiceModelState>;
-  /** Cancel the in-flight model download, preserving resumable partial data. */
-  cancelModelDownload: () => Promise<void>;
-  /** Remove the installed local model. Resolves with the resulting state. */
-  removeModel: () => Promise<VoiceModelState>;
+  /** Current catalog, selection and install/download state. */
+  getModelsState: () => Promise<VoiceModelsSnapshot>;
+  /** Download + verify one model, optionally selecting it after verification. */
+  downloadModel: (request: VoiceModelDownloadRequest) => Promise<VoiceModelsSnapshot>;
+  /** Cancel the matching in-flight model download, preserving partial data. */
+  cancelModelDownload: (request: VoiceModelOperationRequest) => Promise<void>;
+  /** Select an already-installed model for the next transcription. */
+  selectModel: (request: VoiceModelOperationRequest) => Promise<VoiceModelsSnapshot>;
+  /** Remove one model and optionally select a confirmed fallback. */
+  removeModel: (request: VoiceModelRemoveRequest) => Promise<VoiceModelsSnapshot>;
   /** Transcribe one validated clip. Rejects with a safe, user-facing message. */
   transcribe: (request: VoiceTranscribeRequest) => Promise<VoiceTranscript>;
   /** Cancel the in-flight transcription, if any. */
   cancelTranscription: () => Promise<void>;
   /**
-   * Observe model-download progress. Implemented by polling `getModelState`
+   * Observe model-download progress. Implemented by polling `getModelsState`
    * from the preload bridge, so it needs no dedicated push channel. Returns an
    * unsubscribe function.
    */
