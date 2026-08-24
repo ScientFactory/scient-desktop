@@ -8,7 +8,9 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
@@ -141,12 +143,23 @@ function makeHarness(
       streamChanges: Stream.empty,
     };
     const coordinator = yield* makeLifecycleCoordinator;
+    const managerScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
     const manager = yield* make().pipe(
       Effect.provideService(ProviderRegistry, registry),
       Effect.provideService(ProviderLifecycleCoordinator, coordinator),
       Effect.provide(NodeServices.layer),
+      Scope.provide(managerScope),
     );
-    return { manager, providersRef, reloadCountRef, reloadOperationsRef, stopCountRef };
+    return {
+      manager,
+      providersRef,
+      reloadCountRef,
+      reloadOperationsRef,
+      stopCountRef,
+      coordinator,
+      closeManager: Scope.close(managerScope, Exit.void),
+    };
   });
 }
 
@@ -400,6 +413,51 @@ describe("ProviderRuntimeManager", () => {
       yield* Effect.yieldNow;
       assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
     }),
+  );
+
+  it.effect(
+    "shuts down an active runtime operation without leaving work or publishing a false failure",
+    () =>
+      Effect.gen(function* () {
+        const runInterruptions = yield* Ref.make(0);
+        const runStarted = yield* Deferred.make<void>();
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Effect.succeed(systemRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: () =>
+            Deferred.succeed(runStarted, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Ref.update(runInterruptions, (count) => count + 1)),
+            ),
+        };
+        const { manager, providersRef, coordinator, closeManager } = yield* makeHarness(actions, [
+          systemProvider,
+        ]);
+        const started = yield* manager.start({
+          instanceId: INSTANCE,
+          action: "install",
+          catalogRevision: "reviewed:1",
+        });
+        const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+        assert.ok(operationId);
+        yield* Deferred.await(runStarted);
+
+        yield* closeManager;
+
+        assert.strictEqual(yield* Ref.get(runInterruptions), 1);
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.strictEqual(
+          (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+          "preparing",
+        );
+        const inactive = yield* manager
+          .cancel({ instanceId: INSTANCE, operationId })
+          .pipe(Effect.flip);
+        assert.strictEqual(inactive.reason, "runtime_operation_not_found");
+
+        yield* closeManager;
+        assert.strictEqual(yield* Ref.get(runInterruptions), 1);
+      }),
   );
 
   it.effect("keeps an installed runtime cancellable while provider reload is still running", () =>

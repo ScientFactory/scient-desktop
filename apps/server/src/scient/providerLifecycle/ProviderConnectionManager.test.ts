@@ -8,9 +8,12 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   ProviderRegistry,
@@ -75,6 +78,10 @@ function makeHarness(options?: {
   readonly beforeSetProviderConnectionOperation?: (
     operation: ProviderConnectionOperation | null,
   ) => Effect.Effect<void>;
+  readonly beforeRefreshInstance?: (
+    instanceId: ProviderInstanceId,
+    refreshCount: number,
+  ) => Effect.Effect<void>;
   readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
 }) {
   return Effect.gen(function* () {
@@ -107,6 +114,7 @@ function makeHarness(options?: {
       refreshInstance: (instanceId) =>
         Effect.gen(function* () {
           const refreshCount = yield* Ref.updateAndGet(refreshCountRef, (count) => count + 1);
+          yield* options?.beforeRefreshInstance?.(instanceId, refreshCount) ?? Effect.void;
           return yield* Ref.updateAndGet(providersRef, (providers) =>
             providers.map((provider) =>
               provider.instanceId === instanceId
@@ -130,12 +138,31 @@ function makeHarness(options?: {
     };
 
     const lifecycleCoordinator = yield* makeLifecycleCoordinator;
+    const lifecycleReleaseCountRef = yield* Ref.make(0);
+    const trackedLifecycleCoordinator = ProviderLifecycleCoordinator.of({
+      ...lifecycleCoordinator,
+      release: (input) =>
+        Ref.update(lifecycleReleaseCountRef, (count) => count + 1).pipe(
+          Effect.andThen(lifecycleCoordinator.release(input)),
+        ),
+    });
+    const managerScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
     const manager = yield* make().pipe(
       Effect.provideService(ProviderRegistry, registry),
-      Effect.provideService(ProviderLifecycleCoordinator, lifecycleCoordinator),
+      Effect.provideService(ProviderLifecycleCoordinator, trackedLifecycleCoordinator),
       Effect.provide(NodeServices.layer),
+      Scope.provide(managerScope),
     );
-    return { manager, providersRef, transitionsRef, refreshCountRef };
+    return {
+      manager,
+      providersRef,
+      transitionsRef,
+      refreshCountRef,
+      lifecycleCoordinator: trackedLifecycleCoordinator,
+      lifecycleReleaseCountRef,
+      closeManager: Scope.close(managerScope, Exit.void),
+    };
   });
 }
 
@@ -527,6 +554,143 @@ describe("ProviderConnectionManager", () => {
       const transitions = yield* Ref.get(transitionsRef);
       assert.strictEqual(transitions.at(-1)?.status, "cancelled");
     }),
+  );
+
+  it.effect(
+    "preserves verified connection truth when cancellation arrives during verification",
+    () =>
+      Effect.gen(function* () {
+        const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+        const verificationStarted = yield* Deferred.make<void>();
+        const releaseVerification = yield* Deferred.make<void>();
+        const actions: ProviderConnectionActions = {
+          methods: ["codex_browser"],
+          start: () =>
+            Effect.succeed({
+              authorizationUrl: "https://auth.openai.com/",
+              authorizationUrlKind: "primary",
+              initialStatus: "waiting_for_browser",
+              waitForCompletion: Deferred.await(completed),
+              cancel: Effect.void,
+            }),
+          disconnect: Effect.void,
+        };
+        const {
+          manager,
+          providersRef,
+          transitionsRef,
+          lifecycleCoordinator,
+          lifecycleReleaseCountRef,
+        } = yield* makeHarness({
+          actions,
+          beforeRefreshInstance: (_instanceId, refreshCount) =>
+            refreshCount === 2
+              ? Deferred.succeed(verificationStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseVerification)),
+                )
+              : Effect.void,
+          refreshProvider: (provider, refreshCount) =>
+            refreshCount === 2 ? authenticatedProvider(provider) : provider,
+        });
+        const started = yield* manager.start({
+          instanceId: CODEX_INSTANCE,
+          method: "codex_browser",
+        });
+        const operationId = started.providers[0]?.connection?.operation?.operationId;
+        assert.ok(operationId);
+
+        yield* Deferred.succeed(completed, undefined);
+        yield* Deferred.await(verificationStarted);
+        const cancelFiber = yield* manager
+          .cancel({ instanceId: CODEX_INSTANCE, operationId })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseVerification, undefined);
+        const cancelResult = yield* Fiber.join(cancelFiber);
+
+        assert.strictEqual(cancelResult._tag, "Failure");
+        if (cancelResult._tag === "Failure") {
+          assert.strictEqual(cancelResult.failure.reason, "operation_not_found");
+        }
+        assert.strictEqual(
+          (yield* Ref.get(providersRef))[0]?.connection?.operation?.status,
+          "connected",
+        );
+        assert.deepStrictEqual(
+          (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+          ["starting", "waiting_for_browser", "verifying", "connected"],
+        );
+        assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+      }),
+  );
+
+  it.effect(
+    "shuts down an active connection without leaving resources or publishing a false failure",
+    () =>
+      Effect.gen(function* () {
+        const attemptCancellations = yield* Ref.make(0);
+        const supervisorInterruptions = yield* Ref.make(0);
+        const operationScopeClosures = yield* Ref.make(0);
+        const supervisorStarted = yield* Deferred.make<void>();
+        const actions: ProviderConnectionActions = {
+          methods: ["codex_browser"],
+          start: () =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() =>
+                Ref.update(operationScopeClosures, (count) => count + 1),
+              );
+              return {
+                authorizationUrl: "https://auth.openai.com/",
+                authorizationUrlKind: "primary" as const,
+                initialStatus: "waiting_for_browser" as const,
+                waitForCompletion: Deferred.succeed(supervisorStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() =>
+                    Ref.update(supervisorInterruptions, (count) => count + 1),
+                  ),
+                ),
+                cancel: Ref.update(attemptCancellations, (count) => count + 1).pipe(
+                  Effect.andThen(Effect.never),
+                ),
+              };
+            }),
+          disconnect: Effect.void,
+        };
+        const { manager, transitionsRef, lifecycleCoordinator, closeManager } = yield* makeHarness({
+          actions,
+        });
+        const started = yield* manager.start({
+          instanceId: CODEX_INSTANCE,
+          method: "codex_browser",
+        });
+        const operationId = started.providers[0]?.connection?.operation?.operationId;
+        assert.ok(operationId);
+        yield* Deferred.await(supervisorStarted);
+
+        const closeFiber = yield* closeManager.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(closeFiber);
+
+        assert.strictEqual(yield* Ref.get(attemptCancellations), 1);
+        assert.strictEqual(yield* Ref.get(supervisorInterruptions), 1);
+        assert.strictEqual(yield* Ref.get(operationScopeClosures), 1);
+        assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+        assert.deepStrictEqual(
+          (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
+          ["starting", "waiting_for_browser"],
+        );
+        const inactive = yield* manager
+          .cancel({ instanceId: CODEX_INSTANCE, operationId })
+          .pipe(Effect.flip);
+        assert.strictEqual(inactive.reason, "operation_not_found");
+
+        yield* closeManager;
+        assert.strictEqual(yield* Ref.get(attemptCancellations), 1);
+        assert.strictEqual(yield* Ref.get(supervisorInterruptions), 1);
+        assert.strictEqual(yield* Ref.get(operationScopeClosures), 1);
+      }),
   );
 
   it.effect("does not resurrect a browser flow cancelled while the provider is starting", () =>
