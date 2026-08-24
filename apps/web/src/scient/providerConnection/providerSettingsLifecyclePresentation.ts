@@ -1,9 +1,18 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
 
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
 } from "./providerConnectionPresentation";
+
+export type ProviderSettingsLifecycleActionKind =
+  | "enable"
+  | "runtime"
+  | "external-update"
+  | "sign-in"
+  | "continue"
+  | "manage";
 
 export type ProviderSettingsLifecycleKind =
   | "checking"
@@ -22,8 +31,28 @@ export interface ProviderSettingsLifecyclePresentation {
   readonly statusLabel: string | null;
   readonly detail: string | null;
   readonly actionLabel: string | null;
+  readonly actionKind: ProviderSettingsLifecycleActionKind | null;
+  readonly runtimeAction: ProviderManagedRuntimeAction | null;
   readonly busy: boolean;
 }
+
+function action(input: {
+  readonly kind: ProviderSettingsLifecycleActionKind;
+  readonly label: string;
+  readonly runtimeAction?: ProviderManagedRuntimeAction;
+}) {
+  return {
+    actionKind: input.kind,
+    actionLabel: input.label,
+    runtimeAction: input.runtimeAction ?? null,
+  } as const;
+}
+
+const NO_ACTION = {
+  actionKind: null,
+  actionLabel: null,
+  runtimeAction: null,
+} as const;
 
 export function providerSettingsLifecyclePresentation(
   provider: ServerProvider | undefined,
@@ -34,7 +63,7 @@ export function providerSettingsLifecyclePresentation(
       kind: "checking",
       statusLabel: null,
       detail: "Checking installation and sign-in status…",
-      actionLabel: null,
+      ...NO_ACTION,
       busy: true,
     };
   }
@@ -43,18 +72,23 @@ export function providerSettingsLifecyclePresentation(
       kind: "disabled",
       statusLabel: "Disabled",
       detail: "Hidden from new conversations.",
-      actionLabel: null,
+      ...action({ kind: "enable", label: "Enable" }),
       busy: false,
     };
   }
 
   const runtimeOperation = provider.connection?.runtime?.operation ?? null;
   if (runtimeOperation?.status === "failed") {
+    const retryableAction = provider.connection?.runtime?.actions.includes(runtimeOperation.action)
+      ? runtimeOperation.action
+      : null;
     return {
       kind: "failed",
       statusLabel: "Setup failed",
       detail: runtimeOperation.message,
-      actionLabel: "Retry",
+      ...(retryableAction
+        ? action({ kind: "runtime", label: "Retry", runtimeAction: retryableAction })
+        : action({ kind: "manage", label: "Manage" })),
       busy: false,
     };
   }
@@ -63,11 +97,15 @@ export function providerSettingsLifecyclePresentation(
       kind: "installing",
       statusLabel: runtimeOperation.status === "removing" ? "Removing" : "Installing",
       detail: runtimeOperation.message,
-      actionLabel: "Continue",
+      ...action({ kind: "continue", label: "Continue" }),
       busy: true,
     };
   }
-  if (!provider.installed || provider.connection?.runtime?.source === "missing") {
+  if (
+    !isProviderRuntimePresentedAsInstalled(provider) ||
+    provider.connection?.runtime?.source === "missing"
+  ) {
+    const canInstall = provider.connection?.runtime?.actions.includes("install") ?? false;
     return {
       kind: "not-installed",
       statusLabel: "Not installed",
@@ -75,7 +113,30 @@ export function providerSettingsLifecyclePresentation(
         provider.driver === "codex"
           ? "Install Codex to connect your ChatGPT account."
           : `Install ${displayName} to connect your account.`,
-      actionLabel: "Install",
+      ...(canInstall
+        ? action({ kind: "runtime", label: "Install", runtimeAction: "install" })
+        : action({ kind: "manage", label: "Manage" })),
+      busy: false,
+    };
+  }
+
+  if (provider.connection?.runtime?.actions.includes("update")) {
+    return {
+      kind: "attention",
+      statusLabel: "Update available",
+      detail: `A reviewed ${displayName} update is ready to install.`,
+      ...action({ kind: "runtime", label: "Update", runtimeAction: "update" }),
+      busy: false,
+    };
+  }
+  if (provider.versionAdvisory?.status === "behind_latest" && provider.versionAdvisory.canUpdate) {
+    return {
+      kind: "attention",
+      statusLabel: "Update available",
+      detail:
+        provider.versionAdvisory.message ??
+        `A newer ${displayName} version is available on this computer.`,
+      ...action({ kind: "external-update", label: "Update" }),
       busy: false,
     };
   }
@@ -86,7 +147,7 @@ export function providerSettingsLifecyclePresentation(
         kind: "attention",
         statusLabel: "Needs attention",
         detail: provider.message ?? `${displayName} is connected but has no available model.`,
-        actionLabel: "Manage",
+        ...action({ kind: "manage", label: "Manage" }),
         busy: false,
       };
     }
@@ -97,7 +158,7 @@ export function providerSettingsLifecyclePresentation(
         provider.auth.required === false
           ? "Ready without account sign-in."
           : (provider.auth.label ?? provider.auth.email ?? "Account connected."),
-      actionLabel: "Manage",
+      ...action({ kind: "manage", label: "Manage" }),
       busy: false,
     };
   }
@@ -107,7 +168,7 @@ export function providerSettingsLifecyclePresentation(
       kind: "failed",
       statusLabel: "Sign-in failed",
       detail: connectionOperation.message,
-      actionLabel: "Retry",
+      ...action({ kind: "sign-in", label: "Retry" }),
       busy: false,
     };
   }
@@ -116,7 +177,7 @@ export function providerSettingsLifecyclePresentation(
       kind: "signing-in",
       statusLabel: connectionOperation.status === "verifying" ? "Verifying" : "Signing in",
       detail: connectionOperation.message,
-      actionLabel: "Continue",
+      ...action({ kind: "continue", label: "Continue" }),
       busy: true,
     };
   }
@@ -130,7 +191,7 @@ export function providerSettingsLifecyclePresentation(
           : provider.driver === "droid"
             ? "Sign in with your existing Factory subscription."
             : "Connect your account.",
-      actionLabel: "Sign in",
+      ...action({ kind: "sign-in", label: "Sign in" }),
       busy: false,
     };
   }
@@ -138,7 +199,7 @@ export function providerSettingsLifecyclePresentation(
     kind: "manual",
     statusLabel: "Manual setup",
     detail: provider.message ?? "Use the provider's advanced configuration.",
-    actionLabel: null,
+    ...NO_ACTION,
     busy: false,
   };
 }

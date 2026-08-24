@@ -79,7 +79,9 @@ describe("Codex lifecycle actions", () => {
 
     await updateCodexRuntime(lifecycle, managed);
 
+    expect(lifecycle.planRuntime).toHaveBeenCalledTimes(1);
     expect(lifecycle.planRuntime).toHaveBeenCalledWith("update");
+    expect(lifecycle.startRuntime).toHaveBeenCalledTimes(1);
     expect(lifecycle.startRuntime).toHaveBeenCalledWith(updatePlan);
     expect(lifecycle.updateExternalRuntime).not.toHaveBeenCalled();
   });
@@ -128,6 +130,9 @@ describe("Codex lifecycle actions", () => {
 
     await startCodexBrowserSignIn(lifecycle);
 
+    expect(lifecycle.startConnection).toHaveBeenCalledTimes(1);
+    expect(lifecycle.startConnection).toHaveBeenCalledWith("codex_browser");
+    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledTimes(1);
     expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/");
   });
 
