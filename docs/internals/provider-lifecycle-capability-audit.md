@@ -37,11 +37,15 @@ provider-specific rationale.
 
 ## Evidence and confidence
 
-The initial audit was performed against Scient `main` at:
+Initial investigation began against Scient `main` at `dc07474af931877d4b94747d241df6c2af7d35c4`.
+The published audit was performed against the planning branch based on:
 
 ```text
-dc07474af931877d4b94747d241df6c2af7d35c4
+118420c908594f0d9ca3124d341a5ce47cc3505a
 ```
+
+That baseline includes PR #151 and the Codex managed-package completeness fix in
+`5f52a1420823c0f311d5755f6a715294fba48fe1`.
 
 Use the following evidence labels when this document is updated:
 
@@ -63,8 +67,9 @@ Provider parity should be evaluated across independent dimensions rather than on
 state:
 
 1. **Runtime discovery:** custom, system, Scient-managed, missing, unknown, remote, or unsupported.
-2. **Runtime acquisition:** reviewed plan, download, checksum verification, extraction, staging, smoke
-   test, activation, cancellation, and recovery.
+2. **Runtime acquisition:** reviewed plan, download, checksum verification, extraction, staging,
+   provider-specific package-completeness validation, smoke test, activation, cancellation, and
+   recovery.
 3. **Runtime maintenance:** managed update, repair, removal, and the inherited T3 update path for an
    external installation.
 4. **Authentication:** available methods, browser owner, URL recovery, device code, optional returned
@@ -99,6 +104,9 @@ These are common guarantees, not requirements for every provider to display the 
   installations.
 - Install, managed update, and repair keep the previous usable runtime until the replacement is
   verified and activated.
+- Smoke-test success does not prove package completeness. Provider conformance must verify required
+  companion executables and files before a managed runtime is selected; the expected contents remain
+  explicit provider policy rather than a universal shared manifest.
 - Remove deletes only Scient's private copy and preserves provider credentials.
 - Sign-out revokes only provider-owned credentials and preserves the runtime.
 - Every advertised runtime or connection operation is cancellable and publishes authoritative state.
@@ -134,6 +142,7 @@ The following differences should not be normalized without new evidence:
 - how the provider verifies stored credentials and usable models;
 - whether email or subscription tier is available;
 - which targets have official reviewed artifacts;
+- which companion executables and files define a complete provider package;
 - which updater is safe for a detected external installation source; and
 - whether switching from a healthy system runtime to Scient-managed has been explicitly qualified.
 
@@ -226,8 +235,8 @@ Before declaring a provider aligned with the shared lifecycle:
 4. Exercise every advertised login method, browser owner, device or returned-code path, cancellation,
    fresh-process verification, and sign-out.
 5. Exercise authenticated-but-unentitled or no-model behavior where the provider permits it.
-6. Verify managed install, failed/cancelled install, repair, update, removal, restart recovery, and
-   multiple instances on each advertised target.
+6. Verify managed install, provider-specific package completeness, failed/cancelled install, repair,
+   update, removal, restart recovery, and multiple instances on each advertised target.
 7. Verify the inherited external update path for every supported installation source.
 8. Confirm Settings and composer preserve the fastest safe path and render only server-advertised
    capabilities.

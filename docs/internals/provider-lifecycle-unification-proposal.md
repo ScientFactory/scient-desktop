@@ -38,14 +38,25 @@ and less likely to conflict with future T3 updates.
 
 ## Current baseline
 
-This proposal starts from Scient `main` at:
+Initial investigation began from Scient `main` at:
 
 ```text
 dc07474af931877d4b94747d241df6c2af7d35c4
 ```
 
-The worktree was created from that exact commit. At investigation time, a fresh fetch placed
-official T3 `upstream/main` at:
+Before the planning branch was published, Scient `main` advanced to:
+
+```text
+118420c908594f0d9ca3124d341a5ce47cc3505a
+```
+
+The published planning branch and companion capability audit are based on that later commit. It
+includes PR #151 and its Codex managed-package completeness fix, whose implementation commit is
+`5f52a1420823c0f311d5755f6a715294fba48fe1`. Use `118420c908594f0d9ca3124d341a5ce47cc3505a`
+when reproducing code-confirmed claims in these documents; the earlier commit records only where the
+investigation started.
+
+At initial investigation time, a fresh fetch placed official T3 `upstream/main` at:
 
 ```text
 b60a2c0b99c8d5d8f02b6705171da694d12e77e3
@@ -124,7 +135,7 @@ reviewable and reversible. Green CI alone is not a merge decision. The relevant 
 - preservation of the T3-owned seams and provider-specific behavior described here;
 - the automated contract, provider, and compatibility tests appropriate to the change;
 - isolated real-app validation for affected user-visible lifecycle paths;
-- platform qualification when runtime packaging or process behavior changes; and
+- platform qualification when runtime packaging or process behavior changes;
 - synchronized architecture, provider-matrix, and user documentation; and
 - a refreshed capability-audit row for every affected provider, with unresolved claims still marked
   open rather than presented as implemented behavior.
@@ -589,22 +600,12 @@ defer all architectural knowledge to the final PR.
 3. Run the normal upstream provenance, protected-divergence, focused automated, and manual gates.
 4. Keep all lifecycle refactoring out of this PR.
 
-### PR 1: Lifecycle reliability and reusable runtime characterization
+### PR 1A: Characterization foundation
 
-This may remain one reliability PR while both changes are small and independently committed. If the
-manager-lifetime fix or runtime characterization uncovers substantive product changes, split them into
-separate PRs rather than forcing two failure domains through one review.
-
-#### Manager lifetime
-
-- Change the connection and runtime manager layers to scoped services.
-- Give each active operation one cleanup path that owns interruption, scope closure, and reservation
-  release.
-- Register a layer finalizer that invokes that cleanup path for every active operation without
-  publishing a user-facing failure during server teardown.
-- Do not add a second competing release/close path; prove cleanup is idempotent at the manager
-  boundary.
-- Add tests proving shutdown leaves no active process, scope, or reservation.
+Land the behavior-preserving characterization before changing manager lifetime. This PR owns tests and
+documentation only; it must not hide a production repair inside a characterization diff. If a proposed
+invariant does not hold in the current code, record the finding and fix it in a focused follow-up rather
+than weakening the test or silently expanding this PR.
 
 #### Managed runtime contract suite
 
@@ -633,7 +634,10 @@ Do not repeat this whole suite for every provider or every archive format:
   malformed ZIP and extraction-limit failure must preserve the previous active runtime, commit no new
   activation, and leave staging/reconciliation in the expected recoverable state;
 - keep thin per-provider tests for manifest resolution, target support, private-root wiring, smoke
-  policy, and provider-specific environment; and
+  policy, package completeness, and provider-specific environment;
+- treat smoke-test success and package completeness as independent checks: provider conformance must
+  verify required companion executables and files before a managed runtime is selected, while the
+  expected package contents remain explicit provider policy rather than a generic shared manifest; and
 - add the currently missing `managedGrokRuntime.test.ts` conformance coverage.
 
 Also strengthen the existing `ProviderRegistry` characterization for transient connection/runtime
@@ -644,6 +648,21 @@ Characterize Codex's existing system-to-managed switch before changing its prese
 system availability, custom-path precedence, failed/cancelled install retaining system selection,
 successful provider-wide cutover and reload, account re-verification, managed-health fallback, removal
 returning to system, and external-versus-managed update ownership.
+
+No production or user-interface changes.
+
+### PR 1B: Manager lifetime
+
+Land the manager-lifetime production change after PR 1A establishes the behavior baseline:
+
+- Change the connection and runtime manager layers to scoped services.
+- Give each active operation one cleanup path that owns interruption, scope closure, and reservation
+  release.
+- Register a layer finalizer that invokes that cleanup path for every active operation without
+  publishing a user-facing failure during server teardown.
+- Do not add a second competing release/close path; prove cleanup is idempotent at the manager
+  boundary.
+- Add tests proving shutdown leaves no active process, scope, or reservation.
 
 No user-interface changes.
 
@@ -804,6 +823,13 @@ The documentation must explain:
 Use tables for ownership and provider differences where they improve scanning, but keep the prose
 focused on behavior and rationale rather than file-by-file narration. Link to provider-specific user
 documentation for installation/account instructions instead of duplicating it internally.
+
+After PR 5 and the final qualification pass, fold every accepted architectural rule into the canonical
+lifecycle documentation, mark this proposal superseded, and link the canonical document and landed
+implementation pull requests. Preserve this proposal as historical design context rather than
+maintaining it as a second source of current truth. The companion audit should then remain as the
+canonical provider matrix or be folded into that same documentation without losing its evidence and
+provider-specific rationale.
 
 ## User-experience target
 
@@ -1030,10 +1056,10 @@ semantics, keep them separate.
 ## Final recommendation
 
 Proceed incrementally after the separate T3 synchronization. Preserve the existing coordinator,
-managers, runtime package, optional provider action seams, and canonical server snapshot. Harden
-manager lifetime, strengthen generic runtime characterization, extract only low-level duplicated
-mechanics, establish one explicit assisted frontend host, preserve a generic quick Update path,
-normalize the Settings entry, and only then migrate Antigravity under strong characterization tests.
+managers, runtime package, optional provider action seams, and canonical server snapshot. Land the
+characterization foundation, harden manager lifetime, extract only low-level duplicated mechanics,
+establish one explicit assisted frontend host, preserve a generic quick Update path, normalize the
+Settings entry, and only then migrate Antigravity under strong characterization tests.
 
 The goal is not maximum abstraction. It is one reliable shared lifecycle where the underlying
 behavior is genuinely shared, with explicit provider-specific adapters everywhere the providers
