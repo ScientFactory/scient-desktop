@@ -21,7 +21,7 @@ Every Scient-managed release is a reviewed directory containing:
 - `SKILL.md`, following the current [Agent Skills
   specification](https://agentskills.io/specification);
 - `scient.skill.json`, carrying Scient's stable ID, exact SemVer, activation
-  scope, role, and origin; and
+  scope, and origin; and
 - optional `scripts/`, `references/`, `assets/`, or other bounded resources.
 
 The loader rejects symlinked roots or entries, non-regular files, malformed
@@ -63,19 +63,21 @@ skill capability or MCP credential is added merely for this feature.
 For supported adapters the existing authenticated Scient MCP session receives:
 
 - the `skills:read` capability;
-- the exact allowed release keys and optional project root; and
-- `scient_skills_list`, `scient_skill_activate`, and
+- the exact allowed release keys; and
+- `scient_skills_list`, `scient_skill_load`, and
   `scient_skill_read_resource`.
 
 The bearer-token record owns a defensive copy of that scope, and every handler
-checks both the capability and exact release allowlist. Activation returns
+checks both the capability and exact release allowlist. Loading returns
 instructions and resource metadata. Resources remain separate and are read on
 demand, preserving progressive disclosure.
 
 Antigravity currently has no MCP transport and is reported as unsupported for
 Scient skill delivery. The foundation does not emulate delivery with a large
-prompt injection. Other current adapters consume Scient's MCP session; agents
-receive a short awareness block only when `skills:read` was actually granted.
+prompt injection. Other current adapters consume Scient's MCP session. Adapters
+with a private awareness seam append a short skills block only when
+`skills:read` was actually granted; Cursor discovers the same tools through MCP
+without extra prompt injection.
 
 ## Deliberate phase-one exclusions
 

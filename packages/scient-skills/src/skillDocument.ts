@@ -4,7 +4,7 @@ import type { AgentSkillMetadata } from "./model.ts";
 
 const MAX_SKILL_DOCUMENT_BYTES = 256 * 1024;
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
-const SKILL_NAME_PATTERN = /^(?!.*--)[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
 export interface ParsedSkillDocument {
   readonly metadata: AgentSkillMetadata;

@@ -49,7 +49,6 @@ async function writeRelease(
       id: `scient.${name}`,
       version: "0.1.0",
       activationScope,
-      role: "review",
       origin: { kind: "scient" },
     })}\n`,
     "utf8",

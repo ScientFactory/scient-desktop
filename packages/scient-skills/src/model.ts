@@ -3,7 +3,6 @@ export const SKILL_DOCUMENT_FILE = "SKILL.md";
 export const SCIENT_SKILLS_LOCK_FILE = ".scient/skills.lock.json";
 
 export type SkillActivationScope = "project" | "user";
-export type SkillRole = "constructive" | "orientation" | "review";
 
 export type SkillOrigin =
   | { readonly kind: "scient" }
@@ -18,7 +17,6 @@ export interface SkillReleaseManifest {
   readonly id: string;
   readonly version: string;
   readonly activationScope: SkillActivationScope;
-  readonly role: SkillRole;
   readonly origin: SkillOrigin;
 }
 
@@ -49,14 +47,12 @@ export interface SkillReleaseSummary extends SkillReleaseRef {
   readonly name: string;
   readonly description: string;
   readonly activationScope: SkillActivationScope;
-  readonly role: SkillRole;
 }
 
 export interface SkillRelease extends SkillReleaseSummary {
   readonly manifest: SkillReleaseManifest;
   readonly metadata: AgentSkillMetadata;
   readonly instructions: string;
-  readonly rootPath: string;
   readonly resources: ReadonlyArray<SkillResourceSummary>;
 }
 
@@ -83,6 +79,5 @@ export function toSkillReleaseSummary(release: SkillRelease): SkillReleaseSummar
     name: release.name,
     description: release.description,
     activationScope: release.activationScope,
-    role: release.role,
   };
 }

@@ -11,8 +11,8 @@ import * as Effect from "effect/Effect";
 import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
-  activateScientSkillForInvocation,
   listScientSkillsForInvocation,
+  loadScientSkillForInvocation,
   readScientSkillResourceForInvocation,
 } from "./handlers.ts";
 
@@ -35,7 +35,6 @@ async function makeCatalogFixture() {
       id: "scient.evidence-review",
       version: "0.1.0",
       activationScope: "user",
-      role: "review",
       origin: { kind: "scient" },
     })}\n`,
     "utf8",
@@ -81,7 +80,7 @@ afterEach(async () => {
 });
 
 describe("Scient skills MCP handlers", () => {
-  it.effect("lists and activates only the exact releases bound to the bearer scope", () =>
+  it.effect("lists and loads only the exact releases bound to the bearer scope", () =>
     Effect.gen(function* () {
       const catalog = yield* Effect.promise(makeCatalogFixture);
       const release = catalog.releases[0]!;
@@ -95,12 +94,12 @@ describe("Scient skills MCP handlers", () => {
       expect(listed.skills).toHaveLength(1);
       expect(listed.skills[0]).toMatchObject({ releaseKey, id: release.id });
 
-      const activated = yield* provideContext(activateScientSkillForInvocation({ releaseKey }), {
+      const loaded = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
         catalog,
         invocation,
       });
-      expect(activated.instructions).toContain("Load the rubric");
-      expect(activated.resources).toEqual([
+      expect(loaded.instructions).toContain("Load the rubric");
+      expect(loaded.resources).toEqual([
         { path: "references/rubric.md", bytes: 37, kind: "reference" },
       ]);
 
@@ -125,7 +124,7 @@ describe("Scient skills MCP handlers", () => {
       const releaseKey = skillReleaseKey(catalog.releases[0]!);
       const emptyScope = makeInvocation(new Set());
 
-      const unavailable = yield* provideContext(activateScientSkillForInvocation({ releaseKey }), {
+      const unavailable = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
         catalog,
         invocation: emptyScope,
       }).pipe(Effect.flip);

@@ -12,7 +12,6 @@ import {
   type SkillRelease,
   type SkillReleaseManifest,
   type SkillResourceSummary,
-  type SkillRole,
 } from "./model.ts";
 import { parseSkillDocument } from "./skillDocument.ts";
 
@@ -28,6 +27,9 @@ const SEMVER_PATTERN = new RegExp(
   "u",
 );
 const verifiedFiles = new WeakMap<SkillRelease, ReadonlyMap<string, Uint8Array>>();
+
+const compareStrings = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
 
 export class SkillReleaseValidationError extends Error {
   override readonly name = "SkillReleaseValidationError";
@@ -93,7 +95,6 @@ export function parseSkillReleaseManifest(contents: string): SkillReleaseManifes
   const id = requiredString(record, "id");
   const version = requiredString(record, "version", 64);
   const activationScope = requiredString(record, "activationScope", 32);
-  const role = requiredString(record, "role", 32);
   if (apiVersion !== "scient.skills/v1alpha1") {
     throw new SkillReleaseValidationError("Unsupported skill manifest apiVersion.");
   }
@@ -103,17 +104,11 @@ export function parseSkillReleaseManifest(contents: string): SkillReleaseManifes
   if (activationScope !== "project" && activationScope !== "user") {
     throw new SkillReleaseValidationError("Skill activationScope must be 'project' or 'user'.");
   }
-  if (role !== "constructive" && role !== "orientation" && role !== "review") {
-    throw new SkillReleaseValidationError(
-      "Skill role must be 'constructive', 'orientation', or 'review'.",
-    );
-  }
   return {
     apiVersion,
     id,
     version,
     activationScope: activationScope as SkillActivationScope,
-    role: role as SkillRole,
     origin: parseOrigin(record.origin),
   };
 }
@@ -143,7 +138,12 @@ async function collectReleaseFiles(rootPath: string): Promise<ReadonlyArray<Rele
 
   async function walk(directoryPath: string, prefix: string): Promise<void> {
     const entries = await NodeFSP.readdir(directoryPath, { withFileTypes: true });
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    for (const entry of entries.sort((left, right) => compareStrings(left.name, right.name))) {
+      if (entry.name.includes("\\")) {
+        throw new SkillReleaseValidationError(
+          `Skill release entry '${entry.name}' must use a portable file name.`,
+        );
+      }
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       const absolutePath = NodePath.join(directoryPath, entry.name);
       if (entry.isSymbolicLink()) {
@@ -165,22 +165,33 @@ async function collectReleaseFiles(rootPath: string): Promise<ReadonlyArray<Rele
           `Skill release contains more than ${MAX_RELEASE_FILES} files.`,
         );
       }
-      const stat = await NodeFSP.stat(absolutePath);
+      const stat = await NodeFSP.lstat(absolutePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new SkillReleaseValidationError(
+          `Skill release entry '${relativePath}' is no longer a regular file.`,
+        );
+      }
       if (stat.size > MAX_RESOURCE_BYTES) {
         throw new SkillReleaseValidationError(
           `Skill release file '${relativePath}' exceeds the 1 MiB file limit.`,
         );
       }
-      totalBytes += stat.size;
+      const bytes = await NodeFSP.readFile(absolutePath);
+      if (bytes.byteLength > MAX_RESOURCE_BYTES) {
+        throw new SkillReleaseValidationError(
+          `Skill release file '${relativePath}' exceeds the 1 MiB file limit.`,
+        );
+      }
+      totalBytes += bytes.byteLength;
       if (totalBytes > MAX_RELEASE_BYTES) {
         throw new SkillReleaseValidationError("Skill release exceeds the 5 MiB total limit.");
       }
-      files.push({ relativePath, bytes: await NodeFSP.readFile(absolutePath) });
+      files.push({ relativePath, bytes });
     }
   }
 
   await walk(rootPath, "");
-  return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return files.sort((left, right) => compareStrings(left.relativePath, right.relativePath));
 }
 
 /** Load and fully snapshot one immutable release directory. */
@@ -238,7 +249,6 @@ export async function loadSkillRelease(root: string): Promise<SkillRelease> {
     manifest: frozenManifest,
     metadata: frozenMetadata,
     instructions: parsed.instructions,
-    rootPath,
     resources,
     id: manifest.id,
     version: manifest.version,
@@ -247,7 +257,6 @@ export async function loadSkillRelease(root: string): Promise<SkillRelease> {
     name: parsed.metadata.name,
     description: parsed.metadata.description,
     activationScope: manifest.activationScope,
-    role: manifest.role,
   });
   verifiedFiles.set(release, byPath);
   return release;
@@ -257,10 +266,11 @@ export function readSkillResource(
   release: SkillRelease,
   relativePath: string,
 ): Uint8Array | undefined {
-  const normalized = relativePath.replaceAll("\\", "/");
+  const normalized = relativePath;
   if (
     normalized.length === 0 ||
     normalized.startsWith("/") ||
+    normalized.includes("\\") ||
     normalized.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   ) {
     return undefined;

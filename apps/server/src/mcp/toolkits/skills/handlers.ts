@@ -10,6 +10,9 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 import { ScientSkillToolError, ScientSkillsToolkit } from "./tools.ts";
 
+const compareStrings = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
 const toolError = (
   code: ConstructorParameters<typeof ScientSkillToolError>[0]["code"],
   message: string,
@@ -57,12 +60,14 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
   const skills = [...scope.releaseKeys]
     .map((releaseKey) => registry.resolveReleaseKey(releaseKey))
     .filter((release): release is SkillRelease => release !== undefined)
-    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+    .sort(
+      (left, right) => compareStrings(left.name, right.name) || compareStrings(left.id, right.id),
+    )
     .map(summary);
   return { skills };
 });
 
-export const activateScientSkillForInvocation = Effect.fn("ScientSkillsToolkit.activate")(
+export const loadScientSkillForInvocation = Effect.fn("ScientSkillsToolkit.load")(
   function* (input: { readonly releaseKey: string }) {
     const release = yield* resolveAllowedRelease(input.releaseKey);
     return {
@@ -100,7 +105,7 @@ export const readScientSkillResourceForInvocation = Effect.fn("ScientSkillsToolk
 
 const handlers = {
   scient_skills_list: listScientSkillsForInvocation,
-  scient_skill_activate: activateScientSkillForInvocation,
+  scient_skill_load: loadScientSkillForInvocation,
   scient_skill_read_resource: readScientSkillResourceForInvocation,
 } satisfies Parameters<typeof ScientSkillsToolkit.toLayer>[0];
 

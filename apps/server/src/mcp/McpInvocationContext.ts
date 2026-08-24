@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 export type McpCapability = "preview" | "skills:read" | "sources:read" | "sources:write";
 
 export interface McpScientSkillScope {
-  readonly projectRoot?: string;
   readonly releaseKeys: ReadonlySet<string>;
 }
 

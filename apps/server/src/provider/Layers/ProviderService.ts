@@ -237,14 +237,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   /**
-   * Attach the `t3-code` MCP server to the session that is about to start.
+   * Attach the provider-scoped MCP server to the session that is about to
+   * start. The capability set is the complete authority carried by the
+   * credential: browser/source access and Scient skill delivery are granted
+   * independently, and omitted capabilities remain unavailable.
    *
-   * This is the only place a credential is minted, so withholding one here is
-   * what disables agent browser access everywhere: every adapter already
-   * treats a missing session as "no MCP server", and the `/mcp` endpoint
-   * accepts nothing but tokens issued from this path.
-   */
-  /**
    * Deny on an unreadable settings file rather than letting the read failure
    * escape: adding `ServerSettingsError` to `ProviderServiceError` would widen
    * a union every caller handles, for a branch that only decides whether one
@@ -316,7 +313,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(skillPlan.delivery === "mcp"
           ? {
               skillScope: {
-                ...(skillPlan.projectRoot ? { projectRoot: skillPlan.projectRoot } : {}),
                 releaseKeys: skillPlan.releaseKeys,
               },
             }

@@ -91,7 +91,6 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["skills:read"]),
       skillScope: {
-        projectRoot: "/workspace/project",
         releaseKeys: requestedReleaseKeys,
       },
     });
@@ -100,11 +99,11 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
     requestedReleaseKeys.clear();
     const first = yield* registry.resolve(token);
     expect(first?.skillScope).toEqual({
-      projectRoot: "/workspace/project",
       releaseKeys: new Set(["scient.review@0.1.0#sha256:one"]),
     });
+    if (!first?.skillScope) throw new Error("Expected the issued skill scope to resolve.");
 
-    (first?.skillScope?.releaseKeys as Set<string>).clear();
+    (first.skillScope.releaseKeys as Set<string>).clear();
     expect((yield* registry.resolve(token))?.skillScope?.releaseKeys).toEqual(
       new Set(["scient.review@0.1.0#sha256:one"]),
     );

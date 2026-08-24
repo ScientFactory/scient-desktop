@@ -3,11 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import {
-  readProjectSkillLock,
-  type ProjectSkillLockReadResult,
-  type SkillReleaseRef,
-} from "@scientfactory/scient-skills";
+import { readProjectSkillLock, type SkillReleaseRef } from "@scientfactory/scient-skills";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -38,6 +34,8 @@ const PersistedPolicySchema = Schema.Struct({
   ),
 });
 const PersistedPolicyJson = Schema.fromJsonString(PersistedPolicySchema);
+const decodePersistedPolicy = Schema.decodeUnknownExit(PersistedPolicyJson);
+const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyJson);
 
 export interface ProjectSkillTrustReceipt {
   readonly projectId: string;
@@ -145,9 +143,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_POLICY_BYTES) {
         throw new Error("Scient skill policy must be a regular file no larger than 1 MiB.");
       }
-      const decoded = Schema.decodeUnknownExit(PersistedPolicyJson)(
-        await NodeFSP.readFile(policyPath, "utf8"),
-      );
+      const decoded = decodePersistedPolicy(await NodeFSP.readFile(policyPath, "utf8"));
       if (Exit.isFailure(decoded)) throw new Error("Scient skill policy is invalid.");
       return normalizeSnapshot(decoded.value);
     },
@@ -170,7 +166,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
     next: ScientSkillPolicySnapshot,
   ) {
     const normalized = normalizeSnapshot(next);
-    const encoded = yield* Schema.encodeEffect(PersistedPolicyJson)({
+    const encoded = yield* encodePersistedPolicy({
       formatVersion: 1,
       userSkills: [...normalized.userSkills],
       trustedProjects: [...normalized.trustedProjects],
@@ -240,7 +236,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
             ),
       })),
     trustProjectLock: Effect.fn("ScientSkillPolicy.trustProjectLock")(function* (projectRoot) {
-      const lock: ProjectSkillLockReadResult = yield* inspectProjectLock(projectRoot);
+      const lock = yield* inspectProjectLock(projectRoot);
       if (lock.status !== "valid") {
         return yield* new ScientSkillPolicyError({
           operation: "trustProjectLock",

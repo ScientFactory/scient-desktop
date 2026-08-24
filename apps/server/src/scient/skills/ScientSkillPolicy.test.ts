@@ -21,6 +21,7 @@ const release: SkillReleaseRef = {
   digest: `sha256:${"a".repeat(64)}`,
   origin: "scient",
 };
+const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 async function fixture(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-skill-policy-"));
@@ -62,9 +63,7 @@ describe("Scient skill policy", () => {
         const persistedContents = yield* Effect.promise(() =>
           NodeFSP.readFile(NodePath.join(config.stateDir, "scient-skills.json"), "utf8"),
         );
-        const persisted = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
-          persistedContents,
-        );
+        const persisted = yield* decodeUnknownJson(persistedContents);
         expect(persisted).toMatchObject({ formatVersion: 1, userSkills: [release] });
 
         yield* policy.setUserSkillActive(release, false);

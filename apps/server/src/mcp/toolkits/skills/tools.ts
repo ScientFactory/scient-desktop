@@ -28,7 +28,6 @@ export const ScientSkillSummary = Schema.Struct({
   name: NonEmptyString,
   description: NonEmptyString,
   activationScope: Schema.Literals(["project", "user"]),
-  role: Schema.Literals(["constructive", "orientation", "review"]),
 });
 
 export const ScientSkillResource = Schema.Struct({
@@ -53,9 +52,9 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSkillActivateTool = Tool.make("scient_skill_activate", {
+export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
-    "Load one selected Scient skill by the exact releaseKey returned by scient_skills_list. Activation returns verified instructions and resource metadata; it does not execute anything or widen authority.",
+    "Load one selected Scient skill by the exact releaseKey returned by scient_skills_list. Loading returns verified instructions and resource metadata; it does not execute anything or widen authority.",
   parameters: Schema.Struct({ releaseKey: NonEmptyString }),
   success: Schema.Struct({
     skill: ScientSkillSummary,
@@ -65,7 +64,7 @@ export const ScientSkillActivateTool = Tool.make("scient_skill_activate", {
   failure: ScientSkillToolError,
   dependencies,
 })
-  .annotate(Tool.Title, "Activate a Scient skill")
+  .annotate(Tool.Title, "Load a Scient skill")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
@@ -73,7 +72,7 @@ export const ScientSkillActivateTool = Tool.make("scient_skill_activate", {
 
 export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource", {
   description:
-    "Read one verified resource from an activated Scient skill. Relative traversal and files outside the immutable release are unavailable.",
+    "Read one verified resource from a selected Scient skill. Relative traversal and files outside the immutable release are unavailable.",
   parameters: Schema.Struct({ releaseKey: NonEmptyString, path: NonEmptyString }),
   success: Schema.Struct({
     path: NonEmptyString,
@@ -91,6 +90,6 @@ export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource
 
 export const ScientSkillsToolkit = Toolkit.make(
   ScientSkillsListTool,
-  ScientSkillActivateTool,
+  ScientSkillLoadTool,
   ScientSkillReadResourceTool,
 );

@@ -70,7 +70,8 @@ export interface McpSessionRegistryOptions {
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the preview toolkit on a remote-reachable server.
+ * the authority guarding every provider-scoped MCP capability on a
+ * remote-reachable server.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -137,9 +138,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ...(request.skillScope
           ? {
               skillScope: {
-                ...(request.skillScope.projectRoot
-                  ? { projectRoot: request.skillScope.projectRoot }
-                  : {}),
                 releaseKeys: new Set(request.skillScope.releaseKeys),
               },
             }
@@ -186,9 +184,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
             ...(record.scope.skillScope
               ? {
                   skillScope: {
-                    ...(record.scope.skillScope.projectRoot
-                      ? { projectRoot: record.scope.skillScope.projectRoot }
-                      : {}),
                     releaseKeys: new Set(record.scope.skillScope.releaseKeys),
                   },
                 }

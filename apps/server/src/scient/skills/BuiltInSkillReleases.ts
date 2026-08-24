@@ -5,4 +5,4 @@
  * reviewed package directory and a separate product decision; provider-native
  * Codex and Claude skills are not copied into this registry.
  */
-export const BUILT_IN_SKILL_RELEASE_ROOTS: ReadonlyArray<string> = [];
+export const BUILT_IN_SKILL_RELEASE_ROOTS: ReadonlyArray<string> = Object.freeze([]);

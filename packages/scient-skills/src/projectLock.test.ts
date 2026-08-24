@@ -21,6 +21,12 @@ const release: SkillReleaseRef = {
   digest: `sha256:${"a".repeat(64)}`,
   origin: "scient",
 };
+const secondRelease: SkillReleaseRef = {
+  id: "scient.reproducible-research",
+  version: "0.2.0",
+  digest: `sha256:${"b".repeat(64)}`,
+  origin: "scient",
+};
 
 async function fixture(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-skill-lock-"));
@@ -68,6 +74,9 @@ describe("Scient project skill lock", () => {
 
   it("rejects duplicate identities and symlinked locks", async () => {
     expect(() => renderProjectSkillLock([release, release])).toThrow("duplicate");
+    expect(renderProjectSkillLock([release, secondRelease])).toBe(
+      renderProjectSkillLock([secondRelease, release]),
+    );
     const root = await fixture();
     await initializeScientProject({ root });
     const outside = NodePath.join(root, "outside-lock.json");

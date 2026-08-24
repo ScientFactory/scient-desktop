@@ -10,7 +10,10 @@ import * as Layer from "effect/Layer";
 
 import { BUILT_IN_SKILL_RELEASE_ROOTS } from "./BuiltInSkillReleases.ts";
 
-const EMPTY_CATALOG: SkillCatalog = { releases: [], diagnostics: [] };
+const EMPTY_CATALOG: SkillCatalog = Object.freeze({
+  releases: Object.freeze([]),
+  diagnostics: Object.freeze([]),
+});
 
 export interface ScientSkillRegistryShape {
   readonly catalog: SkillCatalog;

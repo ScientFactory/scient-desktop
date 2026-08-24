@@ -7,6 +7,9 @@ import {
 } from "./model.ts";
 import { loadSkillRelease } from "./release.ts";
 
+const compareStrings = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
 export interface SkillCatalogDiagnostic {
   readonly code: "duplicate-release" | "invalid-release";
   readonly rootPath: string;
@@ -23,7 +26,7 @@ export async function loadSkillCatalog(roots: ReadonlyArray<string>): Promise<Sk
   const releases: SkillRelease[] = [];
   const diagnostics: SkillCatalogDiagnostic[] = [];
   const byIdentity = new Map<string, SkillRelease>();
-  for (const rootPath of [...roots].sort()) {
+  for (const rootPath of [...roots].sort(compareStrings)) {
     let release: SkillRelease;
     try {
       release = await loadSkillRelease(rootPath);
@@ -49,9 +52,9 @@ export async function loadSkillCatalog(roots: ReadonlyArray<string>): Promise<Sk
   }
   releases.sort(
     (left, right) =>
-      left.id.localeCompare(right.id) ||
-      right.version.localeCompare(left.version) ||
-      left.digest.localeCompare(right.digest),
+      compareStrings(left.id, right.id) ||
+      compareStrings(right.version, left.version) ||
+      compareStrings(left.digest, right.digest),
   );
   return Object.freeze({
     releases: Object.freeze(releases),

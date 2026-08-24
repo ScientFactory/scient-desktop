@@ -22,7 +22,6 @@ export {
   type SkillReleaseRef,
   type SkillReleaseSummary,
   type SkillResourceSummary,
-  type SkillRole,
 } from "./model.ts";
 export {
   parseProjectSkillLock,

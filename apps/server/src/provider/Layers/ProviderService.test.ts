@@ -14,7 +14,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
-  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -2141,7 +2140,6 @@ describe("agent browser access", () => {
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
         readonly skillScope?: {
-          readonly projectRoot?: string;
           readonly releaseKeys: ReadonlySet<string>;
         };
       }> = [];
@@ -2165,9 +2163,6 @@ describe("agent browser access", () => {
               ...(request.skillScope
                 ? {
                     skillScope: {
-                      ...(request.skillScope.projectRoot
-                        ? { projectRoot: request.skillScope.projectRoot }
-                        : {}),
                       releaseKeys: new Set(request.skillScope.releaseKeys),
                     },
                   }
@@ -2216,9 +2211,8 @@ describe("agent browser access", () => {
       return issued;
     });
 
-  // Credential issuance is the observable that matters: it is the only place a
-  // credential is minted, and `/mcp` accepts nothing else, so withholding it is
-  // what actually denies every provider and external MCP client.
+  // With no independent MCP capability in the session plan, disabling browser
+  // access leaves the provider with no credential to present to `/mcp`.
   it.effect("requests no MCP credential when agent browser access is off", () =>
     Effect.gen(function* () {
       const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
@@ -2282,7 +2276,6 @@ describe("agent browser access", () => {
           threadId,
           capabilities: new Set(["skills:read"]),
           skillScope: {
-            projectRoot: "/tmp/scient-project",
             releaseKeys,
           },
         },

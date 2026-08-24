@@ -10,6 +10,7 @@ import {
   loadSkillCatalog,
   loadSkillRelease,
   parseSkillDocument,
+  parseSkillReleaseManifest,
   readSkillResource,
   skillReleaseKey,
 } from "./index.ts";
@@ -48,7 +49,6 @@ async function writeRelease(
         id: input.id ?? "scient.evidence-review",
         version: input.version ?? "0.1.0",
         activationScope: "project",
-        role: "review",
         origin: input.origin ?? { kind: "scient" },
       },
       null,
@@ -155,6 +155,65 @@ describe("Scient skill releases", () => {
       version: "1.2.3-beta.1+build.7",
     });
     await expect(loadSkillRelease(loose)).rejects.toThrow("invalid id or version");
+  });
+
+  it("enforces bounded instruction, manifest, file, and release sizes", async () => {
+    expect(() =>
+      parseSkillDocument(
+        `---\nname: bounded\ndescription: Bounded.\n---\n${"x".repeat(256 * 1024)}`,
+        "bounded",
+      ),
+    ).toThrow("256 KiB");
+    expect(() =>
+      parseSkillReleaseManifest(JSON.stringify({ padding: "x".repeat(64 * 1024) })),
+    ).toThrow("64 KiB");
+
+    const oversizedParent = await fixture();
+    const oversizedRoot = await writeRelease(oversizedParent);
+    await NodeFSP.mkdir(NodePath.join(oversizedRoot, "assets"));
+    await NodeFSP.writeFile(
+      NodePath.join(oversizedRoot, "assets", "oversized.bin"),
+      Buffer.alloc(1024 * 1024 + 1),
+    );
+    await expect(loadSkillRelease(oversizedRoot)).rejects.toThrow("1 MiB file limit");
+
+    const crowdedParent = await fixture();
+    const crowdedRoot = await writeRelease(crowdedParent);
+    await NodeFSP.mkdir(NodePath.join(crowdedRoot, "assets"));
+    await Promise.all(
+      Array.from({ length: 198 }, (_, index) =>
+        NodeFSP.writeFile(NodePath.join(crowdedRoot, "assets", `${String(index)}.txt`), "x"),
+      ),
+    );
+    await expect(loadSkillRelease(crowdedRoot)).rejects.toThrow("more than 200 files");
+
+    const largeParent = await fixture();
+    const largeRoot = await writeRelease(largeParent);
+    await NodeFSP.mkdir(NodePath.join(largeRoot, "assets"));
+    await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        NodeFSP.writeFile(
+          NodePath.join(largeRoot, "assets", `${String(index)}.bin`),
+          Buffer.alloc(900 * 1024),
+        ),
+      ),
+    );
+    await expect(loadSkillRelease(largeRoot)).rejects.toThrow("5 MiB total limit");
+  });
+
+  it("digests identical release bytes independently of file creation order", async () => {
+    const firstParent = await fixture();
+    const secondParent = await fixture();
+    const firstRoot = await writeRelease(firstParent);
+    const secondRoot = await writeRelease(secondParent);
+    await NodeFSP.writeFile(NodePath.join(firstRoot, "references", "a.md"), "A\n");
+    await NodeFSP.writeFile(NodePath.join(firstRoot, "references", "z.md"), "Z\n");
+    await NodeFSP.writeFile(NodePath.join(secondRoot, "references", "z.md"), "Z\n");
+    await NodeFSP.writeFile(NodePath.join(secondRoot, "references", "a.md"), "A\n");
+
+    expect((await loadSkillRelease(firstRoot)).digest).toBe(
+      (await loadSkillRelease(secondRoot)).digest,
+    );
   });
 
   it("quarantines malformed and duplicate releases without losing valid releases", async () => {

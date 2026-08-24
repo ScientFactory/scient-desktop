@@ -53,16 +53,14 @@ export interface ScientSkillSessionPlannerShape {
   }) => Effect.Effect<ScientSkillSessionPlan>;
 }
 
-const EMPTY_PLAN: ScientSkillSessionPlan = {
-  delivery: "none",
-  releaseKeys: new Set(),
-  diagnostics: [],
-};
-
 /** Default remains inert for tests and non-Scient compositions. */
 export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSessionPlannerShape>(
   "t3/scient/skills/ScientSkillSessionPlanner",
-  { defaultValue: () => ({ resolve: () => Effect.succeed(EMPTY_PLAN) }) },
+  {
+    defaultValue: () => ({
+      resolve: () => Effect.succeed({ delivery: "none", releaseKeys: new Set(), diagnostics: [] }),
+    }),
+  },
 ) {}
 
 const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {

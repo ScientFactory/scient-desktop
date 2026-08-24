@@ -17,6 +17,9 @@ const SEMVER_PATTERN = new RegExp(
 );
 const ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 
+const compareStrings = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
 export interface ProjectSkillLock {
   readonly formatVersion: 1;
   readonly skills: ReadonlyArray<SkillReleaseRef>;
@@ -43,7 +46,15 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
 
 async function requireRealScientDirectory(rootPath: string): Promise<void> {
   const metadataDirectory = NodePath.join(rootPath, ".scient");
-  const stat = await NodeFSP.lstat(metadataDirectory);
+  let stat;
+  try {
+    stat = await NodeFSP.lstat(metadataDirectory);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) {
+      throw new Error("The folder is not an initialized Scient project.", { cause: error });
+    }
+    throw error;
+  }
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error("The project .scient path must be a real directory.");
   }
@@ -98,7 +109,8 @@ export function parseProjectSkillLock(contents: string): ProjectSkillLock | unde
 
 export function renderProjectSkillLock(references: ReadonlyArray<SkillReleaseRef>): string {
   const skills = [...references].sort(
-    (left, right) => left.id.localeCompare(right.id) || left.version.localeCompare(right.version),
+    (left, right) =>
+      compareStrings(left.id, right.id) || compareStrings(left.version, right.version),
   );
   const seen = new Set<string>();
   for (const reference of skills) {
@@ -166,7 +178,6 @@ export async function writeProjectSkillLock(
   await readScientProjectIdentity(rootPath);
   const contents = renderProjectSkillLock(references);
   const lockPath = NodePath.join(rootPath, SCIENT_SKILLS_LOCK_FILE);
-  await NodeFSP.mkdir(NodePath.dirname(lockPath), { recursive: true });
   try {
     const existing = await NodeFSP.lstat(lockPath);
     if (!existing.isFile() || existing.isSymbolicLink()) {
