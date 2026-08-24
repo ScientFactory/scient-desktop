@@ -75,6 +75,9 @@ describe("GrokInlineSetup", () => {
 
     expect(markup).toContain("Install Grok");
     expect(markup).toContain("reviewed official Grok Build runtime");
+    expect(markup).toContain("lucide-shield-check");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
+    expect(markup).toContain("hidden size-8 in-[[data-model-picker-content=true]]:inline-flex");
     expect(markup).toContain("dark:fill-[#F5F5F5]");
   });
 
@@ -87,6 +90,9 @@ describe("GrokInlineSetup", () => {
     );
     expect(markup).toContain("Sign in with Grok");
     expect(markup).toContain("Use device code");
+    expect(markup).toContain("lucide-shield-check");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
+    expect(markup).toContain("hidden size-8 in-[[data-model-picker-content=true]]:inline-flex");
     expect(markup).toContain("border-transparent");
     expect(markup).toContain("text-primary");
     expect(markup).not.toContain("text-primary-foreground");
