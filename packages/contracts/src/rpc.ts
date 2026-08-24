@@ -28,7 +28,15 @@ import {
   EnvironmentFilePrepareInput,
   EnvironmentFilePrepareResult,
 } from "./fileOpening.ts";
-import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
+import {
+  AssetAccessError,
+  AssetCreateUrlInput,
+  AssetCreateUrlResult,
+  AttachmentCreateUploadUrlInput,
+  AttachmentCreateUploadUrlResult,
+  AttachmentDeleteInput,
+  AttachmentUploadSigningKeyError,
+} from "./assets.ts";
 import {
   BrowserPdfExportError,
   BrowserPdfExportInput,
@@ -282,6 +290,8 @@ export const WS_METHODS = {
   filesystemSubscribeFileChanges: "filesystem.subscribeFileChanges",
   assetsCreateUrl: "assets.createUrl",
   documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
+  attachmentsCreateUploadUrl: "attachments.createUploadUrl",
+  attachmentsDelete: "attachments.delete",
 
   // Provider methods
   providerUploadFeedback: "provider.uploadFeedback",
@@ -907,6 +917,16 @@ export const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
     error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
   },
 );
+export const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
+  payload: AttachmentCreateUploadUrlInput,
+  success: AttachmentCreateUploadUrlResult,
+  error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
+});
+
+export const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
+  payload: AttachmentDeleteInput,
+  error: EnvironmentAuthorizationError,
+});
 export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -1315,6 +1335,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemSubscribeFileChangesRpc,
   WsAssetsCreateUrlRpc,
   WsDocumentsPublishBrowserPdfExportRpc,
+  WsAttachmentsCreateUploadUrlRpc,
+  WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
