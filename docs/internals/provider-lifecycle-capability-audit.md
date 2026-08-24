@@ -76,7 +76,9 @@ state:
    code, cancellation, verification, and sign-out.
 5. **Entitlement and readiness:** authenticated account, subscription or billing mode, available
    models, and actual ability to start a session.
-6. **Presentation:** concise capability-driven actions, optional diagnostics, truthful account
+6. **Provider enablement:** the user's canonical enabled/disabled choice, independent from runtime,
+   credentials, and account readiness.
+7. **Presentation:** concise capability-driven actions, optional diagnostics, truthful account
    metadata, and no additional step unless safety or a real choice requires one.
 
 ## Current provider matrix
@@ -94,11 +96,41 @@ reviewed artifact, local desktop mode, and a supported target.
 | Cursor      | Custom, system, and Scient-managed. Install, managed update, repair, and private removal.                                                                                       | Browser login. Scient captures and validates the provider URL while preventing duplicate browser launches. There is no generic pasted-code step.                                                                       | Available for Cursor-owned credentials and hidden when API endpoint, API key, or token configuration owns authentication.                                                                | Existing native `cursor-agent update` path.                                                                                                                                          | Its no-browser launch mode and login environment are provider-specific reliability and security policy.                                                                                                               |
 | OpenCode    | System, custom, or remote runtime use. No Scient-managed runtime lifecycle is currently advertised.                                                                             | No single account flow: OpenCode manages credentials for many upstream LLM providers using different API-key, OAuth, environment, and local-model configurations.                                                      | A universal OpenCode sign-out would be misleading because there is no single upstream account to revoke.                                                                                 | Existing package-manager-aware and native `opencode upgrade` paths.                                                                                                                  | Keep manual/provider-specific management unless a separate multi-provider OpenCode connection project proves a truthful design. Managed local installation is a possible future capability, not a parity requirement. |
 
+## Phase 1-3 presentation evidence and accepted corrections
+
+This section records current evidence so later migrations can distinguish an intentional provider
+difference from a shared presentation defect. The accepted implementation requirements themselves
+remain in the proposal.
+
+- **Code-confirmed:** Grok and Droid currently implement their disabled cards inside provider-specific
+  inline views; the other assisted providers do not share the same presentation.
+- **Code-confirmed:** the management dialog can focus exclusively on managed-runtime content when the
+  top-level disabled snapshot reports `installed: false`, even when runtime metadata proves a managed
+  copy exists. This can hide the Enable/account handoff after a successful install.
+- **Manually observed:** Grok install, repair, removal, cancellation, and account actions work when the
+  provider is enabled. When it remains disabled after install, login becomes reachable only after the
+  separate provider toggle is changed. Droid's disabled card explains the state more clearly, but it
+  still requires leaving the lifecycle surface to enable the provider.
+- **Code-confirmed:** system-to-Scient-managed switching is currently a Codex-qualified capability and
+  its presentation is partly provider-specific. The shared runtime section can carry a secondary
+  action, but the capability has not been qualified for every other assisted provider.
+
+Classification: enabled/disabled is a shared independent lifecycle dimension, and an in-surface
+Enable handoff is a shared presentation requirement where settings are writable. The exact
+system-to-managed capability remains provider-specific until each provider passes selection, health,
+credential, removal, fallback, update, multi-instance, and platform qualification.
+
 ## Shared invariants all assisted providers should satisfy
 
 These are common guarantees, not requirements for every provider to display the same controls:
 
-- Runtime, authentication, entitlement, and readiness remain independent facts.
+- Provider enablement, runtime, authentication, entitlement, and readiness remain independent facts.
+- Disabling a provider preserves its runtime and credentials. A writable lifecycle surface
+  offers an explicit Enable action without automatically installing, signing in, or opening a
+  browser; remote and read-only surfaces fail closed with concise guidance.
+- A disabled provider retains access to advertised managed repair/remove controls. Completing an
+  install while disabled must lead to the Enable/account handoff rather than a blank or runtime-only
+  surface.
 - A healthy custom or system runtime is used without forcing a private installation.
 - Scient mutates only its own managed runtime root. Repair and remove never target custom or system
   installations.
@@ -160,6 +192,10 @@ The following patterns are not valid lifecycle capabilities:
 - repairing, updating, removing, or overwriting a custom or system installation through the managed
   runtime controls;
 - adding a Scient-owned account-creation wizard when the official provider flow owns account creation;
+- treating disabled as equivalent to not installed or signed out;
+- requiring a writable client to leave the lifecycle surface solely to enable the provider;
+- enabling a provider implicitly as a side effect of install, sign-in, or opening the lifecycle
+  surface;
 - treating authentication alone as proof of paid subscription or model access;
 - treating transient operation success, such as a completed repair, as durable provider status;
 - presenting one universal OpenCode account lifecycle over multiple unrelated upstream credential
@@ -236,17 +272,25 @@ Before declaring a provider aligned with the shared lifecycle:
 1. Refresh the exact implementation branch and relevant upstream T3 range.
 2. Revalidate its row in this matrix against code, focused tests, and current official documentation.
 3. Record runtime-source behavior for custom, system, Scient-managed, missing, and unsupported states.
-4. Exercise every advertised login method, browser owner, device or returned-code path, cancellation,
+4. Verify disabled-without-runtime and disabled-with-runtime states, direct Enable where writable,
+   read-only behavior, post-install handoff, and managed maintenance while disabled.
+5. Exercise every advertised login method, browser owner, device or returned-code path, cancellation,
    fresh-process verification, and sign-out.
-5. Exercise authenticated-but-unentitled or no-model behavior where the provider permits it.
-6. Verify managed install, provider-specific package completeness, failed/cancelled install, repair,
+6. Exercise authenticated-but-unentitled or no-model behavior where the provider permits it.
+7. Verify managed install, provider-specific package completeness, failed/cancelled install, repair,
    update, removal, restart recovery, and multiple instances on each advertised target.
-7. Verify the inherited external update path for every supported installation source.
-8. Confirm Settings and composer preserve the fastest safe path and render only server-advertised
-   capabilities.
-9. Classify every discovered difference before changing it. Do not turn an open finding into shared
-   infrastructure without evidence that its truth and failure model are actually shared.
-10. Update this audit, the proposal if a decision changes, and the canonical lifecycle documentation
+8. Verify the inherited external update path for every supported installation source.
+9. Qualify the optional system-to-managed switch separately: capability advertisement, compact
+   presentation, system/custom preservation, failure/cancel behavior, account reuse, multi-instance
+   reload, managed removal/fallback, update ownership, and platform support. Record an explicit reason
+   when the capability remains unavailable.
+10. Confirm Settings and composer preserve the fastest safe path, share proven visual/interaction
+    structure, and render only server-advertised capabilities.
+11. Run the final cross-provider visual and interaction audit in both surfaces without forcing
+    provider-specific authentication semantics into shared UI.
+12. Classify every discovered difference before changing it. Do not turn an open finding into shared
+    infrastructure without evidence that its truth and failure model are actually shared.
+13. Update this audit, the proposal if a decision changes, and the canonical lifecycle documentation
     in the same implementation PR.
 
 ## Initial recommendation
@@ -256,6 +300,12 @@ state, and presentation structure while keeping provider authentication and exce
 local. The highest-value questions to resolve during implementation are inactive managed-copy
 removal, Codex/Claude session-safe disconnect, Grok/Droid external update qualification, and
 diagnostics reachability.
+
+The accepted presentation work is narrower and already evidence-backed: Phase 4 should establish one
+shared disabled-provider/Enable handoff, normalize Settings entry and runtime-source actions, and
+qualify system-to-managed switching provider by provider. Phase 5 should migrate Antigravity onto that
+foundation. The final pass should audit Settings and composer together for residual routing, spacing,
+copy, action hierarchy, and capability inconsistencies rather than create another abstraction layer.
 
 Do not otherwise pursue button-for-button parity. Codex and Claude alternative account methods,
 Antigravity's subscription-only scope, Grok's conditional code path, Droid's ACP-negotiated actions,

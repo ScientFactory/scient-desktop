@@ -295,7 +295,10 @@ Use one lifecycle controller and one setup host. The host selects the existing p
 inline view and supplies explicit surface context.
 
 The provider-specific view remains responsible for the meaningful differences in its flow. The host
-owns only common placement, runtime ownership, account-action placement, and fallback routing.
+owns only common placement, runtime ownership, account-action placement, disabled-provider
+presentation, and fallback routing. Provider enablement remains a canonical T3 Settings mutation,
+not a connection/runtime lifecycle operation: a surface that is allowed to change it supplies one
+explicit enable callback to the host, while remote or read-only surfaces fail closed.
 
 ## What is currently strong and should be preserved
 
@@ -443,6 +446,21 @@ update capability. Provider-specific login methods must remain inside the provid
 The internal provider document's list of current vertical implementations omits Cursor even though
 Cursor is implemented on current `main`.
 
+### 9. Disabled-provider setup can become a dead end
+
+Phase 3 manual QA exposed an independent state that the current presentation does not handle
+consistently. Grok and Droid render provider-local disabled cards, while the other assisted views do
+not share that state. More importantly, a disabled provider may already have a healthy
+Scient-managed runtime even though its top-level snapshot is intentionally not runnable. The dialog's
+runtime-focused routing can then hide both the provider view and the next account action after a
+successful install.
+
+Disabled is neither missing runtime nor signed out. The shared surface must preserve any available
+managed repair/remove controls, explain the disabled state concisely, and offer one direct Enable
+action when the current client can update provider settings. Enabling must be explicit, keep the
+surface open, refresh canonical state, and reveal the natural next action without automatically
+installing or launching sign-in.
+
 ## What should be shared
 
 ### Backend
@@ -465,7 +483,9 @@ Cursor is implemented on current `main`.
 - lifecycle RPC controller;
 - setup host and surface context;
 - title, icon, spacing, status, error, and action structure;
+- disabled-provider presentation and the optional surface-owned enable handoff;
 - runtime management section;
+- runtime-source presentation and compact capability-driven system-to-managed action placement;
 - authorization-code form;
 - diagnostics;
 - transient success notification;
@@ -486,6 +506,11 @@ Cursor is implemented on current `main`.
 - provider-specific environment variables;
 - provider-specific copy and alternative methods; or
 - a callback-heavy managed-runtime factory for Codex's genuinely different runtime selection.
+
+Provider enablement must not be added to the lifecycle RPC controller or manager. It is existing T3
+configuration state with different ownership and persistence semantics. The shared host may present
+it and invoke a supplied settings callback, but it must not hide that mutation behind install or
+sign-in.
 
 The five small native managed-runtime wrappers may look repetitive, but they are clear declarations of
 provider policy. They should not be replaced merely to reduce line count.
@@ -516,6 +541,12 @@ Scient-managed runtime. If the existing installation works, use it without requi
 reinstall. If no working installation exists and the target is fully assisted, offer the reviewed
 private install directly. Never remove, repair, or overwrite a system/custom installation through the
 managed-runtime controls.
+
+Also preserve provider enablement as a separate user choice. A disabled provider may still have a
+working system, custom, or Scient-managed runtime and provider-owned credentials. Disabling must not
+delete either. When a local writable surface offers Enable, the action changes only the canonical
+enabled setting; it must not silently install, sign in, or open a browser. Managed maintenance remains
+reachable while disabled whenever the server advertises it.
 
 ## Optional switch from a system runtime to Scient-managed
 
@@ -563,6 +594,13 @@ The rules are:
     T3's external update presentation.
 12. **Platform qualification remains mandatory.** Offer the switch only in the local desktop app on a
     target with a reviewed artifact and completed install/switch/remove/fallback qualification.
+
+Phase 4 must evaluate every assisted provider against these rules and record one of three outcomes:
+qualified and advertised, intentionally unsupported with the reason, or still blocked on named
+evidence. The shared UI should be able to render the capability for any provider, but no provider
+should gain it for visual parity alone. Exactly one compact switch action should be visible in the
+management surface when advertised; diagnostics may explain the runtime but must not duplicate the
+action.
 
 ## Resolution after independent review
 
@@ -756,10 +794,43 @@ still move pixels. Require before/after screenshots for Grok and at least one ot
 plus focused interaction checks, before calling it behavior-preserving. Antigravity continues using
 its current generic management-dialog path until PR 5.
 
-### PR 4: Settings entry normalization
+### Phase 4: Shared lifecycle presentation and Settings entry normalization
+
+Treat this as one integrated product phase. Prefer two stacked review units if the combined diff would
+hide behavior changes: Phase 4A establishes the shared state/presentation foundation, then Phase 4B
+adopts it in Settings and qualifies runtime-source actions. They must not create temporary competing
+UI, and neither reaches `main` independently of PR #150's completed lifecycle work.
+
+#### Phase 4A: Shared state and presentation foundation
+
+- Move the disabled-provider state out of Grok and Droid's provider-local views and into the shared
+  setup host. Supply a surface-owned enable callback rather than adding enablement to the lifecycle
+  controller. When permitted, Enable updates the existing canonical provider setting, keeps the
+  surface open, waits for the refreshed snapshot, and then reveals Install, Sign in, or Ready without
+  starting that next action automatically. When the environment is remote, read-only, or otherwise
+  unable to mutate settings, show a concise explanation without a broken button.
+- Fix dialog focus arbitration so a completed install cannot suppress the disabled/account handoff.
+  A disabled provider with a managed runtime may show both managed maintenance and the concise Enable
+  state; Repair and Remove remain available when advertised.
+- Establish the shared visual grammar that Phase 4B and Phase 5 will reuse: one title/header, compact
+  status rows, stable icon and text alignment, responsive action placement, one action hierarchy for
+  primary, secondary, destructive, and cancel actions, diagnostics behind disclosure, and transient
+  operation feedback. Reuse existing components where they already express these rules; do not create
+  a new component merely to rename markup.
+- Normalize runtime-source presentation so a healthy system runtime remains primary and an advertised
+  system-to-managed option appears exactly once as a compact secondary action outside diagnostics.
+  Remove Codex-specific wording from shared presentation and use provider metadata for the label.
+
+Add focused tests for disabled providers with missing and managed runtimes, writable and read-only
+enablement, no automatic install/sign-in after enable, maintenance while disabled, and post-install
+handoff. Require before/after screenshots for the shared Settings and composer states affected by the
+layout foundation.
+
+#### Phase 4B: Settings adoption and runtime-source qualification
 
 - Replace the Codex-specific row component with one shared lifecycle entry action.
-- Render Install, Sign in, Continue, or Manage from canonical lifecycle presentation.
+- Render Enable, Install, Sign in, Continue, Update, or Manage from canonical lifecycle presentation
+  and explicit surface capabilities.
 - For Install, open directly on the reviewed install plan by passing `initialRuntimeAction: install`;
   do not add a separate setup/review landing page.
 - Preserve the current sign-in interaction budget. Where a validated existing Settings action already
@@ -770,20 +841,23 @@ its current generic management-dialog path until PR 5.
   existing provider action helper, not in inherited `ProviderInstanceCard` and not in a mount effect.
 - Preserve and generalize the one-click Update action when either `runtime.actions` advertises
   `update` or an external version advisory is `behind_latest` and explicitly advertises `canUpdate`.
-- Route managed Update through `planRuntime` then `startRuntime`; do not bypass the pinned plan or
-  catalog revision.
-- Keep T3's `server.updateProvider`, update notifications, update commands, and external update-state
-  publication unchanged.
-- When the server advertises managed `install` beside a healthy system source, render the optional
-  `Switch to Scient-managed` action as a compact secondary runtime action. Open its reviewed plan
-  directly and preserve the provider-wide/custom-path explanation.
-- Do not add this action to providers whose backend does not advertise and prove the capability.
+  Route managed Update through `planRuntime` then `startRuntime`; do not bypass the pinned plan or
+  catalog revision. Keep T3's `server.updateProvider`, notifications, commands, and external
+  update-state publication unchanged.
+- Qualify the optional system-to-managed switch separately for Codex, Claude, Antigravity, Grok,
+  Droid, and Cursor. Record why each provider is qualified, intentionally unsupported, or still
+  blocked; do not infer support from a managed artifact alone. Where qualification succeeds, add the
+  explicit server capability and route the compact action to the reviewed plan. Do not advertise it
+  for an unproven provider.
 
-Do not redesign the provider card in this architecture PR. Characterize Codex's current Install,
-Sign in, Update, Retry, Continue, and Manage paths, plus T3 external-update presentation, before
-replacing its special component.
+This is an intentional, bounded presentation change, not a broad provider-card redesign. Preserve
+provider-specific authentication views and the compact composer fast path. Characterize Codex's
+current Install, Sign in, Update, Retry, Continue, and Manage paths, plus T3 external-update
+presentation, before replacing its special component. Add exact-click-count and capability-presence
+tests, including a single generic system-to-managed placement and no action when the capability is
+absent.
 
-### PR 5: Antigravity assisted-dialog migration and documentation completion
+### Phase 5 / PR 5: Antigravity assisted-dialog migration
 
 Before moving it, add characterization for every current state:
 
@@ -803,6 +877,40 @@ Before moving it, add characterization for every current state:
 
 Then route Antigravity through the assisted host and remove all Antigravity-only code from the generic
 dialog. The generic dialog remains a truthful fallback for manual, unknown, and future fork drivers.
+Antigravity must reuse Phase 4's shared disabled state, runtime-source row, action hierarchy, and
+surface-owned enable handoff rather than recreating them in its provider view. Add explicit coverage
+for disabled-without-runtime, disabled-with-managed-runtime, direct Enable, and maintenance while
+disabled, while leaving Google sign-in, returned-code handling, verification, and logout fallback
+provider-specific.
+
+### Phase 6 / final cross-provider polish, documentation, and integrated audit
+
+After Antigravity uses the same foundation, run one cross-provider convergence pass over Codex,
+Claude, Antigravity, Grok, Droid, and Cursor in both Settings and composer. This phase is not another
+architecture rewrite. It should remove only residual duplicated presentation and fix concrete visual,
+copy, routing, or capability inconsistencies exposed by the integrated app.
+
+Verify and polish:
+
+- one outer card, one title-bar close control, and no nested cards for ordinary status rows;
+- consistent provider icon sizing, title alignment, spacing, responsive widths, and action placement;
+- concise disabled, install, sign-in, ready, failure, repair, update, remove, sign-out, and cancel copy;
+- primary, secondary, destructive, and cancel styling without large secondary actions dominating a
+  healthy state;
+- no percentage display unless the backend supplies meaningful progress;
+- short transient success feedback rather than durable operation history;
+- diagnostics and raw paths behind a low-prominence disclosure;
+- the fastest safe composer path, with full maintenance confined to Manage;
+- direct Enable and post-install handoff consistency across every supported assisted provider;
+- exactly one compact system-to-managed action where the server advertises a qualified capability;
+  and
+- truthful remote, read-only, manual-only, unsupported, unentitled, and no-model states.
+
+Use screenshots and the complete isolated-app matrix as acceptance evidence. If the audit reveals a
+real semantic difference, document and preserve it instead of forcing visual parity. If it reveals
+only provider-local duplication of a proven shared rule, remove that duplication here.
+
+### Documentation completion
 
 Update documentation to include Cursor and describe exact product semantics:
 
@@ -815,8 +923,8 @@ Update documentation to include Cursor and describe exact product semantics:
 - Removing a runtime does not sign out the provider account.
 - System and custom installations are never modified by managed removal.
 
-Complete the canonical internal lifecycle documentation described below and verify it against the
-landed implementation.
+Complete the canonical internal lifecycle documentation described below during Phase 6 and verify it
+against the landed implementation and final provider qualification results.
 
 ## Required implementation documentation
 
@@ -851,9 +959,9 @@ Use tables for ownership and provider differences where they improve scanning, b
 focused on behavior and rationale rather than file-by-file narration. Link to provider-specific user
 documentation for installation/account instructions instead of duplicating it internally.
 
-After PR 5 and the final qualification pass, fold every accepted architectural rule into the canonical
-lifecycle documentation, mark this proposal superseded, and link the canonical document and landed
-implementation pull requests. Preserve this proposal as historical design context rather than
+After Phase 6 and the final qualification pass, fold every accepted architectural rule into the
+canonical lifecycle documentation, mark this proposal superseded, and link the canonical document and
+landed implementation pull requests. Preserve this proposal as historical design context rather than
 maintaining it as a second source of current truth. The companion audit should then remain as the
 canonical provider matrix or be folded into that same documentation without losing its evidence and
 provider-specific rationale.
@@ -866,8 +974,12 @@ The shared work must preserve or reduce the number of user decisions:
 
 - **Install:** one click from Settings/composer opens the actual reviewed plan; one confirmation starts
   installation. No intermediate "review setup" card before the plan.
+- **Enable:** when a provider is disabled and the surface can update provider settings, one explicit
+  Enable action changes only that setting and keeps the lifecycle surface open. It must not
+  automatically install, sign in, or open a browser.
 - **Switch to Scient-managed:** when a healthy system runtime advertises the option, keep it secondary
-  and open the same reviewed install plan. The Ready state remains primary.
+  and open the same reviewed install plan. The Ready state remains primary, and the action appears
+  exactly once rather than being repeated inside diagnostics.
 - **Repair:** one click from Manage starts the safe same-version replacement; show a short transient
   success message when verification completes.
 - **Update:** retain T3's existing one-click update where advertised; managed update still uses the
@@ -889,6 +1001,7 @@ raw paths, commands, and provider diagnostics never dominate the primary state.
 
 Each lifecycle-enabled provider row has one concise entry action:
 
+- `Enable` when the provider is disabled and this client may update its settings;
 - `Update` when the server explicitly advertises a safe managed or external update;
 - `Install` when a supported runtime is missing;
 - `Sign in` when the runtime works but the account is disconnected;
@@ -899,13 +1012,17 @@ The management dialog shows only server-advertised actions. Diagnostics remain b
 
 A working system/custom runtime should show the account action or ready state, not an Install prompt.
 Managed repair/remove controls appear only when the server reports a Scient-managed runtime and
-advertises those actions.
+advertises those actions. A disabled provider is not treated as uninstalled: show the concise Enable
+handoff alongside any advertised managed maintenance, then derive the next state from the refreshed
+canonical snapshot.
 
 ### Composer
 
 The composer remains optimized for quick setup:
 
 - install when missing;
+- enable directly when disabled and the current surface can update settings, without leaving the
+  setup surface;
 - sign in with the provider's primary method;
 - expose alternatives only when meaningful;
 - show device or pasted code only when the active provider operation supplies or accepts it; and
@@ -930,6 +1047,10 @@ The UI must distinguish:
 - recoverable runtime failure; and
 - manual/advanced-only setup.
 
+The same semantic states and action hierarchy apply in Settings and composer, but their density may
+differ: composer prioritizes the next action, while Manage exposes maintenance and diagnostics. Shared
+infrastructure must not make the composer carry the full Settings surface.
+
 ## Validation strategy
 
 ### Automated layers
@@ -951,12 +1072,17 @@ The UI must distinguish:
 
 ### Manual isolated-app matrix
 
-For each PR, manually exercise only the providers and lifecycle states that PR can affect. After PR 5
-and one final T3 refresh, run the complete matrix below once as the release gate.
+For each PR, manually exercise only the providers and lifecycle states that PR can affect. After
+Phase 6 and one final T3 refresh, run the complete matrix below once as the release gate.
 
 For Codex, Claude, Antigravity, Grok, Droid, and Cursor, exercise where supported:
 
 - missing system and managed runtime;
+- disabled with no runtime, including direct Enable and the resulting Install state;
+- disabled with a healthy system/custom or Scient-managed runtime, including direct Enable and the
+  resulting Sign in or Ready state;
+- disabled in a remote/read-only client, with no actionable Enable control;
+- managed repair/remove while disabled when advertised;
 - install review;
 - cancelled install;
 - successful install;
@@ -1023,8 +1149,11 @@ correct state into a new abstraction is not itself a success metric.
 - Treating every browser flow as identical.
 - Inferring subscription entitlement from authentication alone.
 - Refactoring model discovery or execution.
-- Redesigning every provider card during infrastructure work.
+- Rebuilding every provider card or forcing identical provider flows. Phase 4 establishes only the
+  proven shared visual/interaction grammar; Phase 6 performs bounded integrated polish.
 - Adding managed repair or removal where the backend does not advertise it.
+- Automatically enabling a provider as a side effect of install, sign-in, or opening its lifecycle
+  surface.
 - Creating a universal provider UI state hook.
 - Extracting the lifecycle overlays before conflict or policy evidence justifies it.
 - Mixing this work with an upstream T3 merge.
@@ -1045,6 +1174,10 @@ The work is successful when:
 - working system/custom installations remain first-class and are never mutated by managed controls;
 - a system-to-managed switch appears only as a secondary server-advertised capability, preserves
   custom paths, and has proven failure, removal, fallback, account, multi-instance, and update behavior;
+- every assisted provider has an explicit system-to-managed qualification result, and every qualified
+  provider uses the same compact non-dominant presentation;
+- disabled providers have one truthful shared presentation, can be enabled in place when permitted,
+  retain advertised managed maintenance, and never auto-install or auto-start sign-in;
 - every advertised provider/target passes its specific lifecycle characterization and platform gate;
 - Settings and composer no longer maintain separate provider routing tables;
 - Antigravity no longer contaminates the generic dialog path;
@@ -1056,7 +1189,9 @@ The work is successful when:
   and its rationale, the extension path, and required qualification evidence;
 - focused automated suites and isolated real-app lifecycle matrices pass; and
 - PR #150's cumulative diff and integrated app pass final review before any lifecycle implementation
-  reaches `main`; and
+  reaches `main`;
+- the final Settings/composer audit confirms consistent shared structure without erasing provider
+  differences; and
 - the final architecture is easier to extend without copying an entire provider flow.
 
 ## Final first-principles check
@@ -1068,7 +1203,8 @@ This revised plan remains aligned with the root goals:
   backend extractions are limited to three already-repeated mechanical operations.
 - **Fast for users:** sharing presentation does not impose one universal wizard. Existing safe one-click
   paths remain one-click, method choice appears only where meaningful, and maintenance actions open on
-  the actionable state rather than an intermediate explanation.
+  the actionable state rather than an intermediate explanation. Disabled providers can be enabled in
+  place without a settings round trip or an automatic follow-on side effect.
 - **More reliable:** it first closes the manager-lifetime gap, puts generic runtime invariants at the
   generic runtime boundary, preserves archive-security tests, and adds the missing Grok conformance
   test before changing provider UI routing.
@@ -1093,7 +1229,9 @@ Proceed incrementally after the separate T3 synchronization. Preserve the existi
 managers, runtime package, optional provider action seams, and canonical server snapshot. Land the
 characterization foundation, harden manager lifetime, extract only low-level duplicated mechanics,
 establish one explicit assisted frontend host, preserve a generic quick Update path, normalize the
-Settings entry, and only then migrate Antigravity under strong characterization tests.
+Settings entry and shared presentation behavior, and only then migrate Antigravity under strong
+characterization tests. Finish with one integrated cross-provider polish, documentation, and manual
+acceptance pass rather than redesigning each provider independently.
 
 The goal is not maximum abstraction. It is one reliable shared lifecycle where the underlying
 behavior is genuinely shared, with explicit provider-specific adapters everywhere the providers
