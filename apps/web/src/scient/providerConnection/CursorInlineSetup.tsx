@@ -1,6 +1,7 @@
 import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -29,7 +30,10 @@ import {
   isManagedRuntimeActionDurablySettled,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -335,7 +339,13 @@ export function CursorInlineSetup(props: {
           title="Cursor needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void repair()} size="sm" type="button">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void repair()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Cursor
           </Button>
         </AssistedSetupActions>
@@ -368,8 +378,14 @@ export function CursorInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button">
-              {error ? <RefreshCwIcon aria-hidden /> : null}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {error ? "Retry installation" : "Install Cursor"}
             </Button>
           </AssistedSetupActions>
@@ -472,8 +488,14 @@ export function CursorInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button">
-              {error ? "Try again" : "Update Cursor"}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void update()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Cursor"}
             </Button>
           </AssistedSetupActions>
         </SetupFrame>
@@ -548,7 +570,13 @@ export function CursorInlineSetup(props: {
         title={signInError ? "Cursor sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button onClick={() => void signIn()} size="sm" type="button">
+        <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try again" : "Sign in to Cursor"}
         </Button>

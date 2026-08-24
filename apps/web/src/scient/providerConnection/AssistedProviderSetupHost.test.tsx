@@ -177,6 +177,10 @@ describe("AssistedProviderSetupHost", () => {
 
     expect(markup).toContain(`${name} is disabled`);
     expect(markup).toContain(">Enable<");
+    expect(markup).toContain("lucide-power");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain(`${name} setup`);
     expect(controllerFactory).not.toHaveBeenCalled();
   });

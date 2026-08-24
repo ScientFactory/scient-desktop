@@ -47,7 +47,10 @@ import {
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import {
   AssistedProviderSetupHost,
@@ -520,10 +523,10 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   {operation.authorizationUrl ? (
                     <Button
                       type="button"
-                      className={isAntigravity ? "w-fit" : "w-full"}
+                      className={isAntigravity ? "w-fit" : PRIMARY_GHOST_ACTION_CLASS}
                       onClick={() => void openAuthorizationPage(operation.authorizationUrl!)}
-                      size={isAntigravity ? "sm" : "default"}
-                      variant={isAntigravity ? "ghost-muted" : "default"}
+                      size="sm"
+                      variant={isAntigravity ? "ghost-muted" : "ghost"}
                     >
                       <ExternalLinkIcon />
                       {operation.authorizationUrlKind === "manual_fallback"
@@ -635,11 +638,18 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   </Button>
                 ) : null}
                 <Button
+                  className={PRIMARY_GHOST_ACTION_CLASS}
                   type="button"
                   disabled={isWorking}
                   onClick={() => void start(preferredMethod)}
+                  size="sm"
+                  variant="ghost"
                 >
-                  {pendingAction === "browser" ? <LoaderIcon className="animate-spin" /> : null}
+                  {pendingAction === "browser" ? (
+                    <LoaderIcon className="animate-spin" />
+                  ) : (
+                    <ExternalLinkIcon />
+                  )}
                   {isAntigravityGoogle ? "Sign in with Google" : "Continue in browser"}
                 </Button>
               </div>

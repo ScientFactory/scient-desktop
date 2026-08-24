@@ -1,5 +1,11 @@
 import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
-import { LoaderIcon, LogOutIcon, ShieldCheckIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  LoaderIcon,
+  LogOutIcon,
+  PowerIcon,
+  ShieldCheckIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -14,7 +20,10 @@ import { CodexInlineSetup } from "./CodexInlineSetup";
 import { CursorInlineSetup } from "./CursorInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
 import { GrokInlineSetup } from "./GrokInlineSetup";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import {
   isProviderAccountPresentedAsConnected,
   providerLifecycleFailureMessage,
@@ -272,8 +281,19 @@ function DisabledProviderSetup(props: {
       />
       {canEnable ? (
         <AssistedSetupActions>
-          <Button disabled={enabling} onClick={() => void runEnable()} size="sm" type="button">
-            {enabling ? <LoaderIcon aria-hidden className="animate-spin" /> : null}
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            disabled={enabling}
+            onClick={() => void runEnable()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {enabling ? (
+              <LoaderIcon aria-hidden className="animate-spin" />
+            ) : (
+              <PowerIcon aria-hidden />
+            )}
             {enabling ? "Enabling…" : "Enable"}
           </Button>
         </AssistedSetupActions>

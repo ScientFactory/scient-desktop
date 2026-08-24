@@ -73,7 +73,6 @@ function render(value: ServerProvider): string {
     <ProviderSettingsLifecycleAction
       displayName={value.displayName ?? "Provider"}
       environmentId={EnvironmentId.make("local")}
-      onEnable={vi.fn()}
       onManage={vi.fn()}
       provider={value}
     />,
@@ -82,9 +81,18 @@ function render(value: ServerProvider): string {
 
 describe("ProviderSettingsLifecycleAction", () => {
   it("uses one shared component for healthy, missing, disabled, and update states", () => {
-    expect(render(provider({ source: "system" }))).toContain(">Manage<");
-    expect(render(provider({ source: "missing" }))).toContain(">Install<");
-    expect(render(provider({ source: "system", enabled: false }))).toContain(">Enable<");
+    const manage = render(provider({ source: "system" }));
+    const install = render(provider({ source: "missing" }));
+
+    expect(manage).toContain(">Manage<");
+    expect(manage).toContain("lucide-settings-2");
+    expect(manage).toContain("border-transparent");
+    expect(manage).toContain("text-muted-foreground");
+    expect(manage).not.toContain("text-primary");
+    expect(install).toContain(">Install<");
+    expect(install).toContain("lucide-download");
+    expect(install).toContain("text-primary");
+    expect(render(provider({ source: "system", enabled: false }))).toContain(">Manage<");
     expect(
       render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
     ).toContain(">Update<");

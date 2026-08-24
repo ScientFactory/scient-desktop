@@ -72,6 +72,9 @@ describe("AntigravityInlineSetup", () => {
 
     expect(markup).toContain("Antigravity is installed");
     expect(markup).toContain("Sign in with Google");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).toContain(
       "Sign in with the Google account for your existing subscription. Scient never sees your password.",
     );

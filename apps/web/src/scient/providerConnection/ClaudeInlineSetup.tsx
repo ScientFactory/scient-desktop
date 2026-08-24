@@ -1,6 +1,7 @@
 import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -33,7 +34,10 @@ import {
 } from "./providerConnectionPresentation";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -337,7 +341,13 @@ export function ClaudeInlineSetup(props: {
           title="Claude needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void repair()} size="sm" type="button">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void repair()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Claude
           </Button>
         </AssistedSetupActions>
@@ -370,8 +380,14 @@ export function ClaudeInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button">
-              {error ? <RefreshCwIcon aria-hidden /> : null}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {error ? "Retry installation" : "Install Claude"}
             </Button>
           </AssistedSetupActions>
@@ -489,8 +505,14 @@ export function ClaudeInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button">
-              {error ? "Try again" : "Update Claude"}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void update()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Claude"}
             </Button>
           </AssistedSetupActions>
         </SetupFrame>
@@ -579,7 +601,13 @@ export function ClaudeInlineSetup(props: {
               : "Use Claude subscription"}
           </Button>
         ) : null}
-        <Button onClick={() => void signIn()} size="sm" type="button">
+        <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
             ? "Try sign in again"

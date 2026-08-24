@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -52,6 +53,12 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: symbol) =>
     atom === atoms.plan ? commands.plan : atom === atoms.start ? commands.start : commands.cancel,
+}));
+
+vi.mock("../../components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render }: { render: ReactElement }) => render,
+  TooltipPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
 import {
@@ -130,7 +137,7 @@ describe("ProviderRuntimeSection", () => {
     expect(commands.start).not.toHaveBeenCalled();
   });
 
-  it("labels any server-qualified system-to-managed action with the provider name", () => {
+  it("presents a qualified system-to-managed action as a compact secondary choice", () => {
     hooks.beginRender();
     const markup = renderToStaticMarkup(
       ProviderRuntimeSection({
@@ -159,8 +166,16 @@ describe("ProviderRuntimeSection", () => {
       }),
     );
 
-    expect(markup).toContain("Use Scient-managed Grok");
+    expect(markup).toContain("System installation");
+    expect(markup).toContain('aria-label="Use Scient-managed Grok"');
+    expect(markup).toContain(">Use Scient-managed</button>");
+    expect(markup).toContain("Your system installation stays unchanged and remains available.");
     expect(markup).not.toContain("Use Scient-managed Codex");
+    const actionIndex = markup.indexOf(">Use Scient-managed</button>");
+    const actionStart = markup.lastIndexOf("<button", actionIndex);
+    const actionMarkup = markup.slice(actionStart, actionIndex);
+    expect(actionMarkup).toContain("text-muted-foreground");
+    expect(actionMarkup).not.toContain("bg-primary");
   });
 
   it("keeps the managed install review flat in the Antigravity dialog", async () => {
@@ -196,6 +211,9 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("Source");
     expect(markup).not.toContain("rounded-lg border");
     expect(markup).not.toContain("bg-primary/[0.03]");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
   });
 
   it("keeps removal confirmation focused on the decision", async () => {

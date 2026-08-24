@@ -2,6 +2,7 @@ import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contract
 import {
   CheckCircle2Icon,
   CopyIcon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -36,7 +37,10 @@ import {
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -286,7 +290,13 @@ export function CodexInlineSetup(props: {
           title="Codex needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void repair()} size="sm" type="button">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void repair()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Codex
           </Button>
         </AssistedSetupActions>
@@ -319,8 +329,14 @@ export function CodexInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button">
-              {error ? <RefreshCwIcon aria-hidden /> : null}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {error ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
@@ -446,8 +462,14 @@ export function CodexInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button">
-              {error ? "Try again" : "Update"}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void update()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update"}
             </Button>
           </AssistedSetupActions>
         </SetupFrame>
@@ -518,7 +540,13 @@ export function CodexInlineSetup(props: {
               : "Use browser sign-in"}
           </Button>
         ) : null}
-        <Button onClick={() => void signIn()} size="sm" type="button">
+        <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
             ? "Try again"

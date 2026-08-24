@@ -87,6 +87,9 @@ describe("GrokInlineSetup", () => {
     );
     expect(markup).toContain("Sign in with Grok");
     expect(markup).toContain("Use device code");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("Grok owns the secure flow");
     expect(markup).not.toContain("card");
   });

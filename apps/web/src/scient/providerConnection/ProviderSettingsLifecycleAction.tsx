@@ -3,21 +3,32 @@ import type {
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
-import { DownloadIcon, LoaderIcon, LogInIcon, PowerIcon, RefreshCwIcon } from "lucide-react";
+import {
+  DownloadIcon,
+  LoaderIcon,
+  LogInIcon,
+  RefreshCwIcon,
+  Settings2Icon,
+  WrenchIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
+import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import {
   providerSettingsLifecyclePresentation,
   type ProviderSettingsLifecyclePresentation,
 } from "./providerSettingsLifecyclePresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
+const SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS = `h-7 gap-1.5 px-2.5 text-xs ${PRIMARY_GHOST_ACTION_CLASS}`;
+const SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS =
+  "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground [--control-icon-color:currentColor] hover:bg-accent hover:text-foreground";
+
 export type ProviderSettingsPrimaryAction =
-  | { readonly kind: "enable" }
   | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
   | { readonly kind: "managed-update" }
   | { readonly kind: "codex-browser-sign-in" }
@@ -31,8 +42,6 @@ export function resolveProviderSettingsPrimaryAction(input: {
   readonly canRunExternalUpdate: boolean;
 }): ProviderSettingsPrimaryAction {
   switch (input.presentation.actionKind) {
-    case "enable":
-      return { kind: "enable" };
     case "runtime":
       return input.presentation.runtimeAction === "update"
         ? { kind: "managed-update" }
@@ -64,7 +73,6 @@ export function ProviderSettingsLifecycleAction(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
-  readonly onEnable: () => void;
   readonly onManage: (runtimeAction?: ProviderManagedRuntimeAction) => void;
   readonly onRunExternalUpdate?: (() => void) | undefined;
   readonly externalUpdateRunning?: boolean | undefined;
@@ -98,17 +106,9 @@ export function ProviderSettingsLifecycleAction(props: {
 
   const externallyUpdating =
     primaryAction.kind === "external-update" && props.externalUpdateRunning === true;
-  const primary =
-    primaryAction.kind === "enable" ||
-    primaryAction.kind === "external-update" ||
-    (primaryAction.kind === "open" && primaryAction.runtimeAction !== null) ||
-    presentation.actionKind === "sign-in";
 
   const run = () => {
     switch (primaryAction.kind) {
-      case "enable":
-        props.onEnable();
-        return;
       case "external-update":
         props.onRunExternalUpdate?.();
         return;
@@ -120,24 +120,30 @@ export function ProviderSettingsLifecycleAction(props: {
 
   return (
     <Button
-      className="h-7 gap-1.5 px-2.5 text-xs"
+      className={
+        presentation.actionKind === "manage"
+          ? SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS
+          : SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS
+      }
       disabled={externallyUpdating}
       onClick={run}
       size="sm"
       type="button"
-      variant={primary ? "default" : "outline"}
+      variant="ghost"
     >
       {externallyUpdating || presentation.busy ? (
         <LoaderIcon className="animate-spin" />
-      ) : primaryAction.kind === "enable" ? (
-        <PowerIcon />
       ) : presentation.actionKind === "sign-in" ? (
         <LogInIcon />
       ) : primaryAction.kind === "external-update" || presentation.runtimeAction === "update" ? (
         <RefreshCwIcon />
       ) : presentation.runtimeAction === "install" ? (
         <DownloadIcon />
-      ) : null}
+      ) : presentation.runtimeAction === "repair" ? (
+        <WrenchIcon />
+      ) : (
+        <Settings2Icon />
+      )}
       {externallyUpdating ? "Updating" : presentation.actionLabel}
     </Button>
   );
@@ -173,11 +179,12 @@ function CodexBrowserSignInButton(props: {
 
   return (
     <Button
-      className="h-7 gap-1.5 px-2.5 text-xs"
+      className={SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS}
       disabled={pending}
       onClick={() => void signIn()}
       size="sm"
       type="button"
+      variant="ghost"
     >
       {pending ? <LoaderIcon className="animate-spin" /> : <LogInIcon />}
       {pending ? "Signing in" : "Sign in"}
@@ -215,11 +222,12 @@ function ManagedRuntimeUpdateButton(props: {
 
   return (
     <Button
-      className="h-7 gap-1.5 px-2.5 text-xs"
+      className={SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS}
       disabled={pending}
       onClick={() => void update()}
       size="sm"
       type="button"
+      variant="ghost"
     >
       {pending ? <LoaderIcon className="animate-spin" /> : <RefreshCwIcon />}
       {pending ? "Updating" : "Update"}
