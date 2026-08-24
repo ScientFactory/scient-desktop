@@ -11,6 +11,7 @@
     "dev:marketing": "vp run --filter @t3tools/marketing dev",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "dev:app": "node scripts/local-dev-app.mjs run",
+    "dev:app:start": "node scripts/local-dev-app.mjs start",
     "dev:app:install": "node scripts/local-dev-app.mjs install",
     "dev:app:logs": "node scripts/local-dev-app.mjs logs",
     "dev:app:status": "node scripts/local-dev-app.mjs status",

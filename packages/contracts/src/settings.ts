@@ -23,6 +23,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import { VoiceLanguagePreference } from "./voice.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -128,6 +129,7 @@ export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationM
 export const ContentDirection = Schema.Literals(["auto", "rtl", "ltr"]);
 export type ContentDirection = typeof ContentDirection.Type;
 export const DEFAULT_CONTENT_DIRECTION: ContentDirection = "auto";
+export const DEFAULT_VOICE_LANGUAGE_PREFERENCE: VoiceLanguagePreference = "auto";
 
 /**
  * A user-chosen font family (a single name or a comma-separated list). Empty
@@ -261,6 +263,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  voiceTranscriptCorrectionEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  voiceLanguagePreference: VoiceLanguagePreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_LANGUAGE_PREFERENCE)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
@@ -1007,6 +1015,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  voiceTranscriptCorrectionEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceLanguagePreference: Schema.optionalKey(VoiceLanguagePreference),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

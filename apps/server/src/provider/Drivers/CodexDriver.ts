@@ -44,6 +44,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeCodexConnectionActions } from "../../scient/providerLifecycle/CodexConnectionActions.ts";
 import { makeCodexManagedRuntimeResolution } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
+import { makeCodexVoiceTranscriptCorrection } from "../../scient/voice/CodexVoiceTranscriptCorrection.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -192,6 +193,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
+      const voiceTranscriptCorrection = yield* makeCodexVoiceTranscriptCorrection(
+        effectiveConfig,
+        processEnv,
+      );
       const connectionActions = makeCodexConnectionActions(
         effectiveConfig,
         serverConfig.cwd,
@@ -245,6 +250,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        voiceTranscriptCorrection,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;

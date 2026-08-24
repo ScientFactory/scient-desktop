@@ -2,7 +2,7 @@
 
 Status: Active maintainer runbook
 Owner: ScientFactory
-Last updated: 2026-08-07
+Last updated: 2026-08-24
 Purpose: Defines the one canonical Scient development baseline and the isolated worktree runtimes used to review changes safely.
 
 ## Outcome And Boundary
@@ -24,7 +24,7 @@ Both roles stay separate from the current Scient app and from future release
 identity:
 
 - stable launcher display name: `Scient (Dev) Stable`;
-- candidate worktree display name: `Scient (Dev)`;
+- candidate worktree display name: `Scient (Dev) · <worktree label>`;
 - development protocol: `scient-next-dev://`;
 - worktree-specific macOS bundle identifier;
 - worktree-specific ports;
@@ -34,9 +34,9 @@ identity:
 “Stable” here describes the local development role only. It is not a release
 channel, signing status, production guarantee, or permission to publish.
 
-Cloud, telemetry delivery, background service installation, product updater
-polling, signing, and publication remain disabled by the candidate safety
-envelope. The local `main` watcher below only refreshes this development
+Cloud, telemetry delivery, product background-service installation, product
+updater polling, release signing, and publication remain disabled by the
+candidate safety envelope. The local `main` watcher below only refreshes this development
 checkout; it is not a product updater. A working local dev app does not
 authorize release, cutover, or user-data import.
 
@@ -79,8 +79,8 @@ pnpm dev:app:install -- --stable --replace
 Never use `--replace` merely because another worktree is convenient. Confirm
 the previous owner is stopped, clean, and intentionally superseded first.
 
-Clicking the installed app directly starts the stable `pnpm dev:app` runtime in
-its recorded checkout using the exact Node and pnpm runtime captured during
+Clicking the installed app directly starts the stable background runtime in its
+recorded checkout using the exact Node and pnpm runtime captured during
 installation. It does not use Terminal automation or request permission to
 control another app.
 Stable launches write an append-only development log to
@@ -93,11 +93,17 @@ their output in that terminal instead.
 Run from the checkout whose code must be tested:
 
 ```sh
-pnpm dev:app
+pnpm dev:app:start
 pnpm dev:app:logs
 pnpm dev:app:status
 pnpm dev:app:stop
 ```
+
+`dev:app:start` asks the per-worktree macOS service to launch and returns
+immediately; compilation continues in the background. The initial cold build
+can still take tens of seconds. Use status and logs instead of keeping an agent
+shell or terminal open. `pnpm dev:app` remains available when a maintainer
+explicitly wants the same lifecycle attached to the foreground terminal.
 
 For the canonical stable role, pass `--stable` to status, logs, and stop so
 the command addresses `~/.scient-next/scient-dev-stable/` rather than a
@@ -109,10 +115,13 @@ pnpm dev:app:status -- --stable
 pnpm dev:app:stop -- --stable
 ```
 
-`dev:app` prevents a second managed instance from starting for the same
-checkout. `dev:app:logs` prints the last 200 lines produced by clickable app
-launches. `dev:app:stop` signals only the exact runner PID recorded by that
-checkout; do not stop Electron, Node, or pnpm processes by name or pattern.
+Each checkout and role has its own deterministic service label, state root,
+ports, app identity, and visible name. Different worktrees can therefore run
+concurrently, while a second instance of the same worktree is refused.
+`dev:app:logs` prints the last 200 background-launch lines. `dev:app:stop`
+validates and stops only that checkout's recorded service, runner, Electron
+app, and backend PIDs, waits for those processes to exit, and removes its launch
+files. Never stop Electron, Node, pnpm, or ports by name or pattern.
 
 The desktop renderer hot-reloads, but its local backend runs from the server
 bundle built when the candidate starts. After changing `apps/server`, an HTTP
@@ -139,7 +148,7 @@ For a candidate change:
 
 1. identify the owning worktree, branch, exact head, and cleanliness;
 2. read that worktree's `AGENTS.md` and install its locked dependencies;
-3. run `pnpm dev:app` from that exact worktree;
+3. run `pnpm dev:app:start` from that exact worktree;
 4. report the worktree, head, state root, and resolved ports shown by
    `[dev-runner]`; and
 5. inspect `pnpm dev:app:logs` when startup details are needed; and
@@ -150,10 +159,27 @@ linked worktree automatically receives isolated `.scient-next` state and a
 unique development bundle identifier. This prevents experimental migrations,
 settings, sessions, and browser state from contaminating the stable baseline.
 
-Use one visible candidate instance at a time unless concurrency itself is the
-test. The stable role is identified by its `Scient (Dev) Stable` name; a
-candidate is identified by its worktree, state root, ports, and exact Git head.
-Never infer code or data ownership from a window title alone.
+Concurrent candidates are supported by default. The stable role is identified
+by its `Scient (Dev) Stable` name; each candidate shows a short worktree label.
+Still confirm the worktree, state root, ports, and exact Git head before acting;
+never infer code or data ownership from a window title alone.
+
+## macOS Identity And Microphone Access
+
+The generated candidate app launches through macOS LaunchServices instead of
+being spawned as an anonymous child of Node. When an Apple Development signing
+identity is available, the launcher signs the generated Electron bundle with a
+stable per-worktree bundle identity. That gives macOS a stable identity to
+which microphone permission can be attached. Set
+`SCIENT_DEV_CODESIGN_IDENTITY` only when a specific development certificate is
+required. If no development identity exists, the launcher falls back to ad hoc
+signing and warns that macOS may request microphone permission again after the
+bundle changes.
+
+Grant microphone access to the visible `Scient (Dev) · <label>` entry in
+System Settings when macOS asks. Reloading the renderer cannot repair an
+incorrect app identity or permission grant; stop and start the exact candidate
+after changing either one.
 
 ## Updating The Stable Baseline
 
@@ -234,9 +260,10 @@ If the launcher opens but the Electron app does not appear, inspect the
 managed log with `pnpm dev:app:logs`. It identifies dependency, build, port,
 and backend startup failures without guessing.
 
-If status reports a stale runner after an abnormal exit, rerun
-`pnpm dev:app:status`; it removes a stale lock only after confirming the
-recorded PID is no longer alive.
+If a shell, service, or app exits abnormally, `dev:app:status` validates the
+recorded command and checkout before treating state as live. A later
+`dev:app:start` or `dev:app:stop` removes stale service files and handles any
+exactly identified app or backend process; it never performs a global cleanup.
 
 To remove the clickable launcher owned by the current checkout:
 

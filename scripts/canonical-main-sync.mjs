@@ -11,6 +11,7 @@ import {
   readLocalDevAppMarker,
   resolveLocalDevAppPaths,
   resolveStableDevHome,
+  startAppInBackground,
   stopApp,
 } from "./local-dev-app.mjs";
 
@@ -106,21 +107,8 @@ async function waitForRunnerToStop(paths, log) {
   return false;
 }
 
-function startStableApp(root, paths, log) {
-  const env = {
-    ...process.env,
-    SCIENT_DEV_APP_ROLE: "stable",
-    SCIENT_NEXT_HOME: paths.stateRoot,
-  };
-  const logFd = NodeFS.openSync(paths.logPath, "a");
-  const child = NodeChildProcess.spawn(
-    process.execPath,
-    [NodePath.join(root, "scripts", "local-dev-app.mjs"), "run", "--stable"],
-    { cwd: root, detached: true, env, stdio: ["ignore", logFd, logFd] },
-  );
-  NodeFS.closeSync(logFd);
-  child.unref();
-  log(`stable app restart requested (runner PID ${String(child.pid)})`);
+async function startStableApp(paths, log) {
+  await startAppInBackground({ paths, writeLine: log });
 }
 
 export async function syncOnce({ root = ROOT, log = console.log } = {}) {
@@ -194,7 +182,7 @@ export async function syncOnce({ root = ROOT, log = console.log } = {}) {
       return { status: "paused", reason: "starting" };
     }
     if (runnerState) {
-      stopApp({ paths, writeLine: (message) => logToFile(message) });
+      await stopApp({ paths, writeLine: (message) => logToFile(message) });
       if (!(await waitForRunnerToStop(paths, logToFile))) {
         return { status: "paused", reason: "stop-timeout" };
       }
@@ -235,7 +223,7 @@ export async function syncOnce({ root = ROOT, log = console.log } = {}) {
       logToFile("stable launcher refreshed");
     }
 
-    startStableApp(root, paths, logToFile);
+    await startStableApp(paths, logToFile);
     return { status: "updated", from: head, to: remoteHead };
   } catch (error) {
     logToFile(`sync failed: ${error instanceof Error ? error.message : String(error)}`);
