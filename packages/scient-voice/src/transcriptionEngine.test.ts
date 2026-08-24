@@ -25,6 +25,7 @@ function manifest(overrides: Partial<VoiceModelDefinition> = {}): VoiceModelDefi
     id: "engine-model",
     fileName: "engine-model.bin",
     displayName: "Engine Model",
+    description: "Engine test model",
     byteSize: MODEL_BYTES.byteLength,
     sha256: MODEL_SHA256,
     headerHex: GGML_MAGIC_HEADER_HEX,
@@ -124,26 +125,28 @@ describe("createLocalWhisperEngine", () => {
     });
 
     expect(Object.keys(await engine.getModelStates())).toEqual(["catalog-small", "catalog-medium"]);
-    expect((await engine.getModelStateForModel("catalog-medium")).state).toBe("ready");
-    expect((await engine.getModelStateForModel("catalog-small")).state).toBe("missing");
+    expect((await engine.getModelState("catalog-medium")).state).toBe("ready");
+    expect((await engine.getModelState("catalog-small")).state).toBe("missing");
     await engine.dispose();
   });
 
   it("reports the engine id and model state", async () => {
     const modelDir = await tmp("scient-voice-eng-model-");
     const runtimeDir = await makeRuntimeDir();
-    const engine = createLocalWhisperEngine({ runtimeDir, modelDir, manifest: manifest() });
+    const definition = manifest();
+    const engine = createLocalWhisperEngine({ runtimeDir, modelDir, manifests: [definition] });
     expect(engine.engine).toBe("local");
-    expect((await engine.getModelState()).state).toBe("missing");
+    expect((await engine.getModelState(definition.id)).state).toBe("missing");
     await engine.dispose();
   });
 
   it("rejects transcription with model-missing when no model is installed", async () => {
     const modelDir = await tmp("scient-voice-eng-model-");
     const runtimeDir = await makeRuntimeDir();
-    const engine = createLocalWhisperEngine({ runtimeDir, modelDir, manifest: manifest() });
+    const definition = manifest();
+    const engine = createLocalWhisperEngine({ runtimeDir, modelDir, manifests: [definition] });
     try {
-      await engine.transcribe(CLIP, { signal: new AbortController().signal });
+      await engine.transcribe(definition.id, CLIP, { signal: new AbortController().signal });
       throw new Error("expected rejection");
     } catch (error) {
       expect(isVoiceTranscriptionError(error)).toBe(true);
@@ -160,11 +163,11 @@ describe("createLocalWhisperEngine", () => {
     const engine = createLocalWhisperEngine({
       runtimeDir,
       modelDir,
-      manifest: definition,
+      manifests: [definition],
       isMaintenanceActive: () => true,
     });
     await expect(
-      engine.transcribe(CLIP, { signal: new AbortController().signal }),
+      engine.transcribe(definition.id, CLIP, { signal: new AbortController().signal }),
     ).rejects.toMatchObject({
       kind: "backend-unavailable",
     });
@@ -180,7 +183,7 @@ describe("createLocalWhisperEngine", () => {
     const engine = createLocalWhisperEngine({
       runtimeDir,
       modelDir,
-      manifest: definition,
+      manifests: [definition],
       platform: "linux",
       spawnImpl: fakeSpawn(),
       fetchImpl: inferenceFetch(
@@ -188,7 +191,7 @@ describe("createLocalWhisperEngine", () => {
       ),
     });
 
-    const result = await engine.transcribe(CLIP, {
+    const result = await engine.transcribe(definition.id, CLIP, {
       signal: new AbortController().signal,
       language: "fr",
     });
@@ -205,14 +208,14 @@ describe("createLocalWhisperEngine", () => {
     const engine = createLocalWhisperEngine({
       runtimeDir,
       modelDir,
-      manifest: definition,
+      manifests: [definition],
       platform: "linux",
       spawnImpl: fakeSpawn(),
       fetchImpl: inferenceFetch(() => new Response("boom", { status: 500 })),
     });
 
     await expect(
-      engine.transcribe(CLIP, { signal: new AbortController().signal }),
+      engine.transcribe(definition.id, CLIP, { signal: new AbortController().signal }),
     ).rejects.toMatchObject({
       kind: "provider-error",
     });
@@ -226,14 +229,14 @@ describe("createLocalWhisperEngine", () => {
     const engine = createLocalWhisperEngine({
       runtimeDir,
       modelDir,
-      manifest: definition,
+      manifests: [definition],
       fetchImpl: (async () =>
         new Response(new Uint8Array(MODEL_BYTES), { status: 200 })) as unknown as typeof fetch,
     });
 
-    const path = await engine.ensureModel();
+    const path = await engine.ensureModel(definition.id, new AbortController().signal);
     expect(path).toBe(NodePath.join(modelDir, definition.fileName));
-    expect((await engine.getModelState()).state).toBe("ready");
+    expect((await engine.getModelState(definition.id)).state).toBe("ready");
     await engine.dispose();
   });
 
@@ -245,16 +248,16 @@ describe("createLocalWhisperEngine", () => {
     const engine = createLocalWhisperEngine({
       runtimeDir,
       modelDir,
-      manifest: definition,
+      manifests: [definition],
       platform: "linux",
       spawnImpl: fakeSpawn(),
       fetchImpl: inferenceFetch(
         () => new Response(JSON.stringify({ text: "hello" }), { status: 200 }),
       ),
     });
-    await engine.transcribe(CLIP, { signal: new AbortController().signal });
-    await engine.removeModel();
-    expect((await engine.getModelState()).state).toBe("missing");
+    await engine.transcribe(definition.id, CLIP, { signal: new AbortController().signal });
+    await engine.removeModel(definition.id);
+    expect((await engine.getModelState(definition.id)).state).toBe("missing");
     await engine.dispose();
   });
 });

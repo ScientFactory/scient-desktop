@@ -8,6 +8,7 @@ import type {
 
 import { type VoiceRecorderErrorKind, useVoiceRecorder } from "./useVoiceRecorder.ts";
 import type { VoiceTranscriptionClient } from "./voiceClient.ts";
+import { describeVoiceError } from "./voiceErrorPresentation.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
 import { useRecordScientAnalytics } from "../analytics/client.ts";
 
@@ -20,7 +21,6 @@ export type VoicePhase =
   | "transcribing";
 
 const MODEL_SETUP_FAILED_MESSAGE = "Voice setup didn't finish. Try again.";
-const TRANSCRIPTION_FAILED_MESSAGE = "Transcription failed. Try again.";
 const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 const ARM_DELAY_MS = 250;
 
@@ -87,27 +87,6 @@ export function describeVoiceRecorderError(kind: VoiceRecorderErrorKind): string
     case "unknown":
       return "Couldn't start recording. Try again.";
   }
-}
-
-export function sanitizeVoiceErrorMessage(message: string): string {
-  return message
-    .replace(/\n\s*at\s+[\s\S]*$/u, "")
-    .replace(/^Error invoking remote method '[^']*':\s*/u, "")
-    .replace(/^[A-Za-z][A-Za-z0-9_]*Error:\s*/u, "")
-    .replace(/^(?:Error:\s*)+/u, "")
-    .trim();
-}
-
-export function describeTranscriptionError(error: unknown): string {
-  if (error !== null && typeof error === "object" && "safeMessage" in error) {
-    const safe = (error as { readonly safeMessage?: unknown }).safeMessage;
-    if (typeof safe === "string" && safe.trim().length > 0) return safe;
-  }
-  if (error instanceof Error) {
-    const sanitized = sanitizeVoiceErrorMessage(error.message);
-    if (sanitized.length > 0) return sanitized;
-  }
-  return TRANSCRIPTION_FAILED_MESSAGE;
 }
 
 function percent(progress: VoiceModelDownloadProgress | null): number {
@@ -200,7 +179,7 @@ export function useScientVoiceController({
       } catch (error) {
         if (operation !== operationRef.current) return;
         setPhase("idle");
-        setErrorMessage(describeTranscriptionError(error));
+        setErrorMessage(describeVoiceError(error));
         recordAnalytics({
           name: "voice.transcription.failed",
           properties: { engineClass: "local-whisper", failureClass: "engine" },
@@ -236,7 +215,7 @@ export function useScientVoiceController({
       if (operation !== operationRef.current) return;
     } catch (error) {
       if (operation !== operationRef.current) return;
-      setErrorMessage(describeTranscriptionError(error));
+      setErrorMessage(describeVoiceError(error));
       return;
     }
     const selectedModel = state.models.find((model) => model.id === state.selectedModelId);
@@ -286,7 +265,7 @@ export function useScientVoiceController({
       } catch (error) {
         if (operation !== operationRef.current) return;
         setPhase("idle");
-        setErrorMessage(describeTranscriptionError(error));
+        setErrorMessage(describeVoiceError(error));
       } finally {
         unsubscribe();
         if (downloadModelIdRef.current === modelId) downloadModelIdRef.current = null;

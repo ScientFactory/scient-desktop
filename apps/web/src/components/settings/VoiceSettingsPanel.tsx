@@ -1,7 +1,8 @@
 import { CheckIcon, DownloadIcon, Mic2Icon, RefreshCwIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { VoiceModelId, VoiceModelSummary, VoiceModelsSnapshot } from "@t3tools/contracts";
 
+import { describeVoiceError } from "../../scient/voice/voiceErrorPresentation";
 import { getVoiceBridge } from "../../scient/voice/voiceClient";
 import { Badge } from "../ui/badge";
 import {
@@ -21,9 +22,18 @@ function formatBytes(bytes: number): string {
   return `~${Math.round(mib)} MiB`;
 }
 
-function progressPercent(model: VoiceModelSummary): number {
+export function voiceModelProgressPercent(model: VoiceModelSummary): number {
   if (model.state.state !== "downloading" || model.state.totalBytes <= 0) return 0;
   return Math.min(100, Math.round((model.state.downloadedBytes / model.state.totalBytes) * 100));
+}
+
+export function findVoiceReplacementModel(
+  models: readonly VoiceModelSummary[],
+  removedModelId: VoiceModelId,
+): VoiceModelSummary | null {
+  return (
+    models.find((model) => model.id !== removedModelId && model.state.state === "ready") ?? null
+  );
 }
 
 interface VoiceModelCardProps {
@@ -50,7 +60,7 @@ function VoiceModelCard({
   onRemove,
 }: VoiceModelCardProps): ReactNode {
   const state = model.state;
-  const progress = progressPercent(model);
+  const progress = voiceModelProgressPercent(model);
   return (
     <div className="rounded-xl border border-border/70 bg-card/50 p-4">
       <div className="flex items-start justify-between gap-4">
@@ -82,7 +92,14 @@ function VoiceModelCard({
             <span>Downloading…</span>
             <span>{progress}%</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            aria-label={`Downloading ${model.displayName}`}
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={progress}
+            className="h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+          >
             <div
               className="h-full rounded-full bg-primary transition-[width]"
               style={{ width: `${progress}%` }}
@@ -102,7 +119,12 @@ function VoiceModelCard({
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {state.state === "downloading" ? (
-          <Button size="xs" variant="outline" disabled={busy} onClick={() => onCancel(model.id)}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!runtimeAvailable}
+            onClick={() => onCancel(model.id)}
+          >
             Cancel
           </Button>
         ) : state.state === "ready" ? (
@@ -150,26 +172,30 @@ export function VoiceSettingsPanel(): ReactNode {
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
   const [removeTarget, setRemoveTarget] = useState<VoiceModelSummary | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const cancelledDownloadRef = useRef<VoiceModelId | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!client) return;
-    try {
-      setSnapshot(await client.getModelsState());
-      setErrorMessage(null);
-    } catch {
-      setErrorMessage("Voice settings could not be loaded.");
-    }
-  }, [client]);
+  const refresh = useCallback(
+    async (clearError = false) => {
+      if (!client) return;
+      try {
+        setSnapshot(await client.getModelsState());
+        if (clearError) setErrorMessage(null);
+      } catch {
+        setErrorMessage("Voice settings could not be loaded.");
+      }
+    },
+    [client],
+  );
 
   useEffect(() => {
-    void refresh();
+    void refresh(true);
   }, [refresh]);
 
   useEffect(() => {
-    if (!snapshot?.activeDownloadModelId) return;
+    if (!busyModelId && !snapshot?.activeDownloadModelId) return;
     const interval = window.setInterval(() => void refresh(), 500);
     return () => window.clearInterval(interval);
-  }, [refresh, snapshot?.activeDownloadModelId]);
+  }, [busyModelId, refresh, snapshot?.activeDownloadModelId]);
 
   const run = useCallback(
     async (modelId: VoiceModelId, operation: () => Promise<VoiceModelsSnapshot>) => {
@@ -178,8 +204,11 @@ export function VoiceSettingsPanel(): ReactNode {
       try {
         setSnapshot(await operation());
       } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Voice model operation failed.");
+        if (cancelledDownloadRef.current !== modelId) {
+          setErrorMessage(describeVoiceError(error));
+        }
       } finally {
+        if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
         setBusyModelId(null);
       }
     },
@@ -189,6 +218,7 @@ export function VoiceSettingsPanel(): ReactNode {
   const handleDownload = useCallback(
     (modelId: VoiceModelId, selectOnSuccess: boolean) => {
       if (!client) return;
+      cancelledDownloadRef.current = null;
       void run(modelId, () => client.downloadModel({ modelId, selectOnSuccess }));
     },
     [client, run],
@@ -197,12 +227,13 @@ export function VoiceSettingsPanel(): ReactNode {
   const handleCancel = useCallback(
     async (modelId: VoiceModelId) => {
       if (!client) return;
-      setBusyModelId(modelId);
+      cancelledDownloadRef.current = modelId;
       try {
         await client.cancelModelDownload({ modelId });
         await refresh();
-      } finally {
-        setBusyModelId(null);
+      } catch (error) {
+        if (cancelledDownloadRef.current === modelId) cancelledDownloadRef.current = null;
+        setErrorMessage(describeVoiceError(error));
       }
     },
     [client, refresh],
@@ -218,11 +249,7 @@ export function VoiceSettingsPanel(): ReactNode {
 
   const replacementModel = useMemo(() => {
     if (!removeTarget || !snapshot || snapshot.selectedModelId !== removeTarget.id) return null;
-    return (
-      snapshot.models.find(
-        (model) => model.id !== removeTarget.id && model.state.state === "ready",
-      ) ?? null
-    );
+    return findVoiceReplacementModel(snapshot.models, removeTarget.id);
   }, [removeTarget, snapshot]);
 
   const confirmRemove = useCallback(async () => {
@@ -269,7 +296,7 @@ export function VoiceSettingsPanel(): ReactNode {
                 runtimeAvailable={snapshot.runtimeAvailable}
                 selected={snapshot.selectedModelId === model.id}
                 recommended={snapshot.recommendation?.modelId === model.id}
-                busy={busyModelId === model.id || busyModelId !== null}
+                busy={busyModelId !== null}
                 onDownload={handleDownload}
                 onCancel={handleCancel}
                 onSelect={handleSelect}

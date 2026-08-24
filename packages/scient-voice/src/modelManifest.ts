@@ -13,6 +13,7 @@ export interface VoiceModelDefinition {
   readonly id: string;
   readonly fileName: string;
   readonly displayName: string;
+  readonly description: string;
   readonly byteSize: number;
   readonly sha256: string;
   /** Expected leading bytes, hex-encoded. See {@link GGML_MAGIC_HEADER_HEX}. */
@@ -28,6 +29,7 @@ const WHISPER_SMALL_MULTILINGUAL_Q5_1: VoiceModelDefinition = Object.freeze({
   id: "whisper-small-multilingual-q5_1",
   fileName: "ggml-small-q5_1-ae85e4a9.bin",
   displayName: "Multilingual Small",
+  description: "Faster and lighter for everyday dictation.",
   byteSize: 190_085_487,
   sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
   headerHex: GGML_MAGIC_HEADER_HEX,
@@ -40,6 +42,7 @@ const WHISPER_MEDIUM_MULTILINGUAL_Q5_0: VoiceModelDefinition = Object.freeze({
   id: "whisper-medium-multilingual-q5_0",
   fileName: "ggml-medium-q5_0-19fea4b3.bin",
   displayName: "Multilingual Medium",
+  description: "Higher accuracy with a larger local model.",
   byteSize: 539_212_467,
   sha256: "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
   headerHex: GGML_MAGIC_HEADER_HEX,

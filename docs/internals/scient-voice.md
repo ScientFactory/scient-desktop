@@ -6,13 +6,14 @@ contracts.
 
 ## Boundaries
 
-- `packages/scient-voice` owns model verification, WAV validation, the
-  whisper.cpp loopback runtime, serialization, cancellation, timeouts, and
-  lifecycle tests. It imports neither React nor Electron.
-- `apps/desktop/src/app/DesktopVoice.ts` is the single owner of the built-in
-  model catalog, one manager per model, and one shared native runtime. IPC
-  projects internal paths out of the model state before returning it to the
-  renderer. The selected model is persisted in desktop settings.
+- `packages/scient-voice` owns the pinned model manifest, model verification,
+  WAV validation, the whisper.cpp loopback runtime, serialization,
+  cancellation, timeouts, and lifecycle tests. Its engine API is explicitly
+  model-aware and imports neither React nor Electron.
+- `apps/desktop/src/app/DesktopVoice.ts` owns model selection and lifecycle
+  orchestration over one manager per manifest entry and one shared native
+  runtime. IPC projects internal paths out of model state before returning it
+  to the renderer. The selected model is persisted in desktop settings.
 - `apps/web/src/scient/voice` owns capture, the Electron-client adapter,
   operation guards, and small composer presentation components. The UI depends
   on `VoiceTranscriptionClient`, not directly on whisper.cpp.

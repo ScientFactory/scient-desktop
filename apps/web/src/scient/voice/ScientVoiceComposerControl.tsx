@@ -27,11 +27,8 @@ import { VOICE_WAVEFORM_LEVEL_COUNT } from "./useVoiceRecorder.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 
-export {
-  describeTranscriptionError,
-  describeVoiceRecorderError,
-  formatVoiceTimer,
-} from "./useScientVoiceController.ts";
+export { describeVoiceError } from "./voiceErrorPresentation.ts";
+export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
 
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;

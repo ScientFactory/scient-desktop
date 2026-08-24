@@ -14,7 +14,6 @@ import {
   type VoiceTranscript,
 } from "./errors.ts";
 import type { VoiceModelDefinition } from "./modelManifest.ts";
-import { DEFAULT_VOICE_MODEL_ID } from "./modelManifest.ts";
 import {
   type VoiceModelDownloadProgressCallback,
   type VoiceModelState,
@@ -30,35 +29,24 @@ export interface TranscribeOptions {
 /** Engine-neutral transcription surface. Implemented today only by local whisper. */
 export interface TranscriptionEngine {
   readonly engine: VoiceEngineId;
-  /** Current install/download state of the backing model. */
-  getModelState(): Promise<VoiceModelState>;
-  /** Get the state for a specific catalog model. */
-  getModelStateForModel(modelId: string): Promise<VoiceModelState>;
+  /** Get the state for one catalog model. */
+  getModelState(modelId: string): Promise<VoiceModelState>;
   /** Get every catalog model state without exposing filesystem paths. */
   getModelStates(): Promise<Readonly<Record<string, VoiceModelState>>>;
-  /** Ensure the model is downloaded and verified. Resolves the model path. */
+  /** Ensure one catalog model is downloaded and verified. */
   ensureModel(
-    onProgress?: VoiceModelDownloadProgressCallback,
-    signal?: AbortSignal,
-  ): Promise<string>;
-  /** Ensure a specific catalog model is downloaded and verified. */
-  ensureModelForModel(
     modelId: string,
     signal: AbortSignal,
     onProgress?: VoiceModelDownloadProgressCallback,
   ): Promise<string>;
-  /** Remove the model after stopping the runtime that may hold it open. */
-  removeModel(): Promise<void>;
-  /** Remove a specific catalog model after stopping the shared runtime. */
-  removeModelForModel(modelId: string): Promise<void>;
+  /** Remove one catalog model after stopping the shared runtime. */
+  removeModel(modelId: string): Promise<void>;
   /** Stop the idle helper before model maintenance. */
   stopRuntime(): Promise<void>;
   /** Whether the platform helper exists at the configured runtime path. */
   isRuntimeInstalled(): Promise<boolean>;
-  /** Transcribe a validated clip. Rejects with a {@link VoiceTranscriptionError}. */
-  transcribe(clip: NormalizedVoiceClip, options: TranscribeOptions): Promise<VoiceTranscript>;
-  /** Transcribe a validated clip with a specific catalog model. */
-  transcribeForModel(
+  /** Transcribe a validated clip with one catalog model. */
+  transcribe(
     modelId: string,
     clip: NormalizedVoiceClip,
     options: TranscribeOptions,
@@ -70,10 +58,7 @@ export interface TranscriptionEngine {
 export interface LocalWhisperEngineOptions {
   readonly runtimeDir: string;
   readonly modelDir: string;
-  /** Legacy single-model option retained for callers and tests. */
-  readonly manifest?: VoiceModelDefinition;
-  /** The complete catalog used by the desktop multi-model owner. */
-  readonly manifests?: readonly VoiceModelDefinition[];
+  readonly manifests: readonly VoiceModelDefinition[];
   readonly fetchImpl?: typeof fetch;
   readonly spawnImpl?: WhisperSpawn;
   readonly threads?: number;
@@ -89,7 +74,7 @@ export interface LocalWhisperEngineOptions {
  * the first `transcribe` and idles down between clips.
  */
 export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): TranscriptionEngine {
-  const definitions = options.manifests ?? (options.manifest ? [options.manifest] : []);
+  const definitions = options.manifests;
   if (definitions.length === 0) {
     throw new Error("At least one offline voice model definition is required.");
   }
@@ -103,9 +88,6 @@ export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): Tr
       }),
     ]),
   );
-  const defaultModelId = managers.has(DEFAULT_VOICE_MODEL_ID)
-    ? DEFAULT_VOICE_MODEL_ID
-    : definitions[0]!.id;
   const runtime = new LocalWhisperRuntime({
     runtimeDirectory: options.runtimeDir,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
@@ -119,33 +101,30 @@ export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): Tr
   return {
     engine: "local",
 
-    getModelState(): Promise<VoiceModelState> {
-      return managers.get(defaultModelId)!.getStatus();
-    },
-
-    getModelStateForModel(modelId: string): Promise<VoiceModelState> {
+    getModelState(modelId: string): Promise<VoiceModelState> {
       return requireManager(managers, modelId).getStatus();
     },
 
     async getModelStates(): Promise<Readonly<Record<string, VoiceModelState>>> {
       const entries = await Promise.all(
-        [...managers.entries()].map(
-          async ([modelId, manager]) => [modelId, await manager.getStatus()] as const,
-        ),
+        [...managers.entries()].map(async ([modelId, manager]) => {
+          try {
+            return [modelId, await manager.getStatus()] as const;
+          } catch {
+            return [
+              modelId,
+              {
+                state: "error",
+                message: "Offline voice model status is unavailable.",
+              } satisfies VoiceModelState,
+            ] as const;
+          }
+        }),
       );
       return Object.fromEntries(entries);
     },
 
     ensureModel(
-      onProgress?: VoiceModelDownloadProgressCallback,
-      signal?: AbortSignal,
-    ): Promise<string> {
-      return managers
-        .get(defaultModelId)!
-        .ensureInstalled(signal ?? new AbortController().signal, onProgress);
-    },
-
-    ensureModelForModel(
       modelId: string,
       signal: AbortSignal,
       onProgress?: VoiceModelDownloadProgressCallback,
@@ -153,12 +132,7 @@ export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): Tr
       return requireManager(managers, modelId).ensureInstalled(signal, onProgress);
     },
 
-    async removeModel(): Promise<void> {
-      await runtime.stopIdle();
-      await managers.get(defaultModelId)!.remove();
-    },
-
-    async removeModelForModel(modelId: string): Promise<void> {
+    async removeModel(modelId: string): Promise<void> {
       await runtime.stopIdle();
       await requireManager(managers, modelId).remove();
     },
@@ -172,53 +146,6 @@ export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): Tr
     },
 
     async transcribe(
-      clip: NormalizedVoiceClip,
-      transcribeOptions: TranscribeOptions,
-    ): Promise<VoiceTranscript> {
-      transcribeOptions.signal.throwIfAborted();
-      if (isMaintenanceActive()) {
-        throw new VoiceTranscriptionError({
-          kind: "backend-unavailable",
-          fallbackAllowed: false,
-          safeMessage: "Wait for offline voice model maintenance to finish.",
-        });
-      }
-
-      const status = await managers.get(defaultModelId)!.getStatus();
-      const modelPath =
-        status.state === "ready"
-          ? status.modelPath
-          : status.state === "downloading"
-            ? status.readyModelPath
-            : undefined;
-      if (!modelPath) {
-        throw new VoiceTranscriptionError({
-          kind: "model-missing",
-          fallbackAllowed: false,
-          safeMessage: "Set up offline voice transcription before using the microphone.",
-        });
-      }
-
-      try {
-        const result = await runtime.transcribe(modelPath, clip, {
-          signal: transcribeOptions.signal,
-          ...(transcribeOptions.language !== undefined
-            ? { language: transcribeOptions.language }
-            : {}),
-        });
-        return {
-          text: result.text,
-          engine: "local",
-          ...(transcribeOptions.language !== undefined
-            ? { language: transcribeOptions.language }
-            : {}),
-        };
-      } catch (error) {
-        throw mapRuntimeError(error, transcribeOptions.signal);
-      }
-    },
-
-    async transcribeForModel(
       modelId: string,
       clip: NormalizedVoiceClip,
       transcribeOptions: TranscribeOptions,

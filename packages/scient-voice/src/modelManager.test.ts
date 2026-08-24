@@ -23,6 +23,7 @@ function manifest(overrides: Partial<VoiceModelDefinition> = {}): VoiceModelDefi
     id: "test-model",
     fileName: "test-model.bin",
     displayName: "Test Model",
+    description: "Test model",
     byteSize: MODEL_BYTES.byteLength,
     sha256: MODEL_SHA256,
     headerHex: GGML_MAGIC_HEADER_HEX,

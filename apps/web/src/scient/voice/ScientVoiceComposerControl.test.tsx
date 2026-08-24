@@ -12,7 +12,7 @@ import {
   EMPTY_TRANSCRIPT_MESSAGE,
   MODEL_DOWNLOAD_LABEL,
   ScientVoiceComposerControl,
-  describeTranscriptionError,
+  describeVoiceError,
   describeVoiceRecorderError,
   formatVoiceTimer,
 } from "./ScientVoiceComposerControl.tsx";
@@ -107,15 +107,13 @@ describe("describeVoiceRecorderError", () => {
   });
 });
 
-describe("describeTranscriptionError", () => {
+describe("describeVoiceError", () => {
   it("prefers the host safeMessage when present", () => {
-    expect(describeTranscriptionError({ safeMessage: "Model is warming up" })).toBe(
-      "Model is warming up",
-    );
+    expect(describeVoiceError({ safeMessage: "Model is warming up" })).toBe("Model is warming up");
   });
 
   it("sanitizes a raw error message, stripping stack frames and paths", () => {
-    const shown = describeTranscriptionError(
+    const shown = describeVoiceError(
       new Error("No speech detected\n    at file:///Users/x/secret.ts:1:1"),
     );
     expect(shown).toBe("No speech detected");
@@ -123,8 +121,8 @@ describe("describeTranscriptionError", () => {
   });
 
   it("falls back to a non-empty generic line for opaque non-errors", () => {
-    expect(describeTranscriptionError(null).length).toBeGreaterThan(0);
-    expect(describeTranscriptionError({}).length).toBeGreaterThan(0);
+    expect(describeVoiceError(null).length).toBeGreaterThan(0);
+    expect(describeVoiceError({}).length).toBeGreaterThan(0);
   });
 });
 

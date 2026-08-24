@@ -40,7 +40,7 @@ export type VoiceTranscriptionErrorKind = typeof VoiceTranscriptionErrorKind.Typ
 export const VoiceAudioMimeType = Schema.Literal("audio/wav");
 export type VoiceAudioMimeType = typeof VoiceAudioMimeType.Type;
 
-/** Built-in local model identifiers. The desktop catalog is authoritative. */
+/** Built-in model identifiers allowed across IPC. The verified core manifest is authoritative. */
 export const VoiceModelId = Schema.Literals([
   "whisper-small-multilingual-q5_1",
   "whisper-medium-multilingual-q5_0",
