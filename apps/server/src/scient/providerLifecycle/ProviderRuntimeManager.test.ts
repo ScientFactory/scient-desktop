@@ -59,6 +59,19 @@ const provider: ServerProvider = {
   },
 };
 
+const systemRuntime: ProviderRuntimeSummary = {
+  ...missingRuntime,
+  source: "system",
+  actions: ["install"],
+  message: "Using the Codex installation on this computer.",
+};
+
+const systemProvider: ServerProvider = {
+  ...provider,
+  installed: true,
+  connection: { ...provider.connection!, runtime: systemRuntime },
+};
+
 const yieldUntil = <A>(
   effect: Effect.Effect<A>,
   predicate: (value: A) => boolean,
@@ -270,7 +283,7 @@ describe("ProviderRuntimeManager", () => {
           }),
         run: () => Effect.void,
       };
-      const systemRuntime: ProviderRuntimeSummary = {
+      const fallbackRuntime: ProviderRuntimeSummary = {
         ...missingRuntime,
         source: "system",
         actions: [],
@@ -278,7 +291,7 @@ describe("ProviderRuntimeManager", () => {
       };
       const reloadedSystemActions: ProviderManagedRuntimeActions = {
         ...staleManagedActions,
-        getSummary: Effect.succeed(systemRuntime),
+        getSummary: Effect.succeed(fallbackRuntime),
       };
       const managedProvider: ServerProvider = {
         ...provider,
@@ -330,11 +343,11 @@ describe("ProviderRuntimeManager", () => {
     Effect.gen(function* () {
       const runCount = yield* Ref.make(0);
       const actions: ProviderManagedRuntimeActions = {
-        getSummary: Effect.succeed(missingRuntime),
+        getSummary: Effect.succeed(systemRuntime),
         plan: () => Effect.succeed(installPlan()),
         run: () => Ref.update(runCount, (count) => count + 1),
       };
-      const { manager, providersRef } = yield* makeHarness(actions, [provider], () =>
+      const { manager, providersRef } = yield* makeHarness(actions, [systemProvider], () =>
         Effect.fail(
           new ProviderAdapterProcessError({
             provider: "codex",
@@ -354,6 +367,7 @@ describe("ProviderRuntimeManager", () => {
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "failed",
       );
       assert.strictEqual(yield* Ref.get(runCount), 0);
+      assert.strictEqual(completed[0]?.connection?.runtime?.source, "system");
       assert.match(
         completed[0]?.connection?.runtime?.operation?.message ?? "",
         /could not stop active codex sessions/u,
@@ -365,11 +379,11 @@ describe("ProviderRuntimeManager", () => {
     Effect.gen(function* () {
       const never = yield* Deferred.make<void>();
       const actions: ProviderManagedRuntimeActions = {
-        getSummary: Effect.succeed(missingRuntime),
+        getSummary: Effect.succeed(systemRuntime),
         plan: () => Effect.succeed(installPlan()),
         run: () => Deferred.await(never),
       };
-      const { manager, reloadCountRef } = yield* makeHarness(actions);
+      const { manager, reloadCountRef } = yield* makeHarness(actions, [systemProvider]);
       const started = yield* manager.start({
         instanceId: INSTANCE,
         action: "install",
@@ -382,7 +396,7 @@ describe("ProviderRuntimeManager", () => {
         cancelled.providers[0]?.connection?.runtime?.operation?.status,
         "cancelled",
       );
-      assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "missing");
+      assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "system");
       yield* Effect.yieldNow;
       assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
     }),
