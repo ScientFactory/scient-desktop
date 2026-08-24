@@ -137,6 +137,26 @@ describe("Cursor connection actions", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not sign out when active Cursor sessions cannot be stopped", () =>
+    Effect.gen(function* () {
+      const logoutCalls = yield* Ref.make(0);
+      const stopFailure = new Error("session remained active");
+      const actions = withCursorSessionShutdown(
+        makeCursorConnectionActionsFromRuntime({
+          startLogin: Effect.die("must not start"),
+          verifyLoggedIn: Effect.void,
+          logout: Ref.update(logoutCalls, (count) => count + 1),
+        }),
+        Effect.fail(stopFailure),
+      );
+
+      const failure = yield* actions.disconnect.pipe(Effect.flip);
+      expect(failure.message).toBe("Scient could not stop active Cursor sessions before sign out.");
+      expect(failure.cause).toBe(stopFailure);
+      expect(yield* Ref.get(logoutCalls)).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects unrelated provider methods without starting Cursor", () =>
     Effect.gen(function* () {
       const actions = makeCursorConnectionActionsFromRuntime({

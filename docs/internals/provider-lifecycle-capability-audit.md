@@ -188,11 +188,15 @@ symmetry.
 ### 2. Session-safe disconnect for Codex and Claude
 
 **Code-confirmed:** Antigravity, Grok, Droid, and Cursor currently compose disconnect with adapter
-session shutdown. Codex and Claude do not use the same composition.
+session shutdown through the shared mechanical wrapper, while retaining provider-owned error wording
+and logout behavior. Codex and Claude do not opt into that wrapper.
 
-**Current proposal direction:** add one small shared stop-sessions-before-disconnect wrapper and
-migrate providers under focused tests. Revalidate provider-specific failure mapping and make sure a
-failed shutdown does not revoke credentials under an active session.
+**Open question:** can Codex and Claude safely stop every affected session before revoking credentials
+when one credential store may be shared by multiple provider instances or accounts? Do not infer that
+behavior from the shared wrapper or add it for visual parity. First establish the credential-store and
+session ownership boundary, then add provider-specific composition only if it can stop the complete
+affected set. Focused tests must prove provider-specific failure mapping and that a failed shutdown
+never revokes credentials while an affected session may remain active.
 
 ### 3. External update qualification for Grok and Droid
 

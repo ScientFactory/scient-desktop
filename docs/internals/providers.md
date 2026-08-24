@@ -204,6 +204,21 @@ publish immediately, are reapplied after an authoritative provider refresh, are 
 persistent status cache, and are pruned when an instance disappears. Terminal operation state also
 cannot be overwritten by an older cache write that finishes later.
 
+### Connection adapter primitives
+
+`ProviderConnectionActions.ts` owns only mechanics that are identical across provider adapters. Its
+terminal scanner preserves OSC 8 link targets, removes terminal presentation controls, bounds and
+parses HTTPS candidates, and then delegates the final URL decision to a provider-owned predicate.
+Its environment picker copies values from a provider's complete explicit allowlist without defining
+shared keys or forced values. Its disconnect wrapper sequences session shutdown before
+provider-owned credential revocation and delegates shutdown-error wording to the provider.
+
+The policies remain local: Claude, Cursor, and Antigravity declare their own accepted authorization
+hosts and paths and their own process-environment allowlists; provider-specific updater controls are
+added only after filtering. Structured Codex, Grok, and Droid authentication does not pass through
+the terminal scanner. A provider opts into session shutdown explicitly rather than inheriting it from
+the shared helper.
+
 ### Codex authentication
 
 [`CodexConnectionActions`][codex-connection] uses the structured Codex app-server account API. It

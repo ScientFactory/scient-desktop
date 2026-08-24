@@ -26,7 +26,10 @@ import {
   droidAccountCapabilitiesFromInitializeResult,
   DROID_AUTH_METHOD_DEVICE_PAIRING,
 } from "../../provider/acp/DroidAcpSupport.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  ProviderConnectionActionError,
+  withProviderSessionShutdown,
+} from "./ProviderConnectionActions.ts";
 
 const ACP_START_TIMEOUT = "30 seconds";
 
@@ -178,13 +181,7 @@ export function withDroidSessionShutdown<E>(
   actions: ProviderConnectionActions,
   stopAll: Effect.Effect<void, E>,
 ): ProviderConnectionActions {
-  return {
-    ...actions,
-    disconnect: stopAll.pipe(
-      Effect.mapError((cause) =>
-        connectionError("Scient could not stop active Droid sessions before sign out.", cause),
-      ),
-      Effect.andThen(actions.disconnect),
-    ),
-  };
+  return withProviderSessionShutdown(actions, stopAll, (cause) =>
+    connectionError("Scient could not stop active Droid sessions before sign out.", cause),
+  );
 }
