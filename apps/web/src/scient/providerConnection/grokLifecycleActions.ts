@@ -1,14 +1,9 @@
-import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider } from "@t3tools/contracts";
 
+import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-export async function startReviewedGrokRuntimeAction(
-  controller: ProviderLifecycleController,
-  action: ProviderManagedRuntimeAction,
-): Promise<ServerProvider> {
-  const plan = await controller.planRuntime(action);
-  return controller.startRuntime(plan);
-}
+export const startReviewedGrokRuntimeAction = startReviewedProviderRuntimeAction;
 
 export async function startGrokSignIn(
   controller: ProviderLifecycleController,

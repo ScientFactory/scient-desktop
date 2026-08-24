@@ -19,7 +19,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -38,36 +38,24 @@ import {
 } from "../../components/ui/dialog";
 import {
   hasActiveProviderRuntimeOperation,
-  isProviderAccountConnected,
+  isActiveProviderConnectionOperation,
+  isProviderAccountPresentedAsConnected,
   isSafeProviderAuthorizationUrl,
   preferredProviderConnectionMethod,
+  providerAccountIdentity,
   providerConnectionPresentation,
+  providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
-import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
-import { CodexInlineSetup } from "./CodexInlineSetup";
-import { DroidInlineSetup } from "./DroidInlineSetup";
-import { CursorInlineSetup } from "./CursorInlineSetup";
-import { GrokInlineSetup } from "./GrokInlineSetup";
-import { useProviderLifecycleController } from "./useProviderLifecycleController";
+import {
+  AssistedProviderSetupHost,
+  supportsAssistedProviderSetupSurface,
+} from "./AssistedProviderSetupHost";
 import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
 
 type PendingAction = "browser" | "device" | "submit-code" | "cancel" | "disconnect" | null;
-
-function failureMessage(value: unknown, fallback: string): string {
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    "message" in value &&
-    typeof value.message === "string" &&
-    value.message.trim().length > 0
-  ) {
-    return value.message;
-  }
-  return fallback;
-}
 
 function providerFromResult(
   providers: ReadonlyArray<ServerProvider>,
@@ -95,11 +83,7 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     onRuntimeActionSucceeded: reportRuntimeActionSucceeded,
     repairSucceededRecently,
   };
-  return props.provider.driver === "codex" ||
-    props.provider.driver === "claudeAgent" ||
-    props.provider.driver === "cursor" ||
-    props.provider.driver === "droid" ||
-    props.provider.driver === "grok" ? (
+  return supportsAssistedProviderSetupSurface(props.provider.driver, "management") ? (
     <AssistedProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
@@ -141,16 +125,9 @@ function ProviderConnectionDialogTitle(props: {
 
 function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContentProps) {
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  const [disconnecting, setDisconnecting] = useState(false);
-  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const [accountActionPending, setAccountActionPending] = useState(false);
   const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
-  const isConnected =
-    providerConnectionPresentation(props.provider).kind === "connected" ||
-    (isRuntimeWorking && isProviderAccountConnected(props.provider));
+  const isConnected = isProviderAccountPresentedAsConnected(props.provider);
   const isClaude = props.provider.driver === "claudeAgent";
   const isGrok = props.provider.driver === "grok";
   const isDroid = props.provider.driver === "droid";
@@ -186,35 +163,6 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const isManagedRuntimeFocused =
     showManagedRuntime && (isRuntimePlanOpen || isRuntimeWorking || !props.provider.installed);
 
-  const disconnect = async () => {
-    setDisconnecting(true);
-    setDisconnectError(null);
-    try {
-      await controller.disconnect();
-    } catch (error) {
-      setDisconnectError(
-        failureMessage(error, `Scient could not sign out of ${props.displayName}.`),
-      );
-    } finally {
-      setDisconnecting(false);
-    }
-  };
-
-  const accountAction =
-    isConnected && props.provider.connection?.canDisconnect ? (
-      <Button
-        className={DESTRUCTIVE_GHOST_ACTION_CLASS}
-        disabled={disconnecting || isRuntimeWorking || isRuntimePlanOpen}
-        onClick={() => void disconnect()}
-        size="sm"
-        type="button"
-        variant="ghost-muted"
-      >
-        {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
-        Sign out
-      </Button>
-    ) : undefined;
-
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-[26rem]" initialFocus={titleRef} showCloseButton>
@@ -242,7 +190,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
           {showManagedRuntime ? (
             <ProviderRuntimeSection
               compact
-              disabled={disconnecting}
+              disabled={accountActionPending}
               displayName={assistedDisplayName}
               environmentId={props.environmentId}
               initialAction={availableInitialRuntimeAction}
@@ -251,61 +199,18 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
               provider={props.provider}
             />
           ) : null}
-          {isManagedRuntimeFocused ? null : isDroid ? (
-            <DroidInlineSetup
-              accountAction={accountAction}
-              controller={controller}
+          {isManagedRuntimeFocused ? null : (
+            <AssistedProviderSetupHost
+              accountActionDisabled={isRuntimeWorking || isRuntimePlanOpen}
               displayName={props.displayName}
+              environmentId={props.environmentId}
               managedRuntimePresentedExternally={showManagedRuntime}
+              onAccountActionPendingChange={setAccountActionPending}
               onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
               provider={props.provider}
-            />
-          ) : isClaude ? (
-            <ClaudeInlineSetup
-              accountAction={accountAction}
-              controller={controller}
-              displayName={props.displayName}
-              managedRuntimePresentedExternally={showManagedRuntime}
-              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
-              provider={props.provider}
-            />
-          ) : isCursor ? (
-            <CursorInlineSetup
-              accountAction={accountAction}
-              controller={controller}
-              displayName={props.displayName}
-              managedRuntimePresentedExternally={showManagedRuntime}
-              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
-              provider={props.provider}
-            />
-          ) : isGrok ? (
-            <GrokInlineSetup
-              accountAction={accountAction}
-              controller={controller}
-              displayName={props.displayName}
-              managedRuntimePresentedExternally={showManagedRuntime}
-              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
-              provider={props.provider}
-            />
-          ) : (
-            <CodexInlineSetup
-              accountAction={accountAction}
-              controller={controller}
-              displayName={props.displayName}
-              managedRuntimePresentedExternally={showManagedRuntime}
-              onRepairSucceeded={() => props.onRuntimeActionSucceeded("repair")}
-              provider={props.provider}
+              surface="management"
             />
           )}
-          {disconnectError ? (
-            <div
-              className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"
-              role="alert"
-            >
-              <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-              <span>{disconnectError}</span>
-            </div>
-          ) : null}
         </DialogPanel>
       </DialogPopup>
     </Dialog>
@@ -335,9 +240,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
   );
   const presentation = providerConnectionPresentation(props.provider);
   const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
-  const isConnected =
-    presentation.kind === "connected" ||
-    (isRuntimeWorking && isProviderAccountConnected(props.provider));
+  const isConnected = isProviderAccountPresentedAsConnected(props.provider);
   const operation = isConnected
     ? (props.provider.connection?.operation ?? null)
     : (props.provider.connection?.operation ?? localOperation);
@@ -346,11 +249,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
   const isAntigravityGoogle = preferredMethod === "antigravity_google";
   const isAntigravity = props.provider.driver === "antigravity";
   const isWorking = pendingAction !== null || isRuntimeWorking;
-  const canCancel =
-    operation !== null &&
-    operation.status !== "connected" &&
-    operation.status !== "cancelled" &&
-    operation.status !== "failed";
+  const canCancel = isActiveProviderConnectionOperation(operation);
   const { copyToClipboard } = useCopyToClipboard();
 
   useEffect(() => {
@@ -370,10 +269,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     props.provider.installed,
   ]);
 
-  const accountLabel = useMemo(() => {
-    const email = props.provider.auth.email?.trim();
-    return email || props.provider.auth.label || props.provider.auth.type || null;
-  }, [props.provider.auth.email, props.provider.auth.label, props.provider.auth.type]);
+  const accountLabel = providerAccountIdentity(props.provider) ?? props.provider.auth.type ?? null;
   const acceptsAuthorizationCode =
     operation?.acceptsAuthorizationCode === true ||
     (operation?.acceptsAuthorizationCode === undefined &&
@@ -388,7 +284,9 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     try {
       await ensureLocalApi().shell.openExternal(url);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not open the secure sign-in page."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not open the secure sign-in page."),
+      );
     }
   };
 
@@ -406,7 +304,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setLocalError(
-          failureMessage(
+          providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
             `Scient could not start ${props.displayName} sign in.`,
           ),
@@ -440,7 +338,10 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setLocalError(
-          failureMessage(squashAtomCommandFailure(result), "Scient could not cancel sign in."),
+          providerLifecycleFailureMessage(
+            squashAtomCommandFailure(result),
+            "Scient could not cancel sign in.",
+          ),
         );
       }
       return;
@@ -465,7 +366,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setLocalError(
-          failureMessage(
+          providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
             "Scient could not return the authorization code to Antigravity.",
           ),
@@ -489,7 +390,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setLocalError(
-          failureMessage(
+          providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
             `Scient could not sign out of ${props.displayName}.`,
           ),

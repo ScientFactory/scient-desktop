@@ -21,7 +21,12 @@ import {
   startReviewedAntigravityRuntimeAction,
   updateAntigravityRuntime,
 } from "./antigravityLifecycleActions";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  needsManagedRuntimeRecovery,
+  providerLifecycleFailureMessage,
+} from "./providerConnectionPresentation";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
@@ -37,19 +42,6 @@ type PendingAction =
   | "cancel-sign-in"
   | "disconnect"
   | null;
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -97,16 +89,13 @@ export function AntigravityInlineSetup(props: {
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels && isAuthenticated;
@@ -125,7 +114,9 @@ export function AntigravityInlineSetup(props: {
     try {
       await operation();
     } catch (error) {
-      setLocalError(failureMessage(error, `Scient could not ${action} Antigravity.`));
+      setLocalError(
+        providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -156,7 +147,10 @@ export function AntigravityInlineSetup(props: {
       setAuthorizationCode("");
     } catch (error) {
       setLocalError(
-        failureMessage(error, "Scient could not return the authorization code to Antigravity."),
+        providerLifecycleFailureMessage(
+          error,
+          "Scient could not return the authorization code to Antigravity.",
+        ),
       );
     } finally {
       setPendingAction(null);

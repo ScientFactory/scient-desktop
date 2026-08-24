@@ -28,7 +28,13 @@ import {
 } from "./codexLifecycleActions";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  needsManagedRuntimeRecovery,
+  providerLifecycleFailureMessage,
+  providerRuntimeComputerLabel,
+} from "./providerConnectionPresentation";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -41,19 +47,6 @@ type PendingAction =
   | "cancel-runtime"
   | "cancel-sign-in"
   | null;
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -72,14 +65,6 @@ function runtimeStage(operation: ProviderRuntimeOperation | null): string {
     default:
       return "Preparing Codex…";
   }
-}
-
-function computerLabel(provider: ServerProvider): string {
-  const target = provider.connection?.runtime?.target;
-  if (target?.startsWith("darwin-")) return "this Mac";
-  if (target?.startsWith("win32-")) return "this Windows computer";
-  if (target?.startsWith("linux-")) return "this Linux computer";
-  return "this computer";
 }
 
 export function CodexInlineSetup(props: {
@@ -101,16 +86,13 @@ export function CodexInlineSetup(props: {
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const supportsBrowserSignIn =
     props.provider.connection?.methods.includes("codex_browser") ?? false;
@@ -146,7 +128,7 @@ export function CodexInlineSetup(props: {
     try {
       await startReviewedCodexRuntimeAction(props.controller, "install");
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not install Codex."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Codex."));
     } finally {
       setPendingAction(null);
     }
@@ -158,7 +140,7 @@ export function CodexInlineSetup(props: {
     try {
       await updateCodexRuntime(props.controller, props.provider);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not update Codex."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Codex."));
     } finally {
       setPendingAction(null);
     }
@@ -176,7 +158,7 @@ export function CodexInlineSetup(props: {
         props.onRepairSucceeded?.();
       }
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not repair Codex."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Codex."));
     } finally {
       setPendingAction(null);
     }
@@ -209,7 +191,7 @@ export function CodexInlineSetup(props: {
     try {
       await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not cancel Codex setup."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not cancel Codex setup."));
     } finally {
       setPendingAction(null);
     }
@@ -226,7 +208,9 @@ export function CodexInlineSetup(props: {
         await startCodexBrowserSignIn(props.controller);
       }
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not start Codex sign in."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not start Codex sign in."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -239,7 +223,9 @@ export function CodexInlineSetup(props: {
     try {
       await props.controller.cancelConnection(activeConnectionOperation.operationId);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not cancel Codex sign in."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not cancel Codex sign in."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -317,8 +303,8 @@ export function CodexInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Codex is not installed on ${computerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${computerLabel(props.provider)}. You can use an existing Codex installation.`)
+              ? `Codex is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
+              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Codex installation.`)
           }
           icon={
             error ? (
@@ -492,7 +478,9 @@ export function CodexInlineSetup(props: {
     try {
       await startReviewedCodexRuntimeAction(props.controller, "install");
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not switch to managed Codex."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not switch to managed Codex."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -574,5 +562,5 @@ function StatusFrame(props: {
 }
 
 function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame flow="codex">{props.children}</AssistedSetupFrame>;
+  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }

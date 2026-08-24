@@ -2,19 +2,12 @@ import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
-export function AssistedSetupFrame(props: {
-  readonly children: ReactNode;
-  readonly flow: "claude" | "codex" | "cursor" | "droid" | "grok";
-}) {
+export function AssistedSetupFrame(props: { readonly children: ReactNode }) {
   return (
     <div
       aria-live="polite"
-      className={cn(
-        "space-y-3 px-6 pb-4 in-[[data-model-picker-content=true]]:flex in-[[data-model-picker-content=true]]:min-h-full in-[[data-model-picker-content=true]]:w-full in-[[data-model-picker-content=true]]:flex-col in-[[data-model-picker-content=true]]:items-center in-[[data-model-picker-content=true]]:justify-center in-[[data-model-picker-content=true]]:gap-3 in-[[data-model-picker-content=true]]:space-y-0 in-[[data-model-picker-content=true]]:px-5 in-[[data-model-picker-content=true]]:py-4 in-[[data-model-picker-content=true]]:text-center in-[[data-slot=dialog-panel]]:p-0",
-        props.flow === "grok" &&
-          "in-[[data-model-picker-content=true]]:-translate-x-2.5 in-[[data-model-picker-content=true]]:-translate-y-2.5 in-[[data-model-picker-content=true]]:[&_[data-assisted-setup-icon=true]]:-translate-y-1 in-[[data-model-picker-content=true]]:[&_[data-assisted-setup-title=true]]:-translate-y-1",
-      )}
-      data-provider-onboarding-view={`${props.flow}-flow`}
+      className="space-y-3 px-6 pb-4 in-[[data-model-picker-content=true]]:flex in-[[data-model-picker-content=true]]:min-h-full in-[[data-model-picker-content=true]]:w-full in-[[data-model-picker-content=true]]:flex-col in-[[data-model-picker-content=true]]:items-center in-[[data-model-picker-content=true]]:justify-center in-[[data-model-picker-content=true]]:gap-3 in-[[data-model-picker-content=true]]:space-y-0 in-[[data-model-picker-content=true]]:px-5 in-[[data-model-picker-content=true]]:py-4 in-[[data-model-picker-content=true]]:text-center in-[[data-slot=dialog-panel]]:p-0"
+      data-provider-onboarding-view="assisted"
     >
       {props.children}
     </div>

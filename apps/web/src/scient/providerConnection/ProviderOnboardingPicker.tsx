@@ -10,18 +10,15 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popov
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "~/lib/utils";
-import { CodexInlineSetup } from "./CodexInlineSetup";
-import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
-import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
-import { DroidInlineSetup } from "./DroidInlineSetup";
-import { CursorInlineSetup } from "./CursorInlineSetup";
-import { GrokInlineSetup } from "./GrokInlineSetup";
+import {
+  AssistedProviderSetupHost,
+  supportsAssistedProviderSetupSurface,
+} from "./AssistedProviderSetupHost";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
-import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
@@ -312,78 +309,6 @@ export function ProviderOnboardingPicker(props: {
   );
 }
 
-function CodexSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <CodexInlineSetup {...props} controller={controller} />;
-}
-
-function ClaudeSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <ClaudeInlineSetup {...props} controller={controller} />;
-}
-
-function AntigravitySetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <AntigravityInlineSetup {...props} controller={controller} />;
-}
-
-function CursorSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <CursorInlineSetup {...props} controller={controller} />;
-}
-
-function GrokSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <GrokInlineSetup {...props} controller={controller} />;
-}
-
-function DroidSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <DroidInlineSetup {...props} controller={controller} />;
-}
-
 /**
  * Inline setup surface used by the regular model picker after another provider
  * is already ready. Keeping this in Scient-owned code lets T3 continue to own
@@ -395,57 +320,13 @@ export function ProviderLifecycleSetupSurface(props: {
   readonly onManageFallback?: (() => void) | undefined;
 }) {
   const navigate = useNavigate();
-  if (props.entry.driverKind === "codex") {
+  if (supportsAssistedProviderSetupSurface(props.entry.driverKind, "composer")) {
     return (
-      <CodexSetupWithController
+      <AssistedProviderSetupHost
         displayName={props.entry.displayName}
         environmentId={props.environmentId}
         provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "claudeAgent") {
-    return (
-      <ClaudeSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "antigravity") {
-    return (
-      <AntigravitySetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "cursor") {
-    return (
-      <CursorSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "grok") {
-    return (
-      <GrokSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "droid") {
-    return (
-      <DroidSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
+        surface="composer"
       />
     );
   }

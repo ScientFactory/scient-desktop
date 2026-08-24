@@ -1,5 +1,10 @@
 import type { ServerProvider } from "@t3tools/contracts";
 
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+} from "./providerConnectionPresentation";
+
 export type ProviderSettingsLifecycleKind =
   | "checking"
   | "disabled"
@@ -19,22 +24,6 @@ export interface ProviderSettingsLifecyclePresentation {
   readonly actionLabel: string | null;
   readonly busy: boolean;
 }
-
-const ACTIVE_RUNTIME_STATUSES = new Set([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-const ACTIVE_CONNECTION_STATUSES = new Set([
-  "starting",
-  "waiting_for_browser",
-  "waiting_for_device_code",
-  "verifying",
-]);
 
 export function providerSettingsLifecyclePresentation(
   provider: ServerProvider | undefined,
@@ -69,7 +58,7 @@ export function providerSettingsLifecyclePresentation(
       busy: false,
     };
   }
-  if (runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)) {
+  if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
     return {
       kind: "installing",
       statusLabel: runtimeOperation.status === "removing" ? "Removing" : "Installing",
@@ -122,7 +111,7 @@ export function providerSettingsLifecyclePresentation(
       busy: false,
     };
   }
-  if (connectionOperation && ACTIVE_CONNECTION_STATUSES.has(connectionOperation.status)) {
+  if (connectionOperation && isActiveProviderConnectionOperation(connectionOperation)) {
     return {
       kind: "signing-in",
       statusLabel: connectionOperation.status === "verifying" ? "Verifying" : "Signing in",

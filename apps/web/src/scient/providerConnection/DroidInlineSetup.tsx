@@ -1,8 +1,4 @@
-import type {
-  ProviderRuntimeOperation,
-  ProviderRuntimeSummary,
-  ServerProvider,
-} from "@t3tools/contracts";
+import type { ProviderRuntimeSummary, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   ExternalLinkIcon,
@@ -22,25 +18,18 @@ import {
   AssistedSetupStatus,
 } from "./AssistedProviderSetup";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  needsManagedRuntimeRecovery,
+  providerAccountIdentity,
+  providerLifecycleFailureMessage,
+} from "./providerConnectionPresentation";
+import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction = "install" | "repair" | "sign-in" | "cancel-runtime" | "cancel-sign-in" | null;
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 export function DroidInlineSetup(props: {
   readonly accountAction?: ReactNode;
@@ -63,16 +52,13 @@ export function DroidInlineSetup(props: {
   const serverRuntime = props.provider.connection?.runtime;
   const runtime = resolveProviderRuntimeForPresentation(serverRuntime, localRuntime);
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
   const supportsDevicePairing =
     props.provider.connection?.methods.includes("droid_device_pairing") ?? false;
   const isAuthenticated = props.provider.auth.status === "authenticated";
@@ -94,8 +80,7 @@ export function DroidInlineSetup(props: {
     setLocalError(null);
     setPendingAction(action);
     try {
-      const plan = await props.controller.planRuntime(action);
-      const provider = await props.controller.startRuntime(plan);
+      const provider = await startReviewedProviderRuntimeAction(props.controller, action);
       setLocalRuntime(provider.connection?.runtime ?? null);
       if (
         action === "repair" &&
@@ -105,7 +90,7 @@ export function DroidInlineSetup(props: {
         props.onRepairSucceeded?.();
       }
     } catch (error) {
-      setLocalError(failureMessage(error, `Scient could not ${action} Droid.`));
+      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Droid.`));
     } finally {
       setPendingAction(null);
     }
@@ -130,7 +115,7 @@ export function DroidInlineSetup(props: {
     try {
       await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not cancel Droid setup."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not cancel Droid setup."));
     } finally {
       setPendingAction(null);
     }
@@ -143,7 +128,9 @@ export function DroidInlineSetup(props: {
     try {
       await props.controller.startConnection("droid_device_pairing");
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not start Droid sign in."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not start Droid sign in."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -156,7 +143,9 @@ export function DroidInlineSetup(props: {
     try {
       await props.controller.cancelConnection(activeConnectionOperation.operationId);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not cancel Droid sign in."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not cancel Droid sign in."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -302,7 +291,7 @@ export function DroidInlineSetup(props: {
         <AssistedSetupStatus
           body={
             isReady
-              ? (props.provider.auth.email ?? props.provider.auth.label ?? "Factory account")
+              ? (providerAccountIdentity(props.provider) ?? "Factory account")
               : (props.provider.message ?? "Your Factory account is connected.")
           }
           icon={
@@ -363,7 +352,7 @@ export function DroidInlineSetup(props: {
 
 function SetupFrame(props: { readonly children: ReactNode }) {
   return (
-    <AssistedSetupFrame flow="droid">
+    <AssistedSetupFrame>
       <DroidIcon
         aria-hidden
         className="hidden size-8 shrink-0 in-[[data-model-picker-content=true]]:block"

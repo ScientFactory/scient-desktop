@@ -1,0 +1,200 @@
+import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
+import { LoaderIcon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
+
+import { Button } from "../../components/ui/button";
+import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
+import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
+import { CodexInlineSetup } from "./CodexInlineSetup";
+import { CursorInlineSetup } from "./CursorInlineSetup";
+import { DroidInlineSetup } from "./DroidInlineSetup";
+import { GrokInlineSetup } from "./GrokInlineSetup";
+import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  isProviderAccountPresentedAsConnected,
+  providerLifecycleFailureMessage,
+} from "./providerConnectionPresentation";
+import { useProviderLifecycleController } from "./useProviderLifecycleController";
+
+export type AssistedProviderSetupSurface = "composer" | "management";
+
+export function supportsAssistedProviderSetupSurface(
+  driver: ProviderDriverKind,
+  surface: AssistedProviderSetupSurface,
+): boolean {
+  switch (driver) {
+    case "antigravity":
+      return surface === "composer";
+    case "claudeAgent":
+    case "codex":
+    case "cursor":
+    case "droid":
+    case "grok":
+      return true;
+    default:
+      return false;
+  }
+}
+
+interface AssistedProviderSetupHostBaseProps {
+  readonly displayName: string;
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+}
+
+type AssistedProviderSetupHostProps = AssistedProviderSetupHostBaseProps &
+  (
+    | { readonly surface: "composer" }
+    | {
+        readonly surface: "management";
+        readonly accountActionDisabled: boolean;
+        readonly managedRuntimePresentedExternally: boolean;
+        readonly onAccountActionPendingChange: (pending: boolean) => void;
+        readonly onRepairSucceeded: () => void;
+      }
+  );
+
+/**
+ * The single frontend dispatch seam for assisted provider setup. Provider
+ * flows stay in their own inline views; this host owns only controller
+ * construction and the management surface's shared account action.
+ */
+export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
+  if (!supportsAssistedProviderSetupSurface(props.provider.driver, props.surface)) return null;
+  return <SupportedAssistedProviderSetupHost {...props} />;
+}
+
+function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const displayName =
+    props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
+  const isManagement = props.surface === "management";
+
+  const disconnect = async () => {
+    setDisconnecting(true);
+    if (isManagement) props.onAccountActionPendingChange(true);
+    setDisconnectError(null);
+    try {
+      await controller.disconnect();
+    } catch (error) {
+      setDisconnectError(
+        providerLifecycleFailureMessage(error, `Scient could not sign out of ${displayName}.`),
+      );
+    } finally {
+      setDisconnecting(false);
+      if (isManagement) props.onAccountActionPendingChange(false);
+    }
+  };
+
+  const accountAction =
+    isManagement &&
+    isProviderAccountPresentedAsConnected(props.provider) &&
+    props.provider.connection?.canDisconnect ? (
+      <Button
+        className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+        disabled={disconnecting || props.accountActionDisabled}
+        onClick={() => void disconnect()}
+        size="sm"
+        type="button"
+        variant="ghost-muted"
+      >
+        {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
+        Sign out
+      </Button>
+    ) : undefined;
+
+  const managementProps = isManagement
+    ? {
+        accountAction,
+        managedRuntimePresentedExternally: props.managedRuntimePresentedExternally,
+        onRepairSucceeded: props.onRepairSucceeded,
+      }
+    : {};
+
+  let setup: ReactNode;
+  switch (props.provider.driver) {
+    case "antigravity":
+      setup =
+        props.surface === "composer" ? (
+          <AntigravityInlineSetup
+            controller={controller}
+            displayName={displayName}
+            provider={props.provider}
+          />
+        ) : null;
+      break;
+    case "claudeAgent":
+      setup = (
+        <ClaudeInlineSetup
+          {...managementProps}
+          controller={controller}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
+    case "codex":
+      setup = (
+        <CodexInlineSetup
+          {...managementProps}
+          controller={controller}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
+    case "cursor":
+      setup = (
+        <CursorInlineSetup
+          {...managementProps}
+          controller={controller}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
+    case "droid":
+      setup = (
+        <DroidInlineSetup
+          {...managementProps}
+          controller={controller}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
+    case "grok":
+      setup = (
+        <GrokInlineSetup
+          {...managementProps}
+          controller={controller}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
+    default:
+      setup = null;
+  }
+
+  if (setup === null) return null;
+  return (
+    <>
+      {setup}
+      {isManagement && disconnectError ? (
+        <div
+          className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"
+          role="alert"
+        >
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>{disconnectError}</span>
+        </div>
+      ) : null}
+    </>
+  );
+}

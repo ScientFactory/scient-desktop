@@ -26,7 +26,13 @@ import {
 import { startGrokSignIn, startReviewedGrokRuntimeAction } from "./grokLifecycleActions";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  needsManagedRuntimeRecovery,
+  providerAccountIdentity,
+  providerLifecycleFailureMessage,
+} from "./providerConnectionPresentation";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -40,20 +46,6 @@ type PendingAction =
   | "cancel-runtime"
   | "cancel-sign-in"
   | null;
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -102,16 +94,13 @@ export function GrokInlineSetup(props: {
   const serverRuntime = props.provider.connection?.runtime;
   const runtime = resolveProviderRuntimeForPresentation(serverRuntime, localRuntime);
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
 
   useEffect(() => {
     setShowAuthorizationCode(false);
@@ -142,7 +131,7 @@ export function GrokInlineSetup(props: {
     try {
       await operation();
     } catch (error) {
-      setLocalError(failureMessage(error, `Scient could not ${action} Grok.`));
+      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Grok.`));
     } finally {
       setPendingAction(null);
     }
@@ -388,7 +377,7 @@ export function GrokInlineSetup(props: {
     ) : undefined;
 
   if (accountConnected) {
-    const account = props.provider.auth.email ?? props.provider.auth.label ?? "Grok subscription";
+    const account = providerAccountIdentity(props.provider) ?? "Grok subscription";
     return (
       <StatusFrame
         accountAction={connectedActions}
@@ -499,7 +488,7 @@ function StatusFrame(props: {
 }
 
 function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame flow="grok">{props.children}</AssistedSetupFrame>;
+  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }
 
 function GrokLoadingIcon(props: {

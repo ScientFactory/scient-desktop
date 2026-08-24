@@ -143,7 +143,7 @@ describe("CursorInlineSetup", () => {
     expect(markup).toContain(">Cancel<");
     expect(markup).toContain("text-destructive/80");
     expect(markup).not.toContain("progressbar");
-    expect(markup).toContain('data-provider-onboarding-view="cursor-flow"');
+    expect(markup).toContain('data-provider-onboarding-view="assisted"');
     expect(markup).toContain(
       "hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline",
     );

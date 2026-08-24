@@ -4,11 +4,17 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import {
   canManageProviderLifecycle,
   hasActiveProviderRuntimeOperation,
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
   isProviderAccountConnected,
+  isProviderAccountPresentedAsConnected,
   isSafeProviderAuthorizationUrl,
   needsManagedRuntimeRecovery,
   preferredProviderConnectionMethod,
+  providerAccountIdentity,
   providerConnectionPresentation,
+  providerLifecycleFailureMessage,
+  providerRuntimeComputerLabel,
 } from "./providerConnectionPresentation";
 
 const provider: ServerProvider = {
@@ -141,6 +147,85 @@ describe("providerConnectionPresentation", () => {
     expect(providerConnectionPresentation(repairing).kind).toBe("setting-up");
     expect(hasActiveProviderRuntimeOperation(repairing)).toBe(true);
     expect(isProviderAccountConnected(repairing)).toBe(true);
+    expect(isProviderAccountPresentedAsConnected(repairing)).toBe(true);
+
+    const missingRuntime = {
+      ...repairing,
+      installed: false,
+      connection: {
+        ...repairing.connection!,
+        runtime: {
+          ...repairing.connection!.runtime!,
+          source: "missing" as const,
+          operation: null,
+        },
+      },
+    };
+    expect(isProviderAccountPresentedAsConnected(missingRuntime)).toBe(false);
+  });
+
+  it("classifies lifecycle operations from their terminal states", () => {
+    const connection = {
+      operationId: "connect-1",
+      method: "codex_browser" as const,
+      status: "waiting_for_browser" as const,
+      startedAt: "2026-08-09T00:00:00.000Z",
+      finishedAt: null,
+      message: "Waiting",
+    };
+    const runtime = {
+      operationId: "runtime-1",
+      action: "remove" as const,
+      status: "removing" as const,
+      startedAt: "2026-08-09T00:00:00.000Z",
+      finishedAt: null,
+      message: "Removing",
+    };
+
+    expect(isActiveProviderConnectionOperation(connection)).toBe(true);
+    expect(isActiveProviderConnectionOperation({ ...connection, status: "connected" })).toBe(false);
+    expect(isActiveProviderConnectionOperation({ ...connection, status: "failed" })).toBe(false);
+    expect(isActiveProviderConnectionOperation({ ...connection, status: "cancelled" })).toBe(false);
+    expect(isActiveProviderRuntimeOperation(runtime)).toBe(true);
+    expect(isActiveProviderRuntimeOperation({ ...runtime, status: "succeeded" })).toBe(false);
+    expect(isActiveProviderRuntimeOperation({ ...runtime, status: "failed" })).toBe(false);
+    expect(isActiveProviderRuntimeOperation({ ...runtime, status: "cancelled" })).toBe(false);
+  });
+
+  it("normalizes shared failure and host labels without owning provider copy", () => {
+    expect(providerLifecycleFailureMessage({ message: "Provider detail" }, "Fallback")).toBe(
+      "Provider detail",
+    );
+    expect(providerLifecycleFailureMessage({ message: "  " }, "Fallback")).toBe("Fallback");
+    expect(
+      providerRuntimeComputerLabel({
+        ...provider,
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            source: "missing",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["install"],
+            managedVersion: null,
+            previousManagedVersion: null,
+            operation: null,
+            message: "Missing",
+          },
+        },
+      }),
+    ).toBe("this Mac");
+    expect(
+      providerAccountIdentity({
+        ...provider,
+        auth: {
+          status: "authenticated",
+          required: true,
+          email: "  person@example.com  ",
+          label: "Subscription",
+        },
+      }),
+    ).toBe("person@example.com");
   });
 
   it("routes a broken managed executable to repair instead of account sign-in", () => {

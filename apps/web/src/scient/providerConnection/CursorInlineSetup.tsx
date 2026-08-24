@@ -30,7 +30,13 @@ import {
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
 import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  needsManagedRuntimeRecovery,
+  providerLifecycleFailureMessage,
+  providerRuntimeComputerLabel,
+} from "./providerConnectionPresentation";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
@@ -43,30 +49,9 @@ type PendingAction =
   | "cancel-sign-in"
   | null;
 
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
-
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   const message = operation?.message.trim();
   return message && message.length > 0 ? message : "Preparing Cursor…";
-}
-
-function computerLabel(provider: ServerProvider): string {
-  const target = provider.connection?.runtime?.target;
-  if (target?.startsWith("darwin-")) return "this Mac";
-  if (target?.startsWith("win32-")) return "this Windows computer";
-  if (target?.startsWith("linux-")) return "this Linux computer";
-  return "this computer";
 }
 
 function accountDescription(provider: ServerProvider): string {
@@ -169,16 +154,13 @@ export function CursorInlineSetup(props: {
   const runtimeOperation =
     serverRuntimeOperation ??
     (optimisticRuntimeOperationIsSettled ? null : currentOptimisticRuntimeOperation);
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels;
@@ -206,14 +188,14 @@ export function CursorInlineSetup(props: {
       if (syncRuntimeOperation) {
         const nextOperation = provider.connection?.runtime?.operation ?? null;
         setOptimisticRuntimeOperation(
-          nextOperation && ACTIVE_RUNTIME_STATUSES.has(nextOperation.status)
+          nextOperation && isActiveProviderRuntimeOperation(nextOperation)
             ? { baseProvider: props.provider, value: nextOperation }
             : null,
         );
       }
       return provider;
     } catch (error) {
-      setLocalError(failureMessage(error, fallback));
+      setLocalError(providerLifecycleFailureMessage(error, fallback));
       return undefined;
     } finally {
       setPendingAction(null);
@@ -370,8 +352,8 @@ export function CursorInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Cursor is not installed on ${computerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${computerLabel(props.provider)}. You can use an existing Cursor installation.`)
+              ? `Cursor is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
+              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Cursor installation.`)
           }
           icon={
             error ? (
@@ -610,5 +592,5 @@ function StatusFrame(props: {
 }
 
 function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame flow="cursor">{props.children}</AssistedSetupFrame>;
+  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }
