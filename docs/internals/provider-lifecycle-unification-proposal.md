@@ -60,6 +60,20 @@ Therefore, the bounded upstream synchronization should be reviewed and landed in
 provider lifecycle refactoring begins. Provider architecture changes must not be mixed into the T3
 merge.
 
+## Companion capability audit
+
+The [provider lifecycle capability audit](./provider-lifecycle-capability-audit.md) is the living
+evidence inventory for current provider behavior, intentional differences, suspected omissions, and
+open questions. It is not a second implementation plan and an observation in that document is not an
+accepted requirement by itself.
+
+Before migrating a provider, revalidate its audit row against the current checkout, upstream T3,
+focused tests, official provider behavior, and real-app evidence where source inspection is
+insufficient. Classify every difference as a shared invariant, intentional provider-specific
+capability, missing capability, or behavior that should be removed. Update the audit when evidence
+changes; update this proposal only when that evidence produces an accepted architecture or delivery
+decision.
+
 ## Collaboration and delivery workflow
 
 This proposal has a shared remote planning branch, `feat/provider-lifecycle-unification`. The branch
@@ -98,6 +112,8 @@ long-lived integration branch for accumulating implementation.
 - No implementation PR may silently reinterpret this proposal. When evidence changes an architectural
   decision, update this document and the relevant canonical internal documentation in the same PR,
   recording the reason, affected providers, compatibility impact, and validation required.
+- Each provider migration must revalidate and update the companion capability audit. Open findings in
+  the audit remain investigation gates, not implicit authorization to add parity features.
 
 ### Review and merge discipline
 
@@ -109,7 +125,9 @@ reviewable and reversible. Green CI alone is not a merge decision. The relevant 
 - the automated contract, provider, and compatibility tests appropriate to the change;
 - isolated real-app validation for affected user-visible lifecycle paths;
 - platform qualification when runtime packaging or process behavior changes; and
-- synchronized architecture, provider-matrix, and user documentation.
+- synchronized architecture, provider-matrix, and user documentation; and
+- a refreshed capability-audit row for every affected provider, with unresolved claims still marked
+  open rather than presented as implemented behavior.
 
 This workflow is deliberately lightweight: one shared proposal and review hub, followed by small
 branches and focused PRs. It allows several collaborators to contribute without turning the work into
