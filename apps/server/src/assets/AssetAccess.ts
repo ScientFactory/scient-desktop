@@ -57,7 +57,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import type { ResolvedGeneratedDocumentRevision } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "../scient/analysis/LocalAnalysisStore.ts";
-import type { ResolvedComputeOutputImage } from "../scient/compute/LocalComputeStore.ts";
+import type { ResolvedComputeOutputResource } from "../scient/compute/LocalComputeStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_TOKEN_TTL_MS } from "../scient/documentArtifacts/AssetLifetime.ts";
 
@@ -320,7 +320,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   /** Must match the durable lease returned with `generatedDocument`. */
   readonly generatedDocumentExpiresAtEpochMs?: number;
   readonly analysisArtifact?: ResolvedAnalysisArtifactRepresentation;
-  readonly computeOutput?: ResolvedComputeOutputImage;
+  readonly computeOutput?: ResolvedComputeOutputResource;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -663,8 +663,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     }
     case "compute-output": {
       const resolved = input.computeOutput;
-      // The hash is the identity, so a resolution for a different image is not
-      // a near miss to be tolerated: it is the wrong image.
+      // The hash is the identity, so a resolution for a different resource is
+      // not a near miss to be tolerated: it is the wrong retained output.
       if (!resolved || resolved.contentHash !== input.resource.contentHash) {
         return yield* new AssetComputeOutputNotFoundError({ resource: input.resource });
       }

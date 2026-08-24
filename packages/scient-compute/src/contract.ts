@@ -18,6 +18,7 @@ import {
   Slug,
   StreamText,
 } from "./primitives.ts";
+import { ComputeDisplayOutput, ComputeMediaType } from "./representation.ts";
 
 export const ComputeSessionId = EntityId.pipe(Schema.brand("ComputeSessionId"));
 export type ComputeSessionId = typeof ComputeSessionId.Type;
@@ -186,11 +187,10 @@ const OutputEnvelope = {
  * report, in which case those products share the cursor and their append order
  * is the tie-breaker. Durable transcript order is authoritative.
  *
- * The first product slice renders every member. The union is a closed set on
- * purpose: a representation Scient cannot yet display is either dropped by the
- * transport or reduced to `stream` text, so no client is ever handed a variant
- * it has no code for. Richer representations arrive as new members, and a
- * client that meets an unknown member fails to decode loudly instead of
+ * The union is a closed set on purpose. Rich display members retain bounded
+ * alternative representations plus update/clear facts; a pure projector
+ * derives what is currently visible without rewriting this immutable history.
+ * A client that meets an unknown member fails to decode loudly instead of
  * silently rendering nothing.
  */
 export const ComputeOutput = Schema.Union([
@@ -218,42 +218,41 @@ export const ComputeOutput = Schema.Union([
     event: ComputeSystemEvent,
     detail: Schema.NullOr(ShortText),
   }),
+  ComputeDisplayOutput,
 ]);
 export type ComputeOutput = typeof ComputeOutput.Type;
 
 const utf8 = new TextEncoder();
 
 /**
- * How much of a session's durable transcript one output occupies.
+ * How many retained bytes one output charges to its durable transcript.
  *
- * Counts what is actually kept -- the text of a stream, the text of a
- * diagnostic, the bytes behind an image -- and not the JSON envelope around it,
- * so a retention ceiling means the same thing whichever representation a
- * runtime happened to choose. A transport's own byte estimate answers a
- * different question, how much memory a queued event holds before anyone has
- * read it, and is deliberately a separate number.
+ * The newline-delimited JSON fact is counted exactly, including an otherwise
+ * empty lifecycle envelope such as `clear-output`. Resource bytes are charged
+ * in addition because they are stored beside the transcript rather than inside
+ * it. Repeated references are deliberately charged repeatedly: a retention
+ * ceiling bounds what code may produce, not merely how well content-addressed
+ * storage happens to deduplicate it.
+ *
+ * A transport's estimate answers a different question -- how much memory a
+ * queued event holds before persistence -- and remains a separate number.
  */
 export function computeOutputByteLength(output: ComputeOutput): number {
-  switch (output._tag) {
-    case "stream":
-      return utf8.encode(output.text).length;
-    case "diagnostic":
-      return utf8.encode(
-        [
-          output.diagnostic.errorName,
-          output.diagnostic.message,
-          ...output.diagnostic.traceback,
-          ...output.diagnostic.frames.flatMap((frame) => [
-            frame.relativePath,
-            frame.functionName ?? "",
-          ]),
-        ].join("\n"),
-      ).length;
-    case "image":
-      return output.byteLength;
-    case "system":
-      return output.detail === null ? 0 : utf8.encode(output.detail).length;
-  }
+  const envelopeBytes = utf8.encode(`${JSON.stringify(output)}\n`).length;
+  const resourceBytes =
+    output._tag === "image"
+      ? output.byteLength
+      : output._tag === "display-data" ||
+          output._tag === "execute-result" ||
+          output._tag === "display-update"
+        ? output.bundle.representations.reduce(
+            (total, representation) =>
+              total +
+              (representation.data._tag === "resource" ? representation.data.byteLength : 0),
+            0,
+          )
+        : 0;
+  return envelopeBytes + resourceBytes;
 }
 
 /**
@@ -325,6 +324,14 @@ export const ComputeTransportImageEvent = Schema.Struct({
 });
 export type ComputeTransportImageEvent = typeof ComputeTransportImageEvent.Type;
 
+/** Transient bytes for one content-addressed rich representation. */
+export const ComputeTransportResourceEvent = Schema.Struct({
+  mediaType: ComputeMediaType,
+  contentHash: ContentHash,
+  bytes: Schema.Uint8Array,
+});
+export type ComputeTransportResourceEvent = typeof ComputeTransportResourceEvent.Type;
+
 /**
  * Everything a transport reports, in the order it happened.
  *
@@ -336,6 +343,11 @@ export type ComputeTransportImageEvent = typeof ComputeTransportImageEvent.Type;
  * `image` carries transient bytes only when `output` is an image; it is null
  * for every other output variant. The bytes are consumed once and never
  * persisted.
+ *
+ * `resources` is the representation-bundle equivalent. Each member must match
+ * one resource reference in `output`; the service stores every member before
+ * appending the fact that names it. Keeping these bytes beside rather than
+ * inside the durable output avoids turning transcript JSON into a binary wire.
  *
  * `runtime-error` carries the language-specific report rather than a normalized
  * `ComputeOutput.diagnostic` because a transport is shared by every language
@@ -357,6 +369,7 @@ export const ComputeTransportEvent = Schema.Union([
     generation: ComputeSessionGeneration,
     output: ComputeOutput,
     image: Schema.NullOr(ComputeTransportImageEvent),
+    resources: Schema.Array(ComputeTransportResourceEvent).check(Schema.isMaxLength(32)),
   }),
   Schema.TaggedStruct("runtime-error", {
     ...OutputEnvelope,

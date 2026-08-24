@@ -191,6 +191,7 @@ describe("compute language boundary", () => {
           generation,
           output: textOutput(1, "42\n"),
           image: null,
+          resources: [],
         });
         const completed = yield* next;
         expect(completed).toEqual({

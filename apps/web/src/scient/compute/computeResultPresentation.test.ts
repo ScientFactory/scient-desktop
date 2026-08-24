@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   computeExecutionStatusLabel,
+  computeProjectedStaticImage,
   computeSourceFreshnessLabel,
   computeSourceLabel,
   computeSystemEventLabel,
@@ -19,6 +20,37 @@ import {
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 type ComputeSystemEvent = Extract<ComputeOutput, { readonly _tag: "system" }>["event"];
+
+it("adapts a retained rich static image without losing its immutable identity", () => {
+  expect(
+    computeProjectedStaticImage({
+      _tag: "representation",
+      kind: "display-data",
+      sequence: 4,
+      observedAt: "2026-08-23T12:00:00.000Z",
+      revisionSequence: 7,
+      revisedAt: "2026-08-23T12:00:01.000Z",
+      bundle: {
+        representations: [
+          { mediaType: "text/plain", data: { _tag: "text", text: "fallback" } },
+          {
+            mediaType: "image/png",
+            data: { _tag: "resource", contentHash: "sha256:figure", byteLength: 128 },
+          },
+        ],
+        metadataJson: null,
+      },
+      displayId: "display-1",
+      executionCount: null,
+    }),
+  ).toMatchObject({
+    _tag: "image",
+    sequence: 4,
+    mediaType: "image/png",
+    contentHash: "sha256:figure",
+    origin: { _tag: "runtime-display" },
+  });
+});
 
 const documentSource = (
   overrides: Partial<Extract<ComputeExecutionSource, { _tag: "document" }>> = {},
@@ -130,6 +162,31 @@ describe("compute result presentation", () => {
       firstFigure,
       secondFigure,
     ]);
+  });
+
+  it("deduplicates identical display lifecycle facts without hiding real revisions", () => {
+    const displayed = {
+      _tag: "display-data",
+      sequence: 4,
+      observedAt: "2026-08-21T09:00:00.000Z",
+      bundle: {
+        representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "before" } }],
+        metadataJson: null,
+      },
+      displayId: "progress",
+    } as const satisfies ComputeOutput;
+    const updated = {
+      _tag: "display-update",
+      sequence: 5,
+      observedAt: "2026-08-21T09:00:01.000Z",
+      bundle: {
+        representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "after" } }],
+        metadataJson: null,
+      },
+      displayId: "progress",
+    } as const satisfies ComputeOutput;
+
+    expect(mergeComputeOutputs([displayed], [displayed, updated])).toEqual([displayed, updated]);
   });
 
   it("shows only useful file provenance in embedded results", () => {

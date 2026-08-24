@@ -6,8 +6,10 @@ import * as Effect from "effect/Effect";
 
 import {
   ComputeCapability,
+  ComputeDisplayId,
   ComputeExecutionOutcome,
   ComputeLanguageId,
+  ComputeMediaType,
   ComputeOutputStream,
   ComputeRequestId,
   ComputeSessionGeneration,
@@ -34,6 +36,9 @@ const MaxPngBase64Bytes = 11 * 1024 * 1024;
 // Raw UTF-8 SVG stays below the decoded PNG ceiling and leaves ample room for
 // the JSON envelope inside the 16 MiB bridge frame.
 const MaxSvgTextBytes = 8 * 1024 * 1024;
+const MaxInlineRepresentationBytes = 1024 * 1024;
+const MaxRepresentationMetadataBytes = 256 * 1024;
+const MaxRepresentationCount = 32;
 const MaxOwnerTokenLength = 128;
 const MaxPathLength = 4096;
 const MaxDetailLength = 4096;
@@ -204,7 +209,7 @@ export const StreamPayload = Schema.Struct({
 });
 export type StreamPayload = typeof StreamPayload.Type;
 
-export const DisplayPayload = Schema.Union([
+const LegacyDisplayPayload = Schema.Union([
   Schema.Struct({
     mediaType: Schema.Literal("image/png"),
     data: Schema.String.check(Schema.isMaxLength(MaxPngBase64Bytes)),
@@ -221,6 +226,66 @@ export const DisplayPayload = Schema.Union([
     ),
   }),
 ]);
+
+const RepresentationText = Schema.String.check(
+  Schema.isMaxLength(MaxInlineRepresentationBytes),
+  utf8Bound(MaxInlineRepresentationBytes),
+);
+
+const WireRepresentation = Schema.Union([
+  Schema.Struct({
+    mediaType: ComputeMediaType,
+    encoding: Schema.Literal("text"),
+    data: RepresentationText,
+  }),
+  Schema.Struct({
+    mediaType: ComputeMediaType,
+    encoding: Schema.Literal("json"),
+    data: RepresentationText,
+  }),
+  Schema.Struct({
+    mediaType: ComputeMediaType,
+    encoding: Schema.Literal("base64"),
+    data: Schema.String.check(Schema.isMaxLength(MaxPngBase64Bytes)),
+  }),
+]);
+
+const RepresentationBundlePayload = Schema.Struct({
+  representations: Schema.Array(WireRepresentation).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MaxRepresentationCount),
+  ),
+  metadataJson: Schema.NullOr(
+    Schema.String.check(
+      Schema.isMaxLength(MaxRepresentationMetadataBytes),
+      utf8Bound(MaxRepresentationMetadataBytes),
+    ),
+  ),
+});
+
+const RichDisplayPayload = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("display-data"),
+    bundle: RepresentationBundlePayload,
+    displayId: Schema.NullOr(ComputeDisplayId),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("execute-result"),
+    bundle: RepresentationBundlePayload,
+    executionCount: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("display-update"),
+    bundle: RepresentationBundlePayload,
+    displayId: ComputeDisplayId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("clear-output"),
+    wait: Schema.Boolean,
+  }),
+]);
+
+export const DisplayPayload = Schema.Union([LegacyDisplayPayload, RichDisplayPayload]);
 export type DisplayPayload = typeof DisplayPayload.Type;
 
 export const ErrorPayload = Schema.Struct({

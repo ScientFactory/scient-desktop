@@ -6,6 +6,9 @@ import type {
   ComputeProjectId,
   ComputeSessionId,
 } from "@t3tools/contracts";
+import { projectComputeOutputs } from "@t3tools/contracts";
+
+import { computeProjectedStaticImage } from "./computeResultPresentation";
 
 type ComputeImageOutput = Extract<ComputeOutput, { readonly _tag: "image" }>;
 type ComputeContentHash = ComputeImageOutput["contentHash"];
@@ -237,8 +240,14 @@ export function matchComputeFigureOutput(
   outputs: ReadonlyArray<ComputeOutput>,
 ): ComputeImageOutput | null {
   let runtimeDisplayOrdinal = 0;
-  for (const output of outputs) {
-    if (output._tag !== "image") continue;
+  for (const projected of projectComputeOutputs(outputs)) {
+    const output =
+      projected._tag === "image"
+        ? projected
+        : projected._tag === "representation"
+          ? computeProjectedStaticImage(projected)
+          : null;
+    if (output === null) continue;
     if (reference._tag === "snapshot") {
       if (output.contentHash === reference.contentHash) return output;
       continue;

@@ -302,7 +302,6 @@ class TestExecuteMapping(unittest.TestCase):
         m.iopub_busy = True
         m.iopub_idle = True
         m.interrupt_requested = True
-        m.warned_message_types.add("clear_output")
         m.reset()
         self.assertIsNone(m.active_request_id)
         self.assertIsNone(m.active_msg_id)
@@ -310,7 +309,6 @@ class TestExecuteMapping(unittest.TestCase):
         self.assertFalse(m.iopub_busy)
         self.assertFalse(m.iopub_idle)
         self.assertFalse(m.interrupt_requested)
-        self.assertEqual(m.warned_message_types, set())
 
 
 class TestBridgeHandshake(unittest.TestCase):
@@ -422,15 +420,21 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.b._handle_iopub("display_data", {"data": {"image/png": "iVBORw0KGgo="}}, "req-1")
         msgs = queued(self.b)
         self.assertEqual(msgs[0]["type"], "display")
-        self.assertEqual(msgs[0]["payload"]["mediaType"], "image/png")
-        self.assertEqual(msgs[0]["payload"]["data"], "iVBORw0KGgo=")
+        self.assertEqual(msgs[0]["payload"]["kind"], "display-data")
+        self.assertEqual(
+            msgs[0]["payload"]["bundle"]["representations"][0],
+            {"mediaType": "image/png", "encoding": "base64", "data": "iVBORw0KGgo="},
+        )
 
     def test_display_text_fallback(self):
         self.b._handle_iopub("execute_result", {"data": {"text/plain": "42"}}, "req-1")
         msgs = queued(self.b)
         self.assertEqual(msgs[0]["type"], "display")
-        self.assertEqual(msgs[0]["payload"]["mediaType"], "text/plain")
-        self.assertEqual(msgs[0]["payload"]["text"], "42")
+        self.assertEqual(msgs[0]["payload"]["kind"], "execute-result")
+        self.assertEqual(
+            msgs[0]["payload"]["bundle"]["representations"][0],
+            {"mediaType": "text/plain", "encoding": "text", "data": "42"},
+        )
 
     def test_display_svg_maps_to_display_event(self):
         source = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="2"/></svg>'
@@ -439,11 +443,65 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         )
         msgs = queued(self.b)
         self.assertEqual(msgs[0]["type"], "display")
-        self.assertEqual(msgs[0]["payload"]["mediaType"], "image/svg+xml")
-        self.assertEqual(msgs[0]["payload"]["data"], source)
+        self.assertEqual(msgs[0]["payload"]["kind"], "display-data")
+        self.assertEqual(
+            msgs[0]["payload"]["bundle"]["representations"][0],
+            {"mediaType": "image/svg+xml", "encoding": "text", "data": source},
+        )
+
+    def test_complete_bundle_metadata_identity_and_json_are_retained(self):
+        self.b._handle_iopub(
+            "display_data",
+            {
+                "data": {
+                    "text/plain": "fallback",
+                    "application/vnd.plotly.v1+json": {"data": [{"x": [1, 2]}]},
+                    "image/png": "iVBORw0KGgo=",
+                },
+                "metadata": {"image/png": {"width": 640}},
+                "transient": {"display_id": "figure-1"},
+            },
+            "req-1",
+        )
+        payload = queued(self.b)[0]["payload"]
+        self.assertEqual(payload["kind"], "display-data")
+        self.assertEqual(payload["displayId"], "figure-1")
+        self.assertEqual(
+            [item["mediaType"] for item in payload["bundle"]["representations"]],
+            ["text/plain", "application/vnd.plotly.v1+json", "image/png"],
+        )
+        self.assertEqual(
+            payload["bundle"]["representations"][1]["encoding"], "json"
+        )
+        self.assertEqual(
+            json.loads(payload["bundle"]["metadataJson"])["image/png"]["width"], 640
+        )
+
+    def test_invalid_json_and_metadata_do_not_discard_valid_fallback(self):
+        self.b._handle_iopub(
+            "display_data",
+            {
+                "data": {"text/plain": "fallback", "application/json": float("nan")},
+                "metadata": {"application/json": {"value": float("nan")}},
+            },
+            "req-1",
+        )
+        msgs = queued(self.b)
+        payload = msgs[0]["payload"]
+        self.assertEqual(
+            payload["bundle"],
+            {
+                "representations": [
+                    {"mediaType": "text/plain", "encoding": "text", "data": "fallback"}
+                ],
+                "metadataJson": None,
+            },
+        )
+        self.assertEqual(msgs[1]["type"], "warning")
+        self.assertEqual(msgs[1]["payload"]["code"], "output-truncated")
 
     def test_oversized_png_warns_instead_of_sending(self):
-        oversized = "A" * (bridge.MAX_PNG_BASE64 + 1)
+        oversized = "A" * ((bridge.MAX_REPRESENTATION_BUNDLE * 4) // 3 + 4)
         self.b._handle_iopub("display_data", {"data": {"image/png": oversized}}, "req-1")
         msgs = queued(self.b)
         self.assertEqual(len(msgs), 1)
@@ -454,7 +512,7 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         # What a ``_repr_png_`` returning prose looks like: it is not base64 at
         # all, and half as many characters as the limit allows still encodes to
         # more bytes than the limit -- which an ASCII-only count would miss.
-        oversized = "\u00e9" * (bridge.MAX_PNG_BASE64 // 2 + 1)
+        oversized = "\u00e9" * (bridge.MAX_REPRESENTATION_BUNDLE + 1)
         self.b._handle_iopub("display_data", {"data": {"image/png": oversized}}, "req-1")
         msgs = queued(self.b)
         self.assertEqual(len(msgs), 1)
@@ -462,7 +520,7 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.assertEqual(msgs[0]["payload"]["code"], "output-truncated")
 
     def test_oversized_svg_warns_instead_of_sending(self):
-        oversized = "é" * (bridge.MAX_SVG_TEXT // 2 + 1)
+        oversized = "é" * (bridge.MAX_REPRESENTATION_BUNDLE // 2 + 1)
         self.b._handle_iopub(
             "display_data", {"data": {"image/svg+xml": oversized}}, "req-1"
         )
@@ -511,20 +569,32 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.b._handle_iopub("status", {"execution_state": "idle"}, "req-1")
         self.assertTrue(self.b._mapping.iopub_idle)
 
-    def test_unsupported_message_warns_once_per_execution(self):
+    def test_clear_output_retains_each_ordered_fact(self):
         for _ in range(5):
-            self.b._handle_iopub("clear_output", {}, "req-1")
+            self.b._handle_iopub("clear_output", {"wait": True}, "req-1")
         msgs = queued(self.b)
-        self.assertEqual(len(msgs), 1)
-        self.assertEqual(msgs[0]["payload"]["code"], "runtime-warning")
-        self.b._mapping.reset()
-        self.b._handle_iopub("clear_output", {}, "req-2")
-        self.assertEqual(len(queued(self.b)), 1)
+        self.assertEqual(len(msgs), 5)
+        self.assertTrue(
+            all(
+                msg["payload"] == {"kind": "clear-output", "wait": True}
+                for msg in msgs
+            )
+        )
 
-    def test_update_display_and_clear_output_warn_separately(self):
-        self.b._handle_iopub("update_display_data", {}, "req-1")
+    def test_update_display_and_clear_output_are_distinct_facts(self):
+        self.b._handle_iopub(
+            "update_display_data",
+            {
+                "data": {"text/plain": "revised"},
+                "transient": {"display_id": "display-1"},
+            },
+            "req-1",
+        )
         self.b._handle_iopub("clear_output", {}, "req-1")
-        self.assertEqual(len(queued(self.b)), 2)
+        msgs = queued(self.b)
+        self.assertEqual(msgs[0]["payload"]["kind"], "display-update")
+        self.assertEqual(msgs[0]["payload"]["displayId"], "display-1")
+        self.assertEqual(msgs[1]["payload"], {"kind": "clear-output", "wait": False})
 
     def test_blocked_stdin_reports_the_cause_the_user_can_act_on(self):
         self.b._handle_iopub(
@@ -551,7 +621,7 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.assertEqual(msgs[1]["type"], "warning")
         self.assertEqual(msgs[1]["payload"]["code"], "output-truncated")
 
-    def test_unsupported_media_types_are_named_rather_than_dropped(self):
+    def test_html_is_retained_for_a_future_reviewed_renderer(self):
         self.b._handle_iopub(
             "display_data",
             {"data": {"text/html": "<b>bold</b>"}},
@@ -559,8 +629,9 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         )
         msgs = queued(self.b)
         self.assertEqual(len(msgs), 1)
-        self.assertEqual(msgs[0]["payload"]["code"], "runtime-warning")
-        self.assertIn("text/html", msgs[0]["payload"]["detail"])
+        representation = msgs[0]["payload"]["bundle"]["representations"][0]
+        self.assertEqual(representation["mediaType"], "text/html")
+        self.assertEqual(representation["encoding"], "text")
 
 
 class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):

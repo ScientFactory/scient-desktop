@@ -2300,7 +2300,7 @@ const makeWsRpcLayer = (
                 return yield* issueAssetUrl({ resource: input.resource, analysisArtifact });
               }
               if (input.resource._tag === "compute-output") {
-                const computeOutput = yield* compute.resolveOutputImage(input.resource).pipe(
+                const computeOutput = yield* compute.resolveOutputResource(input.resource).pipe(
                   Effect.mapError(
                     (cause) =>
                       new AssetComputeOutputResolutionError({

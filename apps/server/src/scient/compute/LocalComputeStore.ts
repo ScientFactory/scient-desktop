@@ -11,8 +11,10 @@ import {
   ComputeSessionId,
   ComputeSessionJournalEntry,
   ComputeSessionRecord,
+  MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES,
   type ComputeExecutionRecord,
   type ComputeImageMediaType,
+  type ComputeMediaType,
   type ComputeOutputResourceRef,
   type ComputeSessionStorage,
 } from "@scientfactory/compute";
@@ -41,12 +43,12 @@ import * as ServerConfig from "../../config.ts";
  *     session.json                     the session record, atomically replaced
  *     journal.ndjson                   what happened, in order, append-only
  *     output.ndjson                    output belonging to no execution
- *     outputs/<hex>.<ext>              image bytes, content-addressed
+ *     outputs/<hex>.<ext>              output resources, content-addressed
  *     executions/<executionId>/
  *         request.json                 written once, never rewritten
  *         result.json                  atomically replaced as it progresses
  *         output.ndjson                this execution's output, append-only
- *         outputs/<hex>.<ext>          its image bytes, content-addressed
+ *         outputs/<hex>.<ext>          its output resources, content-addressed
  *
  * Splitting a request from its result is what makes recovery honest rather than
  * a guess: a request with no result is an execution that was in flight when the
@@ -100,14 +102,17 @@ function isSafeSegment(value: string): boolean {
   return SAFE_SEGMENT_PATTERN.test(value);
 }
 
-export interface ResolvedComputeOutputImage {
+export interface ResolvedComputeOutputResource {
   readonly path: string;
   readonly fileName: string;
-  readonly mediaType: ComputeImageMediaType;
+  readonly mediaType: ComputeMediaType;
   readonly contentHash: string;
   readonly byteLength: number;
   readonly revision: { readonly size: number; readonly mtimeMs: number | null };
 }
+export type ResolvedComputeOutputImage = ResolvedComputeOutputResource & {
+  readonly mediaType: ComputeImageMediaType;
+};
 
 export interface LoadedComputeOutputs {
   readonly outputs: ReadonlyArray<ComputeOutput>;
@@ -164,6 +169,14 @@ export class LocalComputeStore extends Context.Service<
       readonly mediaType: ComputeImageMediaType;
       readonly bytes: Uint8Array;
     }) => Effect.Effect<{ readonly fileName: string }, LocalComputeStoreError>;
+    readonly writeOutputResource: (input: {
+      readonly projectId: ComputeProjectId;
+      readonly sessionId: ComputeSessionId;
+      readonly executionId: ComputeExecutionId | null;
+      readonly contentHash: string;
+      readonly mediaType: ComputeMediaType;
+      readonly bytes: Uint8Array;
+    }) => Effect.Effect<{ readonly fileName: string }, LocalComputeStoreError>;
     readonly loadProjectIds: () => Effect.Effect<
       ReadonlyArray<ComputeProjectId>,
       LocalComputeStoreError
@@ -196,6 +209,9 @@ export class LocalComputeStore extends Context.Service<
     readonly resolveOutputImage: (
       ref: ComputeOutputResourceRef,
     ) => Effect.Effect<ResolvedComputeOutputImage | null, LocalComputeStoreError>;
+    readonly resolveOutputResource: (
+      ref: ComputeOutputResourceRef,
+    ) => Effect.Effect<ResolvedComputeOutputResource | null, LocalComputeStoreError>;
     readonly measureSessionStorage: (
       projectId: ComputeProjectId,
       sessionId: ComputeSessionId,
@@ -227,8 +243,8 @@ async function sha256File(filePath: string): Promise<string> {
   return `sha256:${hash.digest("hex")}`;
 }
 
-function imageFileExtension(mediaType: ComputeImageMediaType): ".png" | ".svg" {
-  return mediaType === "image/png" ? ".png" : ".svg";
+function resourceFileExtension(mediaType: string): ".png" | ".svg" | ".bin" {
+  return mediaType === "image/png" ? ".png" : mediaType === "image/svg+xml" ? ".svg" : ".bin";
 }
 
 async function directoryByteLength(directory: string): Promise<number> {
@@ -444,13 +460,15 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const writeOutputImage = (input: {
+  const writeOutputResourceBytes = (input: {
     readonly projectId: ComputeProjectId;
     readonly sessionId: ComputeSessionId;
     readonly executionId: ComputeExecutionId | null;
     readonly contentHash: string;
-    readonly mediaType: ComputeImageMediaType;
+    readonly mediaType: string;
     readonly bytes: Uint8Array;
+    readonly maximumBytes: number;
+    readonly operation: "write-output-image" | "write-output-resource";
   }) =>
     Effect.gen(function* () {
       const owner = yield* outputOwnerDirectory(
@@ -461,17 +479,17 @@ const make = Effect.gen(function* () {
       const digest = CONTENT_HASH_PATTERN.exec(input.contentHash);
       if (digest?.[1] === undefined) {
         return yield* storeError(
-          "write-output-image",
+          input.operation,
           owner,
-          new Error("An image content hash must be a sha256 digest."),
+          new Error("A resource content hash must be a sha256 digest."),
         );
       }
-      if (input.bytes.byteLength > MAXIMUM_COMPUTE_OUTPUT_IMAGE_BYTES) {
+      if (input.bytes.byteLength > input.maximumBytes) {
         return yield* storeError(
-          "write-output-image",
+          input.operation,
           owner,
           new Error(
-            `An image of ${input.bytes.byteLength} bytes exceeds the ${MAXIMUM_COMPUTE_OUTPUT_IMAGE_BYTES}-byte limit.`,
+            `A compute resource of ${input.bytes.byteLength} bytes exceeds the ${input.maximumBytes}-byte limit.`,
           ),
         );
       }
@@ -480,50 +498,78 @@ const make = Effect.gen(function* () {
       // cheapest place to notice is before it is stored.
       const actual = yield* Effect.tryPromise({
         try: () => sha256Bytes(input.bytes),
-        catch: (cause) => storeError("hash-output-image", owner, cause),
+        catch: (cause) => storeError(`hash-${input.operation.slice(6)}`, owner, cause),
       });
       if (actual !== input.contentHash) {
         return yield* storeError(
-          "write-output-image",
+          input.operation,
           owner,
-          new Error("The image bytes do not match the hash they were reported under."),
+          new Error("The resource bytes do not match the hash they were reported under."),
         );
       }
-      const fileName = `${digest[1]}${imageFileExtension(input.mediaType)}`;
+      const fileName = `${digest[1]}${resourceFileExtension(input.mediaType)}`;
       const directory = path.join(owner, "outputs");
       const filePath = path.join(directory, fileName);
       yield* fs
         .makeDirectory(directory, { recursive: true })
-        .pipe(mapStoreError("make-output-image-directory", directory));
-      // Content-addressed, so a figure produced twice is stored once and a
+        .pipe(mapStoreError(`make-${input.operation.slice(6)}-directory`, directory));
+      // Content-addressed, so a resource produced twice is stored once and a
       // rewrite is a no-op rather than a conflict.
       if (!(yield* fs.exists(filePath).pipe(mapStoreError("exists", filePath)))) {
         yield* Effect.scoped(
           Effect.gen(function* () {
             // A temporary directory of its own, the way every other atomic write
             // in this server does it, rather than a name derived from the target.
-            // Image writes deliberately do not take the write lease -- a
+            // Resource writes deliberately do not take the write lease -- a
             // multi-megabyte copy has no business blocking a journal append --
             // so two of them can be in flight at once, and two writers storing
             // the same figure would otherwise derive the same temporary name and
             // the second's rename would look for a file the first had already
             // moved. The scope also takes the directory away again when a write
-            // fails, instead of leaving a half-written image beside a real one.
+            // fails, instead of leaving a partial resource beside a real one.
             const temporaryDirectory = yield* fs
               .makeTempDirectoryScoped({ directory, prefix: `${fileName}.` })
-              .pipe(mapStoreError("write-output-image", directory));
+              .pipe(mapStoreError(input.operation, directory));
             yield* Effect.tryPromise({
               try: async () => {
-                const temporaryPath = path.join(temporaryDirectory, "image.tmp");
+                const temporaryPath = path.join(temporaryDirectory, "resource.tmp");
                 await NodeFSP.writeFile(temporaryPath, input.bytes);
                 await NodeFSP.rename(temporaryPath, filePath);
               },
-              catch: (cause) => storeError("write-output-image", filePath, cause),
+              catch: (cause) => storeError(input.operation, filePath, cause),
             });
           }),
         );
       }
       return { fileName };
+    });
+
+  const writeOutputImage = (input: {
+    readonly projectId: ComputeProjectId;
+    readonly sessionId: ComputeSessionId;
+    readonly executionId: ComputeExecutionId | null;
+    readonly contentHash: string;
+    readonly mediaType: ComputeImageMediaType;
+    readonly bytes: Uint8Array;
+  }) =>
+    writeOutputResourceBytes({
+      ...input,
+      maximumBytes: MAXIMUM_COMPUTE_OUTPUT_IMAGE_BYTES,
+      operation: "write-output-image",
+    });
+
+  const writeOutputResource = (input: {
+    readonly projectId: ComputeProjectId;
+    readonly sessionId: ComputeSessionId;
+    readonly executionId: ComputeExecutionId | null;
+    readonly contentHash: string;
+    readonly mediaType: ComputeMediaType;
+    readonly bytes: Uint8Array;
+  }) =>
+    writeOutputResourceBytes({
+      ...input,
+      maximumBytes: MAXIMUM_COMPUTE_REPRESENTATION_BUNDLE_BYTES,
+      operation: "write-output-resource",
     });
 
   /** Every project with a compute directory, for a sweep that has to visit them all. */
@@ -736,7 +782,7 @@ const make = Effect.gen(function* () {
       return entries;
     });
 
-  const resolveOutputImage = (ref: ComputeOutputResourceRef) =>
+  const resolveOutputResource = (ref: ComputeOutputResourceRef) =>
     Effect.gen(function* () {
       const digest = CONTENT_HASH_PATTERN.exec(ref.contentHash);
       if (digest?.[1] === undefined) return null;
@@ -746,12 +792,54 @@ const make = Effect.gen(function* () {
       // against what was stored, so a caller cannot name a file the transcript
       // never mentioned.
       const { outputs } = yield* loadOutputs(ref.projectId, ref.sessionId, ref.executionId);
-      const metadata = outputs.find(
-        (output) => output._tag === "image" && output.contentHash === ref.contentHash,
-      );
-      if (metadata === undefined || metadata._tag !== "image") return null;
+      type ResourceMetadata = {
+        readonly mediaType: ComputeMediaType;
+        readonly contentHash: string;
+        readonly byteLength: number;
+      };
+      const matches: ResourceMetadata[] = [];
+      for (const output of outputs) {
+        if (output._tag === "image" && output.contentHash === ref.contentHash) {
+          matches.push(output);
+          continue;
+        }
+        if (
+          output._tag !== "display-data" &&
+          output._tag !== "execute-result" &&
+          output._tag !== "display-update"
+        ) {
+          continue;
+        }
+        for (const representation of output.bundle.representations) {
+          if (
+            representation.data._tag !== "resource" ||
+            representation.data.contentHash !== ref.contentHash
+          ) {
+            continue;
+          }
+          matches.push({
+            mediaType: representation.mediaType,
+            contentHash: representation.data.contentHash,
+            byteLength: representation.data.byteLength,
+          });
+        }
+      }
+      const metadata = matches[0];
+      if (metadata === undefined) return null;
+      if (
+        matches.some(
+          (candidate) =>
+            candidate.mediaType !== metadata.mediaType ||
+            candidate.byteLength !== metadata.byteLength,
+        )
+      ) {
+        // A hash proves bytes, not how those bytes should be interpreted.
+        // Serving the first MIME type encountered would make transcript order
+        // decide security-sensitive presentation semantics.
+        return null;
+      }
 
-      const fileName = `${digest[1]}${imageFileExtension(metadata.mediaType)}`;
+      const fileName = `${digest[1]}${resourceFileExtension(metadata.mediaType)}`;
       const filePath = path.join(owner, "outputs", fileName);
       const info = yield* Effect.tryPromise({
         try: async () => {
@@ -764,14 +852,14 @@ const make = Effect.gen(function* () {
             throw cause;
           }
         },
-        catch: (cause) => storeError("inspect-output-image", filePath, cause),
+        catch: (cause) => storeError("inspect-output-resource", filePath, cause),
       });
       if (info === null || !info.isFile()) return null;
       if (info.size !== metadata.byteLength) return null;
 
       const actualHash = yield* Effect.tryPromise({
         try: () => sha256File(filePath),
-        catch: (cause) => storeError("hash-output-image", filePath, cause),
+        catch: (cause) => storeError("hash-output-resource", filePath, cause),
       });
       if (actualHash !== ref.contentHash) return null;
 
@@ -780,7 +868,7 @@ const make = Effect.gen(function* () {
       const [canonicalRoot, canonicalFile] = yield* Effect.all([
         fs.realPath(config.computeDir),
         fs.realPath(filePath),
-      ]).pipe(mapStoreError("canonicalize-output-image", filePath));
+      ]).pipe(mapStoreError("canonicalize-output-resource", filePath));
       const relative = path.relative(canonicalRoot, canonicalFile);
       if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
 
@@ -796,8 +884,18 @@ const make = Effect.gen(function* () {
         // filesystem's sub-millisecond precision, so recording it would make
         // the two disagree about an unchanged file and refuse to serve it.
         revision: { size: info.size, mtimeMs: info.mtime.getTime() },
-      } satisfies ResolvedComputeOutputImage;
+      } satisfies ResolvedComputeOutputResource;
     });
+
+  const resolveOutputImage = (ref: ComputeOutputResourceRef) =>
+    resolveOutputResource(ref).pipe(
+      Effect.map((resolved) =>
+        resolved !== null &&
+        (resolved.mediaType === "image/png" || resolved.mediaType === "image/svg+xml")
+          ? (resolved as ResolvedComputeOutputImage)
+          : null,
+      ),
+    );
 
   const measureSessionStorage = (projectId: ComputeProjectId, sessionId: ComputeSessionId) =>
     Effect.gen(function* () {
@@ -915,6 +1013,7 @@ const make = Effect.gen(function* () {
     writeExecutionResult,
     appendOutputs,
     writeOutputImage,
+    writeOutputResource,
     loadProjectIds,
     loadSessions,
     loadSession,
@@ -923,6 +1022,7 @@ const make = Effect.gen(function* () {
     loadOutputs,
     loadJournal,
     resolveOutputImage,
+    resolveOutputResource,
     measureSessionStorage,
     removeDisposableSessionData,
   });

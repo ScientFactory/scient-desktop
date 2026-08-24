@@ -83,7 +83,10 @@ import {
   type ComputeProjectOutputObservation,
 } from "./ComputeProjectOutputObserver.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
-import type { ResolvedComputeOutputImage } from "./LocalComputeStore.ts";
+import type {
+  ResolvedComputeOutputImage,
+  ResolvedComputeOutputResource,
+} from "./LocalComputeStore.ts";
 
 /**
  * One coordinator for every live compute session.
@@ -349,6 +352,9 @@ export class ComputeSessionService extends Context.Service<
     readonly resolveOutputImage: (
       ref: ComputeOutputResourceRef,
     ) => Effect.Effect<ResolvedComputeOutputImage | null, ComputeOperationError>;
+    readonly resolveOutputResource: (
+      ref: ComputeOutputResourceRef,
+    ) => Effect.Effect<ResolvedComputeOutputResource | null, ComputeOperationError>;
     readonly subscribeSessions: (
       input: ComputeSubscribeSessionsInput,
     ) => Effect.Effect<
@@ -950,14 +956,94 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(persistenceError("outputs", "Unable to record an output image.")));
       }
+      if (
+        event.output._tag === "display-data" ||
+        event.output._tag === "execute-result" ||
+        event.output._tag === "display-update"
+      ) {
+        const expected = event.output.bundle.representations.flatMap((representation) =>
+          representation.data._tag === "resource"
+            ? [
+                {
+                  mediaType: representation.mediaType,
+                  contentHash: representation.data.contentHash,
+                  byteLength: representation.data.byteLength,
+                },
+              ]
+            : [],
+        );
+        const carried = new Map(
+          event.resources.map((resource) => [
+            `${resource.mediaType}\0${resource.contentHash}`,
+            resource,
+          ]),
+        );
+        const complete =
+          carried.size === event.resources.length &&
+          carried.size === expected.length &&
+          expected.every((resource) => {
+            const candidate = carried.get(`${resource.mediaType}\0${resource.contentHash}`);
+            return candidate !== undefined && candidate.bytes.byteLength === resource.byteLength;
+          });
+        if (!complete) {
+          yield* Effect.logWarning("compute representation resources did not match their bundle", {
+            projectId: live.projectId,
+            sessionId: live.sessionId,
+            executionId,
+            expected: expected.length,
+            carried: event.resources.length,
+          });
+          const scope = budgets.execution === null ? "session" : "execution";
+          const ceiling =
+            budgets.execution === null ? budgets.session.ceiling : budgets.execution.ceiling;
+          const marker = truncationMarker(event.output, scope, ceiling);
+          yield* appendOutputs(live, executionId, [marker]);
+          yield* chargeBudget("outputs", live, executionId, computeOutputByteLength(marker), 1, 0, {
+            execution: executionId !== null,
+            session: executionId === null,
+          });
+          yield* publishOutputs(live, executionId, [marker]);
+          return false;
+        }
+        for (const resource of event.resources) {
+          yield* store
+            .writeOutputResource({
+              projectId: live.projectId,
+              sessionId: live.sessionId,
+              executionId,
+              mediaType: resource.mediaType,
+              contentHash: resource.contentHash,
+              bytes: resource.bytes,
+            })
+            .pipe(
+              Effect.mapError(
+                persistenceError("outputs", "Unable to record a rich output resource."),
+              ),
+            );
+        }
+      } else if (event.resources.length > 0) {
+        return yield* persistenceError(
+          "outputs",
+          "A transport attached rich resources to an output that cannot name them.",
+        )(new Error("Unexpected compute output resources."));
+      }
       yield* appendOutputs(live, executionId, [event.output]);
+      const richImageCount =
+        (event.output._tag === "display-data" || event.output._tag === "execute-result") &&
+        event.output.bundle.representations.some(
+          (representation) =>
+            representation.mediaType === "image/png" ||
+            representation.mediaType === "image/svg+xml",
+        )
+          ? 1
+          : 0;
       yield* chargeBudget(
         "outputs",
         live,
         executionId,
         size,
         1,
-        event.output._tag === "image" ? 1 : 0,
+        event.output._tag === "image" ? 1 : richImageCount,
         {
           execution: false,
           session: false,
@@ -1020,6 +1106,7 @@ const make = Effect.gen(function* () {
             },
           },
           image: { bytes: image.bytes },
+          resources: [],
         });
       }
       for (const warning of collection.warnings) {
@@ -1035,6 +1122,7 @@ const make = Effect.gen(function* () {
             detail: shortText(warning),
           },
           image: null,
+          resources: [],
         });
       }
     });
@@ -1366,6 +1454,7 @@ const make = Effect.gen(function* () {
               generation: event.generation,
               output,
               image: null,
+              resources: [],
             });
             if (kept && diagnostics[index] !== undefined) retained.push(diagnostics[index]);
           }
@@ -2353,6 +2442,11 @@ const make = Effect.gen(function* () {
       .resolveOutputImage(ref)
       .pipe(Effect.mapError(persistenceError("resolve", "Unable to resolve the compute output.")));
 
+  const resolveOutputResource = (ref: ComputeOutputResourceRef) =>
+    store
+      .resolveOutputResource(ref)
+      .pipe(Effect.mapError(persistenceError("resolve", "Unable to resolve the compute output.")));
+
   const subscribeSessions = (input: ComputeSubscribeSessionsInput) =>
     Effect.gen(function* () {
       yield* ensureProjectRecovered("subscribe", input.projectId);
@@ -2469,6 +2563,7 @@ const make = Effect.gen(function* () {
     listOutputs,
     listJournal,
     resolveOutputImage,
+    resolveOutputResource,
     subscribeSessions,
   });
 });
