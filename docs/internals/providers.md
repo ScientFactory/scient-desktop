@@ -126,7 +126,7 @@ Scient adds an optional lifecycle seam to the existing T3 provider instance. It 
 second provider registry, model catalog, session router, or credential store. A driver without the
 optional seam keeps its inherited setup and provider behavior.
 
-The current vertical implementations are Codex, Claude, Antigravity, Grok, and Droid:
+The current vertical implementations are Codex, Claude, Cursor, Antigravity, Grok, and Droid:
 
 - [`ProviderDriver.ts`][driver] exposes optional provider-owned connection and managed-runtime
   actions on a materialized provider instance;
@@ -172,6 +172,11 @@ transient. After restart, the runtime service safely reconciles atomic state and
 again from the filesystem and provider probe instead of restoring a stale wizard page. Abandoned
 staging is removed only when the next serialized runtime mutation begins, so a concurrent status
 refresh cannot delete an active installation.
+
+Registry characterization tests protect that boundary: transient connection and runtime summaries
+publish immediately, are reapplied after an authoritative provider refresh, are excluded from the
+persistent status cache, and are pruned when an instance disappears. Terminal operation state also
+cannot be overwritten by an older cache write that finishes later.
 
 ### Codex authentication
 
@@ -234,12 +239,12 @@ Antigravity is a native integration, not an ACP compatibility bridge:
 
 ### Managed runtime trust boundary
 
-The reviewed runtime catalogs currently include OpenAI Codex `0.147.0`, release tag
-`rust-v0.147.0`; Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version already
-used by T3; Google Antigravity CLI `1.1.19`; and Factory Droid `0.202.0`. Each known artifact has an
-exact HTTPS URL,
-allowlisted redirect hosts, byte size, SHA-256 or SHA-512 digest, archive shape, executable path,
-and smoke command compiled into the signed application source.
+The reviewed runtime catalogs currently include OpenAI Codex `0.149.1`, release tag
+`rust-v0.149.1`; Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version already
+used by T3; Cursor Agent `2026.08.11-e8db854`; Google Antigravity CLI `1.1.19`; xAI Grok `1.0.5`;
+and Factory Droid `0.202.0`. Each known artifact has an exact HTTPS URL, allowlisted redirect hosts,
+byte size, SHA-256 or SHA-512 digest, archive shape, executable path, and smoke command compiled
+into the signed application source.
 
 That paired Claude runtime satisfies the current Fable 5 capability threshold, but it does not
 claim Opus 5 support: Opus 5 remains hidden until a healthy Claude Code `2.1.219` or newer is
@@ -257,6 +262,18 @@ An install, update, or repair:
 5. runs a bounded `--version` smoke test with an explicit environment allowlist;
 6. activates the verified directory atomically; and
 7. removes staging data on success, failure, or cancellation.
+
+Verification ownership is deliberately layered:
+
+- the shared managed-runtime contract suite owns provider-independent install, update, repair,
+  failure, cancellation, rollback, reconciliation, and removal invariants;
+- `runtimeFiles.test.ts` owns archive-format handling and extraction security; and
+- thin manifest and runtime-wrapper tests own provider-specific target support, private roots,
+  smoke policy, and complete package metadata, including required companion executables.
+
+A successful smoke command does not prove that a provider package is complete. Providers whose
+official package needs companion executables must list them in reviewed artifact metadata so the
+shared materializer can reject an incomplete extraction before activation.
 
 Routine status reconciliation never deletes staging because another serialized install may still
 own it. Abandoned staging is removed only after the installation reservation has been acquired and
