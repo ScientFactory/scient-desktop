@@ -261,6 +261,11 @@ import {
   AnalysisSubscribeRunsInput,
   AnalysisVerifyRuntimeInput,
 } from "./scientAnalysis.ts";
+import {
+  ScientSkillInventory,
+  ScientSkillManagementError,
+  ScientSkillSetUserActivationInput,
+} from "./scientSkills.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -285,6 +290,10 @@ export const WS_METHODS = {
   analysisCleanupRun: "analysis.cleanupRun",
   analysisCleanupProject: "analysis.cleanupProject",
   analysisPromoteRun: "analysis.promoteRun",
+
+  // Scient-owned reusable skills
+  skillsList: "skills.list",
+  skillsSetUserActivation: "skills.setUserActivation",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -545,6 +554,18 @@ export const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTrans
   payload: VoiceTranscriptCorrectionRequest,
   success: VoiceTranscriptCorrectionResult,
   error: Schema.Union([VoiceTranscriptCorrectionError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
+  payload: Schema.Struct({}),
+  success: ScientSkillInventory,
+  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsSetUserActivationRpc = Rpc.make(WS_METHODS.skillsSetUserActivation, {
+  payload: ScientSkillSetUserActivationInput,
+  success: ScientSkillInventory,
+  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1293,6 +1314,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsVoiceCorrectTranscriptRpc,
+  WsSkillsListRpc,
+  WsSkillsSetUserActivationRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

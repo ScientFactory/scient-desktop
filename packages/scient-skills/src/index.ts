@@ -1,5 +1,6 @@
 export {
   catalogByReleaseKey,
+  createSkillCatalog,
   listSkillReleaseSummaries,
   loadSkillCatalog,
   resolveExactSkillRelease,
@@ -16,6 +17,7 @@ export {
   toSkillReleaseSummary,
   type AgentSkillMetadata,
   type SkillActivationScope,
+  type SkillInvocationPolicy,
   type SkillOrigin,
   type SkillRelease,
   type SkillReleaseManifest,
@@ -32,6 +34,7 @@ export {
   type ProjectSkillLockReadResult,
 } from "./projectLock.ts";
 export {
+  loadEmbeddedSkillRelease,
   loadSkillRelease,
   parseSkillReleaseManifest,
   readSkillResource,

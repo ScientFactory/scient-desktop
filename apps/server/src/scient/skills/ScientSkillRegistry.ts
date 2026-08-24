@@ -1,6 +1,6 @@
 import {
   catalogByReleaseKey,
-  loadSkillCatalog,
+  createSkillCatalog,
   type SkillCatalog,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
@@ -8,7 +8,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { BUILT_IN_SKILL_RELEASE_ROOTS } from "./BuiltInSkillReleases.ts";
+import { BUILT_IN_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";
 
 const EMPTY_CATALOG: SkillCatalog = Object.freeze({
   releases: Object.freeze([]),
@@ -39,7 +39,14 @@ export const layerFromCatalog = (catalog: SkillCatalog) =>
 
 export const layer = Layer.effect(
   ScientSkillRegistry,
-  Effect.tryPromise(() => loadSkillCatalog(BUILT_IN_SKILL_RELEASE_ROOTS)).pipe(
+  Effect.sync(() =>
+    createSkillCatalog(
+      BUILT_IN_SKILL_RELEASES.map((release) => ({
+        source: `built-in:${release.id}@${release.version}`,
+        release,
+      })),
+    ),
+  ).pipe(
     Effect.tap((catalog) =>
       Effect.forEach(
         catalog.diagnostics,
@@ -48,6 +55,5 @@ export const layer = Layer.effect(
       ),
     ),
     Effect.map(fromCatalog),
-    Effect.orDie,
   ),
 );

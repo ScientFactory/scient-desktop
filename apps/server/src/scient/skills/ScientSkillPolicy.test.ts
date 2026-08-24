@@ -22,6 +22,7 @@ const release: SkillReleaseRef = {
   origin: "scient",
 };
 const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 async function fixture(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-skill-policy-"));
@@ -58,15 +59,20 @@ describe("Scient skill policy", () => {
         });
         expect(policyFileExists).toBe(false);
 
-        yield* policy.setUserSkillActive(release, true);
-        expect((yield* policy.snapshot).userSkills).toEqual([release]);
+        yield* policy.setUserSkillActivation(release, true, "automatic");
+        expect((yield* policy.snapshot).userSkills).toEqual([
+          { release, invocationPolicy: "automatic" },
+        ]);
         const persistedContents = yield* Effect.promise(() =>
           NodeFSP.readFile(NodePath.join(config.stateDir, "scient-skills.json"), "utf8"),
         );
         const persisted = yield* decodeUnknownJson(persistedContents);
-        expect(persisted).toMatchObject({ formatVersion: 1, userSkills: [release] });
+        expect(persisted).toMatchObject({
+          formatVersion: 2,
+          userSkills: [{ release, invocationPolicy: "automatic" }],
+        });
 
-        yield* policy.setUserSkillActive(release, false);
+        yield* policy.setUserSkillActivation(release, false, "explicit");
         expect((yield* policy.snapshot).userSkills).toEqual([]);
       }).pipe(Effect.provide(Layer.merge(configLayer, policyLayer)));
     }),
@@ -96,6 +102,36 @@ describe("Scient skill policy", () => {
         yield* policy.revokeProjectTrust(projectRoot);
         expect((yield* policy.snapshot).trustedProjects).toEqual([]);
       }).pipe(Effect.provide(policyLayer));
+    }),
+  );
+
+  it.effect("migrates the dormant v1 activation format to explicit invocation", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(fixture);
+      const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configLayer));
+      const encodedV1 = yield* encodeUnknownJson({
+        formatVersion: 1,
+        userSkills: [release],
+        trustedProjects: [],
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(config.stateDir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(config.stateDir, "scient-skills.json"),
+          encodedV1,
+          "utf8",
+        );
+      });
+
+      const snapshot = yield* Effect.gen(function* () {
+        const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+        return yield* policy.snapshot;
+      }).pipe(Effect.provide(ScientSkillPolicy.layer.pipe(Layer.provide(configLayer))));
+
+      expect(snapshot.userSkills).toEqual([{ release, invocationPolicy: "explicit" }]);
     }),
   );
 });

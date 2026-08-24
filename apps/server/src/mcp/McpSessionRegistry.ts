@@ -139,6 +139,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           ? {
               skillScope: {
                 releaseKeys: new Set(request.skillScope.releaseKeys),
+                skills: request.skillScope.skills.map((skill) => ({ ...skill })),
               },
             }
           : {}),
@@ -161,6 +162,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           // authorization record. `ReadonlySet` is compile-time only; sharing
           // one mutable Set would let an adapter accidentally widen its token.
           capabilities: new Set(capabilities),
+          ...(request.skillScope
+            ? { scientSkills: request.skillScope.skills.map((skill) => ({ ...skill })) }
+            : {}),
         },
       };
     },
@@ -185,6 +189,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
               ? {
                   skillScope: {
                     releaseKeys: new Set(record.scope.skillScope.releaseKeys),
+                    skills: record.scope.skillScope.skills.map((skill) => ({ ...skill })),
                   },
                 }
               : {}),

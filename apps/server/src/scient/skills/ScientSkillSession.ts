@@ -2,6 +2,7 @@ import {
   readProjectSkillLock,
   resolveExactSkillRelease,
   skillReleaseKey,
+  type SkillInvocationPolicy,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
 import type { ProviderDriverKind } from "@t3tools/contracts";
@@ -17,7 +18,7 @@ export const SCIENT_SKILL_DELIVERY = {
   antigravity: "unsupported",
   claudeAgent: "mcp",
   codex: "mcp",
-  cursor: "mcp",
+  cursor: "unsupported",
   droid: "mcp",
   grok: "mcp",
   opencode: "mcp",
@@ -43,7 +44,16 @@ export interface ScientSkillSessionPlan {
   readonly delivery: "mcp" | "none" | "unsupported";
   readonly projectRoot?: string;
   readonly releaseKeys: ReadonlySet<string>;
+  readonly skills: ReadonlyArray<ScientSkillSessionSkill>;
   readonly diagnostics: ReadonlyArray<ScientSkillSessionDiagnostic>;
+}
+
+export interface ScientSkillSessionSkill {
+  readonly releaseKey: string;
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly invocationPolicy: SkillInvocationPolicy;
 }
 
 export interface ScientSkillSessionPlannerShape {
@@ -58,7 +68,8 @@ export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSess
   "t3/scient/skills/ScientSkillSessionPlanner",
   {
     defaultValue: () => ({
-      resolve: () => Effect.succeed({ delivery: "none", releaseKeys: new Set(), diagnostics: [] }),
+      resolve: () =>
+        Effect.succeed({ delivery: "none", releaseKeys: new Set(), skills: [], diagnostics: [] }),
     }),
   },
 ) {}
@@ -80,7 +91,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       });
       return undefined;
     }
-    if (release.activationScope !== expectedScope) {
+    if (!release.supportedScopes.includes(expectedScope)) {
       diagnostics.push({
         code: "activation-scope-mismatch",
         message: `Skill '${release.id}' cannot be activated at ${expectedScope} scope.`,
@@ -95,10 +106,18 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
   )(function* (input) {
     const snapshot = yield* policy.snapshot;
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
-    const releases = new Map<string, SkillRelease>();
-    for (const reference of snapshot.userSkills) {
-      const release = resolveRelease(reference, "user", diagnostics);
-      if (release) releases.set(skillReleaseKey(release), release);
+    const releases = new Map<
+      string,
+      { readonly release: SkillRelease; readonly invocationPolicy: SkillInvocationPolicy }
+    >();
+    for (const activation of snapshot.userSkills) {
+      const release = resolveRelease(activation.release, "user", diagnostics);
+      if (release) {
+        releases.set(skillReleaseKey(release), {
+          release,
+          invocationPolicy: activation.invocationPolicy,
+        });
+      }
     }
 
     let projectRoot: string | undefined;
@@ -129,7 +148,12 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         } else {
           for (const reference of lock.lock.skills) {
             const release = resolveRelease(reference, "project", diagnostics);
-            if (release) releases.set(skillReleaseKey(release), release);
+            if (release) {
+              releases.set(skillReleaseKey(release), {
+                release,
+                invocationPolicy: release.defaultInvocationPolicy,
+              });
+            }
           }
         }
       }
@@ -140,6 +164,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         delivery: "none" as const,
         ...(projectRoot ? { projectRoot } : {}),
         releaseKeys: new Set<string>(),
+        skills: [],
         diagnostics,
       };
     }
@@ -152,13 +177,26 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         delivery: "unsupported" as const,
         ...(projectRoot ? { projectRoot } : {}),
         releaseKeys: new Set<string>(),
+        skills: [],
         diagnostics,
       };
     }
+    const skills = [...releases.entries()]
+      .map(([releaseKey, activation]) => ({
+        releaseKey,
+        id: activation.release.id,
+        name: activation.release.name,
+        description: activation.release.description,
+        invocationPolicy: activation.invocationPolicy,
+      }))
+      .sort(
+        (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+      );
     return {
       delivery: "mcp" as const,
       ...(projectRoot ? { projectRoot } : {}),
       releaseKeys: new Set(releases.keys()),
+      skills,
       diagnostics,
     };
   });

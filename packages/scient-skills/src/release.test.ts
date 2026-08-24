@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
   catalogByReleaseKey,
+  loadEmbeddedSkillRelease,
   loadSkillCatalog,
   loadSkillRelease,
   parseSkillDocument,
@@ -48,7 +49,8 @@ async function writeRelease(
         apiVersion: "scient.skills/v1alpha1",
         id: input.id ?? "scient.evidence-review",
         version: input.version ?? "0.1.0",
-        activationScope: "project",
+        supportedScopes: ["project"],
+        defaultInvocationPolicy: "automatic",
         origin: input.origin ?? { kind: "scient" },
       },
       null,
@@ -119,6 +121,28 @@ describe("Scient skill releases", () => {
     expect(
       Buffer.from(readSkillResource(release, "references/rubric.md") ?? []).toString("utf8"),
     ).toBe("Check support, contradiction, and uncertainty.\n");
+  });
+
+  it("copies embedded bytes before exposing the immutable release", () => {
+    const resource = new TextEncoder().encode("original\n");
+    const release = loadEmbeddedSkillRelease("embedded-review", {
+      "SKILL.md":
+        "---\nname: embedded-review\ndescription: Reviews an embedded release.\n---\nInstructions\n",
+      "scient.skill.json": JSON.stringify({
+        apiVersion: "scient.skills/v1alpha1",
+        id: "scient.embedded-review",
+        version: "0.1.0",
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "explicit",
+        origin: { kind: "scient" },
+      }),
+      "references/note.md": resource,
+    });
+    resource.fill(0);
+
+    expect(
+      Buffer.from(readSkillResource(release, "references/note.md") ?? []).toString("utf8"),
+    ).toBe("original\n");
   });
 
   it("rejects symlinks instead of following content outside the release", async () => {

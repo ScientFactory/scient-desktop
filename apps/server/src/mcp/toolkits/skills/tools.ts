@@ -27,7 +27,8 @@ export const ScientSkillSummary = Schema.Struct({
   origin: NonEmptyString,
   name: NonEmptyString,
   description: NonEmptyString,
-  activationScope: Schema.Literals(["project", "user"]),
+  supportedScopes: Schema.Array(Schema.Literals(["project", "user"])),
+  invocationPolicy: Schema.Literals(["automatic", "explicit"]),
 });
 
 export const ScientSkillResource = Schema.Struct({
@@ -38,7 +39,7 @@ export const ScientSkillResource = Schema.Struct({
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
-    "List exact Scient-managed skill releases selected for this session. Provider-native skills remain separate. Skills provide instructions and resources but never grant tools, credentials, or permissions.",
+    "List exact Scient-managed skill releases selected for this session and whether each may be chosen automatically or only when explicitly named. Provider-native skills remain separate. Skills never grant tools, credentials, or permissions.",
   parameters: Schema.Struct({}),
   success: Schema.Struct({
     skills: Schema.Array(ScientSkillSummary).pipe(Schema.check(Schema.isMaxLength(500))),

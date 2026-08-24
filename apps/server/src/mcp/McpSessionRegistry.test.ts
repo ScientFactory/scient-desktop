@@ -92,6 +92,15 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
       capabilities: new Set(["skills:read"]),
       skillScope: {
         releaseKeys: requestedReleaseKeys,
+        skills: [
+          {
+            releaseKey: "scient.review@0.1.0#sha256:one",
+            id: "scient.review",
+            name: "review",
+            description: "Review this workspace.",
+            invocationPolicy: "automatic",
+          },
+        ],
       },
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -100,6 +109,15 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
     const first = yield* registry.resolve(token);
     expect(first?.skillScope).toEqual({
       releaseKeys: new Set(["scient.review@0.1.0#sha256:one"]),
+      skills: [
+        {
+          releaseKey: "scient.review@0.1.0#sha256:one",
+          id: "scient.review",
+          name: "review",
+          description: "Review this workspace.",
+          invocationPolicy: "automatic",
+        },
+      ],
     });
     if (!first?.skillScope) throw new Error("Expected the issued skill scope to resolve.");
 

@@ -48,7 +48,8 @@ async function writeRelease(
       apiVersion: "scient.skills/v1alpha1",
       id: `scient.${name}`,
       version: "0.1.0",
-      activationScope,
+      supportedScopes: [activationScope],
+      defaultInvocationPolicy: "automatic",
       origin: { kind: "scient" },
     })}\n`,
     "utf8",
@@ -157,7 +158,7 @@ describe("Scient skill session planning", () => {
         const catalog = yield* Effect.promise(() => loadSkillCatalog([root]));
         const release = catalog.releases[0]!;
         const snapshot = {
-          userSkills: [toSkillReleaseRef(release)],
+          userSkills: [{ release: toSkillReleaseRef(release), invocationPolicy: "automatic" }],
           trustedProjects: [],
         } satisfies ScientSkillPolicy.ScientSkillPolicySnapshot;
 
@@ -167,6 +168,12 @@ describe("Scient skill session planning", () => {
         expect(codex.delivery).toBe("mcp");
         expect(codex.projectRoot).toBeUndefined();
         expect(codex.releaseKeys).toEqual(new Set([skillReleaseKey(release)]));
+        expect(codex.skills).toEqual([
+          expect.objectContaining({
+            releaseKey: skillReleaseKey(release),
+            invocationPolicy: "automatic",
+          }),
+        ]);
 
         const antigravity = yield* resolvePlan(catalog, snapshot, {
           provider: ProviderDriverKind.make("antigravity"),

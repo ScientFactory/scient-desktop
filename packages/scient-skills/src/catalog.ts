@@ -21,28 +21,20 @@ export interface SkillCatalog {
   readonly diagnostics: ReadonlyArray<SkillCatalogDiagnostic>;
 }
 
-/** Quarantine invalid roots independently so one release cannot prevent startup. */
-export async function loadSkillCatalog(roots: ReadonlyArray<string>): Promise<SkillCatalog> {
+export function createSkillCatalog(
+  entries: ReadonlyArray<{ readonly source: string; readonly release: SkillRelease }>,
+): SkillCatalog {
   const releases: SkillRelease[] = [];
   const diagnostics: SkillCatalogDiagnostic[] = [];
   const byIdentity = new Map<string, SkillRelease>();
-  for (const rootPath of [...roots].sort(compareStrings)) {
-    let release: SkillRelease;
-    try {
-      release = await loadSkillRelease(rootPath);
-    } catch (error) {
-      diagnostics.push({
-        code: "invalid-release",
-        rootPath,
-        message: error instanceof Error ? error.message : "Skill release validation failed.",
-      });
-      continue;
-    }
+  for (const { source, release } of [...entries].sort((left, right) =>
+    compareStrings(left.source, right.source),
+  )) {
     const identity = `${release.id}@${release.version}`;
     if (byIdentity.has(identity)) {
       diagnostics.push({
         code: "duplicate-release",
-        rootPath,
+        rootPath: source,
         message: `Skill release '${identity}' is already registered.`,
       });
       continue;
@@ -59,6 +51,33 @@ export async function loadSkillCatalog(roots: ReadonlyArray<string>): Promise<Sk
   return Object.freeze({
     releases: Object.freeze(releases),
     diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))),
+  });
+}
+
+/** Quarantine invalid roots independently so one release cannot prevent startup. */
+export async function loadSkillCatalog(roots: ReadonlyArray<string>): Promise<SkillCatalog> {
+  const diagnostics: SkillCatalogDiagnostic[] = [];
+  const entries: Array<{ readonly source: string; readonly release: SkillRelease }> = [];
+  for (const rootPath of [...roots].sort(compareStrings)) {
+    let release: SkillRelease;
+    try {
+      release = await loadSkillRelease(rootPath);
+    } catch (error) {
+      diagnostics.push({
+        code: "invalid-release",
+        rootPath,
+        message: error instanceof Error ? error.message : "Skill release validation failed.",
+      });
+      continue;
+    }
+    entries.push({ source: rootPath, release });
+  }
+  const catalog = createSkillCatalog(entries);
+  return Object.freeze({
+    releases: catalog.releases,
+    diagnostics: Object.freeze(
+      [...diagnostics, ...catalog.diagnostics].map((diagnostic) => Object.freeze(diagnostic)),
+    ),
   });
 }
 

@@ -44,6 +44,10 @@ export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {
   const normalizedPath = normalizePathSeparators(skill.path);
+  // SCIENT-FORK: built-in Scient releases are app-owned, not provider or user files.
+  if (normalizedPath.startsWith("scient://skills/")) {
+    return "app";
+  }
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
     return "app";
   }

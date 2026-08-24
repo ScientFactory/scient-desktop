@@ -4,6 +4,9 @@ export const SCIENT_SKILLS_LOCK_FILE = ".scient/skills.lock.json";
 
 export type SkillActivationScope = "project" | "user";
 
+/** Whether an active skill may be selected by the agent or only by the user. */
+export type SkillInvocationPolicy = "automatic" | "explicit";
+
 export type SkillOrigin =
   | { readonly kind: "scient" }
   | {
@@ -16,7 +19,9 @@ export interface SkillReleaseManifest {
   readonly apiVersion: "scient.skills/v1alpha1";
   readonly id: string;
   readonly version: string;
-  readonly activationScope: SkillActivationScope;
+  /** Activation is user/project policy, not release provenance. */
+  readonly supportedScopes: ReadonlyArray<SkillActivationScope>;
+  readonly defaultInvocationPolicy: SkillInvocationPolicy;
   readonly origin: SkillOrigin;
 }
 
@@ -46,7 +51,8 @@ export interface SkillReleaseRef {
 export interface SkillReleaseSummary extends SkillReleaseRef {
   readonly name: string;
   readonly description: string;
-  readonly activationScope: SkillActivationScope;
+  readonly supportedScopes: ReadonlyArray<SkillActivationScope>;
+  readonly defaultInvocationPolicy: SkillInvocationPolicy;
 }
 
 export interface SkillRelease extends SkillReleaseSummary {
@@ -78,6 +84,7 @@ export function toSkillReleaseSummary(release: SkillRelease): SkillReleaseSummar
     ...toSkillReleaseRef(release),
     name: release.name,
     description: release.description,
-    activationScope: release.activationScope,
+    supportedScopes: release.supportedScopes,
+    defaultInvocationPolicy: release.defaultInvocationPolicy,
   };
 }

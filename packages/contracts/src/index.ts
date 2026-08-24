@@ -33,6 +33,7 @@ export * from "./scientProject.ts";
 export * from "./scientSources.ts";
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
+export * from "./scientSkills.ts";
 export * from "./scientLatex.ts";
 export * from "./browserPdfExport.ts";
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).

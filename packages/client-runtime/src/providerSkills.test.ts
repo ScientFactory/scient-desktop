@@ -68,6 +68,14 @@ describe("getProviderSlashCommandsForSlashMenu", () => {
 });
 
 describe("resolveProviderSkillSourceKind", () => {
+  it("recognizes built-in Scient skill releases as app-owned", () => {
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "scient://skills/scient.review%400.1.0%23sha256%3Aabc",
+        scope: "personal",
+      }),
+    ).toBe("app");
+  });
   it("marks plugin-backed skills as app installs", () => {
     expect(
       resolveProviderSkillSourceKind({

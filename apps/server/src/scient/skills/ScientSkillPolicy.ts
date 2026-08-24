@@ -3,7 +3,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { readProjectSkillLock, type SkillReleaseRef } from "@scientfactory/scient-skills";
+import {
+  readProjectSkillLock,
+  type SkillInvocationPolicy,
+  type SkillReleaseRef,
+} from "@scientfactory/scient-skills";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -26,16 +30,29 @@ const ProjectTrustReceiptSchema = Schema.Struct({
   rootPath: Schema.Trimmed.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
   lockDigest: Schema.String.pipe(Schema.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/u))),
 });
-const PersistedPolicySchema = Schema.Struct({
+const UserSkillActivationSchema = Schema.Struct({
+  release: SkillReleaseRefSchema,
+  invocationPolicy: Schema.Literals(["automatic", "explicit"]),
+});
+const PersistedPolicyV1Schema = Schema.Struct({
   formatVersion: Schema.Literal(1),
   userSkills: Schema.Array(SkillReleaseRefSchema).pipe(Schema.check(Schema.isMaxLength(500))),
   trustedProjects: Schema.Array(ProjectTrustReceiptSchema).pipe(
     Schema.check(Schema.isMaxLength(500)),
   ),
 });
+const PersistedPolicyV2Schema = Schema.Struct({
+  formatVersion: Schema.Literal(2),
+  userSkills: Schema.Array(UserSkillActivationSchema).pipe(Schema.check(Schema.isMaxLength(500))),
+  trustedProjects: Schema.Array(ProjectTrustReceiptSchema).pipe(
+    Schema.check(Schema.isMaxLength(500)),
+  ),
+});
+const PersistedPolicySchema = Schema.Union([PersistedPolicyV1Schema, PersistedPolicyV2Schema]);
 const PersistedPolicyJson = Schema.fromJsonString(PersistedPolicySchema);
 const decodePersistedPolicy = Schema.decodeUnknownExit(PersistedPolicyJson);
-const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyJson);
+const PersistedPolicyV2Json = Schema.fromJsonString(PersistedPolicyV2Schema);
+const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyV2Json);
 
 export interface ProjectSkillTrustReceipt {
   readonly projectId: string;
@@ -43,8 +60,13 @@ export interface ProjectSkillTrustReceipt {
   readonly lockDigest: string;
 }
 
+export interface UserSkillActivation {
+  readonly release: SkillReleaseRef;
+  readonly invocationPolicy: SkillInvocationPolicy;
+}
+
 export interface ScientSkillPolicySnapshot {
-  readonly userSkills: ReadonlyArray<SkillReleaseRef>;
+  readonly userSkills: ReadonlyArray<UserSkillActivation>;
   readonly trustedProjects: ReadonlyArray<ProjectSkillTrustReceipt>;
 }
 
@@ -59,9 +81,10 @@ export class ScientSkillPolicyError extends Schema.TaggedErrorClass<ScientSkillP
 
 export interface ScientSkillPolicyShape {
   readonly snapshot: Effect.Effect<ScientSkillPolicySnapshot>;
-  readonly setUserSkillActive: (
+  readonly setUserSkillActivation: (
     release: SkillReleaseRef,
     active: boolean,
+    invocationPolicy: SkillInvocationPolicy,
   ) => Effect.Effect<void, ScientSkillPolicyError>;
   readonly trustProjectLock: (
     projectRoot: string,
@@ -91,15 +114,22 @@ function releaseIdentity(release: SkillReleaseRef): string {
 }
 
 function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPolicySnapshot {
-  const userSkills = new Map<string, SkillReleaseRef>();
-  for (const release of snapshot.userSkills) userSkills.set(releaseIdentity(release), release);
+  const userSkills = new Map<string, UserSkillActivation>();
+  for (const activation of snapshot.userSkills) {
+    userSkills.set(releaseIdentity(activation.release), activation);
+  }
   const trustedProjects = new Map<string, ProjectSkillTrustReceipt>();
   for (const trust of snapshot.trustedProjects) trustedProjects.set(trust.rootPath, trust);
   return Object.freeze({
     userSkills: Object.freeze(
       [...userSkills.values()]
-        .sort((a, b) => releaseIdentity(a).localeCompare(releaseIdentity(b)))
-        .map((release) => Object.freeze({ ...release })),
+        .sort((a, b) => releaseIdentity(a.release).localeCompare(releaseIdentity(b.release)))
+        .map((activation) =>
+          Object.freeze({
+            ...activation,
+            release: Object.freeze({ ...activation.release }),
+          }),
+        ),
     ),
     trustedProjects: Object.freeze(
       [...trustedProjects.values()]
@@ -112,7 +142,7 @@ function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPoli
 function makeSnapshotService(snapshot: ScientSkillPolicySnapshot): ScientSkillPolicyShape {
   return {
     snapshot: Effect.succeed(normalizeSnapshot(snapshot)),
-    setUserSkillActive: () => Effect.void,
+    setUserSkillActivation: () => Effect.void,
     trustProjectLock: (projectRoot) =>
       Effect.fail(
         new ScientSkillPolicyError({
@@ -145,7 +175,19 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
       }
       const decoded = decodePersistedPolicy(await NodeFSP.readFile(policyPath, "utf8"));
       if (Exit.isFailure(decoded)) throw new Error("Scient skill policy is invalid.");
-      return normalizeSnapshot(decoded.value);
+      const value = decoded.value;
+      return normalizeSnapshot({
+        userSkills:
+          value.formatVersion === 1
+            ? value.userSkills.map((release) => ({
+                release,
+                // The dormant v1 foundation had no product UI. If a hand-edited
+                // file exists, migrate it to the safer user-only invocation mode.
+                invocationPolicy: "explicit" as const,
+              }))
+            : value.userSkills,
+        trustedProjects: value.trustedProjects,
+      });
     },
     catch: (cause) =>
       new ScientSkillPolicyError({
@@ -167,7 +209,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
   ) {
     const normalized = normalizeSnapshot(next);
     const encoded = yield* encodePersistedPolicy({
-      formatVersion: 1,
+      formatVersion: 2,
       userSkills: [...normalized.userSkills],
       trustedProjects: [...normalized.trustedProjects],
     }).pipe(
@@ -221,18 +263,18 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
 
   return ScientSkillPolicy.of({
     snapshot: Ref.get(state),
-    setUserSkillActive: (release, active) =>
+    setUserSkillActivation: (release, active, invocationPolicy) =>
       update((current) => ({
         ...current,
         userSkills: active
           ? [
               ...current.userSkills.filter(
-                (entry) => releaseIdentity(entry) !== releaseIdentity(release),
+                (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
               ),
-              release,
+              { release, invocationPolicy },
             ]
           : current.userSkills.filter(
-              (entry) => releaseIdentity(entry) !== releaseIdentity(release),
+              (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
             ),
       })),
     trustProjectLock: Effect.fn("ScientSkillPolicy.trustProjectLock")(function* (projectRoot) {

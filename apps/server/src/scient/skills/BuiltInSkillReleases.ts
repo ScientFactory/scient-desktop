@@ -1,8 +1,16 @@
+import { loadEmbeddedSkillRelease, type SkillRelease } from "@scientfactory/scient-skills";
+
+import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
+
 /**
- * Explicit trusted registration seam for Scient-owned immutable releases.
+ * Reviewed Scient-owned releases embedded in the server bundle.
  *
- * Phase one intentionally ships no product skill. Adding a release requires a
- * reviewed package directory and a separate product decision; provider-native
- * Codex and Claude skills are not copied into this registry.
+ * Embedding keeps packaged servers independent from source-tree paths while
+ * preserving the same immutable validation and digest used for imported
+ * releases. Registration makes a release available; it does not activate it.
  */
-export const BUILT_IN_SKILL_RELEASE_ROOTS: ReadonlyArray<string> = Object.freeze([]);
+export const BUILT_IN_SKILL_RELEASES: ReadonlyArray<SkillRelease> = Object.freeze(
+  BUILT_IN_SKILL_SOURCES.map((source) =>
+    loadEmbeddedSkillRelease(source.directoryName, source.files),
+  ),
+);

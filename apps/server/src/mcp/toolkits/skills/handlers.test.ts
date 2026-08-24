@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 
 import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpProviderSession from "../../McpProviderSession.ts";
 import {
   listScientSkillsForInvocation,
   loadScientSkillForInvocation,
@@ -34,7 +35,8 @@ async function makeCatalogFixture() {
       apiVersion: "scient.skills/v1alpha1",
       id: "scient.evidence-review",
       version: "0.1.0",
-      activationScope: "user",
+      supportedScopes: ["user", "project"],
+      defaultInvocationPolicy: "automatic",
       origin: { kind: "scient" },
     })}\n`,
     "utf8",
@@ -50,6 +52,7 @@ async function makeCatalogFixture() {
 const makeInvocation = (
   releaseKeys: ReadonlySet<string>,
   capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["skills:read"]),
+  invocationPolicy: "automatic" | "explicit" = "automatic",
 ) =>
   McpInvocationContext.McpInvocationContext.of({
     environmentId: EnvironmentId.make("environment-skills-test"),
@@ -57,7 +60,16 @@ const makeInvocation = (
     providerSessionId: "session-skills-test",
     providerInstanceId: ProviderInstanceId.make("codex"),
     capabilities,
-    skillScope: { releaseKeys },
+    skillScope: {
+      releaseKeys,
+      skills: [...releaseKeys].map((releaseKey) => ({
+        releaseKey,
+        id: "scient.evidence-review",
+        name: "evidence-review",
+        description: "Reviews evidence without widening authority.",
+        invocationPolicy,
+      })),
+    },
     issuedAt: 1,
   });
 
@@ -74,6 +86,7 @@ const provideContext = <A, E, R>(
   );
 
 afterEach(async () => {
+  McpProviderSession.clearAllMcpProviderSessions();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -141,6 +154,50 @@ describe("Scient skills MCP handlers", () => {
         invocation: makeInvocation(new Set([releaseKey]), new Set()),
       }).pipe(Effect.flip);
       expect(noCapability.code).toBe("capability-unavailable");
+    }),
+  );
+
+  it.effect("requires an exact current-turn selection for explicit skills", () =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.promise(makeCatalogFixture);
+      const releaseKey = skillReleaseKey(catalog.releases[0]!);
+      const invocation = makeInvocation(
+        new Set([releaseKey]),
+        new Set(["skills:read"]),
+        "explicit",
+      );
+
+      const withoutSelection = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
+        catalog,
+        invocation,
+      }).pipe(Effect.flip);
+      expect(withoutSelection.message).toContain("current turn");
+
+      McpProviderSession.setMcpProviderSession({
+        environmentId: invocation.environmentId,
+        threadId: invocation.threadId,
+        providerSessionId: invocation.providerSessionId,
+        providerInstanceId: invocation.providerInstanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test",
+        capabilities: invocation.capabilities,
+        selectedScientSkillReleaseKeys: new Set([releaseKey]),
+      });
+      const loaded = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
+        catalog,
+        invocation,
+      });
+      expect(loaded.skill.invocationPolicy).toBe("explicit");
+
+      McpProviderSession.setMcpProviderSessionSelectedSkills(invocation.threadId, new Set());
+      const cleared = yield* provideContext(
+        readScientSkillResourceForInvocation({
+          releaseKey,
+          path: "references/rubric.md",
+        }),
+        { catalog, invocation },
+      ).pipe(Effect.flip);
+      expect(cleared.message).toContain("current turn");
     }),
   );
 });

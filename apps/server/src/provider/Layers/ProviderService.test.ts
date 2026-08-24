@@ -2128,6 +2128,7 @@ describe("agent browser access", () => {
     skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
       delivery: "none",
       releaseKeys: new Set(),
+      skills: [],
       diagnostics: [],
     },
     sessionCwd?: string,
@@ -2141,6 +2142,7 @@ describe("agent browser access", () => {
         readonly capabilities: ReadonlySet<string>;
         readonly skillScope?: {
           readonly releaseKeys: ReadonlySet<string>;
+          readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
         };
       }> = [];
       const codex = makeFakeCodexAdapter();
@@ -2164,6 +2166,7 @@ describe("agent browser access", () => {
                 ? {
                     skillScope: {
                       releaseKeys: new Set(request.skillScope.releaseKeys),
+                      skills: request.skillScope.skills.map((skill) => ({ ...skill })),
                     },
                   }
                 : {}),
@@ -2254,6 +2257,15 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-skills-only");
       const releaseKeys = new Set(["scient.review@0.1.0#sha256:exact"]);
+      const skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill> = [
+        {
+          releaseKey: "scient.review@0.1.0#sha256:exact",
+          id: "scient.review",
+          name: "review",
+          description: "Review the workspace.",
+          invocationPolicy: "automatic",
+        },
+      ];
       const skillResolutionInputs: Array<
         Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
       > = [];
@@ -2265,6 +2277,7 @@ describe("agent browser access", () => {
           delivery: "mcp",
           projectRoot: "/tmp/scient-project",
           releaseKeys,
+          skills,
           diagnostics: [],
         },
         "/tmp/scient-project",
@@ -2277,6 +2290,7 @@ describe("agent browser access", () => {
           capabilities: new Set(["skills:read"]),
           skillScope: {
             releaseKeys,
+            skills,
           },
         },
       ]);

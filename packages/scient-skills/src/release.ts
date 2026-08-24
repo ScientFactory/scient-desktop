@@ -8,6 +8,7 @@ import {
   SKILL_DOCUMENT_FILE,
   skillOriginKey,
   type SkillActivationScope,
+  type SkillInvocationPolicy,
   type SkillOrigin,
   type SkillRelease,
   type SkillReleaseManifest,
@@ -80,6 +81,24 @@ function parseOrigin(value: unknown): SkillOrigin {
   return { kind: "addon", addonId, addonVersion };
 }
 
+function parseSupportedScopes(value: unknown): ReadonlyArray<SkillActivationScope> {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new SkillReleaseValidationError(
+      "Skill supportedScopes must contain 'project', 'user', or both.",
+    );
+  }
+  const scopes = new Set<SkillActivationScope>();
+  for (const scope of value) {
+    if (scope !== "project" && scope !== "user") {
+      throw new SkillReleaseValidationError(
+        "Skill supportedScopes must contain only 'project' or 'user'.",
+      );
+    }
+    scopes.add(scope);
+  }
+  return Object.freeze([...scopes].sort());
+}
+
 export function parseSkillReleaseManifest(contents: string): SkillReleaseManifest {
   if (Buffer.byteLength(contents, "utf8") > MAX_MANIFEST_BYTES) {
     throw new SkillReleaseValidationError("scient.skill.json exceeds 64 KiB.");
@@ -94,21 +113,24 @@ export function parseSkillReleaseManifest(contents: string): SkillReleaseManifes
   const apiVersion = requiredString(record, "apiVersion");
   const id = requiredString(record, "id");
   const version = requiredString(record, "version", 64);
-  const activationScope = requiredString(record, "activationScope", 32);
+  const defaultInvocationPolicy = requiredString(record, "defaultInvocationPolicy", 32);
   if (apiVersion !== "scient.skills/v1alpha1") {
     throw new SkillReleaseValidationError("Unsupported skill manifest apiVersion.");
   }
   if (!SKILL_ID_PATTERN.test(id) || !SEMVER_PATTERN.test(version)) {
     throw new SkillReleaseValidationError("Skill manifest has an invalid id or version.");
   }
-  if (activationScope !== "project" && activationScope !== "user") {
-    throw new SkillReleaseValidationError("Skill activationScope must be 'project' or 'user'.");
+  if (defaultInvocationPolicy !== "automatic" && defaultInvocationPolicy !== "explicit") {
+    throw new SkillReleaseValidationError(
+      "Skill defaultInvocationPolicy must be 'automatic' or 'explicit'.",
+    );
   }
   return {
     apiVersion,
     id,
     version,
-    activationScope: activationScope as SkillActivationScope,
+    supportedScopes: parseSupportedScopes(record.supportedScopes),
+    defaultInvocationPolicy: defaultInvocationPolicy as SkillInvocationPolicy,
     origin: parseOrigin(record.origin),
   };
 }
@@ -130,6 +152,40 @@ function digestReleaseFiles(files: ReadonlyArray<ReleaseFile>): string {
     hash.update(file.bytes);
   }
   return `sha256:${hash.digest("hex")}`;
+}
+
+function validateReleaseFiles(files: ReadonlyArray<ReleaseFile>): void {
+  if (files.length > MAX_RELEASE_FILES) {
+    throw new SkillReleaseValidationError(
+      `Skill release contains more than ${MAX_RELEASE_FILES} files.`,
+    );
+  }
+  let totalBytes = 0;
+  const paths = new Set<string>();
+  for (const file of files) {
+    const path = file.relativePath;
+    if (
+      path.length === 0 ||
+      path.startsWith("/") ||
+      path.includes("\\") ||
+      path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+    ) {
+      throw new SkillReleaseValidationError(`Skill release file '${path}' has an invalid path.`);
+    }
+    if (paths.has(path)) {
+      throw new SkillReleaseValidationError(`Skill release file '${path}' is duplicated.`);
+    }
+    paths.add(path);
+    if (file.bytes.byteLength > MAX_RESOURCE_BYTES) {
+      throw new SkillReleaseValidationError(
+        `Skill release file '${path}' exceeds the 1 MiB file limit.`,
+      );
+    }
+    totalBytes += file.bytes.byteLength;
+    if (totalBytes > MAX_RELEASE_BYTES) {
+      throw new SkillReleaseValidationError("Skill release exceeds the 5 MiB total limit.");
+    }
+  }
 }
 
 async function collectReleaseFiles(rootPath: string): Promise<ReadonlyArray<ReleaseFile>> {
@@ -191,22 +247,19 @@ async function collectReleaseFiles(rootPath: string): Promise<ReadonlyArray<Rele
   }
 
   await walk(rootPath, "");
-  return files.sort((left, right) => compareStrings(left.relativePath, right.relativePath));
+  const sorted = files.sort((left, right) => compareStrings(left.relativePath, right.relativePath));
+  validateReleaseFiles(sorted);
+  return sorted;
 }
 
-/** Load and fully snapshot one immutable release directory. */
-export async function loadSkillRelease(root: string): Promise<SkillRelease> {
-  const requestedRoot = NodePath.resolve(root);
-  const requestedRootStat = await NodeFSP.lstat(requestedRoot);
-  if (!requestedRootStat.isDirectory() || requestedRootStat.isSymbolicLink()) {
-    throw new SkillReleaseValidationError("Skill release root must be a real directory.");
-  }
-  const rootPath = await NodeFSP.realpath(requestedRoot);
-  const rootStat = await NodeFSP.lstat(rootPath);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new SkillReleaseValidationError("Skill release root must be a real directory.");
-  }
-  const files = await collectReleaseFiles(rootPath);
+function releaseFromFiles(
+  directoryName: string,
+  releaseFiles: ReadonlyArray<ReleaseFile>,
+): SkillRelease {
+  const files = [...releaseFiles].sort((left, right) =>
+    compareStrings(left.relativePath, right.relativePath),
+  );
+  validateReleaseFiles(files);
   const byPath = new Map(files.map((file) => [file.relativePath, file.bytes] as const));
   const skillDocumentBytes = byPath.get(SKILL_DOCUMENT_FILE);
   const manifestBytes = byPath.get(SCIENT_SKILL_MANIFEST_FILE);
@@ -218,7 +271,7 @@ export async function loadSkillRelease(root: string): Promise<SkillRelease> {
   const manifest = parseSkillReleaseManifest(Buffer.from(manifestBytes).toString("utf8"));
   const parsed = parseSkillDocument(
     Buffer.from(skillDocumentBytes).toString("utf8"),
-    NodePath.basename(rootPath),
+    directoryName,
   );
   const resources = Object.freeze(
     files
@@ -237,6 +290,7 @@ export async function loadSkillRelease(root: string): Promise<SkillRelease> {
   );
   const frozenManifest = Object.freeze({
     ...manifest,
+    supportedScopes: Object.freeze([...manifest.supportedScopes]),
     origin: Object.freeze({ ...manifest.origin }),
   });
   const frozenMetadata = Object.freeze({
@@ -256,10 +310,44 @@ export async function loadSkillRelease(root: string): Promise<SkillRelease> {
     origin: skillOriginKey(manifest.origin),
     name: parsed.metadata.name,
     description: parsed.metadata.description,
-    activationScope: manifest.activationScope,
+    supportedScopes: frozenManifest.supportedScopes,
+    defaultInvocationPolicy: manifest.defaultInvocationPolicy,
   });
   verifiedFiles.set(release, byPath);
   return release;
+}
+
+/** Load and fully snapshot one immutable release directory. */
+export async function loadSkillRelease(root: string): Promise<SkillRelease> {
+  const requestedRoot = NodePath.resolve(root);
+  const requestedRootStat = await NodeFSP.lstat(requestedRoot);
+  if (!requestedRootStat.isDirectory() || requestedRootStat.isSymbolicLink()) {
+    throw new SkillReleaseValidationError("Skill release root must be a real directory.");
+  }
+  const rootPath = await NodeFSP.realpath(requestedRoot);
+  const rootStat = await NodeFSP.lstat(rootPath);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new SkillReleaseValidationError("Skill release root must be a real directory.");
+  }
+  const files = await collectReleaseFiles(rootPath);
+  return releaseFromFiles(NodePath.basename(rootPath), files);
+}
+
+/** Build a verified immutable release from files embedded in a server bundle. */
+export function loadEmbeddedSkillRelease(
+  directoryName: string,
+  files: Readonly<Record<string, string | Uint8Array>>,
+): SkillRelease {
+  return releaseFromFiles(
+    directoryName,
+    Object.entries(files).map(([relativePath, contents]) => ({
+      relativePath,
+      bytes:
+        typeof contents === "string"
+          ? new TextEncoder().encode(contents)
+          : new Uint8Array(contents),
+    })),
+  );
 }
 
 export function readSkillResource(

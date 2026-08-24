@@ -4,9 +4,14 @@
   "ownedRoots": [
     "apps/server/src/mcp/toolkits/skills",
     "apps/server/src/scient/skills",
+    "apps/web/src/scient/skills",
     "packages/scient-skills"
   ],
-  "ownedFiles": ["apps/server/src/provider/ScientAwareness.ts"],
+  "ownedFiles": [
+    "apps/server/src/provider/ScientAwareness.ts",
+    "apps/web/src/routes/settings.skills.tsx",
+    "packages/contracts/src/scientSkills.ts"
+  ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",
     "ScientSkill",
@@ -19,7 +24,12 @@
     {
       "path": "apps/server/package.json",
       "anchor": "@scientfactory/scient-skills",
-      "purpose": "Depend on the runtime-neutral Scient skills package."
+      "purpose": "Depend on the fork-owned server-side Scient skills package."
+    },
+    {
+      "path": "apps/server/src/auth/RpcAuthorization.ts",
+      "anchor": "WS_METHODS.skillsList",
+      "purpose": "Authorize personal skill inventory and activation RPCs through existing environment scopes."
     },
     {
       "path": "apps/server/src/mcp/McpHttpServer.ts",
@@ -30,6 +40,11 @@
       "path": "apps/server/src/mcp/McpInvocationContext.ts",
       "anchor": "skills:read",
       "purpose": "Carry the semantic capability and exact per-session skill scope."
+    },
+    {
+      "path": "apps/server/src/mcp/McpProviderSession.ts",
+      "anchor": "scientSkills",
+      "purpose": "Snapshot exact session skill descriptors for deterministic explicit invocation."
     },
     {
       "path": "apps/server/src/mcp/McpSessionRegistry.ts",
@@ -44,7 +59,57 @@
     {
       "path": "apps/server/src/server.ts",
       "anchor": "ScientSkillsLayerLive",
-      "purpose": "Compose the registry, app-owned policy, and session planner."
+      "purpose": "Compose the registry, app-owned policy, session planner, and management service."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "WS_METHODS.skillsList",
+      "purpose": "Expose the small authenticated skill-management RPC surface."
+    },
+    {
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "mergeEffectiveProviderSkills",
+      "purpose": "Present active Scient skills in messages without replacing provider-native inventory."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "mergeEffectiveProviderSkills",
+      "purpose": "Append active Scient skills to the maintained provider-native composer menus."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
+      "anchor": "/settings/skills",
+      "purpose": "Link the fork-owned skill management page from the maintained Settings shell."
+    },
+    {
+      "path": "apps/web/src/components/settings/settingsSearch.ts",
+      "anchor": "id: \"skills\"",
+      "purpose": "Make the skill management page discoverable through Settings search."
+    },
+    {
+      "path": "apps/web/src/routeTree.gen.ts",
+      "anchor": "SettingsSkillsRouteImport",
+      "purpose": "Generated registration for the fork-owned Settings route."
+    },
+    {
+      "path": "apps/web/src/session-logic.ts",
+      "anchor": "scientSkillUsageLabel",
+      "purpose": "Label managed skill loads concisely in the existing work log."
+    },
+    {
+      "path": "packages/client-runtime/src/providerSkills.ts",
+      "anchor": "scient://skills/",
+      "purpose": "Classify managed Scient releases as app-owned in existing skill presentation."
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scientSkills.ts",
+      "purpose": "Export the fork-owned skill management contracts."
+    },
+    {
+      "path": "packages/contracts/src/rpc.ts",
+      "anchor": "skillsList",
+      "purpose": "Register the skill inventory and personal activation RPC contracts."
     },
     {
       "path": "package.json",

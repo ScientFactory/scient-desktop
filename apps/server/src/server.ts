@@ -49,6 +49,7 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ScientSkillSession from "./scient/skills/ScientSkillSession.ts";
+import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -298,7 +299,9 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntime.layer),
 );
 
-const ScientSkillsLayerLive = ScientSkillSession.live;
+const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
+  Layer.provideMerge(ScientSkillSession.live),
+);
 
 // `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
 // by looking up the default `ProviderInstance` per driver in the instance
