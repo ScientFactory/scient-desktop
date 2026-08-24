@@ -113,12 +113,19 @@ ready to release. Partial lifecycle implementation does not land on `main`.
   It must not be based on, or mixed with, lifecycle implementation. After it lands, merge updated
   `main` into `feat/provider-lifecycle-unification` and rerun the characterization baseline.
 - Create each lifecycle stage on a short-lived branch with one clear owner and one dominant purpose.
-  Child pull requests target `feat/provider-lifecycle-unification`, not `main`, and are merged into
-  that branch after focused review and validation.
+  Child pull requests target `feat/provider-lifecycle-unification`, not `main`, and are integrated
+  only after focused review and validation. Use GitHub squash merge by default so each bounded child
+  PR becomes one reversible integration commit; use rebase merge only when preserving its internal
+  commit separation materially improves review or diagnosis. Do not create feature merge commits
+  inside PR #150: the upstream-provenance guard intentionally rejects unexplained non-official
+  second parents. Choosing the linear integration method at merge time keeps the shared branch green
+  without rewriting it afterward.
 - Start independent child branches from the latest integration head. If a change genuinely depends
   on an unmerged predecessor, stack it temporarily on that predecessor, declare the dependency, and
-  retarget it to `feat/provider-lifecycle-unification` after the predecessor merges so its remaining
-  diff can be reviewed precisely.
+  after the predecessor integrates, rebase the dependent child onto the latest integration head and
+  retarget it to `feat/provider-lifecycle-unification` so its remaining diff can be reviewed
+  precisely. A lease-protected update may rewrite that owner-controlled child branch after explicit
+  coordination; it must never rewrite the shared integration branch.
 - Merge updated `main` into the integration branch at controlled checkpoints. Do not routinely
   rebase the shared published branch: rewriting its history would invalidate collaborators' child
   PR bases. Resolve and validate each `main` merge before accepting more dependent work.
