@@ -5,11 +5,11 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/voice"
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/archived"
-  | "/settings/voice";
+  | "/settings/archived";
 
 export interface SettingsSearchItem {
   readonly id: string;
@@ -30,11 +30,11 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/voice": "Voice",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
-  "/settings/voice": "Voice",
 };
 
 /**

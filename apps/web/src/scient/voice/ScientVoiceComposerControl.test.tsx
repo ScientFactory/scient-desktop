@@ -10,7 +10,6 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   EMPTY_TRANSCRIPT_MESSAGE,
-  MODEL_DOWNLOAD_LABEL,
   ScientVoiceComposerControl,
   describeVoiceError,
   describeVoiceRecorderError,
@@ -127,10 +126,6 @@ describe("describeVoiceError", () => {
 });
 
 describe("voice copy constants", () => {
-  it("uses a model-neutral setup label", () => {
-    expect(MODEL_DOWNLOAD_LABEL).toBe("Set up voice");
-  });
-
   it("has a dedicated empty-transcript message", () => {
     expect(EMPTY_TRANSCRIPT_MESSAGE).toBe("No speech detected");
   });

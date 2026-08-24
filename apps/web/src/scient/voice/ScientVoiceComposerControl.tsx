@@ -10,12 +10,20 @@ import {
   DownloadIcon,
   Loader2Icon,
   MicIcon,
+  SlidersHorizontalIcon,
   XIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import type { VoiceModelId, VoiceModelsSnapshot } from "@t3tools/contracts";
 
-import { ComposerControl, ComposerControlIcon } from "../../components/chat/ComposerControl.tsx";
+import {
+  ComposerControl,
+  ComposerControlChevron,
+  ComposerControlIcon,
+} from "../../components/chat/ComposerControl.tsx";
+import { Badge } from "../../components/ui/badge.tsx";
 import { Button } from "../../components/ui/button.tsx";
+import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover.tsx";
 import {
   Tooltip,
   TooltipPopup,
@@ -37,7 +45,6 @@ export interface ScientVoiceComposerControlProps {
   readonly className?: string;
 }
 
-export const MODEL_DOWNLOAD_LABEL = "Set up voice";
 export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 
 function formatModelSize(byteSize: number): string {
@@ -80,6 +87,77 @@ function VoiceErrorText({ message }: { readonly message: string }): ReactNode {
       <CircleAlertIcon aria-hidden="true" className="size-3.5 shrink-0" />
       {message}
     </span>
+  );
+}
+
+interface VoiceModelSetupPickerProps {
+  readonly disabled: boolean;
+  readonly snapshot: VoiceModelsSnapshot | null;
+  readonly onSelect: (modelId: VoiceModelId) => void;
+}
+
+export function VoiceModelSetupPicker({
+  disabled,
+  snapshot,
+  onSelect,
+}: VoiceModelSetupPickerProps): ReactNode {
+  const models = snapshot?.models ?? [];
+  const recommendedModelId = snapshot?.recommendation?.modelId ?? null;
+
+  return (
+    <Popover>
+      <PopoverTrigger render={<ComposerControl disabled={disabled || models.length === 0} />}>
+        <ComposerControlIcon icon={MicIcon} />
+        Choose voice model
+        <ComposerControlChevron />
+      </PopoverTrigger>
+      <PopoverPopup
+        align="end"
+        className="w-[min(20rem,calc(100vw-1rem))]"
+        side="top"
+        sideOffset={8}
+        viewportClassName="space-y-1 p-2 [--viewport-inline-padding:--spacing(2)]"
+      >
+        <div className="space-y-1">
+          {models.map((model) => {
+            const recommended = model.id === recommendedModelId;
+            return (
+              <button
+                key={model.id}
+                className="group flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                disabled={disabled}
+                onClick={() => onSelect(model.id)}
+                type="button"
+              >
+                <span className="min-w-0 flex-1 space-y-0.5">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-sm">{model.displayName}</span>
+                    {recommended ? (
+                      <Badge size="sm" variant="info">
+                        Best for this computer
+                      </Badge>
+                    ) : null}
+                  </span>
+                  <span className="block text-muted-foreground text-xs leading-4">
+                    {model.description} · {formatModelSize(model.byteSize)}
+                  </span>
+                </span>
+                <DownloadIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground" />
+              </button>
+            );
+          })}
+        </div>
+        <Button
+          className="h-auto justify-start gap-1.5 px-2 py-1"
+          render={<Link to="/settings/voice" />}
+          size="xs"
+          variant="ghost-muted"
+        >
+          <SlidersHorizontalIcon className="text-current" />
+          Manage
+        </Button>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -196,26 +274,11 @@ export function ScientVoiceComposerControl({
     <div className={cn("flex items-center gap-2", className)}>
       {controller.phase === "setup-prompt" ? (
         <div className="flex min-w-0 items-center gap-1.5">
-          {(controller.modelSnapshot?.models ?? []).map((model) => (
-            <Button
-              key={model.id}
-              disabled={disabled}
-              onClick={() => void controller.setupModel(model.id)}
-              size="sm"
-              variant={
-                model.id === controller.modelSnapshot?.recommendation?.modelId ? "default" : "ghost"
-              }
-              title={`${model.displayName} · ${formatModelSize(model.byteSize)}`}
-            >
-              <DownloadIcon />
-              {model.id === controller.modelSnapshot?.recommendation?.modelId
-                ? `${MODEL_DOWNLOAD_LABEL} · ${model.displayName}`
-                : model.displayName}
-            </Button>
-          ))}
-          <Button render={<Link to="/settings/voice" />} size="sm" variant="ghost">
-            Manage
-          </Button>
+          <VoiceModelSetupPicker
+            disabled={disabled}
+            onSelect={(modelId) => void controller.setupModel(modelId)}
+            snapshot={controller.modelSnapshot}
+          />
           <Button
             aria-label="Dismiss voice setup"
             onClick={controller.dismissSetup}

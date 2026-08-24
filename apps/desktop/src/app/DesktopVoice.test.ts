@@ -27,6 +27,8 @@ const MEDIUM_MODEL_ID = "whisper-medium-multilingual-q5_0";
 interface FakeEngineHarness {
   readonly engine: TranscriptionEngine;
   readonly downloadStarted: Promise<void>;
+  readonly removalStarted: Promise<void>;
+  readonly releaseRemoval: () => void;
   readonly ensureModel: ReturnType<typeof vi.fn>;
   readonly removeModel: ReturnType<typeof vi.fn>;
   readonly transcribe: ReturnType<typeof vi.fn>;
@@ -40,6 +42,7 @@ function makeFakeEngine(options?: {
   readonly runtimeAvailable?: boolean;
   readonly runtimeProbeFails?: boolean;
   readonly downloadWaitsForAbort?: boolean;
+  readonly removalWaitsForRelease?: boolean;
   readonly states?: Partial<Record<VoiceModelId, CoreVoiceModelState>>;
 }): FakeEngineHarness {
   const states: Record<VoiceModelId, CoreVoiceModelState> = {
@@ -50,6 +53,14 @@ function makeFakeEngine(options?: {
   let markDownloadStarted: () => void = () => undefined;
   const downloadStarted = new Promise<void>((resolve) => {
     markDownloadStarted = resolve;
+  });
+  let markRemovalStarted: () => void = () => undefined;
+  const removalStarted = new Promise<void>((resolve) => {
+    markRemovalStarted = resolve;
+  });
+  let releaseRemoval: () => void = () => undefined;
+  const removalReleased = new Promise<void>((resolve) => {
+    releaseRemoval = resolve;
   });
   const ensureModel = vi.fn(async (modelId: VoiceModelId, signal: AbortSignal): Promise<string> => {
     signal.throwIfAborted();
@@ -71,6 +82,8 @@ function makeFakeEngine(options?: {
     return `/private/${modelId}.bin`;
   });
   const removeModel = vi.fn(async (modelId: VoiceModelId): Promise<void> => {
+    markRemovalStarted();
+    if (options?.removalWaitsForRelease) await removalReleased;
     states[modelId] = { state: "missing" };
   });
   const transcribe = vi.fn(async (modelId: VoiceModelId) => ({
@@ -79,6 +92,8 @@ function makeFakeEngine(options?: {
   }));
   return {
     downloadStarted,
+    removalStarted,
+    releaseRemoval,
     ensureModel,
     removeModel,
     transcribe,
@@ -243,6 +258,7 @@ describe("DesktopVoice model lifecycle", () => {
           selectOnSuccess: true,
         });
         expect(downloadedMedium.selectedModelId).toBe(MEDIUM_MODEL_ID);
+        expect(downloadedMedium.activeDownloadModelId).toBeNull();
         expect((yield* settings.get).voiceSelectedModelId).toBe(MEDIUM_MODEL_ID);
 
         yield* voice.downloadModel({ modelId: SMALL_MODEL_ID });
@@ -263,6 +279,58 @@ describe("DesktopVoice model lifecycle", () => {
       Effect.gen(function* () {
         expect((yield* settings.get).voiceSelectedModelId).toBe(SMALL_MODEL_ID);
         expect(harness.ensureModel).not.toHaveBeenCalled();
+      }),
+    );
+  });
+
+  it.effect("selects the only installed model without requiring another choice", () => {
+    const harness = makeFakeEngine({ states: { [MEDIUM_MODEL_ID]: ready(MEDIUM_MODEL_ID) } });
+    return withVoice(dependencies(harness), (voice, settings) =>
+      Effect.gen(function* () {
+        expect((yield* voice.getModelsState).selectedModelId).toBe(MEDIUM_MODEL_ID);
+        expect((yield* settings.get).voiceSelectedModelId).toBe(MEDIUM_MODEL_ID);
+      }),
+    );
+  });
+
+  it.effect("replaces a stale saved selection with the only verified model", () => {
+    const harness = makeFakeEngine({ states: { [MEDIUM_MODEL_ID]: ready(MEDIUM_MODEL_ID) } });
+    return withVoice(
+      dependencies(harness),
+      (voice, settings) =>
+        Effect.gen(function* () {
+          expect((yield* voice.getModelsState).selectedModelId).toBe(MEDIUM_MODEL_ID);
+          expect((yield* settings.get).voiceSelectedModelId).toBe(MEDIUM_MODEL_ID);
+        }),
+      {
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        voiceSelectedModelId: SMALL_MODEL_ID,
+      },
+    );
+  });
+
+  it.effect("does not guess when multiple installed models have no saved selection", () => {
+    const harness = makeFakeEngine({
+      states: {
+        [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID),
+        [MEDIUM_MODEL_ID]: ready(MEDIUM_MODEL_ID),
+      },
+    });
+    return withVoice(dependencies(harness), (voice, settings) =>
+      Effect.gen(function* () {
+        expect((yield* voice.getModelsState).selectedModelId).toBeNull();
+        expect((yield* settings.get).voiceSelectedModelId).toBeNull();
+      }),
+    );
+  });
+
+  it.effect("selects the first downloaded model automatically", () => {
+    const harness = makeFakeEngine();
+    return withVoice(dependencies(harness), (voice, settings) =>
+      Effect.gen(function* () {
+        const downloaded = yield* voice.downloadModel({ modelId: SMALL_MODEL_ID });
+        expect(downloaded.selectedModelId).toBe(SMALL_MODEL_ID);
+        expect((yield* settings.get).voiceSelectedModelId).toBe(SMALL_MODEL_ID);
       }),
     );
   });
@@ -297,11 +365,56 @@ describe("DesktopVoice model lifecycle", () => {
           .downloadModel({ modelId: SMALL_MODEL_ID, selectOnSuccess: true })
           .pipe(Effect.forkChild);
         yield* Effect.promise(() => harness.downloadStarted);
+        const removalError = yield* voice
+          .removeModel({ modelId: SMALL_MODEL_ID })
+          .pipe(Effect.flip);
+        expect(removalError).toMatchObject({ kind: "provider-error" });
         yield* voice.cancelModelDownload({ modelId: SMALL_MODEL_ID });
         const error = yield* Fiber.join(download).pipe(Effect.flip);
         expect(error).toMatchObject({ kind: "cancelled" });
         expect((yield* voice.getModelsState).activeDownloadModelId).toBeNull();
       }),
+    );
+  });
+
+  it.effect("rejects conflicting model mutations while removal is active", () => {
+    const harness = makeFakeEngine({
+      removalWaitsForRelease: true,
+      states: {
+        [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID),
+        [MEDIUM_MODEL_ID]: ready(MEDIUM_MODEL_ID),
+      },
+    });
+    return withVoice(
+      dependencies(harness),
+      (voice) =>
+        Effect.gen(function* () {
+          const removal = yield* voice
+            .removeModel({ modelId: MEDIUM_MODEL_ID })
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => harness.removalStarted);
+
+          const downloadError = yield* voice
+            .downloadModel({ modelId: SMALL_MODEL_ID })
+            .pipe(Effect.flip);
+          const selectionError = yield* voice
+            .selectModel({ modelId: SMALL_MODEL_ID })
+            .pipe(Effect.flip);
+          const removalError = yield* voice
+            .removeModel({ modelId: SMALL_MODEL_ID })
+            .pipe(Effect.flip);
+
+          expect(downloadError).toMatchObject({ kind: "provider-error" });
+          expect(selectionError).toMatchObject({ kind: "provider-error" });
+          expect(removalError).toMatchObject({ kind: "provider-error" });
+
+          harness.releaseRemoval();
+          yield* Fiber.join(removal);
+        }),
+      {
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        voiceSelectedModelId: SMALL_MODEL_ID,
+      },
     );
   });
 });

@@ -42,8 +42,12 @@ interface VoiceModelCardProps {
   readonly selected: boolean;
   readonly recommended: boolean;
   readonly busy: boolean;
+  readonly activeDownload: boolean;
+  readonly queuedDownload: boolean;
+  readonly downloadBlocked: boolean;
   readonly onDownload: (modelId: VoiceModelId, selectOnSuccess: boolean) => void;
   readonly onCancel: (modelId: VoiceModelId) => void;
+  readonly onCancelQueued: () => void;
   readonly onSelect: (modelId: VoiceModelId) => void;
   readonly onRemove: (model: VoiceModelSummary) => void;
 }
@@ -54,42 +58,44 @@ function VoiceModelCard({
   selected,
   recommended,
   busy,
+  activeDownload,
+  queuedDownload,
+  downloadBlocked,
   onDownload,
   onCancel,
+  onCancelQueued,
   onSelect,
   onRemove,
 }: VoiceModelCardProps): ReactNode {
   const state = model.state;
   const progress = voiceModelProgressPercent(model);
+  const downloading = state.state === "downloading" || activeDownload;
   return (
     <div className="rounded-xl border border-border/70 bg-card/50 p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-medium text-sm">{model.displayName}</h3>
-            {recommended ? (
-              <Badge variant="info" size="sm">
-                Recommended
-              </Badge>
-            ) : null}
-            {selected ? (
-              <Badge variant="success" size="sm">
-                <CheckIcon /> In use
-              </Badge>
-            ) : null}
-          </div>
-          <p className="text-muted-foreground text-xs">{model.description}</p>
-          <p className="text-muted-foreground/70 text-xs">
-            Multilingual · {formatBytes(model.byteSize)}
-          </p>
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-medium text-sm">{model.displayName}</h3>
+          {recommended ? (
+            <Badge variant="info" size="sm">
+              Best for this computer
+            </Badge>
+          ) : null}
+          {selected ? (
+            <Badge variant="success" size="sm">
+              <CheckIcon /> In use
+            </Badge>
+          ) : null}
         </div>
-        {state.state === "ready" ? <CheckIcon className="size-4 shrink-0 text-success" /> : null}
+        <p className="text-muted-foreground text-xs">{model.description}</p>
+        <p className="text-muted-foreground/70 text-xs">
+          Multilingual · {formatBytes(model.byteSize)}
+        </p>
       </div>
 
-      {state.state === "downloading" ? (
+      {downloading ? (
         <div className="mt-4 space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Downloading…</span>
+            <span>{state.state === "downloading" ? "Downloading…" : "Starting download…"}</span>
             <span>{progress}%</span>
           </div>
           <div
@@ -117,8 +123,15 @@ function VoiceModelCard({
         <p className="mt-3 text-destructive text-xs">{state.message}</p>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {state.state === "downloading" ? (
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {queuedDownload ? (
+          <>
+            <span className="text-muted-foreground text-xs">Queued</span>
+            <Button size="xs" variant="ghost-muted" onClick={onCancelQueued}>
+              Cancel
+            </Button>
+          </>
+        ) : downloading ? (
           <Button
             size="xs"
             variant="outline"
@@ -139,7 +152,7 @@ function VoiceModelCard({
         ) : (
           <Button
             size="xs"
-            disabled={busy || !runtimeAvailable}
+            disabled={downloadBlocked || !runtimeAvailable}
             onClick={() => onDownload(model.id, selected || recommended)}
           >
             {state.state === "error" ? <RefreshCwIcon /> : <DownloadIcon />}
@@ -150,7 +163,7 @@ function VoiceModelCard({
                 : "Download"}
           </Button>
         )}
-        {state.state !== "downloading" ? (
+        {!downloading && !queuedDownload ? (
           <Button
             aria-label={`Remove ${model.displayName}`}
             size="icon-xs"
@@ -170,9 +183,15 @@ export function VoiceSettingsPanel(): ReactNode {
   const client = useMemo(() => getVoiceBridge(), []);
   const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
+  const [localDownloadModelId, setLocalDownloadModelId] = useState<VoiceModelId | null>(null);
+  const [queuedDownload, setQueuedDownload] = useState<{
+    readonly modelId: VoiceModelId;
+    readonly selectOnSuccess: boolean;
+  } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<VoiceModelSummary | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const cancelledDownloadRef = useRef<VoiceModelId | null>(null);
+  const localDownloadModelIdRef = useRef<VoiceModelId | null>(null);
 
   const refresh = useCallback(
     async (clearError = false) => {
@@ -215,14 +234,45 @@ export function VoiceSettingsPanel(): ReactNode {
     [],
   );
 
-  const handleDownload = useCallback(
+  const startDownload = useCallback(
     (modelId: VoiceModelId, selectOnSuccess: boolean) => {
       if (!client) return;
       cancelledDownloadRef.current = null;
-      void run(modelId, () => client.downloadModel({ modelId, selectOnSuccess }));
+      localDownloadModelIdRef.current = modelId;
+      setLocalDownloadModelId(modelId);
+      void run(modelId, () => client.downloadModel({ modelId, selectOnSuccess })).finally(() => {
+        if (localDownloadModelIdRef.current !== modelId) return;
+        localDownloadModelIdRef.current = null;
+        setLocalDownloadModelId(null);
+      });
     },
     [client, run],
   );
+
+  const observedActiveDownloadModelId =
+    localDownloadModelId ?? snapshot?.activeDownloadModelId ?? null;
+
+  const handleDownload = useCallback(
+    (modelId: VoiceModelId, selectOnSuccess: boolean) => {
+      const activeModelId =
+        localDownloadModelIdRef.current ?? snapshot?.activeDownloadModelId ?? null;
+      if (activeModelId !== null && activeModelId !== modelId) {
+        setQueuedDownload({ modelId, selectOnSuccess });
+        return;
+      }
+      startDownload(modelId, selectOnSuccess);
+    },
+    [snapshot?.activeDownloadModelId, startDownload],
+  );
+
+  useEffect(() => {
+    if (queuedDownload === null || observedActiveDownloadModelId !== null || busyModelId !== null) {
+      return;
+    }
+    const next = queuedDownload;
+    setQueuedDownload(null);
+    startDownload(next.modelId, next.selectOnSuccess);
+  }, [busyModelId, observedActiveDownloadModelId, queuedDownload, startDownload]);
 
   const handleCancel = useCallback(
     async (modelId: VoiceModelId) => {
@@ -271,9 +321,10 @@ export function VoiceSettingsPanel(): ReactNode {
     <SettingsPageContainer>
       <SettingsSection title="Voice" icon={<Mic2Icon className="size-4 text-muted-foreground" />}>
         <div className="space-y-3 px-3 sm:px-4">
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Voice transcription runs locally on this computer. Choose the model that best fits your
-            balance of speed and accuracy.
+          <p className="text-sm text-muted-foreground">
+            Voice transcription runs locally on this computer. Larger models can improve accuracy,
+            but use more memory, storage, and processing power. Scient marks the best fit for this
+            computer.
           </p>
           {!snapshot ? (
             <p className="text-sm text-muted-foreground">Loading voice models…</p>
@@ -288,7 +339,7 @@ export function VoiceSettingsPanel(): ReactNode {
               {errorMessage}
             </p>
           ) : null}
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
             {snapshot?.models.map((model) => (
               <VoiceModelCard
                 key={model.id}
@@ -297,19 +348,20 @@ export function VoiceSettingsPanel(): ReactNode {
                 selected={snapshot.selectedModelId === model.id}
                 recommended={snapshot.recommendation?.modelId === model.id}
                 busy={busyModelId !== null}
+                activeDownload={observedActiveDownloadModelId === model.id}
+                queuedDownload={queuedDownload?.modelId === model.id}
+                downloadBlocked={
+                  (busyModelId !== null && observedActiveDownloadModelId === null) ||
+                  (queuedDownload !== null && queuedDownload.modelId !== model.id)
+                }
                 onDownload={handleDownload}
                 onCancel={handleCancel}
+                onCancelQueued={() => setQueuedDownload(null)}
                 onSelect={handleSelect}
                 onRemove={setRemoveTarget}
               />
             ))}
           </div>
-          {snapshot ? (
-            <p className="text-xs text-muted-foreground/70">
-              The recommendation is based on local device capabilities and can always be changed
-              here.
-            </p>
-          ) : null}
         </div>
       </SettingsSection>
 
@@ -317,18 +369,22 @@ export function VoiceSettingsPanel(): ReactNode {
         open={removeTarget !== null}
         onOpenChange={(open) => !open && setRemoveTarget(null)}
       >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removeTarget?.displayName}?</AlertDialogTitle>
-            <AlertDialogDescription>
+        <AlertDialogPopup className="max-w-sm">
+          <AlertDialogHeader className="gap-1.5 p-4 pb-3">
+            <AlertDialogTitle className="text-base">
+              Remove {removeTarget?.displayName}?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-5">
               {replacementModel
-                ? `${replacementModel.displayName} will become the active voice model.`
-                : "Voice setup will be required before dictation can be used again."}
+                ? `${replacementModel.displayName} will be used instead.`
+                : "You can download this model again here at any time."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button variant="destructive" onClick={() => void confirmRemove()}>
+          <AlertDialogFooter className="gap-1 px-4 pb-4" variant="bare">
+            <AlertDialogClose render={<Button size="sm" variant="ghost-muted" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button size="sm" variant="destructive" onClick={() => void confirmRemove()}>
               Remove model
             </Button>
           </AlertDialogFooter>

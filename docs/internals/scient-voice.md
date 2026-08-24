@@ -42,8 +42,9 @@ the inherited preload, or the artifact orchestrator.
   alias-prone point sampling.
 - The shared native runtime serializes inference, while the desktop allows one
   catalog download at a time. A newer transcription cancels the previous
-  request; model removal cancels active inference/download work and stops the
-  helper that may hold the model open before deleting files.
+  request. Model removal rejects conflicting model mutations, cancels active
+  inference, and stops the helper that may hold the model open before deleting
+  files.
 - The helper binds to loopback on a random port and a cryptographically random
   request path. It receives only an allowlist of OS environment variables, not
   provider or cloud credentials.
@@ -73,8 +74,9 @@ Voice.
 Settings exposes each model's download, resumable progress, active selection,
 and removal actions. Removing the selected model first switches to another
 verified installed model when one exists; otherwise voice returns to setup.
-Existing installations are migrated by retaining a verified Small model and
-selecting it without downloading again.
+Existing installations retain any valid saved selection. If that selection is
+missing, the sole verified installed model is selected without downloading it
+again; multiple installed models remain an explicit user choice.
 
 ## Runtime provenance and packaging
 

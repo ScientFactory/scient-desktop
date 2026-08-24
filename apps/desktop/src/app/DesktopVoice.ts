@@ -122,6 +122,15 @@ function isReady(state: CoreVoiceModelState): boolean {
   return state.state === "ready";
 }
 
+function findOnlyReadyModelId(
+  states: Readonly<Record<string, CoreVoiceModelState>>,
+): VoiceModelId | null {
+  const readyModelIds = VOICE_MODEL_DEFINITIONS.map((definition) => definition.id).filter((id) =>
+    isReady(states[id] ?? { state: "missing" }),
+  );
+  return readyModelIds.length === 1 ? toPublicModelId(readyModelIds[0]!) : null;
+}
+
 function toPublicModelId(id: string): VoiceModelId {
   if (!isVoiceModelId(id)) throw new Error(`Unsupported offline voice model: ${id}`);
   return id;
@@ -217,10 +226,9 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
       : NodePath.join(environment.resourcesPath, "whisper-runtime");
     const modelDir = NodePath.join(environment.stateDir, "voice", "models");
 
-    let maintenanceActive = false;
+    let activeModelMutation: "select" | "remove" | null = null;
     let downloadController: AbortController | null = null;
     let downloadModelId: VoiceModelId | null = null;
-    let activeDownload: Promise<unknown> | null = null;
     let activeController: AbortController | null = null;
     let activeTranscription: Promise<unknown> | null = null;
     let selectedModelId = (yield* appSettings.load).voiceSelectedModelId ?? null;
@@ -234,7 +242,7 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
       modelDir,
       manifests: VOICE_MODEL_DEFINITIONS,
       platform: environment.platform,
-      isMaintenanceActive: () => maintenanceActive,
+      isMaintenanceActive: () => activeModelMutation === "remove",
     });
     const runtimeAvailable = yield* Effect.tryPromise({
       try: () => engine.isRuntimeInstalled(),
@@ -245,23 +253,34 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
       ),
     );
 
-    // Existing installs retain their current Small model without another download.
-    if (selectedModelId === null) {
-      const smallState = yield* Effect.tryPromise({
-        try: () => engine.getModelState(SMALL_VOICE_MODEL_ID),
+    // Keep persisted selection aligned with verified files. A sole existing
+    // model is the unambiguous fallback, including installations created before
+    // model selection was persisted. A transient probe failure must not erase a
+    // previously valid preference.
+    const existingStates: Readonly<Record<string, CoreVoiceModelState>> | null =
+      yield* Effect.tryPromise({
+        try: () => engine.getModelStates(),
         catch: () => new VoiceHostProbeError({ operation: "model" }),
       }).pipe(
         Effect.catch(() =>
-          Effect.logWarning("Could not inspect the existing offline voice model.").pipe(
-            Effect.as<CoreVoiceModelState>({ state: "missing" }),
+          Effect.logWarning("Could not inspect the existing offline voice models.").pipe(
+            Effect.as<Readonly<Record<string, CoreVoiceModelState>> | null>(null),
           ),
         ),
       );
-      if (isReady(smallState)) {
-        selectedModelId = toPublicModelId(SMALL_VOICE_MODEL_ID);
+    if (existingStates !== null) {
+      const selectedState =
+        selectedModelId === null
+          ? ({ state: "missing" } as const)
+          : (existingStates[selectedModelId] ?? ({ state: "missing" } as const));
+      const reconciledModelId = isReady(selectedState)
+        ? selectedModelId
+        : findOnlyReadyModelId(existingStates);
+      if (reconciledModelId !== selectedModelId) {
+        selectedModelId = reconciledModelId;
         yield* persistSelectedModel(selectedModelId).pipe(
           Effect.catch(() =>
-            Effect.logWarning("Could not persist the migrated offline voice selection."),
+            Effect.logWarning("Could not persist the reconciled offline voice selection."),
           ),
         );
       }
@@ -320,6 +339,12 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
 
       downloadModel: (request) =>
         Effect.gen(function* () {
+          if (activeModelMutation === "remove") {
+            return yield* new VoiceRequestError({
+              kind: "provider-error",
+              safeMessage: "Wait for the current offline voice model operation to finish.",
+            });
+          }
           if (!runtimeAvailable) {
             return yield* new VoiceRequestError({
               kind: "backend-unavailable",
@@ -335,6 +360,12 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
           const controller = new AbortController();
           downloadController = controller;
           downloadModelId = request.modelId;
+          const clearDownloadState = Effect.sync(() => {
+            if (downloadController === controller) {
+              downloadController = null;
+              downloadModelId = null;
+            }
+          });
           return yield* Effect.gen(function* () {
             const definition = getVoiceModelDefinition(request.modelId);
             if (!definition) {
@@ -361,27 +392,24 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
               }
             }
             const ensurePromise = engine.ensureModel(request.modelId, controller.signal);
-            activeDownload = ensurePromise;
             yield* Effect.tryPromise({
               try: () => ensurePromise,
               catch: (cause) => toVoiceRequestError(cause, "download"),
             });
-            if (request.selectOnSuccess === true) {
+            const installedStates = yield* Effect.promise(() => engine.getModelStates());
+            const isOnlyInstalledModel = findOnlyReadyModelId(installedStates) === request.modelId;
+            if (
+              request.selectOnSuccess === true ||
+              (selectedModelId === null && isOnlyInstalledModel)
+            ) {
               yield* persistSelectedModel(request.modelId).pipe(
                 Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
               );
               selectedModelId = request.modelId;
             }
+            yield* clearDownloadState;
             return yield* Effect.promise(getPublicState);
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (downloadController === controller) downloadController = null;
-                activeDownload = null;
-                downloadModelId = null;
-              }),
-            ),
-          );
+          }).pipe(Effect.ensuring(clearDownloadState));
         }),
 
       cancelModelDownload: (request) =>
@@ -391,31 +419,48 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
 
       selectModel: (request) =>
         Effect.gen(function* () {
-          const state = yield* Effect.tryPromise({
-            try: () => engine.getModelState(request.modelId),
-            catch: (cause) => toVoiceRequestError(cause, "download"),
-          });
-          if (!isReady(state)) {
+          if (activeModelMutation !== null) {
             return yield* new VoiceRequestError({
-              kind: "model-missing",
-              safeMessage: "Download this offline voice model before selecting it.",
+              kind: "provider-error",
+              safeMessage: "Wait for the current offline voice model operation to finish.",
             });
           }
-          yield* persistSelectedModel(request.modelId).pipe(
-            Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
+          activeModelMutation = "select";
+          return yield* Effect.gen(function* () {
+            const state = yield* Effect.tryPromise({
+              try: () => engine.getModelState(request.modelId),
+              catch: (cause) => toVoiceRequestError(cause, "download"),
+            });
+            if (!isReady(state)) {
+              return yield* new VoiceRequestError({
+                kind: "model-missing",
+                safeMessage: "Download this offline voice model before selecting it.",
+              });
+            }
+            yield* persistSelectedModel(request.modelId).pipe(
+              Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
+            );
+            selectedModelId = request.modelId;
+            return yield* Effect.promise(getPublicState);
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (activeModelMutation === "select") activeModelMutation = null;
+              }),
+            ),
           );
-          selectedModelId = request.modelId;
-          return yield* Effect.promise(getPublicState);
         }),
 
       removeModel: (request) =>
         Effect.gen(function* () {
-          maintenanceActive = true;
+          if (activeModelMutation !== null || downloadController !== null) {
+            return yield* new VoiceRequestError({
+              kind: "provider-error",
+              safeMessage: "Wait for the current offline voice model operation to finish.",
+            });
+          }
+          activeModelMutation = "remove";
           return yield* Effect.gen(function* () {
-            if (downloadModelId === request.modelId) downloadController?.abort();
-            yield* Effect.promise(
-              () => activeDownload?.catch(() => undefined) ?? Promise.resolve(),
-            );
             activeController?.abort();
             yield* Effect.promise(
               () => activeTranscription?.catch(() => undefined) ?? Promise.resolve(),
@@ -456,7 +501,11 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
             return yield* Effect.promise(getPublicState);
           }).pipe(
             Effect.mapError((cause) => toVoiceRequestError(cause, "remove")),
-            Effect.ensuring(Effect.sync(() => (maintenanceActive = false))),
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (activeModelMutation === "remove") activeModelMutation = null;
+              }),
+            ),
           );
         }),
 
