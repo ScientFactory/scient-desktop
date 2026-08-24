@@ -424,6 +424,7 @@ export async function materializeManagedRuntimeArtifact(input: {
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
   readonly destination: string;
   readonly executablePath: string;
+  readonly auxiliaryExecutablePaths?: ReadonlyArray<string> | undefined;
   readonly platform: NodeJS.Platform;
   readonly extractionLimits?: ManagedRuntimeExtractionLimits | undefined;
   readonly signal: AbortSignal;
@@ -449,12 +450,16 @@ export async function materializeManagedRuntimeArtifact(input: {
       signal: input.signal,
     });
   }
-  const stat = await NodeFSP.lstat(executable).catch(() => undefined);
-  if (!stat?.isFile() || stat.isSymbolicLink()) {
-    throw new ManagedRuntimeFileError(
-      "Managed runtime archive did not contain the reviewed executable.",
-    );
+  const reviewedExecutables = [input.executablePath, ...(input.auxiliaryExecutablePaths ?? [])];
+  for (const reviewedPath of reviewedExecutables) {
+    const reviewedExecutable = resolveManagedRuntimeArtifactPath(input.destination, reviewedPath);
+    const stat = await NodeFSP.lstat(reviewedExecutable).catch(() => undefined);
+    if (!stat?.isFile() || stat.isSymbolicLink()) {
+      throw new ManagedRuntimeFileError(
+        `Managed runtime archive did not contain the reviewed executable: ${reviewedPath}`,
+      );
+    }
+    if (input.platform !== "win32") await NodeFSP.chmod(reviewedExecutable, 0o755);
   }
-  if (input.platform !== "win32") await NodeFSP.chmod(executable, 0o755);
   return executable;
 }

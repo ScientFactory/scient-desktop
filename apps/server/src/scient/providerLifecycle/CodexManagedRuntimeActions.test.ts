@@ -1,7 +1,16 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the managed Codex companion-file boundary.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
+import * as Effect from "effect/Effect";
 
 import type { ManagedRuntimeArtifact } from "@scientfactory/provider-runtime";
 import {
+  hasManagedCodexCodeModeHost,
+  resolveCodexCodeModeHostPath,
   resolveCodexManagedRuntimePolicy,
   resolveCodexRuntimeHomePath,
   resolveCodexRuntimeSource,
@@ -15,6 +24,38 @@ const artifact = {
 } as ManagedRuntimeArtifact;
 
 describe("Codex managed runtime policy", () => {
+  effectIt.effect("requires a real executable code-mode host beside a managed Codex binary", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.tryPromise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-codex-health-")),
+      );
+      const binary = NodePath.join(root, "bin/codex");
+      const host = NodePath.join(root, "bin/codex-code-mode-host");
+      try {
+        yield* Effect.tryPromise(() =>
+          NodeFSP.mkdir(NodePath.dirname(binary), { recursive: true }),
+        );
+        yield* Effect.tryPromise(() => NodeFSP.writeFile(binary, "codex", { mode: 0o755 }));
+        expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(false);
+
+        yield* Effect.tryPromise(() => NodeFSP.writeFile(host, "host", { mode: 0o600 }));
+        expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(false);
+
+        yield* Effect.tryPromise(() => NodeFSP.chmod(host, 0o755));
+        expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(true);
+
+        yield* Effect.tryPromise(() => NodeFSP.rm(host));
+        yield* Effect.tryPromise(() => NodeFSP.symlink(binary, host));
+        expect(yield* hasManagedCodexCodeModeHost(binary, "darwin")).toBe(false);
+        expect(resolveCodexCodeModeHostPath("C:\\Codex\\bin\\codex.exe", "win32")).toBe(
+          "C:\\Codex\\bin\\codex-code-mode-host.exe",
+        );
+      } finally {
+        yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
+      }
+    }),
+  );
+
   it("preserves a configured custom runtime without taking ownership of it", () => {
     expect(
       resolveCodexRuntimeSource({

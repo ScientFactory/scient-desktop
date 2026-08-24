@@ -36,6 +36,8 @@ export interface ManagedRuntimeArtifact {
   /** Reviewed archive-specific limits; omitted for small single-binary releases. */
   readonly extractionLimits?: ManagedRuntimeExtractionLimits | undefined;
   readonly executablePath: string;
+  /** Additional reviewed payload files that must exist and be executable. */
+  readonly auxiliaryExecutablePaths?: ReadonlyArray<string> | undefined;
   /** Optional alternate smoke-test entry point inside the extracted payload. */
   readonly smokeExecutablePath?: string | undefined;
   /** Optional payload-relative working directory for the smoke test. */
