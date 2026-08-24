@@ -31,6 +31,9 @@ describe("AssistedProviderSetup", () => {
     expect(markup).toContain("in-[[data-model-picker-content=true]]:text-center");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
     expect(markup).toContain("in-[[data-slot=dialog-panel]]:p-0");
+    expect(markup).toContain("items-center");
+    expect(markup).toContain("self-center");
+    expect(markup).not.toContain("self-end");
     expect(markup).toContain(">Repair<");
     const installButtonIndex = markup.indexOf(">Install<");
     const actionStart = markup.lastIndexOf("<div", installButtonIndex);

@@ -61,13 +61,13 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
-  it("offers direct enablement before install or sign-in", () => {
+  it("routes disabled providers through management before install or sign-in", () => {
     expect(
       providerSettingsLifecyclePresentation(provider({ enabled: false }), "Codex"),
     ).toMatchObject({
       kind: "disabled",
-      actionLabel: "Enable",
-      actionKind: "enable",
+      actionLabel: "Manage",
+      actionKind: "manage",
     });
   });
 

@@ -14,6 +14,7 @@ import {
   CheckCircle2Icon,
   DownloadIcon,
   LoaderIcon,
+  RefreshCwIcon,
   ShieldCheckIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -25,13 +26,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import {
   currentOptimisticProviderValue,
   isManagedRuntimeActionDurablySettled,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import {
   isActiveProviderRuntimeOperation,
   needsManagedRuntimeRecovery,
@@ -98,8 +103,8 @@ function actionLabel(action: ProviderManagedRuntimeAction, displayName: string):
 
 function runtimeSourceLabel(runtime: ProviderRuntimeSummary): string {
   if (runtime.source === "scient_managed") return "Managed by Scient";
-  if (runtime.source === "system") return "Using the installation on this computer";
-  if (runtime.source === "custom") return "Using your custom installation";
+  if (runtime.source === "system") return "System installation";
+  if (runtime.source === "custom") return "Custom installation";
   if (runtime.source === "missing") return "Provider tool required";
   return "Provider tool status unavailable";
 }
@@ -489,16 +494,26 @@ export function ProviderRuntimeSection(props: {
           <Button
             type="button"
             size="sm"
-            variant={isRemovePlan ? "ghost-muted" : "default"}
+            variant={isRemovePlan ? "ghost-muted" : "ghost"}
             className={
               isRemovePlan
                 ? "text-destructive hover:bg-destructive/8 hover:text-destructive"
-                : undefined
+                : PRIMARY_GHOST_ACTION_CLASS
             }
             disabled={isWorking}
             onClick={() => void start()}
           >
-            {pendingAction === "start" ? <LoaderIcon className="animate-spin" /> : null}
+            {pendingAction === "start" ? (
+              <LoaderIcon className="animate-spin" />
+            ) : plan.action === "install" ? (
+              <DownloadIcon />
+            ) : plan.action === "update" ? (
+              <RefreshCwIcon />
+            ) : plan.action === "remove" ? (
+              <Trash2Icon />
+            ) : (
+              <WrenchIcon />
+            )}
             {isRemovePlan
               ? "Remove"
               : isCompactInstallPlan
@@ -534,8 +549,14 @@ export function ProviderRuntimeSection(props: {
 
   return (
     <div className={props.compact ? "space-y-2 border-b pb-3" : "space-y-3 rounded-lg border p-3"}>
-      <div className={props.compact ? "flex flex-wrap items-center gap-x-3 gap-y-2" : "space-y-3"}>
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+      <div
+        className={
+          props.compact
+            ? "grid grid-cols-[minmax(9rem,1fr)_auto] items-center gap-x-3 gap-y-2"
+            : "space-y-3"
+        }
+      >
+        <div className="flex min-w-0 items-start gap-3">
           {statusIcon}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
@@ -556,43 +577,73 @@ export function ProviderRuntimeSection(props: {
           </div>
         </div>
         {runtime.actions.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {runtime.actions.map((action) => (
-              <Button
-                key={action}
-                type="button"
-                size="sm"
-                variant={
-                  action === "install" ? "default" : props.compact ? "ghost-muted" : "outline"
-                }
-                className={
-                  props.compact && action === "remove"
-                    ? "hover:bg-destructive/8 hover:text-destructive"
-                    : undefined
-                }
-                disabled={isWorking}
-                onClick={() => void requestPlan(action)}
-              >
-                {pendingAction === "plan" ? (
-                  <LoaderIcon className="animate-spin" />
-                ) : action === "install" ? (
-                  <DownloadIcon />
-                ) : action === "remove" ? (
-                  <Trash2Icon />
-                ) : (
-                  <WrenchIcon />
-                )}
-                {action === "install"
-                  ? runtime.source === "system"
-                    ? `Use Scient-managed ${props.displayName}`
-                    : "Review setup"
-                  : action === "update"
-                    ? "Update"
-                    : action === "repair"
-                      ? "Repair"
-                      : "Remove"}
-              </Button>
-            ))}
+          <div className="flex flex-wrap justify-end gap-1">
+            {runtime.actions.map((action) => {
+              const isSystemManagedSwitch = action === "install" && runtime.source === "system";
+              const actionButton = (
+                <Button
+                  aria-label={
+                    isSystemManagedSwitch ? `Use Scient-managed ${props.displayName}` : undefined
+                  }
+                  key={action}
+                  type="button"
+                  size={props.compact ? "compact" : "sm"}
+                  variant={
+                    action === "install" && !isSystemManagedSwitch
+                      ? "ghost"
+                      : props.compact
+                        ? "ghost-muted"
+                        : "outline"
+                  }
+                  className={
+                    action === "install" && !isSystemManagedSwitch
+                      ? PRIMARY_GHOST_ACTION_CLASS
+                      : props.compact && action === "remove"
+                        ? "hover:bg-destructive/8 hover:text-destructive"
+                        : undefined
+                  }
+                  disabled={isWorking}
+                  onClick={() => void requestPlan(action)}
+                >
+                  {pendingAction === "plan" ? (
+                    <LoaderIcon className="animate-spin" />
+                  ) : action === "install" ? (
+                    <DownloadIcon />
+                  ) : action === "remove" ? (
+                    <Trash2Icon />
+                  ) : (
+                    <WrenchIcon />
+                  )}
+                  {action === "install"
+                    ? isSystemManagedSwitch
+                      ? "Use Scient-managed"
+                      : "Review setup"
+                    : action === "update"
+                      ? "Update"
+                      : action === "repair"
+                        ? "Repair"
+                        : "Remove"}
+                </Button>
+              );
+              return isSystemManagedSwitch ? (
+                <Tooltip key={action}>
+                  <TooltipTrigger render={actionButton} />
+                  <TooltipPopup className="max-w-64" side="top">
+                    <div className="space-y-0.5 py-0.5">
+                      <p className="font-medium text-foreground">
+                        Scient-managed {props.displayName}
+                      </p>
+                      <p className="leading-relaxed text-muted-foreground">
+                        Scient installs and maintains a private copy, including updates and repairs.
+                        Your system installation stays unchanged and remains available.
+                      </p>
+                    </div>
+                  </TooltipPopup>
+                </Tooltip>
+              ) : (
+                actionButton
+              );
+            })}
           </div>
         ) : null}
       </div>

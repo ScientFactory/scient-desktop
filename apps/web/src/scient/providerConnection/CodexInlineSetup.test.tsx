@@ -93,6 +93,9 @@ describe("CodexInlineSetup", () => {
     );
     expect(markup).toContain("Sign in with ChatGPT");
     expect(markup).toContain("Use device code");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("The secure flow opens in your browser");
   });
 

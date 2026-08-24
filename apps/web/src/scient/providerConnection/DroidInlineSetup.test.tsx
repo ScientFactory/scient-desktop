@@ -94,6 +94,9 @@ describe("DroidInlineSetup", () => {
     expect(markup).toContain("Sign in required");
     expect(markup).toContain("Sign in with Factory");
     expect(markup).toContain("Scient never sees your password");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
   });
 
   it("represents Droid's provider-opened browser flow without inventing a URL or code", () => {

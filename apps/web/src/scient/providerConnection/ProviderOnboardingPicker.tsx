@@ -19,6 +19,7 @@ import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
+import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
@@ -379,8 +380,14 @@ function ProviderSetupDetail(props: {
       <p className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed">
         {props.status}
       </p>
-      <Button className="mt-4" onClick={props.onManage} size="sm" type="button">
-        Open provider settings
+      <Button
+        className={`mt-4 ${PRIMARY_GHOST_ACTION_CLASS}`}
+        onClick={props.onManage}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        <SettingsIcon aria-hidden /> Open provider settings
       </Button>
     </div>
   );

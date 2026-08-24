@@ -85,6 +85,9 @@ describe("CursorInlineSetup", () => {
 
     expect(markup).toContain("Sign in to Cursor");
     expect(markup).toContain("Scient never sees your password.");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("device code");
     expect(markup).not.toContain("Paste code");
   });

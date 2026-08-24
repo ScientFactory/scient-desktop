@@ -6,6 +6,7 @@ import type {
 import {
   CheckCircle2Icon,
   CopyIcon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -33,7 +34,10 @@ import {
   providerAccountIdentity,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -216,7 +220,12 @@ export function GrokInlineSetup(props: {
           title="Grok needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void run("repair", () => runtimeAction("repair"))} size="sm">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void run("repair", () => runtimeAction("repair"))}
+            size="sm"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Grok
           </Button>
         </AssistedSetupActions>
@@ -252,7 +261,13 @@ export function GrokInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void run("install", () => runtimeAction("install"))} size="sm">
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void run("install", () => runtimeAction("install"))}
+              size="sm"
+              variant="ghost"
+            >
+              {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {localError ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
@@ -448,8 +463,10 @@ export function GrokInlineSetup(props: {
           Use device code
         </Button>
         <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
           onClick={() => void run("sign-in", () => startGrokSignIn(props.controller))}
           size="sm"
+          variant="ghost"
         >
           <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Grok"}
         </Button>

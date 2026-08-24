@@ -1,6 +1,7 @@
 import type { ProviderRuntimeSummary, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -17,7 +18,10 @@ import {
   AssistedSetupFrame,
   AssistedSetupStatus,
 } from "./AssistedProviderSetup";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -188,7 +192,13 @@ export function DroidInlineSetup(props: {
           title="Droid needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void runRuntime("repair")} size="sm" type="button">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void runRuntime("repair")}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Droid
           </Button>
         </AssistedSetupActions>
@@ -221,8 +231,14 @@ export function DroidInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void runRuntime("install")} size="sm" type="button">
-              {installationError ? <RefreshCwIcon aria-hidden /> : null}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void runRuntime("install")}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {installationError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {installationError ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
@@ -330,7 +346,13 @@ export function DroidInlineSetup(props: {
         title={signInError ? "Droid sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
-        <Button onClick={() => void signIn()} size="sm" type="button">
+        <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError ? "Try sign in again" : "Sign in with Factory"}
         </Button>

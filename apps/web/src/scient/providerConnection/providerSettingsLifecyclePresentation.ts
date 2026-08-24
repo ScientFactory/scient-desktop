@@ -9,7 +9,6 @@ import {
 import { hasExternalProviderUpdate } from "./providerLifecycleActions";
 
 export type ProviderSettingsLifecycleActionKind =
-  | "enable"
   | "runtime"
   | "external-update"
   | "sign-in"
@@ -74,7 +73,7 @@ export function providerSettingsLifecyclePresentation(
       kind: "disabled",
       statusLabel: "Disabled",
       detail: "Hidden from new conversations.",
-      ...action({ kind: "enable", label: "Enable" }),
+      ...action({ kind: "manage", label: "Manage" }),
       busy: false,
     };
   }

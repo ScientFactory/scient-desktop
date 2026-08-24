@@ -722,6 +722,9 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).toContain("Sign in required");
     expect(markup).toContain("existing subscription");
     expect(markup).toContain("Sign in with Google");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("Continue in browser");
   });
 

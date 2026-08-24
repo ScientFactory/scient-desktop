@@ -3,6 +3,7 @@ import {
   CheckCircle2Icon,
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -27,7 +28,10 @@ import {
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
@@ -202,12 +206,14 @@ export function AntigravityInlineSetup(props: {
           {localError ?? runtimeOperation?.message ?? props.provider.message}
         </p>
         <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
           onClick={() =>
             void run("repair", () =>
               startReviewedAntigravityRuntimeAction(props.controller, "repair"),
             )
           }
           size="sm"
+          variant="ghost"
         >
           <RefreshCwIcon aria-hidden /> Repair Antigravity
         </Button>
@@ -223,15 +229,16 @@ export function AntigravityInlineSetup(props: {
         <p className="text-muted-foreground text-xs">{runtimeOperation.message}</p>
         {runtime?.actions.includes("install") ? (
           <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() =>
               void run("install", () =>
                 startReviewedAntigravityRuntimeAction(props.controller, "install"),
               )
             }
             size="sm"
-            variant="outline"
+            variant="ghost"
           >
-            Install again
+            <DownloadIcon aria-hidden /> Install again
           </Button>
         ) : null}
       </SetupFrame>
@@ -256,14 +263,16 @@ export function AntigravityInlineSetup(props: {
         </p>
         {canInstall ? (
           <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() =>
               void run("install", () =>
                 startReviewedAntigravityRuntimeAction(props.controller, "install"),
               )
             }
             size="sm"
+            variant="ghost"
           >
-            Install Antigravity
+            <DownloadIcon aria-hidden /> Install Antigravity
           </Button>
         ) : (
           <button
@@ -396,12 +405,14 @@ export function AntigravityInlineSetup(props: {
           {signInGuidance}
         </p>
         <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
           onClick={() =>
             void run("sign-in", () =>
               startAntigravitySignInAndOpenAuthorizationPage(props.controller),
             )
           }
           size="sm"
+          variant="ghost"
         >
           <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Google"}
         </Button>
@@ -442,12 +453,14 @@ export function AntigravityInlineSetup(props: {
           verification succeeds.
         </p>
         <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
           onClick={() =>
             void run("update", () => updateAntigravityRuntime(props.controller, props.provider))
           }
           size="sm"
+          variant="ghost"
         >
-          Update Antigravity
+          <RefreshCwIcon aria-hidden /> Update Antigravity
         </Button>
       </SetupFrame>
     );

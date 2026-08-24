@@ -747,7 +747,6 @@ export function ProviderInstanceCard({
                 displayName={displayName}
                 environmentId={environmentId}
                 externalUpdateRunning={isUpdating}
-                onEnable={() => updateEnabled(true)}
                 onManage={onManageConnection}
                 onRunExternalUpdate={onRunUpdate}
                 provider={liveProvider}

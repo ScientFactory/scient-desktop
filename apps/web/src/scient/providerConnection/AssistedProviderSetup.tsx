@@ -23,11 +23,17 @@ export function AssistedSetupStatus(props: {
 }) {
   return (
     <div
-      className="flex items-start gap-3 py-1 in-[[data-model-picker-content=true]]:flex-col in-[[data-model-picker-content=true]]:items-center in-[[data-model-picker-content=true]]:gap-2 in-[[data-model-picker-content=true]]:py-0 in-[[data-model-picker-content=true]]:text-center"
+      className={cn(
+        "flex gap-3 py-1 in-[[data-model-picker-content=true]]:flex-col in-[[data-model-picker-content=true]]:items-center in-[[data-model-picker-content=true]]:gap-2 in-[[data-model-picker-content=true]]:py-0 in-[[data-model-picker-content=true]]:text-center",
+        props.trailing ? "items-center" : "items-start",
+      )}
       role={props.role}
     >
       <span
-        className="mt-0.5 flex size-5 shrink-0 items-center justify-center in-[[data-model-picker-content=true]]:mt-0 in-[[data-model-picker-content=true]]:size-8 in-[[data-model-picker-content=true]]:[&>svg]:size-7"
+        className={cn(
+          "flex size-5 shrink-0 items-center justify-center in-[[data-model-picker-content=true]]:mt-0 in-[[data-model-picker-content=true]]:size-8 in-[[data-model-picker-content=true]]:[&>svg]:size-7",
+          props.trailing ? "mt-0" : "mt-0.5",
+        )}
         data-assisted-setup-icon="true"
         aria-hidden
       >
@@ -40,7 +46,7 @@ export function AssistedSetupStatus(props: {
         <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{props.body}</div>
       </div>
       {props.trailing ? (
-        <div className="shrink-0 self-end in-[[data-model-picker-content=true]]:hidden">
+        <div className="shrink-0 self-center in-[[data-model-picker-content=true]]:hidden">
           {props.trailing}
         </div>
       ) : null}
