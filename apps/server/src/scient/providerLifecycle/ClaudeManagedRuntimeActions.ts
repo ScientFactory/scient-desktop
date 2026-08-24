@@ -52,6 +52,7 @@ export const makeClaudeManagedRuntimeResolution = Effect.fn("ClaudeManagedRuntim
       environment: input.environment,
       spawner: input.spawner,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official Anthropic Claude Code release",
       managedInstallationLimitation:
         "Scient can use a healthy Claude runtime here, but managed installation is only enabled in the local desktop app.",

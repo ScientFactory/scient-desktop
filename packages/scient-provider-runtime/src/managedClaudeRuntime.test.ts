@@ -88,7 +88,8 @@ describe("ManagedClaudeRuntime", () => {
         "smoke:claude.exe",
       ]);
       expect(await runtime.readState()).toMatchObject({
-        schemaVersion: 1,
+        schemaVersion: 2,
+        selection: "managed",
         targetKey: `win32-${arch}`,
         activeVersion: artifact!.version,
         executableRelativePath: expect.stringMatching(/claude\.exe$/u),

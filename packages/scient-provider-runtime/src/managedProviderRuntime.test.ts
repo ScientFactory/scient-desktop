@@ -118,6 +118,10 @@ function privateRoot(root: string): string {
   return NodePath.join(root, "provider-runtimes", "test-provider");
 }
 
+function statePath(root: string): string {
+  return NodePath.join(privateRoot(root), "state.json");
+}
+
 describe("managed provider runtime smoke environment", () => {
   it("keeps credential-free Windows host coordinates without forwarding provider secrets", () => {
     const environment = managedRuntimeSmokeEnvironment({
@@ -152,7 +156,7 @@ describe("managed provider runtime smoke environment", () => {
 
 describe("ManagedProviderRuntime contract", () => {
   it("runs the reviewed install stages in order before recording activation", async () => {
-    const { runtime, events } = await makeRuntime();
+    const { root, runtime, events } = await makeRuntime();
     const stages: string[] = [];
 
     const status = await runtime.install({
@@ -161,7 +165,15 @@ describe("ManagedProviderRuntime contract", () => {
       onProgress: ({ stage }) => stages.push(stage),
     });
 
-    expect(status).toMatchObject({ installed: true, activeVersion: "1.0.0" });
+    expect(status).toMatchObject({
+      installed: true,
+      activeVersion: "1.0.0",
+      selected: true,
+    });
+    expect(JSON.parse(await NodeFSP.readFile(statePath(root), "utf8"))).toMatchObject({
+      schemaVersion: 2,
+      selection: "managed",
+    });
     expect(stages).toEqual([
       "preparing",
       "downloading",
@@ -171,6 +183,30 @@ describe("ManagedProviderRuntime contract", () => {
       "activating",
     ]);
     expect(events).toEqual(["download", "verify", "materialize", "smoke", "commit"]);
+  });
+
+  it("reads legacy state without silently treating it as an explicit managed selection", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    const current = await runtime.readState();
+    expect(current).toBeDefined();
+    await NodeFSP.writeFile(
+      statePath(root),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        targetKey: current!.targetKey,
+        activeVersion: current!.activeVersion,
+        previousVersion: current!.previousVersion,
+        executableRelativePath: current!.executableRelativePath,
+      })}\n`,
+    );
+
+    expect(await runtime.status(recipe)).toMatchObject({
+      installed: true,
+      activeVersion: "1.0.0",
+      selected: false,
+    });
   });
 
   it("activates an update while recording and preserving the previous version", async () => {
@@ -215,7 +251,7 @@ describe("ManagedProviderRuntime contract", () => {
     expect(await NodeFSP.readFile(repaired.launchPath, "utf8")).toBe("install 2");
   });
 
-  it("keeps the active runtime when verification rejects a replacement", async () => {
+  it("keeps the active runtime and selection when verification rejects a replacement", async () => {
     const { runtime } = await makeRuntime({ verifyFailsAtCall: 2 });
     const first = artifact("1.0.0");
     const installed = await install(runtime, first);
@@ -223,7 +259,10 @@ describe("ManagedProviderRuntime contract", () => {
     await expect(install(runtime, artifact("2.0.0"))).rejects.toThrow("verification failed");
 
     expect(await runtime.readState()).toMatchObject({ activeVersion: "1.0.0" });
-    expect((await runtime.status(first)).launchPath).toBe(installed.launchPath);
+    expect(await runtime.status(first)).toMatchObject({
+      launchPath: installed.launchPath,
+      selected: true,
+    });
     expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
   });
 
@@ -250,6 +289,7 @@ describe("ManagedProviderRuntime contract", () => {
 
     expect(await runtime.readState()).toBeUndefined();
     expect((await runtime.status(recipe)).installed).toBe(false);
+    expect((await runtime.status(recipe)).selected).toBe(false);
     expect(events).toEqual(["download", "verify", "materialize", "smoke"]);
   });
 

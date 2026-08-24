@@ -52,6 +52,7 @@ export const makeGrokManagedRuntimeResolution = Effect.fn("GrokManagedRuntime.ma
       environment: input.environment,
       spawner: input.spawner,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official xAI Grok Build release",
       managedInstallationLimitation:
         "Scient can use a healthy Grok runtime here, but managed installation is only enabled in the local desktop app.",
