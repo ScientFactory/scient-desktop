@@ -82,6 +82,35 @@ it.effect("binds exactly the requested capabilities without ambient defaults", (
   }),
 );
 
+it.effect("snapshots and returns an isolated exact skill scope", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const requestedReleaseKeys = new Set(["scient.review@0.1.0#sha256:one"]);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-skill-scope"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["skills:read"]),
+      skillScope: {
+        projectRoot: "/workspace/project",
+        releaseKeys: requestedReleaseKeys,
+      },
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    requestedReleaseKeys.clear();
+    const first = yield* registry.resolve(token);
+    expect(first?.skillScope).toEqual({
+      projectRoot: "/workspace/project",
+      releaseKeys: new Set(["scient.review@0.1.0#sha256:one"]),
+    });
+
+    (first?.skillScope?.releaseKeys as Set<string>).clear();
+    expect((yield* registry.resolve(token))?.skillScope?.releaseKeys).toEqual(
+      new Set(["scient.review@0.1.0#sha256:one"]),
+    );
+  }),
+);
+
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [

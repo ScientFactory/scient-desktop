@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "owner": "ScientFactory",
+  "ownedRoots": [
+    "apps/server/src/mcp/toolkits/skills",
+    "apps/server/src/scient/skills",
+    "packages/scient-skills"
+  ],
+  "ownedFiles": ["apps/server/src/provider/ScientAwareness.ts"],
+  "skillDiffSignals": [
+    "@scientfactory/scient-skills",
+    "ScientSkill",
+    "scient_skill",
+    "scient-skills",
+    "skills:read",
+    "skillScope"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/server/package.json",
+      "anchor": "@scientfactory/scient-skills",
+      "purpose": "Depend on the runtime-neutral Scient skills package."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "ScientSkillsToolkitRegistrationLive",
+      "purpose": "Register the capability-gated Scient skills MCP toolkit."
+    },
+    {
+      "path": "apps/server/src/mcp/McpInvocationContext.ts",
+      "anchor": "skills:read",
+      "purpose": "Carry the semantic capability and exact per-session skill scope."
+    },
+    {
+      "path": "apps/server/src/mcp/McpSessionRegistry.ts",
+      "anchor": "skillScope",
+      "purpose": "Bind defensive copies of exact skill authority to bearer credentials."
+    },
+    {
+      "path": "apps/server/src/provider/Layers/ProviderService.ts",
+      "anchor": "ScientSkillSession",
+      "purpose": "Resolve effective skills once at provider-session startup."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "ScientSkillsLayerLive",
+      "purpose": "Compose the registry, app-owned policy, and session planner."
+    },
+    {
+      "path": "package.json",
+      "anchor": "skills:seams:check",
+      "purpose": "Expose the fork seam audit as a repository command."
+    }
+  ]
+}

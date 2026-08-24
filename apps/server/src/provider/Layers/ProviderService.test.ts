@@ -60,6 +60,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 
@@ -2122,11 +2123,27 @@ validation.layer("ProviderServiceLive validation", (it) => {
 describe("agent browser access", () => {
   const revokedThreads: Array<ThreadId> = [];
 
-  const startSessionWith = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
+  const startSessionWith = (
+    enableAgentBrowserAccess: boolean,
+    threadId: ThreadId,
+    skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
+      delivery: "none",
+      releaseKeys: new Set(),
+      diagnostics: [],
+    },
+    sessionCwd?: string,
+    observeSkillResolution?: (
+      input: Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0],
+    ) => void,
+  ) =>
     Effect.gen(function* () {
       const issued: Array<{
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
+        readonly skillScope?: {
+          readonly projectRoot?: string;
+          readonly releaseKeys: ReadonlySet<string>;
+        };
       }> = [];
       const codex = makeFakeCodexAdapter();
       const providerAdapterLayer = Layer.succeed(
@@ -2145,6 +2162,16 @@ describe("agent browser access", () => {
             issued.push({
               threadId: request.threadId,
               capabilities: new Set(request.capabilities),
+              ...(request.skillScope
+                ? {
+                    skillScope: {
+                      ...(request.skillScope.projectRoot
+                        ? { projectRoot: request.skillScope.projectRoot }
+                        : {}),
+                      releaseKeys: new Set(request.skillScope.releaseKeys),
+                    },
+                  }
+                : {}),
             });
             return undefined;
           }),
@@ -2153,6 +2180,18 @@ describe("agent browser access", () => {
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableAgentBrowserAccess })),
+        Layer.provide(
+          Layer.succeed(
+            ScientSkillSession.ScientSkillSessionPlanner,
+            ScientSkillSession.ScientSkillSessionPlanner.of({
+              resolve: (input) =>
+                Effect.sync(() => {
+                  observeSkillResolution?.(input);
+                  return skillPlan;
+                }),
+            }),
+          ),
+        ),
         Layer.provide(serverConfigTestLayer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
@@ -2170,6 +2209,7 @@ describe("agent browser access", () => {
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
+          ...(sessionCwd ? { cwd: sessionCwd } : {}),
         });
       }).pipe(Effect.provide(providerLayer));
 
@@ -2212,6 +2252,43 @@ describe("agent browser access", () => {
           threadId,
           capabilities: new Set(["preview", "sources:read", "sources:write"]),
         },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("issues a skill-only credential with the exact resolved release scope", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-skills-only");
+      const releaseKeys = new Set(["scient.review@0.1.0#sha256:exact"]);
+      const skillResolutionInputs: Array<
+        Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
+      > = [];
+
+      const issued = yield* startSessionWith(
+        false,
+        threadId,
+        {
+          delivery: "mcp",
+          projectRoot: "/tmp/scient-project",
+          releaseKeys,
+          diagnostics: [],
+        },
+        "/tmp/scient-project",
+        (input) => void skillResolutionInputs.push(input),
+      );
+
+      assert.deepEqual(issued, [
+        {
+          threadId,
+          capabilities: new Set(["skills:read"]),
+          skillScope: {
+            projectRoot: "/tmp/scient-project",
+            releaseKeys,
+          },
+        },
+      ]);
+      assert.deepEqual(skillResolutionInputs, [
+        { provider: CODEX_DRIVER, projectRoot: "/tmp/scient-project" },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

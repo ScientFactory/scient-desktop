@@ -60,6 +60,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -228,6 +229,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const skillSessionPlanner = yield* ScientSkillSession.ScientSkillSessionPlanner;
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const revokeMcpCredential =
@@ -260,9 +262,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    provider: ProviderDriverKind,
+    projectRoot?: string,
+  ) =>
     Effect.gen(function* () {
-      if (!(yield* agentBrowserAccessEnabled)) {
+      const [browserAccessEnabled, skillPlan] = yield* Effect.all(
+        [
+          agentBrowserAccessEnabled,
+          skillSessionPlanner.resolve({
+            provider,
+            ...(projectRoot !== undefined ? { projectRoot } : {}),
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      yield* Effect.forEach(
+        skillPlan.diagnostics,
+        (diagnostic) =>
+          Effect.logWarning("Scient skill delivery was withheld", {
+            code: diagnostic.code,
+            message: diagnostic.message,
+            provider,
+            ...(skillPlan.projectRoot ? { projectRoot: skillPlan.projectRoot } : {}),
+          }),
+        { discard: true },
+      );
+      const capabilities = new Set<McpCapability>([
+        ...(browserAccessEnabled
+          ? (["preview", "sources:read", "sources:write"] satisfies ReadonlyArray<McpCapability>)
+          : []),
+        ...(skillPlan.delivery === "mcp"
+          ? (["skills:read"] satisfies ReadonlyArray<McpCapability>)
+          : []),
+      ]);
+      if (capabilities.size === 0) {
         // Revoke as well as clear. Every other prepare path reaches
         // `issueActiveMcpCredential`, which revokes the thread first, so
         // skipping it here would leave a previously issued bearer token valid
@@ -273,18 +309,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
         return undefined;
       }
-      // Preserve today's single user-facing access policy while carrying the
-      // exact granted set through authorization and provider awareness. Future
-      // policy can split these independently without changing either seam.
-      const capabilities: ReadonlySet<McpCapability> = new Set([
-        "preview",
-        "sources:read",
-        "sources:write",
-      ]);
       const credential = yield* issueMcpCredential({
         threadId,
         providerInstanceId,
         capabilities,
+        ...(skillPlan.delivery === "mcp"
+          ? {
+              skillScope: {
+                ...(skillPlan.projectRoot ? { projectRoot: skillPlan.projectRoot } : {}),
+                releaseKeys: skillPlan.releaseKeys,
+              },
+            }
+          : {}),
       });
       if (credential) {
         yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
@@ -466,7 +502,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      yield* prepareMcpSession(
+        input.binding.threadId,
+        bindingInstanceId,
+        input.binding.provider,
+        persistedCwd,
+      );
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -662,7 +703,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, resolvedProvider, effectiveCwd);
         const session = yield* adapter
           .startSession({
             ...input,

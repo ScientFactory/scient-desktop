@@ -15,6 +15,7 @@ export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
+  readonly skillScope?: McpInvocationContext.McpScientSkillScope;
 }
 
 export interface McpIssuedCredential {
@@ -133,6 +134,16 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
         capabilities,
+        ...(request.skillScope
+          ? {
+              skillScope: {
+                ...(request.skillScope.projectRoot
+                  ? { projectRoot: request.skillScope.projectRoot }
+                  : {}),
+                releaseKeys: new Set(request.skillScope.releaseKeys),
+              },
+            }
+          : {}),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -168,7 +179,23 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         if (!record) return [undefined, { records: current }] as const;
         const next = new Map(current);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [
+          {
+            ...record.scope,
+            capabilities: new Set(record.scope.capabilities),
+            ...(record.scope.skillScope
+              ? {
+                  skillScope: {
+                    ...(record.scope.skillScope.projectRoot
+                      ? { projectRoot: record.scope.skillScope.projectRoot }
+                      : {}),
+                    releaseKeys: new Set(record.scope.skillScope.releaseKeys),
+                  },
+                }
+              : {}),
+          },
+          { records: next },
+        ] as const;
       });
     },
   );
