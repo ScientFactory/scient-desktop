@@ -15,6 +15,7 @@ import {
   MEDIUM_VOICE_MODEL_ID,
   normalizeVoiceClip,
   SMALL_VOICE_MODEL_ID,
+  TURBO_VOICE_MODEL_ID,
   VOICE_MODEL_DEFINITIONS,
   type TranscriptionEngine,
   type VoiceModelState as CoreVoiceModelState,
@@ -187,12 +188,26 @@ export function recommendVoiceModel(
 ): VoiceModelRecommendation | null {
   if (!runtimeAvailable) return null;
   const medium = getVoiceModelDefinition(MEDIUM_VOICE_MODEL_ID);
-  if (!medium) return null;
-  const requiredBytes = medium.byteSize + 512 * 1024 * 1024;
+  const turbo = getVoiceModelDefinition(TURBO_VOICE_MODEL_ID);
+  if (!medium || !turbo) return null;
   const native = device.platform !== "darwin" || !device.runningUnderArm64Translation;
-  const enoughCompute =
-    device.availableParallelism >= 8 && device.totalMemoryBytes >= 16 * 1024 ** 3;
-  return native && enoughCompute && device.freeModelStorageBytes >= requiredBytes
+  const canRunTurboResponsively =
+    native &&
+    device.availableParallelism >= 10 &&
+    device.totalMemoryBytes >= 24 * 1024 ** 3 &&
+    device.freeModelStorageBytes >= turbo.byteSize + 512 * 1024 * 1024;
+  if (canRunTurboResponsively) {
+    return {
+      modelId: toPublicModelId(turbo.id),
+      reason: "Recommended for this device: the most capable model should remain responsive.",
+    };
+  }
+  const canRunMediumResponsively =
+    native &&
+    device.availableParallelism >= 8 &&
+    device.totalMemoryBytes >= 16 * 1024 ** 3 &&
+    device.freeModelStorageBytes >= medium.byteSize + 512 * 1024 * 1024;
+  return canRunMediumResponsively
     ? {
         modelId: toPublicModelId(medium.id),
         reason: "Recommended for this device: higher accuracy should remain responsive.",

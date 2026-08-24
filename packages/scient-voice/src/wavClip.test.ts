@@ -6,6 +6,7 @@ import { VoiceTranscriptionError } from "./errors.ts";
 import {
   isValidWav,
   MAX_AUDIO_BYTES,
+  MAX_DURATION_MS,
   normalizeVoiceClip,
   TARGET_SAMPLE_RATE_HZ,
 } from "./wavClip.ts";
@@ -51,6 +52,19 @@ describe("normalizeVoiceClip", () => {
     expect(clip.audioBytes.byteLength).toBe(46);
   });
 
+  it("accepts a clip at the three-minute boundary within the existing size ceiling", () => {
+    const dataBytes = TARGET_SAMPLE_RATE_HZ * 2 * (MAX_DURATION_MS / 1000);
+    const clip = normalizeVoiceClip({
+      mimeType: "audio/wav",
+      sampleRateHz: TARGET_SAMPLE_RATE_HZ,
+      durationMs: MAX_DURATION_MS,
+      audioBase64: wavBase64({ dataBytes }),
+    });
+    expect(clip.durationMs).toBe(180_000);
+    expect(clip.audioBytes.byteLength).toBe(8_640_044);
+    expect(clip.audioBytes.byteLength).toBeLessThan(MAX_AUDIO_BYTES);
+  });
+
   it("rejects a non-object payload", () => {
     expect(() => normalizeVoiceClip(null)).toThrow(VoiceTranscriptionError);
     expect(() => normalizeVoiceClip("string")).toThrow(
@@ -76,13 +90,13 @@ describe("normalizeVoiceClip", () => {
 
   it("rejects out-of-range durations", () => {
     expect(() => normalizeVoiceClip({ ...validRequest(), durationMs: 0 })).toThrow(
-      "Voice messages must be between 1 ms and 120 seconds.",
+      "Voice messages must be between 1 ms and 180 seconds.",
     );
-    expect(() => normalizeVoiceClip({ ...validRequest(), durationMs: 120_001 })).toThrow(
-      "Voice messages must be between 1 ms and 120 seconds.",
+    expect(() => normalizeVoiceClip({ ...validRequest(), durationMs: 180_001 })).toThrow(
+      "Voice messages must be between 1 ms and 180 seconds.",
     );
     expect(() => normalizeVoiceClip({ ...validRequest(), durationMs: 1.5 })).toThrow(
-      "Voice messages must be between 1 ms and 120 seconds.",
+      "Voice messages must be between 1 ms and 180 seconds.",
     );
   });
 

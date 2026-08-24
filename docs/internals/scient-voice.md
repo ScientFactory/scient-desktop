@@ -58,18 +58,20 @@ the inherited preload, or the artifact orchestrator.
 
 ## Model management
 
-The catalog currently contains two local multilingual Whisper artifacts:
+The catalog currently contains three local multilingual Whisper artifacts:
 
 - `Multilingual Small` (`q5_1`, about 181 MiB): the migration-safe default,
   faster and lighter.
 - `Multilingual Medium` (`q5_0`, about 514 MiB): higher expected accuracy with
   higher memory and compute requirements.
+- `Multilingual Turbo` (Large-v3 Turbo `q5_0`, about 547 MiB): the most capable
+  option, reserved by the recommendation heuristic for powerful computers.
 
-The desktop recommends Medium only when the runtime reports a suitable native
-machine (at least eight available logical CPUs, 16 GiB RAM, and enough free
-space); otherwise it recommends Small. This is a conservative heuristic, not a
-benchmark. The recommendation is advisory and can be changed in Settings →
-Voice.
+The desktop recommends Turbo on a native machine with at least ten available
+logical CPUs, 24 GiB RAM, and enough free space. It recommends Medium with at
+least eight available logical CPUs and 16 GiB RAM; otherwise it recommends
+Small. This is a conservative heuristic, not a benchmark. The recommendation
+is advisory and can be changed in Settings → Voice.
 
 Settings exposes each model's download, resumable progress, active selection,
 and removal actions. Removing the selected model first switches to another

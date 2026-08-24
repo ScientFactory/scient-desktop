@@ -9,11 +9,12 @@ import {
 } from "./modelManifest.ts";
 
 describe("voice model manifest", () => {
-  it("ships the pinned Small and Medium models with Small as the default", () => {
-    expect(VOICE_MODEL_DEFINITIONS).toHaveLength(2);
+  it("ships the pinned Small, Medium, and Turbo models with Small as the default", () => {
+    expect(VOICE_MODEL_DEFINITIONS).toHaveLength(3);
     expect(DEFAULT_VOICE_MODEL_ID).toBe("whisper-small-multilingual-q5_1");
     expect(VOICE_MODEL_DEFINITIONS[0]?.id).toBe(DEFAULT_VOICE_MODEL_ID);
     expect(VOICE_MODEL_DEFINITIONS[1]?.id).toBe("whisper-medium-multilingual-q5_0");
+    expect(VOICE_MODEL_DEFINITIONS[2]?.id).toBe("whisper-large-v3-turbo-multilingual-q5_0");
   });
 
   it("pins the Multilingual Medium artifact", () => {
@@ -22,6 +23,15 @@ describe("voice model manifest", () => {
     expect(model.displayName).toBe("Multilingual Medium");
     expect(model.byteSize).toBe(539_212_467);
     expect(model.sha256).toBe("19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f");
+    expect(model.sourceRevision).toBe("5359861c739e955e79d9a303bcbc70fb988958b1");
+  });
+
+  it("pins the Multilingual Turbo artifact", () => {
+    const model = requireVoiceModelDefinition("whisper-large-v3-turbo-multilingual-q5_0");
+    expect(model.fileName).toBe("ggml-large-v3-turbo-q5_0-39422170.bin");
+    expect(model.displayName).toBe("Multilingual Turbo");
+    expect(model.byteSize).toBe(574_041_195);
+    expect(model.sha256).toBe("394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2");
     expect(model.sourceRevision).toBe("5359861c739e955e79d9a303bcbc70fb988958b1");
   });
 

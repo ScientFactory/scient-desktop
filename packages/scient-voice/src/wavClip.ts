@@ -16,7 +16,7 @@ export const TARGET_SAMPLE_RATE_HZ = 24_000;
 /** Hard ceiling on decoded audio size. */
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 /** Longest accepted clip. */
-export const MAX_DURATION_MS = 120_000;
+export const MAX_DURATION_MS = 180_000;
 /** Canonical WAV header length for the fixed 16-byte PCM `fmt ` layout. */
 export const WAV_HEADER_BYTES = 44;
 
@@ -48,7 +48,7 @@ export function normalizeVoiceClip(input: unknown): NormalizedVoiceClip {
     (durationMs as number) <= 0 ||
     (durationMs as number) > MAX_DURATION_MS
   ) {
-    throw invalidAudio("Voice messages must be between 1 ms and 120 seconds.");
+    throw invalidAudio("Voice messages must be between 1 ms and 180 seconds.");
   }
 
   const encoded = readRequiredString(
