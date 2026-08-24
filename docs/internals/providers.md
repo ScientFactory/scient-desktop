@@ -157,6 +157,32 @@ The connection and runtime managers are constructed once per server process and 
 WebSocket client. Closing a dialog or disconnecting one client therefore does not create a second
 operation or make an in-flight provider flow disappear.
 
+Their construction effects are owned by the server layer scope. Every active operation is removed
+from its manager atomically and then passes through the same resource cleanup path used by explicit
+cancellation. Server teardown drains all remaining operations, gives active connection attempts a
+bounded best-effort window to stop, interrupts their supervisors, closes connection-owned scopes,
+and releases lifecycle reservations. Teardown does not publish a synthetic cancelled or failed
+result: the process is going away, and the next server derives provider truth again from the provider
+and managed-runtime state. Repeated cleanup is harmless because only the first atomic claim receives
+the active operation.
+
+Reservation acquisition through detached-supervisor handoff is also one cleanup boundary. If the
+initiating request is interrupted before handoff, Scient releases the reservation and owned resources;
+an operation that was already published becomes `cancelled`, while an interruption before publication
+leaves no synthetic operation behind.
+
+Explicit connection cancellation uses that same cleanup path. An unresponsive provider can delay it
+for up to the configured provider-cancel bound (currently five seconds) before Scient interrupts its
+supervisor and continues resource cleanup. After owned resources stop, Scient publishes the terminal
+state while the lifecycle reservation is still held, then releases that reservation in an `ensuring`
+finalizer. Failed connection startup, explicit cancellation, and post-disconnect refresh all follow
+that ordering, so an older terminal write cannot overwrite a newer operation. Final account
+verification is different: it decides whether the connection actually succeeded, so it keeps the
+transition claim through the probe and terminal publication. A cancel requested after provider
+completion waits for that decision and cannot replace truthful `connected` or `failed` state. Runtime
+reload remains cancellable until terminal publication because it reconciles an already-finished
+runtime mutation instead of deciding its result.
+
 One lifecycle coordinator serializes connection, managed-runtime mutation, and inherited T3
 provider maintenance for the same provider instance. Managed runtime mutation and provider-tool
 updates also have a driver-wide reservation because every Codex account in one environment may

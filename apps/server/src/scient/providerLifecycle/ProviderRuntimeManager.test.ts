@@ -8,7 +8,10 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
@@ -91,6 +94,10 @@ function makeHarness(
   stopProviderSessions: ProviderRegistryShape["stopProviderSessions"] = () => Effect.void,
   actionsAfterReload?: ProviderManagedRuntimeActions,
   reloadBarrier: Effect.Effect<void> = Effect.void,
+  hooks: {
+    readonly beforeSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
+    readonly afterSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
+  } = {},
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
@@ -99,16 +106,21 @@ function makeHarness(
     const stopCountRef = yield* Ref.make(0);
     const reloadOperationsRef = yield* Ref.make<ReadonlyArray<string | null>>([]);
     const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
-      Ref.updateAndGet(providersRef, (providers) =>
-        providers.map((candidate) =>
-          candidate.instanceId === input.instanceId && candidate.connection && input.runtime
-            ? {
-                ...candidate,
-                connection: { ...candidate.connection, runtime: input.runtime },
-              }
-            : candidate,
-        ),
-      );
+      Effect.gen(function* () {
+        yield* hooks.beforeSetRuntime?.(input.runtime) ?? Effect.void;
+        const providers = yield* Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((candidate) =>
+            candidate.instanceId === input.instanceId && candidate.connection && input.runtime
+              ? {
+                  ...candidate,
+                  connection: { ...candidate.connection, runtime: input.runtime },
+                }
+              : candidate,
+          ),
+        );
+        yield* hooks.afterSetRuntime?.(input.runtime) ?? Effect.void;
+        return providers;
+      });
     const registry: ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
@@ -141,12 +153,32 @@ function makeHarness(
       streamChanges: Stream.empty,
     };
     const coordinator = yield* makeLifecycleCoordinator;
+    const lifecycleReleaseCountRef = yield* Ref.make(0);
+    const trackedCoordinator = ProviderLifecycleCoordinator.of({
+      ...coordinator,
+      release: (input) =>
+        Ref.update(lifecycleReleaseCountRef, (count) => count + 1).pipe(
+          Effect.andThen(coordinator.release(input)),
+        ),
+    });
+    const managerScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
     const manager = yield* make().pipe(
       Effect.provideService(ProviderRegistry, registry),
-      Effect.provideService(ProviderLifecycleCoordinator, coordinator),
+      Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
       Effect.provide(NodeServices.layer),
+      Scope.provide(managerScope),
     );
-    return { manager, providersRef, reloadCountRef, reloadOperationsRef, stopCountRef };
+    return {
+      manager,
+      providersRef,
+      reloadCountRef,
+      reloadOperationsRef,
+      stopCountRef,
+      coordinator: trackedCoordinator,
+      lifecycleReleaseCountRef,
+      closeManager: Scope.close(managerScope, Exit.void),
+    };
   });
 }
 
@@ -400,6 +432,197 @@ describe("ProviderRuntimeManager", () => {
       yield* Effect.yieldNow;
       assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
     }),
+  );
+
+  it.effect("holds the lifecycle reservation until cancelled runtime state is published", () =>
+    Effect.gen(function* () {
+      const cancellationPublicationStarted = yield* Deferred.make<void>();
+      const releaseCancellationPublication = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.never,
+      };
+      const { manager, coordinator, lifecycleReleaseCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        () => Effect.void,
+        undefined,
+        Effect.void,
+        {
+          beforeSetRuntime: (runtime) =>
+            runtime?.operation?.status === "cancelled"
+              ? Deferred.succeed(cancellationPublicationStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseCancellationPublication)),
+                )
+              : Effect.void,
+        },
+      );
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+      assert.ok(operationId);
+
+      const cancelFiber = yield* manager
+        .cancel({ instanceId: INSTANCE, operationId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(cancellationPublicationStarted);
+
+      assert.strictEqual((yield* coordinator.current(INSTANCE))?.operationId, operationId);
+      const overlappingStart = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.flip);
+      assert.strictEqual(overlappingStart.reason, "runtime_busy");
+
+      yield* Deferred.succeed(releaseCancellationPublication, undefined);
+      const cancelled = yield* Fiber.join(cancelFiber);
+      assert.strictEqual(
+        cancelled.providers[0]?.connection?.runtime?.operation?.status,
+        "cancelled",
+      );
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
+
+  it.effect(
+    "shuts down an active runtime operation without leaving work or publishing a false failure",
+    () =>
+      Effect.gen(function* () {
+        const runInterruptions = yield* Ref.make(0);
+        const runStarted = yield* Deferred.make<void>();
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Effect.succeed(systemRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: () =>
+            Deferred.succeed(runStarted, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Ref.update(runInterruptions, (count) => count + 1)),
+            ),
+        };
+        const { manager, providersRef, coordinator, closeManager } = yield* makeHarness(actions, [
+          systemProvider,
+        ]);
+        const started = yield* manager.start({
+          instanceId: INSTANCE,
+          action: "install",
+          catalogRevision: "reviewed:1",
+        });
+        const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+        assert.ok(operationId);
+        yield* Deferred.await(runStarted);
+
+        yield* closeManager;
+
+        assert.strictEqual(yield* Ref.get(runInterruptions), 1);
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.strictEqual(
+          (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+          "preparing",
+        );
+        const inactive = yield* manager
+          .cancel({ instanceId: INSTANCE, operationId })
+          .pipe(Effect.flip);
+        assert.strictEqual(inactive.reason, "runtime_operation_not_found");
+
+        yield* closeManager;
+        assert.strictEqual(yield* Ref.get(runInterruptions), 1);
+      }),
+  );
+
+  it.effect("releases the runtime reservation when initial summary discovery is interrupted", () =>
+    Effect.gen(function* () {
+      const summaryStarted = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Deferred.succeed(summaryStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+      };
+      const { manager, coordinator } = yield* makeHarness(actions);
+
+      const startFiber = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(summaryStarted);
+      yield* Fiber.interrupt(startFiber);
+
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+    }),
+  );
+
+  it.effect("releases the runtime reservation when initial publication is interrupted", () =>
+    Effect.gen(function* () {
+      const publicationStarted = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+      };
+      const { manager, coordinator } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        () => Effect.void,
+        undefined,
+        Effect.void,
+        {
+          beforeSetRuntime: (runtime) =>
+            runtime?.operation?.status === "preparing"
+              ? Deferred.succeed(publicationStarted, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+        },
+      );
+
+      const startFiber = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(publicationStarted);
+      yield* Fiber.interrupt(startFiber);
+
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+    }),
+  );
+
+  it.effect(
+    "publishes cancellation when interrupted after initial runtime state becomes visible",
+    () =>
+      Effect.gen(function* () {
+        const publicationCommitted = yield* Deferred.make<void>();
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Effect.succeed(systemRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: () => Effect.die("must not run"),
+        };
+        const { manager, coordinator, providersRef } = yield* makeHarness(
+          actions,
+          [systemProvider],
+          () => Effect.void,
+          undefined,
+          Effect.void,
+          {
+            afterSetRuntime: (runtime) =>
+              runtime?.operation?.status === "preparing"
+                ? Deferred.succeed(publicationCommitted, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                  )
+                : Effect.void,
+          },
+        );
+
+        const startFiber = yield* manager
+          .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(publicationCommitted);
+        yield* Fiber.interrupt(startFiber);
+
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.strictEqual(
+          (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
+          "cancelled",
+        );
+      }),
   );
 
   it.effect("keeps an installed runtime cancellable while provider reload is still running", () =>

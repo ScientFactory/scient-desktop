@@ -669,9 +669,22 @@ No production or user-interface changes.
 
 Land the manager-lifetime production change after PR 1A establishes the behavior baseline:
 
-- Change the connection and runtime manager layers to scoped services.
+- Use the existing Effect v4 `Layer.effect` construction scope to register connection- and
+  runtime-manager shutdown finalizers. (`Layer.effect` already builds its effect in the layer scope;
+  no parallel layer abstraction is needed.)
 - Give each active operation one cleanup path that owns interruption, scope closure, and reservation
   release.
+- Treat reservation acquisition through detached-supervisor handoff as one cleanup boundary, so an
+  interrupted initiating request cannot strand an invisible operation or block the next attempt.
+- Bound provider-owned cancellation so an unresponsive provider command or RPC cannot indefinitely
+  stall either explicit user cancellation or layer teardown. Scient currently waits up to five
+  seconds for that provider-owned step before interrupting the supervisor and continuing cleanup;
+  explicit cancelled-state publication follows cleanup.
+- Keep the lifecycle reservation through terminal publication and post-disconnect refresh, releasing
+  it in an `ensuring` finalizer so a completed older operation cannot overwrite a newer one.
+- Preserve truthful terminal ownership: final connection verification holds the transition claim
+  because its probe decides success or failure, while runtime reload remains cancellable because it
+  reconciles an already-finished mutation before terminal publication.
 - Register a layer finalizer that invokes that cleanup path for every active operation without
   publishing a user-facing failure during server teardown.
 - Do not add a second competing release/close path; prove cleanup is idempotent at the manager
