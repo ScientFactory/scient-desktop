@@ -4,7 +4,9 @@ import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isProviderRuntimePresentedAsInstalled,
+  needsManagedRuntimeRecovery,
 } from "./providerConnectionPresentation";
+import { hasExternalProviderUpdate } from "./providerLifecycleActions";
 
 export type ProviderSettingsLifecycleActionKind =
   | "enable"
@@ -129,14 +131,26 @@ export function providerSettingsLifecyclePresentation(
       busy: false,
     };
   }
-  if (provider.versionAdvisory?.status === "behind_latest" && provider.versionAdvisory.canUpdate) {
+  if (hasExternalProviderUpdate(provider)) {
     return {
       kind: "attention",
       statusLabel: "Update available",
       detail:
-        provider.versionAdvisory.message ??
+        provider.versionAdvisory?.message ??
         `A newer ${displayName} version is available on this computer.`,
       ...action({ kind: "external-update", label: "Update" }),
+      busy: false,
+    };
+  }
+  if (needsManagedRuntimeRecovery(provider)) {
+    const canRepair = provider.connection?.runtime?.actions.includes("repair") ?? false;
+    return {
+      kind: "attention",
+      statusLabel: "Runtime needs repair",
+      detail: provider.message ?? `${displayName} could not start correctly.`,
+      ...(canRepair
+        ? action({ kind: "runtime", label: "Repair", runtimeAction: "repair" })
+        : action({ kind: "manage", label: "Manage" })),
       busy: false,
     };
   }
@@ -164,11 +178,14 @@ export function providerSettingsLifecyclePresentation(
   }
   const connectionOperation = provider.connection?.operation ?? null;
   if (connectionOperation?.status === "failed") {
+    const canRetrySignIn = (provider.connection?.methods.length ?? 0) > 0;
     return {
       kind: "failed",
       statusLabel: "Sign-in failed",
       detail: connectionOperation.message,
-      ...action({ kind: "sign-in", label: "Retry" }),
+      ...(canRetrySignIn
+        ? action({ kind: "sign-in", label: "Retry" })
+        : action({ kind: "manage", label: "Manage" })),
       busy: false,
     };
   }

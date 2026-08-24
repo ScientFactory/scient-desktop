@@ -134,6 +134,7 @@ export function isProviderUpdateCandidate(
 ): provider is ProviderUpdateCandidate {
   return (
     provider.enabled &&
+    provider.connection?.runtime?.source !== "scient_managed" &&
     provider.versionAdvisory?.status === "behind_latest" &&
     provider.versionAdvisory.latestVersion !== null
   );

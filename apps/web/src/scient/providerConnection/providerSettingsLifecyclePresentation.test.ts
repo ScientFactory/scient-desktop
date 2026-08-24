@@ -166,6 +166,78 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
+  it("never offers the external updater for an active Scient-managed runtime", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", required: true, label: "ChatGPT" },
+          models: [{ slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null }],
+          versionAdvisory: {
+            status: "behind_latest",
+            currentVersion: "0.147.0",
+            latestVersion: "0.148.0",
+            updateCommand: "npm update -g @openai/codex",
+            canUpdate: true,
+            checkedAt: "2026-08-23T08:00:00.000Z",
+            message: "External update available.",
+          },
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: true,
+            operation: null,
+            runtime: {
+              source: "scient_managed",
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: ["repair", "remove"],
+              managedVersion: "0.147.0",
+              previousManagedVersion: null,
+              operation: null,
+              message: "Managed Codex is ready.",
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({ kind: "ready", actionKind: "manage", actionLabel: "Manage" });
+  });
+
+  it("routes a broken managed runtime to repair before account setup", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          status: "error",
+          auth: { status: "unknown", required: true },
+          message: "Codex could not start.",
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              source: "scient_managed",
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: ["repair", "remove"],
+              managedVersion: "0.147.0",
+              previousManagedVersion: null,
+              operation: null,
+              message: "Managed Codex needs repair.",
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({
+      kind: "attention",
+      statusLabel: "Runtime needs repair",
+      actionKind: "runtime",
+      runtimeAction: "repair",
+    });
+  });
+
   it("uses concise Factory subscription guidance for Droid pairing", () => {
     expect(
       providerSettingsLifecyclePresentation(
@@ -292,6 +364,33 @@ describe("provider settings lifecycle presentation", () => {
       kind: "failed",
       actionKind: "manage",
       runtimeAction: null,
+    });
+  });
+
+  it("does not retry failed sign-in after the server withdraws every sign-in method", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          connection: {
+            methods: [],
+            canDisconnect: false,
+            operation: {
+              operationId: "connection-1",
+              method: "codex_browser",
+              status: "failed",
+              startedAt: "2026-08-09T08:00:00.000Z",
+              finishedAt: "2026-08-09T08:01:00.000Z",
+              message: "Sign-in method is no longer available.",
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({
+      kind: "failed",
+      actionKind: "manage",
+      actionLabel: "Manage",
     });
   });
 
