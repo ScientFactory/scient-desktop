@@ -19,26 +19,17 @@ import type {
   ProviderConnectionActionFailure,
 } from "../../provider/ProviderDriver.ts";
 import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  findTerminalAuthorizationUrl,
+  pickProcessEnvironment,
+  ProviderConnectionActionError,
+  withProviderSessionShutdown,
+} from "./ProviderConnectionActions.ts";
 
 const MAX_AUTH_OUTPUT_BYTES = 128 * 1024;
 const AUTH_URL_TIMEOUT = "30 seconds";
 const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_STATUS_TIMEOUT = "20 seconds";
-const ANSI_ESCAPE_CHARACTER = String.fromCharCode(27);
-const ANSI_BELL_CHARACTER = String.fromCharCode(7);
-const ANSI_OSC_HYPERLINK = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\]8;[^;]*;(https:\\/\\/[^${ANSI_BELL_CHARACTER}${ANSI_ESCAPE_CHARACTER}]*)` +
-    `(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_OSC_SEQUENCE = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\][^${ANSI_BELL_CHARACTER}]*(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_ESCAPE = new RegExp(`${ANSI_ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, "gu");
-const URL_CANDIDATE = /https:\/\/[^\s<>"']+/gu;
-
 const connectionError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
     message,
@@ -56,21 +47,7 @@ function isCursorAuthorizationUrl(url: URL): boolean {
 }
 
 export function findCursorAuthorizationUrl(output: string): string | undefined {
-  const normalized = output
-    .replace(ANSI_OSC_HYPERLINK, "$1 ")
-    .replace(ANSI_OSC_SEQUENCE, "")
-    .replace(ANSI_ESCAPE, "");
-  for (const match of normalized.matchAll(URL_CANDIDATE)) {
-    const candidate = match[0]?.replace(/[),.;]+$/u, "");
-    if (!candidate) continue;
-    try {
-      const url = new URL(candidate);
-      if (isCursorAuthorizationUrl(url)) return url.toString();
-    } catch {
-      // Continue scanning provider-controlled output.
-    }
-  }
-  return undefined;
+  return findTerminalAuthorizationUrl(output, isCursorAuthorizationUrl);
 }
 
 export interface CursorLoginProcess {
@@ -116,15 +93,9 @@ export function withCursorSessionShutdown<E>(
   actions: ProviderConnectionActions,
   stopAll: Effect.Effect<void, E>,
 ): ProviderConnectionActions {
-  return {
-    ...actions,
-    disconnect: stopAll.pipe(
-      Effect.mapError((cause) =>
-        connectionError("Scient could not stop active Cursor sessions before sign out.", cause),
-      ),
-      Effect.andThen(actions.disconnect),
-    ),
-  };
+  return withProviderSessionShutdown(actions, stopAll, (cause) =>
+    connectionError("Scient could not stop active Cursor sessions before sign out.", cause),
+  );
 }
 
 export function officialCursorAccountEnvironment(
@@ -172,12 +143,7 @@ export function officialCursorAccountEnvironment(
     "NODE_EXTRA_CA_CERTS",
     "SCIENT_MANAGED_CURSOR_RUNTIME",
   ] as const;
-  const allowedNames = new Set(allowedKeys.map((key) => key.toLowerCase()));
-  return Object.fromEntries(
-    Object.entries(environment).filter(
-      ([key, value]) => value !== undefined && allowedNames.has(key.toLowerCase()),
-    ),
-  );
+  return pickProcessEnvironment(environment, allowedKeys);
 }
 
 const runCursorLifecycleCommand = Effect.fn("CursorConnectionActions.runCommand")(function* (

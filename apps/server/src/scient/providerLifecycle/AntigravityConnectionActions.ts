@@ -34,7 +34,13 @@ import type {
 } from "../../provider/ProviderDriver.ts";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import type * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  findTerminalAuthorizationUrl,
+  normalizeTerminalOutput,
+  pickProcessEnvironment,
+  ProviderConnectionActionError,
+  withProviderSessionShutdown,
+} from "./ProviderConnectionActions.ts";
 
 const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_VERIFY_TIMEOUT = "15 seconds";
@@ -49,18 +55,6 @@ const LOCAL_LOGOUT_VERIFY_TIMEOUT = "5 seconds";
 const MAX_AUTH_OUTPUT_BYTES = 128 * 1024;
 const AUTH_FALLBACK_URL = "https://antigravity.google/docs/cli/install/#authentication-workflows";
 const ANSI_ESCAPE_CHARACTER = String.fromCharCode(27);
-const ANSI_BELL_CHARACTER = String.fromCharCode(7);
-const ANSI_OSC_HYPERLINK = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\]8;[^;]*;(https:\\/\\/[^${ANSI_BELL_CHARACTER}${ANSI_ESCAPE_CHARACTER}]*)` +
-    `(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_OSC_SEQUENCE = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\][^${ANSI_BELL_CHARACTER}]*(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_ESCAPE = new RegExp(`${ANSI_ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, "gu");
-const URL_CANDIDATE = /https:\/\/[^\s<>"']+/gu;
 const ANTIGRAVITY_ONBOARDING_PROMPT =
   /Choose your color scheme:|Terms of Service & Data Use|Select login method:/u;
 const ANTIGRAVITY_WORKSPACE_TRUST_PROMPT = /Do you trust the contents of this project\?/u;
@@ -138,11 +132,7 @@ export function officialAntigravityAccountEnvironment(
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
   ] as const;
-  const allowedKeyNames = new Set(allowedKeys.map((key) => key.toLowerCase()));
-  const result: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(environment)) {
-    if (value !== undefined && allowedKeyNames.has(key.toLowerCase())) result[key] = value;
-  }
+  const result = pickProcessEnvironment(environment, allowedKeys);
   // Scient owns updates for its reviewed app-private runtime. Google documents
   // this exact variable for disabling Antigravity's in-place auto-updater.
   result.AGY_CLI_DISABLE_AUTO_UPDATE = "true";
@@ -158,27 +148,13 @@ function isAntigravityAuthorizationHost(hostname: string): boolean {
 }
 
 export function findAntigravityAuthorizationUrl(output: string): string | undefined {
-  const normalized = normalizeAntigravityTerminalOutput(output);
-  for (const match of normalized.matchAll(URL_CANDIDATE)) {
-    const candidate = match[0]?.replace(/[),.;]+$/u, "");
-    if (!candidate) continue;
-    try {
-      const url = new URL(candidate);
-      if (url.protocol === "https:" && isAntigravityAuthorizationHost(url.hostname)) {
-        return url.toString();
-      }
-    } catch {
-      // Continue scanning provider-controlled terminal output.
-    }
-  }
-  return undefined;
+  return findTerminalAuthorizationUrl(output, (url) =>
+    isAntigravityAuthorizationHost(url.hostname),
+  );
 }
 
 function normalizeAntigravityTerminalOutput(output: string): string {
-  return output
-    .replace(ANSI_OSC_HYPERLINK, "$1 ")
-    .replace(ANSI_OSC_SEQUENCE, "")
-    .replace(ANSI_ESCAPE, "");
+  return normalizeTerminalOutput(output);
 }
 
 export function antigravityTerminalResponses(output: string): ReadonlyArray<string> {
@@ -336,19 +312,15 @@ export function withAntigravitySessionShutdown<E>(
   actions: ProviderConnectionActions,
   stopAll: Effect.Effect<void, E>,
 ): ProviderConnectionActions {
-  return {
-    ...actions,
-    disconnect: stopAll.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderConnectionActionError({
-            message: "Scient could not stop active Antigravity sessions before sign out.",
-            cause,
-          }),
-      ),
-      Effect.andThen(actions.disconnect),
-    ),
-  };
+  return withProviderSessionShutdown(
+    actions,
+    stopAll,
+    (cause) =>
+      new ProviderConnectionActionError({
+        message: "Scient could not stop active Antigravity sessions before sign out.",
+        cause,
+      }),
+  );
 }
 
 const runAgyModels = Effect.fn("AntigravityConnectionActions.runModels")(function* (
