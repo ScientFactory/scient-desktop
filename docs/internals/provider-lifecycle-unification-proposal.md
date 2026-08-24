@@ -1,6 +1,8 @@
 # Provider Lifecycle Unification Proposal
 
-> Status: shared architecture proposal only. No implementation has started.
+> Status: shared architecture proposal and integration plan. Implementation lands through focused
+> child pull requests and remains unreleased until the complete integration branch passes final
+> validation.
 > This is a living proposal, not a fixed implementation mandate. Every decision must be re-evaluated
 > against the code, tests, provider behavior, platform evidence, and user experience during
 > implementation. Update this document whenever evidence shows that a decision should change.
@@ -56,13 +58,13 @@ includes PR #151 and its Codex managed-package completeness fix, whose implement
 when reproducing code-confirmed claims in these documents; the earlier commit records only where the
 investigation started.
 
-At initial investigation time, a fresh fetch placed official T3 `upstream/main` at:
+At the integration-workflow decision, a fresh fetch placed official T3 `upstream/main` at:
 
 ```text
-b60a2c0b99c8d5d8f02b6705171da694d12e77e3
+e6a109b9f74552eb735968986845e500b98c3c73
 ```
 
-That tip is eleven commits beyond Scient's currently recorded integration base
+That tip is 31 commits beyond Scient's currently recorded integration base
 `b1670ac7d9b5b7bb9d7ebd969f27384daee22813`. The pending range modifies more provider-adjacent
 surface than `ChatComposer.tsx` alone, including `ProviderInstanceIcon.tsx`, `SettingsPanels.tsx`,
 `settingsSearch.ts`, `usageProviders.ts`, `session-logic.ts`, and `packages/contracts/src/settings.ts`.
@@ -87,36 +89,39 @@ decision.
 
 ## Collaboration and delivery workflow
 
-This proposal has a shared remote planning branch, `feat/provider-lifecycle-unification`. The branch
-and its draft pull request are the review and coordination home for the proposal. They are not a
-long-lived integration branch for accumulating implementation.
+This proposal has a shared remote integration branch, `feat/provider-lifecycle-unification`, and a
+draft pull request to `main`, PR #150. The branch and draft pull request are the architecture,
+coordination, cumulative review, and integrated-validation home until the complete lifecycle work is
+ready to release. Partial lifecycle implementation does not land on `main`.
 
 ### Planning phase
 
 - The shared branch contains this proposal and planning-only changes while the architecture is under
-  review.
-- Collaborators should make substantive proposal changes on short-lived branches and open focused
-  pull requests against `feat/provider-lifecycle-unification`. Direct edits should be limited to small,
-  coordinated corrections.
-- Do not add product implementation, generated artifacts, local runtime state, credentials, or
-  machine-specific files to the planning branch.
-- Do not force-push the published planning branch. Preserve review history and coordinate any history
-  repair explicitly.
-- Use the draft pull request to `main` for architecture discussion, ownership, sequencing, and open
-  decisions. Acceptance of the proposal is a review gate, not evidence that any product behavior has
-  been implemented or qualified.
-- Once the proposal is accepted, merge it as a documentation-only change so implementation branches
-  can update the same living document from `main`.
+  review. Small coordinated documentation corrections may be pushed directly; substantive or
+  behavior-changing work still uses a focused child pull request.
+- Do not add generated artifacts, local runtime state, credentials, or machine-specific files to the
+  integration branch.
+- Do not force-push the published integration branch. Preserve review history and the bases of open
+  child pull requests.
+- Use PR #150 for architecture discussion, ownership, sequencing, cumulative status, and final
+  integrated validation. Acceptance of the proposal is a review gate, not evidence that product
+  behavior has been implemented or qualified.
 
 ### Implementation phase
 
 - The bounded T3 synchronization remains a separate prerequisite branch and pull request to `main`.
-  It must not be based on, or mixed with, lifecycle implementation.
-- After that prerequisite lands, create every lifecycle PR from the latest verified `main`. Use one
-  short-lived branch with one clear owner and one dominant purpose for each stage below.
-- Implementation pull requests target `main`, not the planning branch. If a change genuinely depends
-  on an unmerged predecessor, it may be stacked temporarily, but must be rebased or retargeted after
-  the predecessor lands and reviewed against the resulting `main` diff.
+  It must not be based on, or mixed with, lifecycle implementation. After it lands, merge updated
+  `main` into `feat/provider-lifecycle-unification` and rerun the characterization baseline.
+- Create each lifecycle stage on a short-lived branch with one clear owner and one dominant purpose.
+  Child pull requests target `feat/provider-lifecycle-unification`, not `main`, and are merged into
+  that branch after focused review and validation.
+- Start independent child branches from the latest integration head. If a change genuinely depends
+  on an unmerged predecessor, stack it temporarily on that predecessor, declare the dependency, and
+  retarget it to `feat/provider-lifecycle-unification` after the predecessor merges so its remaining
+  diff can be reviewed precisely.
+- Merge updated `main` into the integration branch at controlled checkpoints. Do not routinely
+  rebase the shared published branch: rewriting its history would invalidate collaborators' child
+  PR bases. Resolve and validate each `main` merge before accepting more dependent work.
 - Collaborators must not share one mutable checkout or push unrelated work into another owner's
   implementation branch. Coordinate through branch ownership, draft pull requests, and explicit
   dependency notes.
@@ -125,11 +130,15 @@ long-lived integration branch for accumulating implementation.
   recording the reason, affected providers, compatibility impact, and validation required.
 - Each provider migration must revalidate and update the companion capability audit. Open findings in
   the audit remain investigation gates, not implicit authorization to add parity features.
+- Keep PR #150 in draft until every planned stage, cross-provider regression suite, required platform
+  evidence, and isolated integrated-app review is complete. PR #150 is the only lifecycle delivery
+  merge to `main`.
 
 ### Review and merge discipline
 
-Each pull request must be checked against its exact current base and should remain independently
-reviewable and reversible. Green CI alone is not a merge decision. The relevant gate includes:
+Each child pull request must be checked against its exact current base and should remain independently
+reviewable and reversible inside the integration branch. PR #150 additionally owns the cumulative
+diff and final release decision. Green CI alone is not a merge decision. The relevant gate includes:
 
 - a focused diff with no unrelated cleanup;
 - preservation of the T3-owned seams and provider-specific behavior described here;
@@ -140,9 +149,9 @@ reviewable and reversible. Green CI alone is not a merge decision. The relevant 
 - a refreshed capability-audit row for every affected provider, with unresolved claims still marked
   open rather than presented as implemented behavior.
 
-This workflow is deliberately lightweight: one shared proposal and review hub, followed by small
-branches and focused PRs. It allows several collaborators to contribute without turning the work into
-one conflict-heavy integration branch.
+This workflow deliberately separates review granularity from release granularity: small child PRs
+provide focused review, while one continuously tested integration branch prevents partial lifecycle
+architecture from reaching `main`.
 
 ## First principles
 
@@ -588,9 +597,11 @@ The review also proposed abstractions that are deliberately not adopted:
 
 ## Proposed implementation sequence
 
-Every stage should be a focused, independently reviewable PR. Do not use one large migration PR.
-Each PR must update the relevant internal documentation alongside the behavior it establishes; do not
-defer all architectural knowledge to the final PR.
+Every stage should be a focused, independently reviewable child PR into
+`feat/provider-lifecycle-unification`. PR #150 is the cumulative delivery PR, but implementation must
+not arrive there as one undifferentiated change. Each child PR must update the relevant internal
+documentation alongside the behavior it establishes; do not defer all architectural knowledge to the
+final review.
 
 ### Prerequisite: bounded T3 synchronization
 
@@ -598,7 +609,10 @@ defer all architectural knowledge to the final PR.
 2. Preserve Scient's existing provider setup callbacks in `ChatComposer` while adopting T3's new
    slash-menu behavior.
 3. Run the normal upstream provenance, protected-divergence, focused automated, and manual gates.
-4. Keep all lifecycle refactoring out of this PR.
+4. Land that bounded synchronization through its own pull request to `main`, then merge updated
+   `main` into `feat/provider-lifecycle-unification` without rewriting the shared branch.
+5. Rerun the lifecycle characterization baseline on the updated integration branch.
+6. Keep all lifecycle refactoring out of the upstream-alignment PR.
 
 ### PR 1A: Characterization foundation
 
@@ -970,13 +984,18 @@ never a broken Install button.
 
 ### T3 compatibility gate
 
-Before each PR merges:
+Before each child PR merges into the integration branch:
 
 - refresh official T3;
 - inspect whether T3 changed any inherited seam touched by the PR;
-- run a merge-tree conflict analysis;
+- run a merge-tree conflict analysis against the child PR's exact integration base;
 - verify the inherited diff did not grow without necessity; and
 - keep upstream synchronization separate from feature commits.
+
+When `main` advances, merge it into the integration branch at a controlled checkpoint and rerun the
+affected characterization and integration gates. Do not chase every upstream commit during the
+implementation: select explicit synchronization checkpoints, and add another only when an upstream
+change is important or overlaps inherited seams we are about to modify.
 
 At the end, compare the lifecycle-related inherited diff against the pre-refactor baseline. Success
 means fewer provider-specific routing branches and no unnecessary growth in inherited files; moving
@@ -1023,6 +1042,8 @@ The work is successful when:
 - canonical internal documentation clearly records shared ownership, every provider-specific exception
   and its rationale, the extension path, and required qualification evidence;
 - focused automated suites and isolated real-app lifecycle matrices pass; and
+- PR #150's cumulative diff and integrated app pass final review before any lifecycle implementation
+  reaches `main`; and
 - the final architecture is easier to extend without copying an entire provider flow.
 
 ## Final first-principles check
