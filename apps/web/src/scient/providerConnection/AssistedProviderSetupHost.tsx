@@ -67,6 +67,17 @@ type AssistedProviderSetupHostProps = AssistedProviderSetupHostBaseProps &
  */
 export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
   if (!supportsAssistedProviderSetupSurface(props.provider.driver, props.surface)) return null;
+  const displayName =
+    props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
+  if (!props.provider.enabled) {
+    return (
+      <DisabledProviderSetup
+        displayName={displayName}
+        environmentId={props.environmentId}
+        provider={props.provider}
+      />
+    );
+  }
   return <SupportedAssistedProviderSetupHost {...props} />;
 }
 
@@ -80,16 +91,6 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   const displayName =
     props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
   const isManagement = props.surface === "management";
-
-  if (!props.provider.enabled) {
-    return (
-      <DisabledProviderSetup
-        displayName={displayName}
-        environmentId={props.environmentId}
-        provider={props.provider}
-      />
-    );
-  }
 
   const disconnect = async () => {
     setDisconnecting(true);

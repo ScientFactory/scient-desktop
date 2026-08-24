@@ -165,6 +165,7 @@ describe("AssistedProviderSetupHost", () => {
     ["droid", "Droid"],
     ["grok", "Grok"],
   ] as const)("owns the disabled %s state instead of delegating it", (driver, name) => {
+    controllerFactory.mockClear();
     const markup = renderToStaticMarkup(
       <AssistedProviderSetupHost
         displayName={name}
@@ -177,6 +178,7 @@ describe("AssistedProviderSetupHost", () => {
     expect(markup).toContain(`${name} is disabled`);
     expect(markup).toContain(">Enable<");
     expect(markup).not.toContain(`${name} setup`);
+    expect(controllerFactory).not.toHaveBeenCalled();
   });
 
   it("explains read-only access without offering a broken enable action", () => {

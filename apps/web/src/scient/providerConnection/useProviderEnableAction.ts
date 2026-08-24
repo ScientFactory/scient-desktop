@@ -46,10 +46,11 @@ export function useProviderEnableAction(input: {
         hasError: remoteSession.hasError,
       });
   const patch = buildEnableProviderPatch(settings, input.provider);
+  const displayName = input.provider.displayName?.trim() || String(input.provider.driver);
 
   const enable = useCallback(async () => {
     if (access !== "granted" || patch === null) {
-      throw new Error(`This session cannot enable ${input.provider.displayName}.`);
+      throw new Error(`This session cannot enable ${displayName}.`);
     }
     const result = await updateSettings({
       environmentId: input.environmentId,
@@ -57,13 +58,11 @@ export function useProviderEnableAction(input: {
     });
     if (result._tag === "Success") return;
     if (isAtomCommandInterrupted(result)) {
-      throw new Error(`Enabling ${input.provider.displayName} was cancelled.`);
+      throw new Error(`Enabling ${displayName} was cancelled.`);
     }
     const failure = squashAtomCommandFailure(result);
-    throw failure instanceof Error
-      ? failure
-      : new Error(`Scient could not enable ${input.provider.displayName}.`);
-  }, [access, input.environmentId, input.provider.displayName, patch, updateSettings]);
+    throw failure instanceof Error ? failure : new Error(`Scient could not enable ${displayName}.`);
+  }, [access, displayName, input.environmentId, patch, updateSettings]);
 
   return {
     access,
