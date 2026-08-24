@@ -137,6 +137,8 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const hasActionableManagedRuntime =
     runtime?.source === "scient_managed" &&
     (runtime.actions.length > 0 || runtime.operation !== null);
+  const hasQualifiedSystemManagedAction =
+    runtime?.source === "system" && runtime.actions.includes("install");
   const cursorInlineInstallIsRunning =
     isCursor &&
     props.initialRuntimeAction === "install" &&
@@ -149,7 +151,10 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
     !cursorInlineInstallIsRunning &&
     (isCursor
       ? isConnected || hasRuntimeMaintenanceActions
-      : isConnected || props.initialRuntimeAction !== undefined || hasActionableManagedRuntime) &&
+      : isConnected ||
+        props.initialRuntimeAction !== undefined ||
+        hasActionableManagedRuntime ||
+        hasQualifiedSystemManagedAction) &&
     (runtime.actions.length > 0 || runtime.diagnostics !== undefined || runtime.operation !== null);
   const availableInitialRuntimeAction =
     props.initialRuntimeAction !== undefined &&
@@ -160,8 +165,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const [isRuntimePlanOpen, setIsRuntimePlanOpen] = useState(
     availableInitialRuntimeAction !== undefined,
   );
-  const isManagedRuntimeFocused =
-    showManagedRuntime && (isRuntimePlanOpen || isRuntimeWorking || !props.provider.installed);
+  const isManagedRuntimeFocused = showManagedRuntime && (isRuntimePlanOpen || isRuntimeWorking);
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>

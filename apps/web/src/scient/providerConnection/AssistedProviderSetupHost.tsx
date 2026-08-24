@@ -1,8 +1,13 @@
 import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
-import { LoaderIcon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
+import { LoaderIcon, LogOutIcon, ShieldCheckIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { Button } from "../../components/ui/button";
+import {
+  AssistedSetupActions,
+  AssistedSetupFrame,
+  AssistedSetupStatus,
+} from "./AssistedProviderSetup";
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
 import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
@@ -15,6 +20,7 @@ import {
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
+import { useProviderEnableAction } from "./useProviderEnableAction";
 
 export type AssistedProviderSetupSurface = "composer" | "management";
 
@@ -74,6 +80,16 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   const displayName =
     props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
   const isManagement = props.surface === "management";
+
+  if (!props.provider.enabled) {
+    return (
+      <DisabledProviderSetup
+        displayName={displayName}
+        environmentId={props.environmentId}
+        provider={props.provider}
+      />
+    );
+  }
 
   const disconnect = async () => {
     setDisconnecting(true);
@@ -196,5 +212,71 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
         </div>
       ) : null}
     </>
+  );
+}
+
+function DisabledProviderSetup(props: {
+  readonly displayName: string;
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+}) {
+  const { access, canEnable, enable } = useProviderEnableAction({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  const [enabling, setEnabling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runEnable = async () => {
+    setError(null);
+    setEnabling(true);
+    try {
+      await enable();
+      // Keep the pending state until the canonical provider snapshot reports
+      // enabled. This component then unmounts and the next action is revealed;
+      // installation or sign-in is never started implicitly.
+    } catch (cause) {
+      setEnabling(false);
+      setError(
+        providerLifecycleFailureMessage(cause, `Scient could not enable ${props.displayName}.`),
+      );
+    }
+  };
+
+  const body = error
+    ? error
+    : access === "pending"
+      ? `Checking whether this session can enable ${props.displayName}.`
+      : access === "denied"
+        ? `This session can view ${props.displayName}, but cannot enable it.`
+        : canEnable
+          ? `Enable ${props.displayName} to continue.`
+          : `Open provider settings to enable ${props.displayName}.`;
+
+  return (
+    <AssistedSetupFrame>
+      <AssistedSetupStatus
+        body={body}
+        icon={
+          error ? (
+            <TriangleAlertIcon className="size-5 text-destructive" />
+          ) : (
+            <ShieldCheckIcon className="size-5 text-primary" />
+          )
+        }
+        role={error ? "alert" : undefined}
+        title={
+          error ? `${props.displayName} couldn’t be enabled` : `${props.displayName} is disabled`
+        }
+      />
+      {canEnable ? (
+        <AssistedSetupActions>
+          <Button disabled={enabling} onClick={() => void runEnable()} size="sm" type="button">
+            {enabling ? <LoaderIcon aria-hidden className="animate-spin" /> : null}
+            {enabling ? "Enabling…" : "Enable"}
+          </Button>
+        </AssistedSetupActions>
+      ) : null}
+    </AssistedSetupFrame>
   );
 }

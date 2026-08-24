@@ -9,7 +9,6 @@ import {
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -29,6 +28,7 @@ import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection"
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
   providerAccountIdentity,
   providerLifecycleFailureMessage,
@@ -163,18 +163,6 @@ export function GrokInlineSetup(props: {
     setAuthorizationCode("");
   };
 
-  if (!props.provider.enabled) {
-    return (
-      <SetupFrame>
-        <AssistedSetupStatus
-          body="Enable Grok in provider settings before installing or connecting it."
-          icon={<ShieldCheckIcon className="size-5 text-primary" />}
-          title="Grok is disabled"
-        />
-      </SetupFrame>
-    );
-  }
-
   if (activeRuntimeOperation || ["install", "repair", "update"].includes(pendingAction ?? "")) {
     const action = activeRuntimeOperation?.action ?? pendingAction;
     return (
@@ -236,7 +224,7 @@ export function GrokInlineSetup(props: {
     );
   }
 
-  if (!props.provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>

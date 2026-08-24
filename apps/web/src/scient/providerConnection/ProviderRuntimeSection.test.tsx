@@ -130,6 +130,39 @@ describe("ProviderRuntimeSection", () => {
     expect(commands.start).not.toHaveBeenCalled();
   });
 
+  it("labels any server-qualified system-to-managed action with the provider name", () => {
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        displayName: "Grok",
+        provider: {
+          ...provider,
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          displayName: "Grok",
+          installed: true,
+          version: "1.0.5",
+          connection: {
+            methods: ["grok_account"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              ...provider.connection!.runtime!,
+              source: "system",
+              actions: ["install"],
+              message: "Using a compatible system Grok runtime.",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("Use Scient-managed Grok");
+    expect(markup).not.toContain("Use Scient-managed Codex");
+  });
+
   it("keeps the managed install review flat in the Antigravity dialog", async () => {
     hooks.beginRender();
     ProviderRuntimeSection({

@@ -59,9 +59,8 @@ const render = (snapshot: ServerProvider, accountAction?: ReactNode) =>
   );
 
 describe("DroidInlineSetup", () => {
-  it("keeps the Droid mark mounted across composer lifecycle states", () => {
+  it("keeps the Droid mark mounted across enabled composer lifecycle states", () => {
     const snapshots = [
-      { ...provider, enabled: false },
       {
         ...provider,
         installed: false,

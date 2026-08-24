@@ -76,6 +76,18 @@ export function hasActiveProviderRuntimeOperation(provider: ServerProvider | und
   return isActiveProviderRuntimeOperation(provider?.connection?.runtime?.operation);
 }
 
+/**
+ * A successful runtime operation can reach the provider stream one event
+ * before the next probe updates `installed`. Treat the authoritative managed
+ * runtime selection as installed so the UI hands off directly to account
+ * setup instead of flashing an unusable install state.
+ */
+export function isProviderRuntimePresentedAsInstalled(
+  provider: ServerProvider | undefined,
+): boolean {
+  return provider?.installed === true || provider?.connection?.runtime?.source === "scient_managed";
+}
+
 export function isProviderAccountConnected(provider: ServerProvider | undefined): boolean {
   return provider?.auth.status === "authenticated";
 }
@@ -89,7 +101,7 @@ export function providerConnectionPresentation(
   if (hasActiveProviderRuntimeOperation(provider)) {
     return { kind: "setting-up", label: "Setting up" };
   }
-  if (!provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(provider)) {
     return { kind: "not-installed", label: "Tool not installed" };
   }
   if (provider.auth.required === false) {

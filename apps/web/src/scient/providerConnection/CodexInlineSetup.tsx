@@ -31,6 +31,7 @@ import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -293,7 +294,7 @@ export function CodexInlineSetup(props: {
     );
   }
 
-  if (!props.provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const error =
       localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
     const canInstall = runtime?.actions.includes("install") ?? false;
@@ -471,7 +472,8 @@ export function CodexInlineSetup(props: {
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
-  const canInstallManaged = runtime?.actions.includes("install") ?? false;
+  const canInstallManaged =
+    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   const useManaged = async () => {
     setLocalError(null);
     setPendingAction("install");

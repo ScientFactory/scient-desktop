@@ -583,8 +583,8 @@ export function ProviderRuntimeSection(props: {
                   <WrenchIcon />
                 )}
                 {action === "install"
-                  ? props.provider.driver === "codex" && runtime.source === "system"
-                    ? "Use Scient-managed Codex"
+                  ? runtime.source === "system"
+                    ? `Use Scient-managed ${props.displayName}`
                     : "Review setup"
                   : action === "update"
                     ? "Update"
