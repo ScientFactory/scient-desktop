@@ -26,6 +26,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const SMALL_MODEL_ID = "whisper-small-multilingual-q5_1";
 const MEDIUM_MODEL_ID = "whisper-medium-multilingual-q5_0";
+const TURBO_MODEL_ID = "whisper-large-v3-turbo-multilingual-q5_0";
 
 interface FakeEngineHarness {
   readonly engine: TranscriptionEngine;
@@ -51,6 +52,7 @@ function makeFakeEngine(options?: {
   const states: Record<VoiceModelId, CoreVoiceModelState> = {
     [SMALL_MODEL_ID]: { state: "missing" },
     [MEDIUM_MODEL_ID]: { state: "missing" },
+    [TURBO_MODEL_ID]: { state: "missing" },
     ...options?.states,
   };
   let markDownloadStarted: () => void = () => undefined;
@@ -146,8 +148,8 @@ function dependencies(
     createEngine: () => harness.engine,
     resolveFreeBytes: async () => freeBytes,
     readDeviceCapacity: () => ({
-      availableParallelism: 10,
-      totalMemoryBytes: 32 * 1024 ** 3,
+      availableParallelism: 8,
+      totalMemoryBytes: 16 * 1024 ** 3,
     }),
   };
 }
@@ -218,7 +220,7 @@ describe("toVoiceModelRequestError", () => {
 });
 
 describe("recommendVoiceModel", () => {
-  const capableDevice = {
+  const turboDevice = {
     platform: "darwin" as const,
     runningUnderArm64Translation: false,
     availableParallelism: 10,
@@ -226,24 +228,31 @@ describe("recommendVoiceModel", () => {
     freeModelStorageBytes: 4 * 1024 ** 3,
   };
 
-  it("recommends Medium only when the runtime and device can support it", () => {
-    expect(recommendVoiceModel(true, capableDevice)?.modelId).toBe(MEDIUM_MODEL_ID);
+  it("recommends Turbo only for the most capable devices", () => {
+    expect(recommendVoiceModel(true, turboDevice)?.modelId).toBe(TURBO_MODEL_ID);
     expect(
       recommendVoiceModel(true, {
-        ...capableDevice,
+        ...turboDevice,
+        availableParallelism: 8,
+        totalMemoryBytes: 16 * 1024 ** 3,
+      })?.modelId,
+    ).toBe(MEDIUM_MODEL_ID);
+    expect(
+      recommendVoiceModel(true, {
+        ...turboDevice,
         runningUnderArm64Translation: true,
       })?.modelId,
     ).toBe(SMALL_MODEL_ID);
     expect(
       recommendVoiceModel(true, {
-        ...capableDevice,
+        ...turboDevice,
         freeModelStorageBytes: 0,
       })?.modelId,
     ).toBe(SMALL_MODEL_ID);
   });
 
   it("does not recommend a model when the runtime is unavailable", () => {
-    expect(recommendVoiceModel(false, capableDevice)).toBeNull();
+    expect(recommendVoiceModel(false, turboDevice)).toBeNull();
   });
 });
 
@@ -270,6 +279,11 @@ describe("DesktopVoice model lifecycle", () => {
         const initial = yield* voice.getModelsState;
         expect(initial.selectedModelId).toBeNull();
         expect(initial.recommendation?.modelId).toBe(MEDIUM_MODEL_ID);
+        expect(initial.models.map((model) => model.id)).toEqual([
+          SMALL_MODEL_ID,
+          MEDIUM_MODEL_ID,
+          TURBO_MODEL_ID,
+        ]);
 
         const downloadedMedium = yield* voice.downloadModel({
           modelId: MEDIUM_MODEL_ID,

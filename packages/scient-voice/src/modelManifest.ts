@@ -51,8 +51,22 @@ const WHISPER_MEDIUM_MULTILINGUAL_Q5_0: VoiceModelDefinition = Object.freeze({
   license: "MIT",
 });
 
+const WHISPER_LARGE_V3_TURBO_MULTILINGUAL_Q5_0: VoiceModelDefinition = Object.freeze({
+  id: "whisper-large-v3-turbo-multilingual-q5_0",
+  fileName: "ggml-large-v3-turbo-q5_0-39422170.bin",
+  displayName: "Multilingual Turbo",
+  description: "Most capable for demanding dictation on powerful computers.",
+  byteSize: 574_041_195,
+  sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+  headerHex: GGML_MAGIC_HEADER_HEX,
+  sourceRevision: WHISPER_CPP_REVISION,
+  downloadUrl: `https://huggingface.co/ggerganov/whisper.cpp/resolve/${WHISPER_CPP_REVISION}/ggml-large-v3-turbo-q5_0.bin?download=true`,
+  license: "MIT",
+});
+
 export const SMALL_VOICE_MODEL_ID = WHISPER_SMALL_MULTILINGUAL_Q5_1.id;
 export const MEDIUM_VOICE_MODEL_ID = WHISPER_MEDIUM_MULTILINGUAL_Q5_0.id;
+export const TURBO_VOICE_MODEL_ID = WHISPER_LARGE_V3_TURBO_MULTILINGUAL_Q5_0.id;
 
 /** Small is the safe migration fallback for existing installations. */
 export const DEFAULT_VOICE_MODEL_ID = SMALL_VOICE_MODEL_ID;
@@ -61,6 +75,7 @@ export const DEFAULT_VOICE_MODEL_ID = SMALL_VOICE_MODEL_ID;
 export const VOICE_MODEL_DEFINITIONS: readonly VoiceModelDefinition[] = Object.freeze([
   WHISPER_SMALL_MULTILINGUAL_Q5_1,
   WHISPER_MEDIUM_MULTILINGUAL_Q5_0,
+  WHISPER_LARGE_V3_TURBO_MULTILINGUAL_Q5_0,
 ]);
 
 const VOICE_MODELS_BY_ID: ReadonlyMap<string, VoiceModelDefinition> = new Map(

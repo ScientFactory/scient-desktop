@@ -6,14 +6,12 @@ import { describeVoiceError } from "../../scient/voice/voiceErrorPresentation";
 import { getVoiceBridge } from "../../scient/voice/voiceClient";
 import { Badge } from "../ui/badge";
 import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
+  Popover,
+  PopoverDescription,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../ui/popover";
 import { Button } from "../ui/button";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -52,11 +50,14 @@ interface VoiceModelCardProps {
   readonly activeDownload: boolean;
   readonly queuedDownload: boolean;
   readonly downloadBlocked: boolean;
+  readonly removeOpen: boolean;
+  readonly removeDescription: string;
   readonly onDownload: (modelId: VoiceModelId) => void;
   readonly onCancel: (modelId: VoiceModelId) => void;
   readonly onCancelQueued: () => void;
   readonly onSelect: (modelId: VoiceModelId) => void;
-  readonly onRemove: (model: VoiceModelSummary) => void;
+  readonly onRemoveOpenChange: (open: boolean) => void;
+  readonly onConfirmRemove: () => void;
 }
 
 function VoiceModelCard({
@@ -68,11 +69,14 @@ function VoiceModelCard({
   activeDownload,
   queuedDownload,
   downloadBlocked,
+  removeOpen,
+  removeDescription,
   onDownload,
   onCancel,
   onCancelQueued,
   onSelect,
-  onRemove,
+  onRemoveOpenChange,
+  onConfirmRemove,
 }: VoiceModelCardProps): ReactNode {
   const state = model.state;
   const progress = voiceModelProgressPercent(model);
@@ -171,15 +175,49 @@ function VoiceModelCard({
           </Button>
         )}
         {!downloading && !queuedDownload ? (
-          <Button
-            aria-label={`Remove ${model.displayName}`}
-            size="icon-xs"
-            variant="ghost"
-            disabled={busy || (state.state === "missing" && !state.partialBytes)}
-            onClick={() => onRemove(model)}
+          <Popover
+            open={removeOpen}
+            onOpenChange={(open) => {
+              if (busy) return;
+              onRemoveOpenChange(open);
+            }}
           >
-            <Trash2Icon />
-          </Button>
+            <PopoverTrigger
+              render={
+                <Button
+                  aria-label={`Remove ${model.displayName}`}
+                  size="icon-xs"
+                  variant="ghost"
+                  disabled={busy || (state.state === "missing" && !state.partialBytes)}
+                />
+              }
+            >
+              <Trash2Icon />
+            </PopoverTrigger>
+            <PopoverPopup
+              align="start"
+              className="w-72 max-w-[calc(100vw-1rem)]"
+              side="bottom"
+              sideOffset={6}
+              viewportClassName="p-0"
+              role="alertdialog"
+            >
+              <div className="p-3">
+                <PopoverTitle className="text-sm">Remove {model.displayName}?</PopoverTitle>
+                <PopoverDescription className="mt-1 text-xs leading-5">
+                  {removeDescription}
+                </PopoverDescription>
+                <div className="mt-3 flex justify-end gap-1.5">
+                  <Button size="xs" variant="ghost" onClick={() => onRemoveOpenChange(false)}>
+                    Cancel
+                  </Button>
+                  <Button size="xs" variant="destructive" onClick={onConfirmRemove}>
+                    Remove model
+                  </Button>
+                </div>
+              </div>
+            </PopoverPopup>
+          </Popover>
         ) : null}
       </div>
     </div>
@@ -361,6 +399,12 @@ export function VoiceSettingsPanel(): ReactNode {
                   (busyModelId !== null && observedActiveDownloadModelId === null) ||
                   (queuedDownload !== null && queuedDownload.modelId !== model.id)
                 }
+                removeOpen={removeTarget?.id === model.id}
+                removeDescription={
+                  removeTarget?.id === model.id && replacementModel
+                    ? `${replacementModel.displayName} will be used instead.`
+                    : "You can download this model again here at any time."
+                }
                 onDownload={(modelId) =>
                   handleDownload(
                     modelId,
@@ -370,38 +414,17 @@ export function VoiceSettingsPanel(): ReactNode {
                 onCancel={handleCancel}
                 onCancelQueued={() => setQueuedDownload(null)}
                 onSelect={handleSelect}
-                onRemove={setRemoveTarget}
+                onRemoveOpenChange={(open) =>
+                  setRemoveTarget((current) =>
+                    open ? model : current?.id === model.id ? null : current,
+                  )
+                }
+                onConfirmRemove={() => void confirmRemove()}
               />
             ))}
           </div>
         </div>
       </SettingsSection>
-
-      <AlertDialog
-        open={removeTarget !== null}
-        onOpenChange={(open) => !open && setRemoveTarget(null)}
-      >
-        <AlertDialogPopup className="max-w-sm">
-          <AlertDialogHeader className="gap-1.5 p-4 pb-3">
-            <AlertDialogTitle className="text-base">
-              Remove {removeTarget?.displayName}?
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-xs leading-5">
-              {replacementModel
-                ? `${replacementModel.displayName} will be used instead.`
-                : "You can download this model again here at any time."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="gap-1 px-4 pb-4" variant="bare">
-            <AlertDialogClose render={<Button size="sm" variant="ghost-muted" />}>
-              Cancel
-            </AlertDialogClose>
-            <Button size="sm" variant="destructive" onClick={() => void confirmRemove()}>
-              Remove model
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
     </SettingsPageContainer>
   );
 }

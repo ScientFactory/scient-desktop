@@ -23,6 +23,14 @@ const medium: VoiceModelSummary = {
   state: { state: "missing" },
 };
 
+const turbo: VoiceModelSummary = {
+  id: "whisper-large-v3-turbo-multilingual-q5_0",
+  displayName: "Multilingual Turbo",
+  description: "Turbo",
+  byteSize: 300,
+  state: { state: "ready", byteSize: 300 },
+};
+
 describe("VoiceSettingsPanel model state", () => {
   it("reports bounded download progress", () => {
     expect(
@@ -41,8 +49,9 @@ describe("VoiceSettingsPanel model state", () => {
   });
 
   it("selects only another ready model as the removal fallback", () => {
-    expect(findVoiceReplacementModel([small, medium], medium.id)?.id).toBe(small.id);
-    expect(findVoiceReplacementModel([small, medium], small.id)).toBeNull();
+    expect(findVoiceReplacementModel([small, medium, turbo], medium.id)?.id).toBe(small.id);
+    expect(findVoiceReplacementModel([small, medium, turbo], small.id)?.id).toBe(turbo.id);
+    expect(findVoiceReplacementModel([medium], medium.id)).toBeNull();
   });
 
   it("does not silently replace an existing selection after a download", () => {

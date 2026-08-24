@@ -35,7 +35,11 @@ const DesktopSettingsPatch = Schema.Struct({
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   voiceSelectedModelId: Schema.optionalKey(
     Schema.NullOr(
-      Schema.Literals(["whisper-small-multilingual-q5_1", "whisper-medium-multilingual-q5_0"]),
+      Schema.Literals([
+        "whisper-small-multilingual-q5_1",
+        "whisper-medium-multilingual-q5_0",
+        "whisper-large-v3-turbo-multilingual-q5_0",
+      ]),
     ),
   ),
   wslOnly: Schema.optionalKey(Schema.Boolean),
@@ -133,19 +137,19 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setVoiceSelectedModelId("whisper-medium-multilingual-q5_0");
+        yield* settings.setVoiceSelectedModelId("whisper-large-v3-turbo-multilingual-q5_0");
         assert.equal(
           (yield* settings.get).voiceSelectedModelId,
-          "whisper-medium-multilingual-q5_0",
+          "whisper-large-v3-turbo-multilingual-q5_0",
         );
         assert.include(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
-          "whisper-medium-multilingual-q5_0",
+          "whisper-large-v3-turbo-multilingual-q5_0",
         );
 
         assert.equal(
           (yield* settings.load).voiceSelectedModelId,
-          "whisper-medium-multilingual-q5_0",
+          "whisper-large-v3-turbo-multilingual-q5_0",
         );
       }),
     ),
