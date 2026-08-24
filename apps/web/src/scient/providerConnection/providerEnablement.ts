@@ -13,6 +13,20 @@ function withoutLegacyEnabled(config: unknown): unknown {
   return rest;
 }
 
+/** Apply one enabled value without leaving a contradictory legacy flag. */
+export function withProviderInstanceEnabled(
+  instance: ProviderInstanceConfig,
+  enabled: boolean,
+): ProviderInstanceConfig {
+  if (!enabled) return { ...instance, enabled: false };
+  const cleanConfig = withoutLegacyEnabled(instance.config);
+  return {
+    ...instance,
+    enabled: true,
+    ...(cleanConfig === undefined ? {} : { config: cleanConfig }),
+  };
+}
+
 /**
  * Build the one settings write needed to enable an existing provider.
  *
@@ -37,12 +51,7 @@ export function buildEnableProviderPatch(
     driver: provider.driver,
     config: legacyConfig,
   };
-  const cleanConfig = withoutLegacyEnabled(source.config);
-  const enabledInstance: ProviderInstanceConfig = {
-    ...source,
-    enabled: true,
-    ...(cleanConfig === undefined ? {} : { config: cleanConfig }),
-  };
+  const enabledInstance = withProviderInstanceEnabled(source, true);
 
   return {
     ...(isDefault && legacyDefaults[provider.driver] !== undefined

@@ -22,10 +22,52 @@ const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
 
 describe("provider settings lifecycle presentation", () => {
   it("offers installation when Codex is missing", () => {
-    expect(providerSettingsLifecyclePresentation(provider(), "Codex")).toMatchObject({
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              source: "missing",
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: ["install"],
+              managedVersion: null,
+              previousManagedVersion: null,
+              operation: null,
+              message: "Install available.",
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({
       kind: "not-installed",
       statusLabel: "Not installed",
       actionLabel: "Install",
+      actionKind: "runtime",
+      runtimeAction: "install",
+    });
+  });
+
+  it("does not advertise installation without an explicit runtime capability", () => {
+    expect(providerSettingsLifecyclePresentation(provider(), "Codex")).toMatchObject({
+      kind: "not-installed",
+      actionLabel: "Manage",
+      actionKind: "manage",
+      runtimeAction: null,
+    });
+  });
+
+  it("offers direct enablement before install or sign-in", () => {
+    expect(
+      providerSettingsLifecyclePresentation(provider({ enabled: false }), "Codex"),
+    ).toMatchObject({
+      kind: "disabled",
+      actionLabel: "Enable",
+      actionKind: "enable",
     });
   });
 
@@ -61,6 +103,67 @@ describe("provider settings lifecycle presentation", () => {
     expect(
       providerSettingsLifecyclePresentation(provider({ installed: true }), "Codex"),
     ).toMatchObject({ kind: "sign-in-required", actionLabel: "Sign in" });
+  });
+
+  it("prioritizes a server-advertised managed update", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", required: true, label: "ChatGPT" },
+          models: [{ slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null }],
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: true,
+            operation: null,
+            runtime: {
+              source: "scient_managed",
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: ["update", "repair", "remove"],
+              managedVersion: "0.147.0",
+              previousManagedVersion: null,
+              operation: null,
+              message: "Update available.",
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({
+      kind: "attention",
+      actionLabel: "Update",
+      actionKind: "runtime",
+      runtimeAction: "update",
+    });
+  });
+
+  it("keeps external updates distinct from managed runtime plans", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", required: true, label: "ChatGPT" },
+          models: [{ slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null }],
+          versionAdvisory: {
+            status: "behind_latest",
+            currentVersion: "0.147.0",
+            latestVersion: "0.148.0",
+            updateCommand: "npm update -g @openai/codex",
+            canUpdate: true,
+            checkedAt: "2026-08-23T08:00:00.000Z",
+            message: "Update available.",
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({
+      actionLabel: "Update",
+      actionKind: "external-update",
+      runtimeAction: null,
+    });
   });
 
   it("uses concise Factory subscription guidance for Droid pairing", () => {
@@ -150,6 +253,45 @@ describe("provider settings lifecycle presentation", () => {
       kind: "failed",
       statusLabel: "Setup failed",
       detail: "Verification failed.",
+      actionKind: "runtime",
+      runtimeAction: "install",
+    });
+  });
+
+  it("does not retry a failed runtime action the server no longer advertises", () => {
+    expect(
+      providerSettingsLifecyclePresentation(
+        provider({
+          installed: true,
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              source: "system",
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: [],
+              managedVersion: null,
+              previousManagedVersion: null,
+              message: "System runtime is active.",
+              operation: {
+                operationId: "runtime-2",
+                action: "repair",
+                status: "failed",
+                startedAt: "2026-08-09T08:00:00.000Z",
+                finishedAt: "2026-08-09T08:01:00.000Z",
+                message: "Repair is unavailable.",
+              },
+            },
+          },
+        }),
+        "Codex",
+      ),
+    ).toMatchObject({
+      kind: "failed",
+      actionKind: "manage",
+      runtimeAction: null,
     });
   });
 

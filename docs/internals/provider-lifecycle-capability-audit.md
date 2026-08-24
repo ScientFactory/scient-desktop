@@ -1,6 +1,6 @@
 # Provider Lifecycle Capability Audit
 
-> Status: pre-implementation investigation, last refreshed 2026-08-24.
+> Status: implementation evidence ledger, last refreshed 2026-08-24.
 >
 > This document is evidence for the
 > [provider lifecycle unification proposal](./provider-lifecycle-unification-proposal.md), not an
@@ -136,6 +136,28 @@ shows a qualified system-to-managed action only once outside diagnostics.
 These are renderer and settings-handoff rules, not new provider capabilities. Authentication method
 choice, browser ownership, code entry, logout, runtime actions, and system-to-managed eligibility
 remain provider- and server-owned.
+
+## Phase 4B runtime-source qualification
+
+Phase 4 makes the renderer generic: if the server advertises managed installation beside a healthy
+system runtime, Settings and Manage can present one compact `Use Scient-managed <provider>` action.
+That renderer capability is not permission to advertise the action. The server remains the source of
+truth, and each provider has a separate qualification result:
+
+| Provider    | Result                         | Evidence and reason                                                                                                                                                                                                                                                                                                   |
+| ----------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex       | **Supported (code-confirmed)** | Codex has an explicit system-to-managed runtime policy plus characterization for preserving the active system runtime during failed/cancelled installation, provider-wide cutover after verified activation, re-probe, managed-health fallback, removal back to system, and external-versus-managed update ownership. |
+| Claude      | **Blocked; not advertised**    | A reviewed managed artifact exists, but the generic runtime policy intentionally keeps a healthy system/custom runtime active and advertises no install action. Selection, account continuity, removal fallback, and packaged-platform switching have not been qualified.                                             |
+| Antigravity | **Blocked; not advertised**    | Managed install/update/repair/remove are qualified for missing or active managed runtimes, not for replacing a healthy external selection. Its current generic management surface also remains in place until Phase 5.                                                                                                |
+| Grok        | **Blocked; not advertised**    | Generic selection prefers the healthy external runtime and exposes no system-to-managed install capability. External updater ownership is also still an open qualification gap.                                                                                                                                       |
+| Droid       | **Blocked; not advertised**    | Generic selection prefers the healthy external runtime. Installation-source-aware external updates, ACP/account continuity, fallback, and packaged switching remain unqualified.                                                                                                                                      |
+| Cursor      | **Blocked; not advertised**    | Managed acquisition and the native external updater are both supported in their own source states, but switching a healthy system selection, preserving login/session behavior, and returning to the correct native updater after removal have not passed a dedicated qualification.                                  |
+| OpenCode    | **Intentionally unsupported**  | OpenCode has no Scient-managed runtime lifecycle or single account lifecycle. A managed-install project would require a separate product and provider qualification rather than renderer parity.                                                                                                                      |
+
+Therefore this phase changes no provider's server capability advertisement. Codex keeps its proven
+switch; every other provider fails closed until its named evidence exists. A later provider may opt in
+without another frontend special case, but only by adding an explicit server capability and the
+provider-specific tests described above.
 
 ## Shared invariants all assisted providers should satisfy
 

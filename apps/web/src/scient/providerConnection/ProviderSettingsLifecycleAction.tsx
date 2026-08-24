@@ -1,0 +1,228 @@
+import type {
+  EnvironmentId,
+  ProviderManagedRuntimeAction,
+  ServerProvider,
+} from "@t3tools/contracts";
+import { DownloadIcon, LoaderIcon, LogInIcon, PowerIcon, RefreshCwIcon } from "lucide-react";
+import { useState } from "react";
+
+import { Button } from "../../components/ui/button";
+import { stackedThreadToast, toastManager } from "../../components/ui/toast";
+import { startCodexBrowserSignIn } from "./codexLifecycleActions";
+import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
+import {
+  providerSettingsLifecyclePresentation,
+  type ProviderSettingsLifecyclePresentation,
+} from "./providerSettingsLifecyclePresentation";
+import { useProviderLifecycleController } from "./useProviderLifecycleController";
+
+export type ProviderSettingsPrimaryAction =
+  | { readonly kind: "enable" }
+  | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
+  | { readonly kind: "managed-update" }
+  | { readonly kind: "codex-browser-sign-in" }
+  | { readonly kind: "external-update" }
+  | { readonly kind: "none" };
+
+/** Keep provider-specific fast paths explicit and small. */
+export function resolveProviderSettingsPrimaryAction(input: {
+  readonly provider: ServerProvider;
+  readonly presentation: ProviderSettingsLifecyclePresentation;
+  readonly canRunExternalUpdate: boolean;
+}): ProviderSettingsPrimaryAction {
+  switch (input.presentation.actionKind) {
+    case "enable":
+      return { kind: "enable" };
+    case "runtime":
+      return input.presentation.runtimeAction === "update"
+        ? { kind: "managed-update" }
+        : { kind: "open", runtimeAction: input.presentation.runtimeAction };
+    case "external-update":
+      return input.canRunExternalUpdate
+        ? { kind: "external-update" }
+        : { kind: "open", runtimeAction: null };
+    case "sign-in":
+      return input.provider.driver === "codex" &&
+        input.provider.connection?.methods.includes("codex_browser")
+        ? { kind: "codex-browser-sign-in" }
+        : { kind: "open", runtimeAction: null };
+    case "continue":
+    case "manage":
+      return { kind: "open", runtimeAction: null };
+    case null:
+      return { kind: "none" };
+  }
+}
+
+function actionErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "The provider action could not be completed.";
+}
+
+export function ProviderSettingsLifecycleAction(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+  readonly displayName: string;
+  readonly onEnable: () => void;
+  readonly onManage: (runtimeAction?: ProviderManagedRuntimeAction) => void;
+  readonly onRunExternalUpdate?: (() => void) | undefined;
+  readonly externalUpdateRunning?: boolean | undefined;
+}) {
+  const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
+  const primaryAction = resolveProviderSettingsPrimaryAction({
+    provider: props.provider,
+    presentation,
+    canRunExternalUpdate: props.onRunExternalUpdate !== undefined,
+  });
+
+  if (primaryAction.kind === "codex-browser-sign-in") {
+    return (
+      <CodexBrowserSignInButton
+        displayName={props.displayName}
+        environmentId={props.environmentId}
+        provider={props.provider}
+      />
+    );
+  }
+  if (primaryAction.kind === "managed-update") {
+    return (
+      <ManagedRuntimeUpdateButton
+        displayName={props.displayName}
+        environmentId={props.environmentId}
+        provider={props.provider}
+      />
+    );
+  }
+  if (primaryAction.kind === "none") return null;
+
+  const externallyUpdating =
+    primaryAction.kind === "external-update" && props.externalUpdateRunning === true;
+  const primary =
+    primaryAction.kind === "enable" ||
+    primaryAction.kind === "external-update" ||
+    (primaryAction.kind === "open" && primaryAction.runtimeAction !== null) ||
+    presentation.actionKind === "sign-in";
+
+  const run = () => {
+    switch (primaryAction.kind) {
+      case "enable":
+        props.onEnable();
+        return;
+      case "external-update":
+        props.onRunExternalUpdate?.();
+        return;
+      case "open":
+        props.onManage(primaryAction.runtimeAction ?? undefined);
+        return;
+    }
+  };
+
+  return (
+    <Button
+      className="h-7 gap-1.5 px-2.5 text-xs"
+      disabled={externallyUpdating}
+      onClick={run}
+      size="sm"
+      type="button"
+      variant={primary ? "default" : "outline"}
+    >
+      {externallyUpdating || presentation.busy ? (
+        <LoaderIcon className="animate-spin" />
+      ) : primaryAction.kind === "enable" ? (
+        <PowerIcon />
+      ) : presentation.actionKind === "sign-in" ? (
+        <LogInIcon />
+      ) : primaryAction.kind === "external-update" || presentation.runtimeAction === "update" ? (
+        <RefreshCwIcon />
+      ) : presentation.runtimeAction === "install" ? (
+        <DownloadIcon />
+      ) : null}
+      {externallyUpdating ? "Updating" : presentation.actionLabel}
+    </Button>
+  );
+}
+
+function CodexBrowserSignInButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  const [pending, setPending] = useState(false);
+
+  const signIn = async () => {
+    setPending(true);
+    try {
+      await startCodexBrowserSignIn(controller);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not sign in to ${props.displayName}`,
+          description: actionErrorMessage(error),
+        }),
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Button
+      className="h-7 gap-1.5 px-2.5 text-xs"
+      disabled={pending}
+      onClick={() => void signIn()}
+      size="sm"
+      type="button"
+    >
+      {pending ? <LoaderIcon className="animate-spin" /> : <LogInIcon />}
+      {pending ? "Signing in" : "Sign in"}
+    </Button>
+  );
+}
+
+function ManagedRuntimeUpdateButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+  readonly displayName: string;
+}) {
+  const controller = useProviderLifecycleController({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  const [pending, setPending] = useState(false);
+
+  const update = async () => {
+    setPending(true);
+    try {
+      await startReviewedProviderRuntimeAction(controller, "update");
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not update ${props.displayName}`,
+          description: actionErrorMessage(error),
+        }),
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Button
+      className="h-7 gap-1.5 px-2.5 text-xs"
+      disabled={pending}
+      onClick={() => void update()}
+      size="sm"
+      type="button"
+    >
+      {pending ? <LoaderIcon className="animate-spin" /> : <RefreshCwIcon />}
+      {pending ? "Updating" : "Update"}
+    </Button>
+  );
+}

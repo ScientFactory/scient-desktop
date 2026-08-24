@@ -800,13 +800,15 @@ export function EnvironmentProviderSettings({
                 instance={row.instance}
                 driverOption={driverOption}
                 liveProvider={liveProvider}
-                onManageConnection={() =>
+                onManageConnection={(requestedRuntimeAction) =>
                   setConnectionRequest({
                     instanceId: row.instanceId,
-                    ...(liveProvider?.installed === false &&
-                    liveProvider.connection?.runtime?.actions.includes("install")
-                      ? { initialRuntimeAction: "install" as const }
-                      : {}),
+                    ...(requestedRuntimeAction !== undefined
+                      ? { initialRuntimeAction: requestedRuntimeAction }
+                      : liveProvider?.installed === false &&
+                          liveProvider.connection?.runtime?.actions.includes("install")
+                        ? { initialRuntimeAction: "install" as const }
+                        : {}),
                   })
                 }
                 isExpanded={openInstanceDetails[row.instanceId] ?? false}
