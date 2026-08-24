@@ -120,6 +120,23 @@ Enable handoff is a shared presentation requirement where settings are writable.
 system-to-managed capability remains provider-specific until each provider passes selection, health,
 credential, removal, fallback, update, multi-instance, and platform qualification.
 
+## Phase 4A shared presentation outcome
+
+The shared setup host now owns the provider-disabled state for every assisted provider. A permitted
+Enable action performs one canonical settings update, keeps the surface open, waits for the refreshed
+provider snapshot, and never starts installation, authentication, or a browser as a side effect.
+Remote or read-only clients without operate permission receive a concise non-actionable explanation.
+
+The shared presentation also treats a verified managed runtime as installed during the short handoff
+before the top-level provider probe catches up, so completion cannot collapse into a blank or
+runtime-only surface. Managed maintenance remains available while disabled when the server advertises
+it. Runtime-source presentation uses provider metadata, keeps a healthy system runtime primary, and
+shows a qualified system-to-managed action only once outside diagnostics.
+
+These are renderer and settings-handoff rules, not new provider capabilities. Authentication method
+choice, browser ownership, code entry, logout, runtime actions, and system-to-managed eligibility
+remain provider- and server-owned.
+
 ## Shared invariants all assisted providers should satisfy
 
 These are common guarantees, not requirements for every provider to display the same controls:
