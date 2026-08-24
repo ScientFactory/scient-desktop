@@ -21,4 +21,6 @@ Report concisely:
 - material strengths or gaps, tied to observed evidence and practical consequences; and
 - selective, prioritized improvements tied to meaningful practical benefit.
 
-Omit cosmetic, speculative, or low-value recommendations. If the workspace is already ready for the requested work, say so plainly. If its purpose cannot be inferred reliably, state what remains unknown rather than guessing. Offer changes separately instead of performing them as part of the review.
+Omit cosmetic, speculative, or low-value recommendations. If the workspace is already ready for the requested work, say so plainly. If its purpose cannot be inferred reliably, state what remains unknown rather than guessing.
+
+When material improvements exist, ask whether the user wants them applied. If they agree, use `improve-workspace-readiness` when available; do not begin changes as part of this review.

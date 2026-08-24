@@ -6,23 +6,35 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { BUILT_IN_SKILL_RELEASE_ROOTS } from "./BuiltInSkillReleases.ts";
 
-const candidateRoot = NodePath.join(
-  import.meta.dirname,
-  "candidates",
-  "workspace-readiness-review",
-);
+const candidateRoots = {
+  improve: NodePath.join(import.meta.dirname, "candidates", "improve-workspace-readiness"),
+  review: NodePath.join(import.meta.dirname, "candidates", "workspace-readiness-review"),
+};
 
 describe("Scient built-in skill candidates", () => {
-  it("keeps the workspace readiness release valid but dormant", async () => {
-    const release = await loadSkillRelease(candidateRoot);
+  it("keeps the workspace readiness releases valid but dormant", async () => {
+    const [improve, review] = await Promise.all([
+      loadSkillRelease(candidateRoots.improve),
+      loadSkillRelease(candidateRoots.review),
+    ]);
 
-    expect(release).toMatchObject({
-      id: "scient.workspace-readiness-review",
-      version: "0.1.0",
-      activationScope: "user",
-      origin: "scient",
-      resources: [],
-    });
-    expect(BUILT_IN_SKILL_RELEASE_ROOTS).not.toContain(candidateRoot);
+    expect([improve, review]).toMatchObject([
+      {
+        id: "scient.improve-workspace-readiness",
+        version: "0.1.0",
+        activationScope: "user",
+        origin: "scient",
+        resources: [],
+      },
+      {
+        id: "scient.workspace-readiness-review",
+        version: "0.1.0",
+        activationScope: "user",
+        origin: "scient",
+        resources: [],
+      },
+    ]);
+    expect(BUILT_IN_SKILL_RELEASE_ROOTS).not.toContain(candidateRoots.improve);
+    expect(BUILT_IN_SKILL_RELEASE_ROOTS).not.toContain(candidateRoots.review);
   });
 });
