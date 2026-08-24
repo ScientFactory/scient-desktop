@@ -514,6 +514,23 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
+/**
+ * A fork's imported transcript makes it look started to routing and navigation,
+ * but that provider-neutral baseline has not bound a provider session. Keep
+ * that precise state unlocked while failing closed for ordinary history,
+ * started forks, and inconsistent projections.
+ */
+function isProviderUnboundFork(thread: Thread | null | undefined): boolean {
+  const forkLineage = thread?.forkLineage ?? null;
+  const latestTurn = thread?.latestTurn ?? null;
+  return (
+    forkLineage !== null &&
+    thread?.session === null &&
+    latestTurn?.state === "completed" &&
+    latestTurn.assistantMessageId === forkLineage.baselineAssistantMessageId
+  );
+}
+
 // `threadProvider` is the open branded driver kind carried by the session.
 // Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
 // rollback / fork behavior — the routing layer is the right place to surface
@@ -531,7 +548,7 @@ export function deriveLockedProvider(input: {
   selectedProvider: string | null;
   threadProvider: string | null;
 }): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
+  if (!threadHasStarted(input.thread) || isProviderUnboundFork(input.thread)) {
     return null;
   }
   const sessionProvider = input.thread?.session?.providerName ?? null;
