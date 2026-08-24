@@ -178,6 +178,51 @@ describe("ProviderRuntimeSection", () => {
     expect(actionMarkup).not.toContain("bg-primary");
   });
 
+  it("keeps the reviewed system-to-managed handoff concise and explicit", async () => {
+    const systemProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "system",
+          actions: ["install"],
+          message: "Using a compatible system Antigravity runtime.",
+        },
+      },
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: systemProvider,
+      displayName: "Antigravity",
+      initialAction: "install",
+    });
+
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: systemProvider,
+        displayName: "Antigravity",
+        initialAction: "install",
+      }),
+    );
+
+    expect(markup).toContain("Use Scient-managed Antigravity?");
+    expect(markup).toContain(
+      "Accounts using the default installation will use Scient’s private copy",
+    );
+    expect(markup).toContain("system and custom installations stay unchanged");
+    expect(markup).not.toContain("Review Antigravity setup");
+  });
+
   it("keeps the managed install review flat in the Antigravity dialog", async () => {
     hooks.beginRender();
     ProviderRuntimeSection({

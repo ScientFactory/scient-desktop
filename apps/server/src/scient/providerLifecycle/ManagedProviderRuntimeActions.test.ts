@@ -4,7 +4,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import { afterEach, describe, expect } from "vite-plus/test";
 
 import {
   ManagedProviderRuntimeError,
@@ -67,7 +68,7 @@ describe("managed provider runtime source", () => {
         hasCustomRuntime: true,
         configuredRuntimeHealthy: true,
         managedInstalled: false,
-        managedSelected: false,
+        managedSelected: true,
       }),
     ).toBe("custom");
     expect(
@@ -134,23 +135,41 @@ describe("managed provider runtime policy", () => {
     ).toEqual(["install"]);
   });
 
-  it("exposes the qualified handoff through the real generic resolution boundary", async () => {
-    const baseDir = await NodeFSP.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-resolution-"),
-    );
-    temporaryRoots.push(baseDir);
-    const resolution = await Effect.runPromise(
-      Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        return yield* makeManagedProviderRuntimeResolution({
+  it.effect("exposes the qualified handoff through the real generic resolution boundary", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-resolution-")),
+      );
+      temporaryRoots.push(baseDir);
+      const runtime = new ManagedProviderRuntime(
+        baseDir,
+        {
+          providerDirectory: "claude",
+          displayName: "Claude",
+        },
+        {
+          download: async ({ destination }) => {
+            await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+            await NodeFSP.writeFile(destination, "downloaded", { flag: "wx" });
+          },
+          verify: async () => undefined,
+          materialize: async ({ destination, executablePath }) => {
+            await NodeFSP.mkdir(destination, { recursive: true });
+            const executable = NodePath.join(destination, executablePath);
+            await NodeFSP.writeFile(executable, "managed", { mode: 0o755 });
+            return executable;
+          },
+          smoke: async () => undefined,
+        },
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const resolve = () =>
+        makeManagedProviderRuntimeResolution({
           configuredBinaryPath: process.execPath,
           defaultBinary: process.execPath,
           providerName: "Claude",
           providerSlug: "claude",
-          runtime: new ManagedProviderRuntime(baseDir, {
-            providerDirectory: "claude",
-            displayName: "Claude",
-          }),
+          runtime,
           artifact: reviewedArtifact,
           targetLabel: "darwin-arm64",
           environment: process.env,
@@ -162,17 +181,45 @@ describe("managed provider runtime policy", () => {
           diagnosticsHomePath: null,
           diagnosticsBackend: "macOS native",
         });
-      }).pipe(Effect.provide(NodeServices.layer)),
-    );
+      const resolution = yield* resolve();
 
-    expect(resolution.summary).toMatchObject({ source: "system", actions: ["install"] });
-    expect(await Effect.runPromise(resolution.actions.plan("install"))).toMatchObject({
-      action: "install",
-      message: expect.stringContaining("system installation"),
-    });
-    expect(resolution.effectiveBinaryPath).toBe(process.execPath);
-    expect(resolution.usesManagedPath).toBe(false);
-  });
+      expect(resolution.summary).toMatchObject({ source: "system", actions: ["install"] });
+      const plan = yield* resolution.actions.plan("install");
+      expect(plan).toMatchObject({
+        action: "install",
+        message: expect.stringContaining("system installation"),
+      });
+      expect(resolution.effectiveBinaryPath).toBe(process.execPath);
+      expect(resolution.usesManagedPath).toBe(false);
+
+      yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
+
+      expect(yield* resolution.actions.getSummary).toMatchObject({
+        source: "scient_managed",
+        actions: ["repair", "remove"],
+        managedVersion: "1.0.0",
+      });
+      expect(yield* Effect.promise(() => runtime.status(reviewedArtifact))).toMatchObject({
+        installed: true,
+        selected: true,
+      });
+      const managedResolution = yield* resolve();
+      expect(managedResolution.effectiveBinaryPath).toBe(runtime.launchPath(reviewedArtifact));
+      expect(managedResolution.usesManagedPath).toBe(true);
+
+      const removePlan = yield* managedResolution.actions.plan("remove");
+      yield* managedResolution.actions.run("remove", removePlan.catalogRevision, () => Effect.void);
+      const restoredResolution = yield* resolve();
+      expect(restoredResolution.summary).toMatchObject({
+        source: "system",
+        actions: ["install"],
+        managedVersion: null,
+      });
+      expect(restoredResolution.effectiveBinaryPath).toBe(process.execPath);
+      expect(restoredResolution.usesManagedPath).toBe(false);
+      yield* Effect.promise(() => NodeFSP.access(process.execPath));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it("keeps a selected but damaged managed runtime repairable and removable", () => {
     expect(

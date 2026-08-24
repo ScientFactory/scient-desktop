@@ -566,10 +566,10 @@ The rules are:
 1. **Capability, not inference.** Show the option only when the server reports `source: "system"`,
    `supportTier: "fully_assisted"`, and `runtime.actions` includes `install`. Do not infer it from the
    driver name or from the mere existence of a managed artifact.
-2. **No automatic generalization.** Codex currently has bespoke, tested source selection and is the
-   only provider that advertises managed installation beside a healthy system runtime. The shared
-   native policy currently does not. Add another provider only after its selection, health, credential,
-   removal, and fallback semantics are proven.
+2. **No automatic generalization.** Codex keeps its bespoke, tested source selection. The shared
+   native policy requires an explicit provider opt-in and never derives permission from artifact
+   existence. Add a provider only after its selection, health, credential, removal, and fallback
+   semantics are proven.
 3. **Custom paths remain authoritative.** An explicitly configured custom executable must not be
    silently replaced by the private runtime. Do not advertise this switch for `source: "custom"`
    without a separate explicit product decision.
@@ -856,6 +856,16 @@ layout foundation.
   blocked; do not infer support from a managed artifact alone. Where qualification succeeds, add the
   explicit server capability and route the compact action to the reviewed plan. Do not advertise it
   for an unproven provider.
+
+Implementation qualification preserves Codex's bespoke capability-health policy and adds an
+explicit opt-in to the shared native policy for Claude, Antigravity, Grok, Droid, and Cursor. The
+shared runtime's atomic state schema v2 distinguishes an installed private copy from an explicitly
+selected private copy. Schema-v1 state remains readable and system-first when a healthy system
+runtime exists, so upgrade alone never changes the active source. Successful verified activation
+writes selection and reloads every provider instance; failure or cancellation does not. Custom paths,
+remote/read-only hosts, unsupported targets, and OpenCode remain outside the capability. The living
+capability audit records the provider-specific account, update, package, fallback, and platform
+evidence and the remaining packaged-app release gates.
 
 This is an intentional, bounded presentation change, not a broad provider-card redesign. Preserve
 provider-specific authentication views and the compact composer fast path. Characterize Codex's

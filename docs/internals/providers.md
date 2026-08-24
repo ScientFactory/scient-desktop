@@ -325,12 +325,31 @@ resolution continue to use the atomically activated executable recorded in the p
 state. An update stages and verifies the reviewed replacement, then switches that state only after
 activation. A failed replacement leaves the previous working managed runtime in place. `Remove`
 deletes only the selected Scient-private provider runtime root. It never changes a custom path,
-system package,
-provider credential home, or provider-owned account data. A user-visible manual rollback action is
-not exposed until two distinct managed releases have each passed the required release proof.
+system package, provider credential home, or provider-owned account data. A user-visible manual
+rollback action is not exposed until two distinct managed releases have each passed the required
+release proof.
 Settings exposes repair and removal for a managed copy. When the canonical provider probe reports
 that an existing managed executable cannot run, the assisted dialog routes directly to runtime
 recovery rather than presenting authentication as the next step.
+
+Managed runtime state schema v2 records explicit user selection beside the activated version in the
+same atomic file. The generic source order is: explicit custom path; explicitly selected managed
+runtime; healthy system runtime; legacy managed runtime when no healthy system runtime exists; then
+missing. Schema-v1 state records activation but no selection, so upgrades preserve the existing
+system-first behavior instead of silently taking over a working installation. The next successful
+install, update, or repair writes v2 only after download, verification, smoke testing, and activation
+have succeeded. Failure or cancellation therefore leaves the active source unchanged.
+
+System-to-managed handoff is an explicit provider capability, not an artifact inference. Codex keeps
+its bespoke capability-health and fallback policy. Claude, Antigravity, Grok, Droid, and Cursor opt
+into the shared policy at their server wrappers after provider-specific account, update, package,
+removal, and platform review. The capability is advertised only for a healthy default system source
+on a writable local desktop target with a fully assisted artifact. Custom paths always remain
+authoritative. Successful activation reloads every instance of that provider; default-runtime
+instances use the selected private copy, while explicit custom-path instances remain unchanged.
+Removal deletes only Scient's private root and re-probes the system runtime. Provider credentials are
+never copied or migrated: both sources continue to use each provider's established account/home
+environment and provider-owned authentication rules.
 
 The app-private store has one owning Scient server process per data directory. The desktop
 single-instance and server lifecycle enforce that deployment invariant; independent server

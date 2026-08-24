@@ -420,6 +420,7 @@ export function ProviderRuntimeSection(props: {
     const downloadSize = formatDownloadSize(plan.downloadBytes);
     const isRemovePlan = plan.action === "remove";
     const isCompactInstallPlan = props.compact && plan.action === "install";
+    const isSystemManagedInstallPlan = isCompactInstallPlan && runtime.source === "system";
     return (
       <div
         className={
@@ -434,16 +435,20 @@ export function ProviderRuntimeSection(props: {
             <p className="text-sm font-medium text-foreground">
               {isRemovePlan
                 ? `Remove ${props.displayName}?`
-                : isCompactInstallPlan
-                  ? `Install ${props.displayName}`
-                  : `Review ${props.displayName} setup`}
+                : isSystemManagedInstallPlan
+                  ? `Use Scient-managed ${props.displayName}?`
+                  : isCompactInstallPlan
+                    ? `Install ${props.displayName}`
+                    : `Review ${props.displayName} setup`}
             </p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
               {isRemovePlan
                 ? `Only Scient’s managed copy will be removed. Your account and other ${props.displayName} installations stay unchanged.`
-                : isCompactInstallPlan
-                  ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
-                  : plan.message}
+                : isSystemManagedInstallPlan
+                  ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}. Accounts using the default installation will use Scient’s private copy; system and custom installations stay unchanged.`
+                  : isCompactInstallPlan
+                    ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
+                    : plan.message}
             </p>
           </div>
         </div>
