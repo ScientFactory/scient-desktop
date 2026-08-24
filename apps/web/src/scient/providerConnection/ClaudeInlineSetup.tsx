@@ -26,6 +26,7 @@ import {
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
@@ -344,7 +345,7 @@ export function ClaudeInlineSetup(props: {
     );
   }
 
-  if (!props.provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const error =
       localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
     const canInstall = runtime?.actions.includes("install") ?? false;

@@ -8,6 +8,7 @@ import {
   isActiveProviderRuntimeOperation,
   isProviderAccountConnected,
   isProviderAccountPresentedAsConnected,
+  isProviderRuntimePresentedAsInstalled,
   isSafeProviderAuthorizationUrl,
   needsManagedRuntimeRecovery,
   preferredProviderConnectionMethod,
@@ -116,6 +117,29 @@ describe("providerConnectionPresentation", () => {
         },
       }).kind,
     ).toBe("setting-up");
+  });
+
+  it("hands a settled managed install to account setup before the next probe catches up", () => {
+    const settledManagedRuntime: ServerProvider = {
+      ...provider,
+      installed: false,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["repair", "remove"],
+          managedVersion: "0.147.0",
+          previousManagedVersion: null,
+          operation: null,
+          message: "Managed Codex is ready.",
+        },
+      },
+    };
+
+    expect(isProviderRuntimePresentedAsInstalled(settledManagedRuntime)).toBe(true);
+    expect(providerConnectionPresentation(settledManagedRuntime).kind).toBe("not-connected");
   });
 
   it("keeps runtime activity separate from the connected account state", () => {

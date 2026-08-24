@@ -8,7 +8,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const controllerFactory = vi.hoisted(() => vi.fn(() => ({ disconnect: vi.fn() })));
+const controller = vi.hoisted(() => ({
+  disconnect: vi.fn(),
+  startConnection: vi.fn(),
+  startRuntime: vi.fn(),
+}));
+const controllerFactory = vi.hoisted(() => vi.fn(() => controller));
+const enableState = vi.hoisted(() => ({
+  access: "granted" as "granted" | "denied" | "pending",
+  canEnable: true,
+  enable: vi.fn<() => Promise<void>>(),
+}));
 
 function inlineSetup(name: string) {
   return (props: {
@@ -27,6 +37,9 @@ function inlineSetup(name: string) {
 
 vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: controllerFactory,
+}));
+vi.mock("./useProviderEnableAction", () => ({
+  useProviderEnableAction: () => enableState,
 }));
 vi.mock("./AntigravityInlineSetup", () => ({
   AntigravityInlineSetup: inlineSetup("Antigravity"),
@@ -63,6 +76,13 @@ function provider(driver: string, displayName: string): ServerProvider {
 describe("AssistedProviderSetupHost", () => {
   beforeEach(() => {
     controllerFactory.mockClear();
+    controller.disconnect.mockReset();
+    controller.startConnection.mockReset();
+    controller.startRuntime.mockReset();
+    enableState.access = "granted";
+    enableState.canEnable = true;
+    enableState.enable.mockReset();
+    enableState.enable.mockResolvedValue();
   });
 
   it.each([
@@ -135,6 +155,44 @@ describe("AssistedProviderSetupHost", () => {
     );
 
     expect(markup).not.toContain("Sign out");
+  });
+
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+  ] as const)("owns the disabled %s state instead of delegating it", (driver, name) => {
+    const markup = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        displayName={name}
+        environmentId={EnvironmentId.make("local")}
+        provider={{ ...provider(driver, name), enabled: false }}
+        surface="composer"
+      />,
+    );
+
+    expect(markup).toContain(`${name} is disabled`);
+    expect(markup).toContain(">Enable<");
+    expect(markup).not.toContain(`${name} setup`);
+  });
+
+  it("explains read-only access without offering a broken enable action", () => {
+    enableState.access = "denied";
+    enableState.canEnable = false;
+    const markup = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        displayName="Droid"
+        environmentId={EnvironmentId.make("remote")}
+        provider={{ ...provider("droid", "Droid"), enabled: false }}
+        surface="composer"
+      />,
+    );
+
+    expect(markup).toContain("can view Droid, but cannot enable it");
+    expect(markup).not.toContain(">Enable<");
   });
 
   it("leaves Antigravity management and unsupported providers to the generic fallback", () => {

@@ -180,12 +180,4 @@ describe("GrokInlineSetup", () => {
     expect(apiKeyMarkup).toContain("Use a Grok subscription");
     expect(apiKeyMarkup).not.toContain("Sign out");
   });
-
-  it("does not offer lifecycle actions while Grok is disabled", () => {
-    const markup = render(provider({ enabled: false, installed: false }));
-
-    expect(markup).toContain("Grok is disabled");
-    expect(markup).not.toContain(">Install<");
-    expect(markup).not.toContain("Sign in with Grok");
-  });
 });

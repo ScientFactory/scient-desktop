@@ -9,6 +9,11 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const repairNotice = vi.hoisted(() => ({ visible: false }));
+const enableState = vi.hoisted(() => ({
+  access: "granted" as const,
+  canEnable: true,
+  enable: vi.fn(async () => undefined),
+}));
 
 vi.mock("../../components/ui/dialog", () => ({
   Dialog: (props: { children?: ReactNode }) => props.children,
@@ -119,6 +124,9 @@ vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({
     disconnect: vi.fn(async () => undefined),
   }),
+}));
+vi.mock("./useProviderEnableAction", () => ({
+  useProviderEnableAction: () => enableState,
 }));
 
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
@@ -241,6 +249,67 @@ describe("ProviderConnectionDialog", () => {
       expect(markup).not.toContain("<footer>");
     },
   );
+
+  it("keeps maintenance and enable available for a disabled managed provider", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Droid"
+        environmentId={EnvironmentId.make("local")}
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("droid"),
+          driver: ProviderDriverKind.make("droid"),
+          displayName: "Droid",
+          enabled: false,
+          installed: false,
+          status: "disabled",
+          auth: { status: "unauthenticated", required: true },
+          connection: {
+            methods: ["droid_device_pairing"],
+            canDisconnect: false,
+            operation: null,
+            runtime: provider.connection!.runtime!,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Compact managed runtime actions");
+    expect(markup).toContain("Droid is disabled");
+    expect(markup).toContain(">Enable<");
+    expect(markup).not.toContain("Droid lifecycle surface");
+  });
+
+  it("reveals sign-in after a managed install settles instead of leaving runtime focus blank", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Grok"
+        environmentId={EnvironmentId.make("local")}
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          displayName: "Grok",
+          installed: false,
+          status: "warning",
+          auth: { status: "unauthenticated", required: true, type: "grok_account" },
+          connection: {
+            methods: ["grok_account"],
+            canDisconnect: false,
+            operation: null,
+            runtime: provider.connection!.runtime!,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Compact managed runtime actions");
+    expect(markup).toContain("Grok lifecycle surface");
+  });
 
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
@@ -479,6 +548,40 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).not.toContain("Shared runtime management");
     expect(markup).toContain("Claude lifecycle surface");
     expect(markup).toContain(">Sign out<");
+  });
+
+  it("presents a qualified system-to-managed action once, outside provider diagnostics", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Codex"
+        environmentId={EnvironmentId.make("local")}
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          displayName: "Codex",
+          status: "warning",
+          auth: { status: "unauthenticated", required: true },
+          connection: {
+            methods: ["codex_browser"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              ...provider.connection!.runtime!,
+              source: "system",
+              actions: ["install"],
+              managedVersion: null,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Compact managed runtime actions");
+    expect(markup).toContain("Shared runtime management");
+    expect(markup).toContain("Codex lifecycle surface");
   });
 
   it.each([

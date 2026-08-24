@@ -21,6 +21,7 @@ import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
   providerAccountIdentity,
   providerLifecycleFailureMessage,
@@ -95,18 +96,6 @@ export function DroidInlineSetup(props: {
       setPendingAction(null);
     }
   };
-
-  if (!props.provider.enabled) {
-    return (
-      <SetupFrame>
-        <AssistedSetupStatus
-          body="Enable Droid in provider settings before installing or connecting it."
-          icon={<ShieldCheckIcon className="size-5 text-primary" />}
-          title="Droid is disabled"
-        />
-      </SetupFrame>
-    );
-  }
 
   const cancelRuntime = async () => {
     if (!activeRuntimeOperation) return;
@@ -207,7 +196,7 @@ export function DroidInlineSetup(props: {
     );
   }
 
-  if (!props.provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     const installationError =
       localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
