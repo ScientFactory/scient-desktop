@@ -163,7 +163,11 @@ interface Harness {
     args: readonly string[];
     options: WhisperSpawnOptions;
   }>;
-  readonly posts: Array<{ url: string; method: string }>;
+  readonly posts: Array<{
+    url: string;
+    method: string;
+    language: FormDataEntryValue | null;
+  }>;
   maxConcurrent: number;
   readonly cleanup: () => Promise<void>;
 }
@@ -189,7 +193,11 @@ async function makeHarness(child: FakeChild = new FakeChild()): Promise<Harness>
     if (method === "OPTIONS") {
       return new Response(null, { status: 200 });
     }
-    posts.push({ url: target, method });
+    posts.push({
+      url: target,
+      method,
+      language: init?.body instanceof FormData ? init.body.get("language") : null,
+    });
     active += 1;
     harness.maxConcurrent = Math.max(harness.maxConcurrent ?? 0, active);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -253,6 +261,18 @@ describe("LocalWhisperRuntime lifecycle", () => {
 
     const endpoint = h.posts[0]?.url ?? "";
     expect(endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/scient-[0-9a-f]{48}\/inference$/u);
+    expect(h.posts[0]?.language).toBe("auto");
+  });
+
+  it("passes an explicit language to Whisper inference", async () => {
+    const h = await harness();
+
+    await h.runtime.transcribe("/model.bin", CLIP, {
+      signal: new AbortController().signal,
+      language: "he",
+    });
+
+    expect(h.posts[0]?.language).toBe("he");
   });
 
   it("accepts an empty transcript as valid no-speech output", async () => {

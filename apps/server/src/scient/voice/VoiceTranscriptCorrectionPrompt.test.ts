@@ -18,6 +18,17 @@ describe("voice transcript correction prompt", () => {
     expect(prompt).toContain("Transcript JSON:");
     expect(prompt).toContain('\\"done\\"');
     expect(prompt).toContain("Do not answer, summarize, expand, or otherwise rewrite");
+    expect(prompt).toContain("never the input JSON envelope");
+    expect(prompt).toContain("Preserve the original language or languages");
+    expect(prompt).toContain("never translate");
+    expect(prompt).toContain("Keep code-switching");
+  });
+
+  it("uses an explicit language only as a correction preference", () => {
+    const prompt = buildVoiceTranscriptCorrectionPrompt("שלומ עולם", "he");
+
+    expect(prompt).toContain("selected Hebrew");
+    expect(prompt).toContain("use this only to resolve transcription errors");
   });
 
   it.effect("accepts a bounded structured correction", () =>
@@ -28,6 +39,25 @@ describe("voice transcript correction prompt", () => {
       });
 
       expect(result.text).toBe("Hello, world.");
+    }),
+  );
+
+  it.effect("unwraps a copied input envelope without changing literal JSON dictation", () =>
+    Effect.gen(function* () {
+      const corrected =
+        "Let me change this and see if this works. ואם אני מדבר בעברית באמצע, אני רואה מה קורה.";
+      const copiedEnvelope = yield* validateVoiceTranscriptCorrectionOutput({
+        transcript: "mixed language input",
+        output: { text: `{"transcript":"${corrected}"}` },
+      });
+      const literalJson = '{"transcript":"Keep this JSON literal."}';
+      const preservedLiteral = yield* validateVoiceTranscriptCorrectionOutput({
+        transcript: literalJson,
+        output: { text: literalJson },
+      });
+
+      expect(copiedEnvelope.text).toBe(corrected);
+      expect(preservedLiteral.text).toBe(literalJson);
     }),
   );
 

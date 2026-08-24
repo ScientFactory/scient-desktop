@@ -86,7 +86,7 @@ export function makeClaudeVoiceTranscriptCorrection(
             }),
             cwd: tempDirectory,
             environment: providerEnvironment,
-            prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript),
+            prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
           });
           const envelope = yield* decodeClaudeOutput(stdout).pipe(
             Effect.mapError(

@@ -32,6 +32,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -64,6 +65,7 @@ export interface ProviderDriverMetadata {
 export interface ProviderVoiceTranscriptCorrection {
   readonly correct: (input: {
     readonly transcript: string;
+    readonly language?: VoiceTranscriptionLanguage;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
 }

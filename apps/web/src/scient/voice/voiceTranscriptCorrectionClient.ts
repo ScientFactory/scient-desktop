@@ -5,6 +5,7 @@ import {
 import {
   type EnvironmentId,
   type ProviderDriverKind,
+  type VoiceTranscriptionLanguage,
   type VoiceTranscriptCorrectionResult,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ export interface VoiceTranscriptCorrectionClient {
   readonly correct: (input: {
     readonly environmentId: EnvironmentId;
     readonly transcript: string;
+    readonly language?: VoiceTranscriptionLanguage;
     readonly signal: AbortSignal;
   }) => Promise<VoiceTranscriptCorrectionResult>;
 }
@@ -33,17 +35,23 @@ export const voiceTranscriptCorrectionCommand = createEnvironmentRpcCommand(conn
 export function makeVoiceTranscriptCorrectionClient<E>(
   run: (target: {
     readonly environmentId: EnvironmentId;
-    readonly input: { readonly transcript: string };
+    readonly input: {
+      readonly transcript: string;
+      readonly language?: VoiceTranscriptionLanguage;
+    };
   }) => Promise<AtomCommandResult<VoiceTranscriptCorrectionResult, E>>,
 ): VoiceTranscriptCorrectionClient {
   return {
-    correct: async ({ environmentId, transcript, signal }) => {
+    correct: async ({ environmentId, transcript, language, signal }) => {
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const result = await new Promise<AtomCommandResult<VoiceTranscriptCorrectionResult, E>>(
         (resolve, reject) => {
           const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
           signal.addEventListener("abort", onAbort, { once: true });
-          void run({ environmentId, input: { transcript } })
+          void run({
+            environmentId,
+            input: { transcript, ...(language ? { language } : {}) },
+          })
             .then(resolve, reject)
             .finally(() => signal.removeEventListener("abort", onAbort));
         },
@@ -60,6 +68,7 @@ export async function correctVoiceTranscript(input: {
   readonly client: VoiceTranscriptCorrectionClient | null;
   readonly environmentId: EnvironmentId | undefined;
   readonly transcript: string;
+  readonly language?: VoiceTranscriptionLanguage;
   readonly signal: AbortSignal;
 }): Promise<VoiceTranscriptCorrectionOutcome> {
   if (!input.enabled || !input.client || !input.environmentId) {
@@ -70,6 +79,7 @@ export async function correctVoiceTranscript(input: {
     const result = await input.client.correct({
       environmentId: input.environmentId,
       transcript: input.transcript,
+      ...(input.language ? { language: input.language } : {}),
       signal: input.signal,
     });
     const text = result.text.trim();

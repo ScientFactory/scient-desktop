@@ -1,5 +1,6 @@
 import {
   isProviderAvailable,
+  type VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
   type VoiceTranscriptCorrectionResult,
 } from "@t3tools/contracts";
@@ -28,6 +29,7 @@ export function makeVoiceTranscriptCorrection(input: {
   return {
     correct: Effect.fn("VoiceTranscriptCorrection.correct")(function* (request: {
       readonly transcript: string;
+      readonly language?: VoiceTranscriptionLanguage;
     }): Effect.fn.Return<VoiceTranscriptCorrectionResult, VoiceTranscriptCorrectionError> {
       const settings = yield* input.serverSettings.getSettings.pipe(
         Effect.mapError(() =>
@@ -66,7 +68,11 @@ export function makeVoiceTranscriptCorrection(input: {
       }
 
       const corrected = yield* correction
-        .correct({ transcript: request.transcript, modelSelection })
+        .correct({
+          transcript: request.transcript,
+          ...(request.language ? { language: request.language } : {}),
+          modelSelection,
+        })
         .pipe(Effect.timeoutOption(timeoutMs));
       if (Option.isNone(corrected)) {
         return yield* failure("timeout", "Transcript correction timed out.");

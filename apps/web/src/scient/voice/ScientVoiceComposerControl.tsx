@@ -179,6 +179,7 @@ export function ScientVoiceComposerControl({
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
+  const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
   const runVoiceTranscriptCorrection = useAtomCommand(voiceTranscriptCorrectionCommand, {
     reportFailure: false,
   });
@@ -190,6 +191,7 @@ export function ScientVoiceComposerControl({
     client,
     correctionClient,
     correctionEnabled,
+    languagePreference,
     ...(environmentId === undefined ? {} : { environmentId }),
     onTranscript,
     ...(onRequestSubmit ? { onRequestSubmit } : {}),

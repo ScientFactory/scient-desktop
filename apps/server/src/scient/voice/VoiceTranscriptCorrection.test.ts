@@ -75,11 +75,12 @@ describe("makeVoiceTranscriptCorrection", () => {
         serverSettings: settings(),
       });
 
-      const result = yield* service.correct({ transcript: "helo world" });
+      const result = yield* service.correct({ transcript: "helo world", language: "en" });
 
       expect(result).toEqual({ text: "Hello, world.", provider: "codex" });
       expect(correct).toHaveBeenCalledWith({
         transcript: "helo world",
+        language: "en",
         modelSelection: expect.objectContaining({ instanceId, model: "gpt-5.6" }),
       });
     }),

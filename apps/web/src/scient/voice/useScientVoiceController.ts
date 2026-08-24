@@ -4,6 +4,8 @@ import type {
   VoiceModelDownloadProgress,
   VoiceModelId,
   VoiceModelsSnapshot,
+  VoiceLanguagePreference,
+  VoiceTranscriptionLanguage,
   VoiceTranscribeRequest,
 } from "@t3tools/contracts";
 
@@ -34,6 +36,7 @@ interface VoiceControllerOptions {
   readonly client: VoiceTranscriptionClient | null;
   readonly correctionClient?: VoiceTranscriptCorrectionClient | null;
   readonly correctionEnabled?: boolean;
+  readonly languagePreference?: VoiceLanguagePreference;
   readonly environmentId?: EnvironmentId;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
@@ -116,6 +119,7 @@ export function useScientVoiceController({
   client,
   correctionClient = null,
   correctionEnabled = false,
+  languagePreference = "auto",
   environmentId,
   onTranscript,
   onRequestSubmit,
@@ -165,10 +169,15 @@ export function useScientVoiceController({
       }
       setErrorMessage(null);
       setPhase("transcribing");
+      const language: VoiceTranscriptionLanguage | undefined =
+        languagePreference === "auto" ? undefined : languagePreference;
       const transcriptionStartedAt = performance.now();
       recordAnalytics({
         name: "voice.transcription.started",
-        properties: { engineClass: "local-whisper", languageMode: "automatic" },
+        properties: {
+          engineClass: "local-whisper",
+          languageMode: language ? "explicit" : "automatic",
+        },
       });
       try {
         const request: VoiceTranscribeRequest = {
@@ -176,6 +185,7 @@ export function useScientVoiceController({
           mimeType: "audio/wav",
           sampleRateHz: clip.sampleRateHz,
           durationMs: clip.durationMs,
+          ...(language ? { language } : {}),
         };
         const transcript = await client.transcribe(request);
         if (operation !== operationRef.current) return;
@@ -220,6 +230,7 @@ export function useScientVoiceController({
           client: correctionClient,
           environmentId,
           transcript: text,
+          ...(language ? { language } : {}),
           signal: abortController.signal,
         });
         if (operation !== operationRef.current) return;
@@ -245,7 +256,15 @@ export function useScientVoiceController({
         });
       }
     },
-    [client, correctionClient, correctionEnabled, environmentId, recordAnalytics, setPhase],
+    [
+      client,
+      correctionClient,
+      correctionEnabled,
+      environmentId,
+      languagePreference,
+      recordAnalytics,
+      setPhase,
+    ],
   );
 
   const useOriginal = useCallback((): void => {

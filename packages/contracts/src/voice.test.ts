@@ -32,6 +32,19 @@ describe("VoiceTranscribeRequest", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts a supported explicit language and rejects arbitrary values", () => {
+    const request = {
+      audioBase64: "AAAA",
+      mimeType: "audio/wav",
+      sampleRateHz: 24_000,
+      durationMs: 1_000,
+      language: "he",
+    } as const;
+    expect(decodeVoiceRequest(request)).toEqual(request);
+    expect(() => decodeVoiceRequest({ ...request, language: "auto" })).toThrow();
+    expect(() => decodeVoiceRequest({ ...request, language: "xx" })).toThrow();
+  });
 });
 
 describe("VoiceTranscriptCorrectionRequest", () => {
@@ -48,5 +61,13 @@ describe("VoiceTranscriptCorrectionRequest", () => {
         transcript: "A".repeat(VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS + 1),
       }),
     ).toThrow();
+  });
+
+  it("accepts only supported explicit language hints", () => {
+    expect(decodeCorrectionRequest({ transcript: "שלום", language: "he" })).toEqual({
+      transcript: "שלום",
+      language: "he",
+    });
+    expect(() => decodeCorrectionRequest({ transcript: "hello", language: "auto" })).toThrow();
   });
 });

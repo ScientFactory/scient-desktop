@@ -20,6 +20,67 @@ export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3
  */
 export const VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS = 20_000;
 
+/** Languages Scient can explicitly pin for local Whisper transcription. */
+export const VOICE_TRANSCRIPTION_LANGUAGE_CODES = [
+  "ar",
+  "de",
+  "el",
+  "en",
+  "es",
+  "fa",
+  "fr",
+  "he",
+  "hi",
+  "id",
+  "it",
+  "ja",
+  "ko",
+  "nl",
+  "pl",
+  "pt",
+  "ro",
+  "ru",
+  "tr",
+  "uk",
+  "vi",
+  "zh",
+] as const;
+export const VoiceTranscriptionLanguage = Schema.Literals(VOICE_TRANSCRIPTION_LANGUAGE_CODES);
+export type VoiceTranscriptionLanguage = typeof VoiceTranscriptionLanguage.Type;
+
+/** Saved preference. `auto` leaves language detection to Whisper. */
+export const VoiceLanguagePreference = Schema.Literals([
+  "auto",
+  ...VOICE_TRANSCRIPTION_LANGUAGE_CODES,
+]);
+export type VoiceLanguagePreference = typeof VoiceLanguagePreference.Type;
+
+export const VOICE_LANGUAGE_NAMES = {
+  auto: "Automatic",
+  ar: "Arabic",
+  de: "German",
+  el: "Greek",
+  en: "English",
+  es: "Spanish",
+  fa: "Persian",
+  fr: "French",
+  he: "Hebrew",
+  hi: "Hindi",
+  id: "Indonesian",
+  it: "Italian",
+  ja: "Japanese",
+  ko: "Korean",
+  nl: "Dutch",
+  pl: "Polish",
+  pt: "Portuguese",
+  ro: "Romanian",
+  ru: "Russian",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  vi: "Vietnamese",
+  zh: "Chinese",
+} as const satisfies Record<VoiceLanguagePreference, string>;
+
 export const VoiceTranscriptCorrectionText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS),
 );
@@ -27,6 +88,7 @@ export type VoiceTranscriptCorrectionText = typeof VoiceTranscriptCorrectionText
 
 export const VoiceTranscriptCorrectionRequest = Schema.Struct({
   transcript: VoiceTranscriptCorrectionText,
+  language: Schema.optionalKey(VoiceTranscriptionLanguage),
 });
 export type VoiceTranscriptCorrectionRequest = typeof VoiceTranscriptCorrectionRequest.Type;
 
@@ -103,7 +165,7 @@ export const VoiceTranscribeRequest = Schema.Struct({
   mimeType: VoiceAudioMimeType,
   sampleRateHz: NonNegativeInt,
   durationMs: NonNegativeInt,
-  language: Schema.optionalKey(TrimmedNonEmptyString),
+  language: Schema.optionalKey(VoiceTranscriptionLanguage),
 });
 export type VoiceTranscribeRequest = typeof VoiceTranscribeRequest.Type;
 

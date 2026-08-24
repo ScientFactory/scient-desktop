@@ -60,7 +60,7 @@ export function makeAntigravityVoiceTranscriptCorrection(
           const toolAttempted = yield* Ref.make(false);
           const result = yield* session
             .prompt({
-              text: buildVoiceTranscriptCorrectionPrompt(input.transcript),
+              text: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
               onEvent: (event) =>
                 event._tag === "ToolCall"
                   ? Ref.set(toolAttempted, true).pipe(Effect.andThen(session.cancel))

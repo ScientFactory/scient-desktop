@@ -1,7 +1,21 @@
-import { CheckIcon, DownloadIcon, Mic2Icon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  Mic2Icon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { VoiceModelId, VoiceModelSummary, VoiceModelsSnapshot } from "@t3tools/contracts";
+import {
+  VOICE_LANGUAGE_NAMES,
+  type VoiceLanguagePreference,
+  type VoiceModelId,
+  type VoiceModelSummary,
+  type VoiceModelsSnapshot,
+} from "@t3tools/contracts";
 
 import { describeVoiceError } from "../../scient/voice/voiceErrorPresentation";
 import { getVoiceBridge } from "../../scient/voice/voiceClient";
@@ -15,16 +29,148 @@ import {
 } from "../ui/popover";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import {
-  useClientSettings,
-  usePrimarySettings,
-  useUpdateClientSettings,
-} from "../../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 function formatBytes(bytes: number): string {
   const mib = bytes / 1024 / 1024;
   return `~${Math.round(mib)} MiB`;
+}
+
+const PRIMARY_VOICE_LANGUAGES = [
+  "auto",
+  "en",
+  "he",
+] as const satisfies ReadonlyArray<VoiceLanguagePreference>;
+const MORE_VOICE_LANGUAGES = [
+  "ar",
+  "zh",
+  "fr",
+  "de",
+  "it",
+  "ja",
+  "ko",
+  "pt",
+  "ru",
+  "es",
+] as const satisfies ReadonlyArray<VoiceLanguagePreference>;
+
+function isPrimaryVoiceLanguage(language: VoiceLanguagePreference): boolean {
+  return language === "auto" || language === "en" || language === "he";
+}
+
+function VoiceLanguagePicker({
+  value,
+  onChange,
+}: {
+  readonly value: VoiceLanguagePreference;
+  readonly onChange: (language: VoiceLanguagePreference) => void;
+}): ReactNode {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [moreLanguagesOpen, setMoreLanguagesOpen] = useState(!isPrimaryVoiceLanguage(value));
+
+  const selectLanguage = (language: VoiceLanguagePreference): void => {
+    onChange(language);
+    setPickerOpen(false);
+    if (isPrimaryVoiceLanguage(language)) setMoreLanguagesOpen(false);
+  };
+
+  return (
+    <div className="relative border-border/60 border-t pt-3 md:border-t-0 md:pl-8 md:pt-1 md:before:absolute md:before:top-1 md:before:left-0 md:before:h-10 md:before:w-px md:before:bg-border/60">
+      <div className="flex items-center gap-1">
+        <h3 className="font-medium text-sm">Language</h3>
+        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                aria-label="Choose voice language"
+                className="relative top-0.5 h-6 gap-1 px-1.5"
+                size="xs"
+                variant="ghost-muted"
+              />
+            }
+          >
+            {VOICE_LANGUAGE_NAMES[value]}
+            <ChevronDownIcon className="size-3.5 stroke-[2.5] opacity-70" />
+          </PopoverTrigger>
+          <PopoverPopup
+            align="start"
+            className="w-56 max-w-[calc(100vw-1rem)]"
+            side="bottom"
+            sideOffset={4}
+            viewportClassName="p-1"
+          >
+            <div className="space-y-0.5">
+              {PRIMARY_VOICE_LANGUAGES.map((language) => {
+                const selected = value === language;
+                return (
+                  <Button
+                    key={language}
+                    aria-pressed={selected}
+                    className={
+                      selected
+                        ? "h-auto w-full justify-start bg-accent/60 px-2 py-1.5 text-foreground hover:bg-accent"
+                        : "h-auto w-full justify-start px-2 py-1.5 hover:bg-accent hover:text-foreground"
+                    }
+                    onClick={() => selectLanguage(language)}
+                    variant="ghost-muted"
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span>{VOICE_LANGUAGE_NAMES[language]}</span>
+                      {language === "auto" ? (
+                        <Badge size="sm" variant="info">
+                          Recommended
+                        </Badge>
+                      ) : null}
+                    </span>
+                    {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                  </Button>
+                );
+              })}
+              <div className="mt-1 border-border/60 border-t pt-1">
+                <Button
+                  aria-expanded={moreLanguagesOpen}
+                  className="w-full justify-start px-2 hover:bg-accent hover:text-foreground"
+                  onClick={() => setMoreLanguagesOpen((open) => !open)}
+                  size="xs"
+                  variant="ghost-muted"
+                >
+                  <span className="flex-1 text-left">More languages</span>
+                  <ChevronRightIcon
+                    className={`size-3.5 stroke-[2.5] transition-transform ${moreLanguagesOpen ? "rotate-90" : ""}`}
+                  />
+                </Button>
+                {moreLanguagesOpen ? (
+                  <div className="mt-0.5 space-y-0.5">
+                    {MORE_VOICE_LANGUAGES.map((language) => {
+                      const selected = value === language;
+                      return (
+                        <Button
+                          key={language}
+                          aria-pressed={selected}
+                          className={
+                            selected
+                              ? "w-full justify-start bg-accent/60 px-2 text-foreground hover:bg-accent"
+                              : "w-full justify-start px-2 hover:bg-accent hover:text-foreground"
+                          }
+                          onClick={() => selectLanguage(language)}
+                          size="xs"
+                          variant="ghost-muted"
+                        >
+                          <span className="flex-1 text-left">{VOICE_LANGUAGE_NAMES[language]}</span>
+                          {selected ? <CheckIcon className="stroke-[2.5]" /> : null}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </PopoverPopup>
+        </Popover>
+      </div>
+    </div>
+  );
 }
 
 export function voiceModelProgressPercent(model: VoiceModelSummary): number {
@@ -236,9 +382,7 @@ export function VoiceSettingsPanel(): ReactNode {
   const correctionEnabled = useClientSettings(
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
-  const selectedTextModel = usePrimarySettings(
-    (settings) => settings.textGenerationModelSelection.model,
-  );
+  const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
   const updateClientSettings = useUpdateClientSettings();
   const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
@@ -380,35 +524,43 @@ export function VoiceSettingsPanel(): ReactNode {
     <SettingsPageContainer>
       <SettingsSection title="Voice" icon={<Mic2Icon className="size-4 text-muted-foreground" />}>
         <div className="space-y-3 px-3 sm:px-4">
-          <div className="flex items-center justify-between gap-4 py-1">
-            <div className="min-w-0">
-              <h3 className="font-medium text-sm">Correct transcripts with AI</h3>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                <span>Fix spelling and punctuation. May add a few seconds.</span>
-                <span className="text-muted-foreground">{selectedTextModel}</span>
+          <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
+            <div className="flex items-start justify-between gap-4 py-1 md:pr-8">
+              <div className="min-w-0">
+                <h3 className="font-medium text-sm">Correct transcripts with an LLM</h3>
+                <p className="text-xs text-muted-foreground">
+                  Fix spelling and punctuation. Significantly slower.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
                 <Button
-                  className="h-auto px-1 py-0"
+                  className="h-6 px-1.5"
                   render={<Link hash="text-generation-model" to="/settings/general" />}
-                  size="micro"
+                  size="sm"
                   variant="ghost-muted"
                 >
                   Manage
                 </Button>
+                <Switch
+                  aria-label="Correct voice transcripts with an LLM"
+                  checked={correctionEnabled}
+                  onCheckedChange={(checked) =>
+                    updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
+                  }
+                />
               </div>
             </div>
-            <Switch
-              aria-label="Correct voice transcripts with AI"
-              checked={correctionEnabled}
-              onCheckedChange={(checked) =>
-                updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
-              }
+            <VoiceLanguagePicker
+              value={languagePreference}
+              onChange={(language) => updateClientSettings({ voiceLanguagePreference: language })}
             />
           </div>
-          <p className="text-sm text-muted-foreground">
-            Voice transcription runs locally on this computer. Larger models can improve accuracy,
-            but use more memory, storage, and processing power. Scient marks the best fit for this
-            computer.
-          </p>
+          <div className="border-border/60 border-t pt-3">
+            <h3 className="font-medium text-sm">Voice model</h3>
+            <p className="text-muted-foreground text-xs">
+              Choose the balance of speed and accuracy for this computer.
+            </p>
+          </div>
           {!snapshot ? (
             <p className="text-sm text-muted-foreground">Loading voice models…</p>
           ) : null}

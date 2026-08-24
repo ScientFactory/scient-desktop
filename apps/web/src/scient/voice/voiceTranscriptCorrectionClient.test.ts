@@ -73,10 +73,14 @@ describe("makeVoiceTranscriptCorrectionClient", () => {
       client.correct({
         environmentId,
         transcript: "helo",
+        language: "en",
         signal: new AbortController().signal,
       }),
     ).resolves.toEqual({ text: "Hello.", provider: "claude" });
-    expect(run).toHaveBeenCalledWith({ environmentId, input: { transcript: "helo" } });
+    expect(run).toHaveBeenCalledWith({
+      environmentId,
+      input: { transcript: "helo", language: "en" },
+    });
   });
 
   it("lets Use original stop waiting without waiting for the RPC", async () => {

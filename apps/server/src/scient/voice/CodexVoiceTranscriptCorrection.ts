@@ -108,7 +108,7 @@ export function makeCodexVoiceTranscriptCorrection(
             }),
             cwd: tempDirectory,
             environment: providerEnvironment,
-            prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript),
+            prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
           });
 
           const outputInfo = yield* fileSystem.stat(outputPath).pipe(
