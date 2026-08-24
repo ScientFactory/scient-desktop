@@ -8,6 +8,11 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import {
+  resolveDevelopmentAppDisplayName as resolveDevAppDisplayName,
+  SCIENT_DEV_APP_ENV_FILE_ENV,
+  SCIENT_DEV_APP_PID_FILE_ENV,
+} from "./dev-app-process.mjs";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -17,15 +22,15 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export function resolveDevelopmentAppDisplayName(environment = process.env) {
-  return environment.SCIENT_DEV_APP_ROLE === "stable" ? "Scient (Dev) Stable" : "Scient (Dev)";
+export function resolveDevelopmentAppDisplayName(environment = process.env, root = repoRoot) {
+  return resolveDevAppDisplayName(environment, root);
 }
 export const APP_DISPLAY_NAME = isDevelopment ? resolveDevelopmentAppDisplayName() : "Scient";
 export const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 15;
+const LAUNCHER_VERSION = 18;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -129,14 +134,90 @@ export function makeDevelopmentLauncherScript({
     '  launcher_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
     '  exec "$launcher_dir/../Resources/run-scient-next-dev.command"',
     "fi",
+    `if [ -n "\${${SCIENT_DEV_APP_ENV_FILE_ENV}:-}" ]; then`,
+    `  if [ ! -f "\$${SCIENT_DEV_APP_ENV_FILE_ENV}" ]; then`,
+    `    echo "Missing development environment file: \$${SCIENT_DEV_APP_ENV_FILE_ENV}" >&2`,
+    "    exit 78",
+    "  fi",
+    `  . "\$${SCIENT_DEV_APP_ENV_FILE_ENV}"`,
+    `  rm -f "\$${SCIENT_DEV_APP_ENV_FILE_ENV}"`,
+    `  unset ${SCIENT_DEV_APP_ENV_FILE_ENV}`,
+    "fi",
     ...envEntries.map(([name, value]) =>
       name === "SCIENT_NEXT_SAFETY_ENVELOPE"
         ? `export ${name}=${shellSingleQuote(value)}`
         : `if [ -z "\${${name}:-}" ]; then export ${name}=${shellSingleQuote(value)}; fi`,
     ),
+    `if [ -n "\${${SCIENT_DEV_APP_PID_FILE_ENV}:-}" ]; then`,
+    "  umask 077",
+    `  dev_pid_file_tmp="\$${SCIENT_DEV_APP_PID_FILE_ENV}.tmp.$$"`,
+    '  printf "%s\\n" "$$" > "$dev_pid_file_tmp"',
+    `  mv -f "$dev_pid_file_tmp" "\$${SCIENT_DEV_APP_PID_FILE_ENV}"`,
+    "fi",
     `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopRoot)} ${shellSingleQuote(mainEntryPath)} "$@"`,
     "",
   ].join("\n");
+}
+
+export function resolveDevelopmentCodeSigningIdentity({
+  environment = process.env,
+  spawnSync = NodeChildProcess.spawnSync,
+} = {}) {
+  const configured = environment.SCIENT_DEV_CODESIGN_IDENTITY?.trim();
+  if (configured) return configured;
+
+  const result = spawnSync("security", ["find-identity", "-v", "-p", "codesigning"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) return "-";
+  for (const line of result.stdout.split(/\r?\n/u)) {
+    const match = line.match(/^\s*\d+\)\s+([A-F0-9]{40})\s+"Apple Development:/u);
+    if (match?.[1]) return match[1];
+  }
+  return "-";
+}
+
+export function makeDevelopmentCodeSigningCommand({ appBundlePath, identity, signerScriptPath }) {
+  return {
+    command: process.execPath,
+    args: [signerScriptPath, appBundlePath, identity],
+  };
+}
+
+function hasValidDevelopmentCodeIdentity(appBundlePath) {
+  const verification = NodeChildProcess.spawnSync(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", appBundlePath],
+    { encoding: "utf8" },
+  );
+  if (verification.status !== 0) return false;
+
+  const requirement = NodeChildProcess.spawnSync(
+    "/usr/bin/codesign",
+    ["--display", "--requirements", "-", appBundlePath],
+    { encoding: "utf8" },
+  );
+  return (
+    requirement.status === 0 &&
+    `${requirement.stdout}${requirement.stderr}`.includes(`identifier "${APP_BUNDLE_ID}"`)
+  );
+}
+
+function signDevelopmentAppBundle(appBundlePath, identity) {
+  if (identity === "-") {
+    console.warn(
+      "[desktop-launcher] No Apple Development signing identity is available. The app will run with an ad hoc identity, so macOS may ask for microphone access again after the bundle changes.",
+    );
+  }
+  const signing = makeDevelopmentCodeSigningCommand({
+    appBundlePath,
+    identity,
+    signerScriptPath: NodePath.join(__dirname, "sign-development-app.mjs"),
+  });
+  runChecked(signing.command, signing.args);
+  if (!hasValidDevelopmentCodeIdentity(appBundlePath)) {
+    throw new Error(`Failed to establish a valid development identity for ${appBundlePath}.`);
+  }
 }
 
 export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
@@ -149,8 +230,8 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
   const nodeBinDir = NodePath.dirname(process.execPath);
   const pnpmExecPath = environment.npm_execpath?.trim();
   const localDevInvocation = pnpmExecPath
-    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app`
-    : "pnpm dev:app";
+    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app:start`
+    : "pnpm dev:app:start";
   const roleExport = environment.SCIENT_DEV_APP_ROLE
     ? `export SCIENT_DEV_APP_ROLE=${shellSingleQuote(environment.SCIENT_DEV_APP_ROLE)}`
     : "";
@@ -355,6 +436,7 @@ function buildMacLauncher(electronBinaryPath) {
     : runtimeElectronBinaryPath;
   const iconPath = ensureMacIconIcns(runtimeDir);
   const metadataPath = NodePath.join(runtimeDir, "metadata.json");
+  const signingIdentity = isDevelopment ? resolveDevelopmentCodeSigningIdentity() : undefined;
 
   NodeFS.mkdirSync(runtimeDir, { recursive: true });
 
@@ -365,6 +447,7 @@ function buildMacLauncher(electronBinaryPath) {
     iconMtimeMs: NodeFS.statSync(iconPath).mtimeMs,
     appBundleId: APP_BUNDLE_ID,
     appProtocolSchemes: APP_PROTOCOL_SCHEMES,
+    signingIdentity,
   };
 
   const currentMetadata = readJson(metadataPath);
@@ -372,15 +455,9 @@ function buildMacLauncher(electronBinaryPath) {
     NodeFS.existsSync(launcherBinaryPath) &&
     (!isDevelopment || NodeFS.existsSync(runtimeElectronBinaryPath)) &&
     currentMetadata &&
-    JSON.stringify(currentMetadata) === JSON.stringify(expectedMetadata)
+    JSON.stringify(currentMetadata) === JSON.stringify(expectedMetadata) &&
+    (!isDevelopment || hasValidDevelopmentCodeIdentity(targetAppBundlePath))
   ) {
-    if (isDevelopment) {
-      // The launcher also handles protocol activations outside the dev runner,
-      // so refresh its fallback environment on every launch. Never let a value
-      // captured by an older parent app override the live dev-runner environment.
-      writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
-    }
-    registerMacLauncherBundle(targetAppBundlePath);
     return launcherBinaryPath;
   }
 
@@ -406,6 +483,7 @@ function buildMacLauncher(electronBinaryPath) {
     // Its conventional executable name also keeps Electron's default-app runtime
     // in development mode instead of making app.isPackaged report true.
     writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
+    signDevelopmentAppBundle(targetAppBundlePath, signingIdentity ?? "-");
   }
   NodeFS.writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
   registerMacLauncherBundle(targetAppBundlePath);
