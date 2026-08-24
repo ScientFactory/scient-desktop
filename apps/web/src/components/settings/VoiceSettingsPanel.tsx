@@ -36,6 +36,13 @@ export function findVoiceReplacementModel(
   );
 }
 
+export function shouldSelectVoiceModelAfterDownload(
+  selectedModelId: VoiceModelId | null,
+  downloadedModelId: VoiceModelId,
+): boolean {
+  return selectedModelId === null || selectedModelId === downloadedModelId;
+}
+
 interface VoiceModelCardProps {
   readonly model: VoiceModelSummary;
   readonly runtimeAvailable: boolean;
@@ -45,7 +52,7 @@ interface VoiceModelCardProps {
   readonly activeDownload: boolean;
   readonly queuedDownload: boolean;
   readonly downloadBlocked: boolean;
-  readonly onDownload: (modelId: VoiceModelId, selectOnSuccess: boolean) => void;
+  readonly onDownload: (modelId: VoiceModelId) => void;
   readonly onCancel: (modelId: VoiceModelId) => void;
   readonly onCancelQueued: () => void;
   readonly onSelect: (modelId: VoiceModelId) => void;
@@ -153,7 +160,7 @@ function VoiceModelCard({
           <Button
             size="xs"
             disabled={downloadBlocked || !runtimeAvailable}
-            onClick={() => onDownload(model.id, selected || recommended)}
+            onClick={() => onDownload(model.id)}
           >
             {state.state === "error" ? <RefreshCwIcon /> : <DownloadIcon />}
             {state.state === "error"
@@ -354,7 +361,12 @@ export function VoiceSettingsPanel(): ReactNode {
                   (busyModelId !== null && observedActiveDownloadModelId === null) ||
                   (queuedDownload !== null && queuedDownload.modelId !== model.id)
                 }
-                onDownload={handleDownload}
+                onDownload={(modelId) =>
+                  handleDownload(
+                    modelId,
+                    shouldSelectVoiceModelAfterDownload(snapshot.selectedModelId, modelId),
+                  )
+                }
                 onCancel={handleCancel}
                 onCancelQueued={() => setQueuedDownload(null)}
                 onSelect={handleSelect}

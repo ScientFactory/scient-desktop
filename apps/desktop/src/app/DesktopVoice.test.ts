@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import type { VoiceModelId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import type {
   TranscriptionEngine,
@@ -13,6 +15,7 @@ import {
   makeWithDependencies,
   projectVoiceModelState,
   recommendVoiceModel,
+  resolveVoiceModelFreeBytes,
   toVoiceModelRequestError,
   type DesktopVoiceDependencies,
   type DesktopVoiceService,
@@ -244,6 +247,21 @@ describe("recommendVoiceModel", () => {
   });
 });
 
+describe("resolveVoiceModelFreeBytes", () => {
+  it.effect("uses the nearest existing ancestor for a clean model directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-voice-storage-" });
+      const freeBytes = yield* Effect.promise(() =>
+        resolveVoiceModelFreeBytes(path.join(root, "voice", "models", "not-created-yet")),
+      );
+      expect(Number.isFinite(freeBytes)).toBe(true);
+      expect(freeBytes).toBeGreaterThan(0);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
 describe("DesktopVoice model lifecycle", () => {
   it.effect("downloads, selects, and removes models with a verified fallback", () => {
     const harness = makeFakeEngine();
@@ -353,6 +371,20 @@ describe("DesktopVoice model lifecycle", () => {
         const error = yield* voice.downloadModel({ modelId: SMALL_MODEL_ID }).pipe(Effect.flip);
         expect(error).toMatchObject({ kind: "insufficient-storage" });
         expect(harness.ensureModel).not.toHaveBeenCalled();
+      }),
+    );
+  });
+
+  it.effect("accounts for resumable partial data in the storage preflight", () => {
+    const partialBytes = 150 * 1024 * 1024;
+    const harness = makeFakeEngine({
+      states: { [SMALL_MODEL_ID]: { state: "missing", partialBytes } },
+    });
+    return withVoice(dependencies(harness, 560 * 1024 * 1024), (voice) =>
+      Effect.gen(function* () {
+        const snapshot = yield* voice.downloadModel({ modelId: SMALL_MODEL_ID });
+        expect(snapshot.selectedModelId).toBe(SMALL_MODEL_ID);
+        expect(harness.ensureModel).toHaveBeenCalledWith(SMALL_MODEL_ID, expect.any(AbortSignal));
       }),
     );
   });

@@ -1,7 +1,11 @@
 import type { VoiceModelSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { findVoiceReplacementModel, voiceModelProgressPercent } from "./VoiceSettingsPanel.tsx";
+import {
+  findVoiceReplacementModel,
+  shouldSelectVoiceModelAfterDownload,
+  voiceModelProgressPercent,
+} from "./VoiceSettingsPanel.tsx";
 
 const small: VoiceModelSummary = {
   id: "whisper-small-multilingual-q5_1",
@@ -39,5 +43,11 @@ describe("VoiceSettingsPanel model state", () => {
   it("selects only another ready model as the removal fallback", () => {
     expect(findVoiceReplacementModel([small, medium], medium.id)?.id).toBe(small.id);
     expect(findVoiceReplacementModel([small, medium], small.id)).toBeNull();
+  });
+
+  it("does not silently replace an existing selection after a download", () => {
+    expect(shouldSelectVoiceModelAfterDownload(null, medium.id)).toBe(true);
+    expect(shouldSelectVoiceModelAfterDownload(small.id, small.id)).toBe(true);
+    expect(shouldSelectVoiceModelAfterDownload(small.id, medium.id)).toBe(false);
   });
 });

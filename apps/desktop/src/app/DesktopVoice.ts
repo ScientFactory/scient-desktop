@@ -156,15 +156,19 @@ export function projectVoiceModelState(state: CoreVoiceModelState): VoiceModelSt
   }
 }
 
-async function resolveFreeBytes(path: string): Promise<number> {
-  for (const candidate of [path, NodePath.dirname(path)]) {
+export async function resolveVoiceModelFreeBytes(path: string): Promise<number> {
+  let candidate = path;
+  for (;;) {
     try {
       const stats = await NodeFSP.statfs(candidate);
       return Number(stats.bavail) * Number(stats.bsize);
     } catch {
-      // The model directory may not exist on a first install; its parent is
-      // the same filesystem and is sufficient for a conservative preflight.
+      // A clean install may not have created any of the voice directories yet.
+      // Walk to the nearest existing ancestor on the same filesystem.
     }
+    const parent = NodePath.dirname(candidate);
+    if (parent === candidate) break;
+    candidate = parent;
   }
   return Number.POSITIVE_INFINITY;
 }
@@ -210,7 +214,7 @@ export interface DesktopVoiceDependencies {
 
 const defaultDependencies: DesktopVoiceDependencies = {
   createEngine: createLocalWhisperEngine,
-  resolveFreeBytes,
+  resolveFreeBytes: resolveVoiceModelFreeBytes,
   readDeviceCapacity: () => ({
     availableParallelism: NodeOS.availableParallelism(),
     totalMemoryBytes: NodeOS.totalmem(),
@@ -383,7 +387,11 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
                 try: () => dependencies.resolveFreeBytes(modelDir),
                 catch: (cause) => toVoiceRequestError(cause, "download"),
               });
-              const requiredBytes = definition.byteSize + 512 * 1024 * 1024;
+              const partialBytes =
+                currentState.state === "missing"
+                  ? Math.min(currentState.partialBytes ?? 0, definition.byteSize)
+                  : 0;
+              const requiredBytes = definition.byteSize - partialBytes + 512 * 1024 * 1024;
               if (Number.isFinite(freeBytes) && freeBytes < requiredBytes) {
                 return yield* new VoiceRequestError({
                   kind: "insufficient-storage",
