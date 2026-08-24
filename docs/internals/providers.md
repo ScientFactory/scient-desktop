@@ -166,6 +166,11 @@ result: the process is going away, and the next server derives provider truth ag
 and managed-runtime state. Repeated cleanup is harmless because only the first atomic claim receives
 the active operation.
 
+Reservation acquisition through detached-supervisor handoff is also one cleanup boundary. If the
+initiating request is interrupted before handoff, Scient releases the reservation and owned resources;
+an operation that was already published becomes `cancelled`, while an interruption before publication
+leaves no synthetic operation behind.
+
 Explicit connection cancellation uses that same cleanup path. An unresponsive provider can delay it
 for up to the configured provider-cancel bound (currently five seconds) before Scient interrupts its
 supervisor and continues resource cleanup; cancelled state is published after that cleanup. Final

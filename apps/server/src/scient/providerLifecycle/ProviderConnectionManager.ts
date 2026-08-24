@@ -305,18 +305,18 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       });
     }
 
-    yield* providerRegistry.setProviderConnectionOperation({
-      instanceId: input.instanceId,
-      operation: operation({
-        operationId,
-        method: input.method,
-        status: "starting",
-        startedAt,
-        message: "Starting secure provider sign in.",
-      }),
-    });
-
     return yield* Effect.gen(function* () {
+      yield* providerRegistry.setProviderConnectionOperation({
+        instanceId: input.instanceId,
+        operation: operation({
+          operationId,
+          method: input.method,
+          status: "starting",
+          startedAt,
+          message: "Starting secure provider sign in.",
+        }),
+      });
+
       const attemptResult = yield* actions.start(input.method).pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.result,
@@ -499,13 +499,15 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
 
       return { providers: waitingProviders };
     }).pipe(
-      Effect.onInterrupt(() =>
-        cleanupInterruptedStart({
-          instanceId: input.instanceId,
-          operationId,
-          method: input.method,
-          startedAt,
-        }),
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : cleanupInterruptedStart({
+              instanceId: input.instanceId,
+              operationId,
+              method: input.method,
+              startedAt,
+            }),
       ),
     );
   });

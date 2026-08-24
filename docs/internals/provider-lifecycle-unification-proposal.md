@@ -674,6 +674,8 @@ Land the manager-lifetime production change after PR 1A establishes the behavior
   no parallel layer abstraction is needed.)
 - Give each active operation one cleanup path that owns interruption, scope closure, and reservation
   release.
+- Treat reservation acquisition through detached-supervisor handoff as one cleanup boundary, so an
+  interrupted initiating request cannot strand an invisible operation or block the next attempt.
 - Bound provider-owned cancellation so an unresponsive provider command or RPC cannot indefinitely
   stall either explicit user cancellation or layer teardown. Scient currently waits up to five
   seconds for that provider-owned step before interrupting the supervisor and continuing cleanup;
