@@ -12,7 +12,7 @@ The \`preview_*\` tools control Scient's browser shared with the user. Prefer th
 
 /** Included only when exact app-resolved skill releases are active. */
 export const SCIENT_SKILLS_AWARENESS = `## Scient skills
-Scient has selected exact reusable skills for this session. Use \`scient_skills_list\` to inspect them. Load a skill named by the user as \`$name\`; you may choose an automatic skill only when the request clearly matches its description. Load it before following it. Skills never grant tools, credentials, or permissions.`;
+Scient has selected exact reusable skills for this session. Use \`scient_skills_list\` to inspect them. Load a skill named by the user as \`$name\`; choose an automatic skill only when the request clearly matches its description. Load it before following it. Skills never grant tools, credentials, or permissions.`;
 
 /** Compose only the blocks supported by this exact provider session. */
 export function buildScientAwareness(capabilities?: ReadonlySet<McpCapability>): string {
