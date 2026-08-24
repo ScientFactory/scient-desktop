@@ -9,10 +9,20 @@ import {
 } from "./modelManifest.ts";
 
 describe("voice model manifest", () => {
-  it("ships exactly one pinned model as the default", () => {
-    expect(VOICE_MODEL_DEFINITIONS).toHaveLength(1);
+  it("ships the pinned Small and Medium models with Small as the default", () => {
+    expect(VOICE_MODEL_DEFINITIONS).toHaveLength(2);
     expect(DEFAULT_VOICE_MODEL_ID).toBe("whisper-small-multilingual-q5_1");
     expect(VOICE_MODEL_DEFINITIONS[0]?.id).toBe(DEFAULT_VOICE_MODEL_ID);
+    expect(VOICE_MODEL_DEFINITIONS[1]?.id).toBe("whisper-medium-multilingual-q5_0");
+  });
+
+  it("pins the Multilingual Medium artifact", () => {
+    const model = requireVoiceModelDefinition("whisper-medium-multilingual-q5_0");
+    expect(model.fileName).toBe("ggml-medium-q5_0-19fea4b3.bin");
+    expect(model.displayName).toBe("Multilingual Medium");
+    expect(model.byteSize).toBe(539_212_467);
+    expect(model.sha256).toBe("19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f");
+    expect(model.sourceRevision).toBe("5359861c739e955e79d9a303bcbc70fb988958b1");
   });
 
   it("pins the verified provenance copied from upstream", () => {

@@ -3,6 +3,8 @@ import {
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
+  VoiceModelId as VoiceModelIdSchema,
+  type VoiceModelId,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
@@ -40,6 +42,7 @@ export interface DesktopSettings {
   // value are migrated to `wslBackendEnabled: true` on load.
   readonly wslBackendEnabled: boolean;
   readonly wslDistro: string | null;
+  readonly voiceSelectedModelId: VoiceModelId | null;
   // When true (and wslBackendEnabled is also true) the desktop runs only
   // the WSL backend as the primary, and the Windows-side Node backend is
   // not started. Designed for users who develop entirely inside WSL and
@@ -83,6 +86,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   updateChannelConfiguredByUser: false,
   wslBackendEnabled: false,
   wslDistro: null,
+  voiceSelectedModelId: null,
   wslOnly: false,
 };
 
@@ -108,6 +112,7 @@ const DesktopSettingsDocument = Schema.Struct({
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  voiceSelectedModelId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
 });
 
@@ -117,6 +122,7 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 const DesktopSettingsJson = fromLenientJson(DesktopSettingsDocument);
 const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
+const isVoiceModelId = Schema.is(VoiceModelIdSchema);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
 
@@ -171,6 +177,9 @@ export class DesktopAppSettings extends Context.Service<
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslDistro: (
       distro: string | null,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setVoiceSelectedModelId: (
+      modelId: VoiceModelId | null,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslOnly: (
       enabled: boolean,
@@ -237,6 +246,9 @@ function normalizeDesktopSettingsDocument(
     updateChannelConfiguredByUser,
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
+    voiceSelectedModelId: isVoiceModelId(parsed.voiceSelectedModelId)
+      ? parsed.voiceSelectedModelId
+      : null,
     wslOnly: parsed.wslOnly === true,
   };
 }
@@ -276,6 +288,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.wslDistro !== defaults.wslDistro) {
     document.wslDistro = settings.wslDistro;
+  }
+  if (settings.voiceSelectedModelId !== defaults.voiceSelectedModelId) {
+    document.voiceSelectedModelId = settings.voiceSelectedModelId;
   }
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
@@ -358,6 +373,18 @@ function setWslDistro(settings: DesktopSettings, distro: string | null): Desktop
     : {
         ...settings,
         wslDistro: normalized,
+      };
+}
+
+function setVoiceSelectedModelId(
+  settings: DesktopSettings,
+  modelId: VoiceModelId | null,
+): DesktopSettings {
+  return settings.voiceSelectedModelId === modelId
+    ? settings
+    : {
+        ...settings,
+        voiceSelectedModelId: modelId,
       };
 }
 
@@ -540,6 +567,12 @@ export const make = Effect.gen(function* () {
           attributes: { distro: distro ?? null },
         }),
       ),
+    setVoiceSelectedModelId: (modelId) =>
+      persist((settings) => setVoiceSelectedModelId(settings, modelId)).pipe(
+        Effect.withSpan("desktop.settings.setVoiceSelectedModelId", {
+          attributes: { modelId: modelId ?? null },
+        }),
+      ),
     setWslOnly: (enabled) =>
       persist((settings) => setWslOnly(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
@@ -584,6 +617,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslBackendEnabled: (enabled) =>
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
+        setVoiceSelectedModelId: (modelId) =>
+          update((settings) => setVoiceSelectedModelId(settings, modelId)),
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),

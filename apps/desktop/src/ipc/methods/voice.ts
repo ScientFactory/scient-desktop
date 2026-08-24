@@ -1,4 +1,11 @@
-import { VoiceModelState, VoiceTranscribeRequest, VoiceTranscript } from "@t3tools/contracts";
+import {
+  VoiceModelDownloadRequest,
+  VoiceModelOperationRequest,
+  VoiceModelRemoveRequest,
+  VoiceModelsSnapshot,
+  VoiceTranscribeRequest,
+  VoiceTranscript,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -6,43 +13,53 @@ import * as DesktopVoice from "../../app/DesktopVoice.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
-export const getVoiceModelState = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL,
+export const getVoiceModelsState = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.VOICE_GET_MODELS_STATE_CHANNEL,
   payload: Schema.Void,
-  result: VoiceModelState,
-  handler: Effect.fn("desktop.ipc.voice.getModelState")(function* () {
+  result: VoiceModelsSnapshot,
+  handler: Effect.fn("desktop.ipc.voice.getModelsState")(function* () {
     const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.getModelState;
+    return yield* voice.getModelsState;
   }),
 });
 
 export const downloadVoiceModel = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL,
-  payload: Schema.Void,
-  result: VoiceModelState,
-  handler: Effect.fn("desktop.ipc.voice.downloadModel")(function* () {
+  payload: VoiceModelDownloadRequest,
+  result: VoiceModelsSnapshot,
+  handler: Effect.fn("desktop.ipc.voice.downloadModel")(function* (request) {
     const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.downloadModel;
+    return yield* voice.downloadModel(request);
   }),
 });
 
 export const cancelVoiceModelDownload = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
-  payload: Schema.Void,
+  payload: VoiceModelOperationRequest,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.voice.cancelModelDownload")(function* () {
+  handler: Effect.fn("desktop.ipc.voice.cancelModelDownload")(function* (request) {
     const voice = yield* DesktopVoice.DesktopVoice;
-    yield* voice.cancelModelDownload;
+    yield* voice.cancelModelDownload(request);
+  }),
+});
+
+export const selectVoiceModel = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.VOICE_SELECT_MODEL_CHANNEL,
+  payload: VoiceModelOperationRequest,
+  result: VoiceModelsSnapshot,
+  handler: Effect.fn("desktop.ipc.voice.selectModel")(function* (request) {
+    const voice = yield* DesktopVoice.DesktopVoice;
+    return yield* voice.selectModel(request);
   }),
 });
 
 export const removeVoiceModel = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_REMOVE_MODEL_CHANNEL,
-  payload: Schema.Void,
-  result: VoiceModelState,
-  handler: Effect.fn("desktop.ipc.voice.removeModel")(function* () {
+  payload: VoiceModelRemoveRequest,
+  result: VoiceModelsSnapshot,
+  handler: Effect.fn("desktop.ipc.voice.removeModel")(function* (request) {
     const voice = yield* DesktopVoice.DesktopVoice;
-    return yield* voice.removeModel;
+    return yield* voice.removeModel(request);
   }),
 });
 
@@ -67,9 +84,10 @@ export const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
 });
 
 export const methods = [
-  getVoiceModelState,
+  getVoiceModelsState,
   downloadVoiceModel,
   cancelVoiceModelDownload,
+  selectVoiceModel,
   removeVoiceModel,
   transcribeVoice,
   cancelVoiceTranscription,
