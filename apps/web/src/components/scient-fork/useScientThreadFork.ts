@@ -135,6 +135,16 @@ export function clearStagedUserForkDraft(destinationRef: ScopedThreadRef): void 
   flushComposerDraftPersistence();
 }
 
+export function moveAcceptedForkComposerDraft(input: {
+  readonly sourceRef: ScopedThreadRef;
+  readonly destinationRef: ScopedThreadRef;
+}): void {
+  useComposerDraftStore
+    .getState()
+    .moveComposerPromptAndImages(input.sourceRef, input.destinationRef);
+  flushComposerDraftPersistence();
+}
+
 export function useScientThreadFork({
   origin,
   navigate,
@@ -163,6 +173,8 @@ export function useScientThreadFork({
       options: {
         readonly workspaceMode: "new-worktree" | "local";
         readonly titleOverride?: string;
+        /** Move only portable unsent text/images after the fork command is accepted. */
+        readonly composerDraftSource?: ScopedThreadRef;
       },
       originWorkspaceRoot: string | undefined,
     ): Promise<ForkAcceptanceOutcome> => {
@@ -208,6 +220,12 @@ export function useScientThreadFork({
           return "not-accepted";
         }
         forkAccepted = true;
+        if (options.composerDraftSource) {
+          moveAcceptedForkComposerDraft({
+            sourceRef: options.composerDraftSource,
+            destinationRef,
+          });
+        }
         stageForkViewContinuity({
           originRef: scopeThreadRef(origin.environmentId, origin.id),
           destinationThreadId: forkThreadId,

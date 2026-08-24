@@ -2924,25 +2924,28 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [activeLatestTurn, runningTurnId, timelineEntries],
   );
-  const onForkConversation = useCallback(() => {
-    if (latestCompletedAssistantMessageId === null) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Fork unavailable",
-          description: "This conversation does not expose a completed fork boundary yet.",
-        }),
-      );
-      return;
-    }
-    if (!activeThreadId) return;
-    setForkCommandTarget({
-      threadId: activeThreadId,
-      kind: "assistant-response",
-      messageId: latestCompletedAssistantMessageId,
-      source: "latest-response",
-    });
-  }, [activeThreadId, latestCompletedAssistantMessageId]);
+  const onForkConversation = useCallback(
+    (options?: { readonly preserveComposerDraft?: boolean }) => {
+      if (latestCompletedAssistantMessageId === null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Fork unavailable",
+            description: "This conversation does not expose a completed fork boundary yet.",
+          }),
+        );
+        return;
+      }
+      if (!activeThreadId) return;
+      setForkCommandTarget({
+        threadId: activeThreadId,
+        kind: "assistant-response",
+        messageId: latestCompletedAssistantMessageId,
+        source: options?.preserveComposerDraft ? "switch-provider" : "latest-response",
+      });
+    },
+    [activeThreadId, latestCompletedAssistantMessageId],
+  );
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -7823,7 +7826,14 @@ function ChatViewContent(props: ChatViewProps) {
                   prompt: target.message.text,
                   attachments: target.message.attachments ?? [],
                 },
-            confirmation,
+            {
+              ...confirmation,
+              ...(target.kind === "assistant-response" &&
+              target.source === "switch-provider" &&
+              activeThreadRef
+                ? { composerDraftSource: activeThreadRef }
+                : {}),
+            },
             activeWorkspaceRoot,
           ).then((outcome) => {
             setForkCommandTarget((current) =>

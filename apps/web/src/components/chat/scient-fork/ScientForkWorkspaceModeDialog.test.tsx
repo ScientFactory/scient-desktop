@@ -37,6 +37,10 @@ describe("scientForkDialogCopy", () => {
       title: "Fork this message",
       description: "Create a new conversation from this message.",
     });
+    expect(scientForkDialogCopy("switch-provider")).toEqual({
+      title: "Fork to switch provider",
+      description: "Continue this conversation with another provider.",
+    });
   });
 });
 

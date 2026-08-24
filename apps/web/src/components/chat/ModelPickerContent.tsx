@@ -15,7 +15,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, SearchIcon, SplitIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
@@ -45,6 +45,7 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
+import { Button } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -71,6 +72,31 @@ const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
 function ModelListSeparator() {
   return <div className="h-0.5" />;
+}
+
+export function ModelPickerProviderLockNotice(props: {
+  readonly disabled: boolean;
+  readonly onFork: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border/70 px-2 py-1.5">
+      <p className="min-w-0 text-[11px] leading-snug text-muted-foreground">
+        Continue this conversation with another provider.
+      </p>
+      <Button
+        type="button"
+        size="micro"
+        variant="ghost-muted"
+        className="shrink-0"
+        disabled={props.disabled}
+        aria-label="Fork conversation to switch providers"
+        onClick={props.onFork}
+      >
+        <SplitIcon className="size-3 rotate-90 text-primary/80" />
+        Fork
+      </Button>
+    </div>
+  );
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
@@ -107,6 +133,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** Keep a not-ready provider selectable when Scient can render its setup flow inline. */
   isProviderSetupAvailable?: (entry: ProviderInstanceEntry) => boolean;
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
+  onForkToSwitchProvider?: () => void;
+  forkToSwitchProviderDisabled?: boolean;
 }) {
   const {
     keybindings: providedKeybindings,
@@ -282,6 +310,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider, props.activeInstanceId]);
+  const hasAlternativeProvider = useMemo(
+    () => sidebarInstanceEntries.some((entry) => !matchesLockedProvider(entry)),
+    [matchesLockedProvider, sidebarInstanceEntries],
+  );
   const setupAvailableInstanceIds = useMemo(() => {
     if (!props.isProviderSetupAvailable || !props.renderProviderSetup || isLocked) {
       return undefined;
@@ -449,6 +481,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return next;
     });
   }, []);
+
+  const handleForkToSwitchProvider = useCallback(() => {
+    if (props.forkToSwitchProviderDisabled) return;
+    props.onRequestClose?.();
+    props.onForkToSwitchProvider?.();
+  }, [props.forkToSwitchProviderDisabled, props.onForkToSwitchProvider, props.onRequestClose]);
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId) => {
@@ -648,7 +686,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
-                    `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
+                    `${entry.displayName} is unavailable in this conversation. Fork to continue with ${entry.displayName}.`,
                 }
               : {})}
           />
@@ -841,6 +879,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             >
               No models found
             </ComboboxEmpty>
+            {isLocked && hasAlternativeProvider && props.onForkToSwitchProvider ? (
+              <ModelPickerProviderLockNotice
+                disabled={props.forkToSwitchProviderDisabled ?? false}
+                onFork={handleForkToSwitchProvider}
+              />
+            ) : null}
           </div>
         </Combobox>
       </div>

@@ -15,6 +15,7 @@ const snapshot: ServerProvider = {
   installed: true,
   version: "2.1.170",
   status: "warning",
+  message: "Claude CLI command `/private/runtime/claude` was not found.",
   auth: { status: "unauthenticated", required: true },
   checkedAt: "2026-08-09T08:00:00.000Z",
   models: [],
@@ -53,10 +54,24 @@ function render(setupAvailable: boolean): string {
 }
 
 describe("ModelPickerSidebar provider setup", () => {
+  it("renders the favorites entry without provider-scoped tooltip state", () => {
+    const markup = renderToStaticMarkup(
+      <ModelPickerSidebar
+        instanceEntries={[entry]}
+        selectedInstanceId="favorites"
+        showFavorites
+        onSelectInstance={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Favorites"');
+  });
+
   it("keeps a not-ready provider selectable when an inline setup surface exists", () => {
     const markup = render(true);
 
-    expect(markup).toContain('aria-label="Claude — Limited."');
+    expect(markup).toContain('aria-label="Claude needs setup. Select it to install or reconnect."');
+    expect(markup).not.toContain("/private/runtime/claude");
     expect(markup).not.toContain("disabled");
   });
 
@@ -64,6 +79,60 @@ describe("ModelPickerSidebar provider setup", () => {
     const markup = render(false);
 
     expect(markup).toContain("disabled");
-    expect(markup).toContain("Claude — Limited.");
+    expect(markup).toContain(
+      "Claude is unavailable. Open Settings → Providers to install or reconnect it.",
+    );
+    expect(markup).not.toContain("/private/runtime/claude");
+  });
+});
+
+describe("ModelPickerSidebar provider lock", () => {
+  it("exposes the provider-specific fork guidance to assistive technology", () => {
+    const readyEntry: ProviderInstanceEntry = {
+      ...entry,
+      status: "ready",
+      snapshot: {
+        ...snapshot,
+        status: "ready",
+        auth: { status: "authenticated", required: true },
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <ModelPickerSidebar
+        instanceEntries={[readyEntry]}
+        selectedInstanceId="favorites"
+        disabledInstanceIds={new Set([INSTANCE_ID])}
+        getDisabledInstanceTooltip={() =>
+          "Claude is unavailable in this conversation. Fork to continue with Claude."
+        }
+        showFavorites={false}
+        onSelectInstance={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain(
+      'aria-label="Claude is unavailable in this conversation. Fork to continue with Claude."',
+    );
+  });
+
+  it("prioritizes unavailable-runtime guidance over conversation locking", () => {
+    const markup = renderToStaticMarkup(
+      <ModelPickerSidebar
+        instanceEntries={[entry]}
+        selectedInstanceId="favorites"
+        disabledInstanceIds={new Set([INSTANCE_ID])}
+        getDisabledInstanceTooltip={() =>
+          "Claude is unavailable in this conversation. Fork to continue with Claude."
+        }
+        showFavorites={false}
+        onSelectInstance={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain(
+      'aria-label="Claude is unavailable. Open Settings → Providers to install or reconnect it."',
+    );
+    expect(markup).not.toContain("Fork to continue");
+    expect(markup).not.toContain("/private/runtime/claude");
   });
 });

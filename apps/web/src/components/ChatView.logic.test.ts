@@ -18,6 +18,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
@@ -314,6 +315,70 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("deriveLockedProvider", () => {
+  const baselineAssistantMessageId = MessageId.make("fork-baseline-assistant");
+  const forkLineage = {
+    originThreadId: ThreadId.make("origin-thread"),
+    baselineAssistantMessageId,
+  };
+  const forkBaselineTurn = {
+    ...completedTurn,
+    assistantMessageId: baselineAssistantMessageId,
+  };
+  const lockedProviderFor = (overrides: Partial<Thread>) =>
+    deriveLockedProvider({
+      thread: makeThread(overrides),
+      selectedProvider: null,
+      threadProvider: "codex",
+    });
+
+  it("leaves a pristine fork unlocked before its first provider turn", () => {
+    expect(lockedProviderFor({ forkLineage, latestTurn: forkBaselineTurn })).toBeNull();
+  });
+
+  it("leaves an empty-baseline fork unlocked before its first provider turn", () => {
+    expect(
+      lockedProviderFor({
+        forkLineage: {
+          ...forkLineage,
+          baselineAssistantMessageId: null,
+        },
+        latestTurn: completedTurn,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps ordinary sessionless conversation history locked", () => {
+    expect(lockedProviderFor({ latestTurn: completedTurn })).toBe("codex");
+  });
+
+  it("locks a fork after its first provider session starts", () => {
+    expect(
+      lockedProviderFor({
+        forkLineage,
+        latestTurn: forkBaselineTurn,
+        session: {
+          ...readySession,
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        },
+      }),
+    ).toBe("claudeAgent");
+  });
+
+  it("fails closed when a sessionless fork has advanced beyond its baseline", () => {
+    expect(
+      lockedProviderFor({
+        forkLineage,
+        latestTurn: {
+          ...completedTurn,
+          assistantMessageId: MessageId.make("post-fork-assistant"),
+        },
+      }),
+    ).toBe("codex");
+  });
+});
 
 describe("buildLoadingThreadFromShell", () => {
   it("preserves shell metadata and supplies empty detail collections", () => {
