@@ -1,0 +1,9 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.workspace-readiness-review",
+  "version": "0.1.0",
+  "activationScope": "user",
+  "origin": {
+    "kind": "scient"
+  }
+}
