@@ -158,7 +158,7 @@ describe("bridge protocol payload schemas", () => {
       mediaType: "image/png",
       data: "iVBORw0KGgo=",
     });
-    expect(payload.mediaType).toBe("image/png");
+    expect("mediaType" in payload && payload.mediaType).toBe("image/png");
   });
 
   it("accepts a valid SVG display payload", () => {
@@ -166,7 +166,7 @@ describe("bridge protocol payload schemas", () => {
       mediaType: "image/svg+xml",
       data: '<svg xmlns="http://www.w3.org/2000/svg"><circle r="2"/></svg>',
     });
-    expect(payload.mediaType).toBe("image/svg+xml");
+    expect("mediaType" in payload && payload.mediaType).toBe("image/svg+xml");
   });
 
   it("bounds SVG display payloads by UTF-8 bytes", () => {
@@ -183,7 +183,7 @@ describe("bridge protocol payload schemas", () => {
       mediaType: "text/plain",
       text: "<Figure size 640x480>",
     });
-    expect(payload.mediaType).toBe("text/plain");
+    expect("mediaType" in payload && payload.mediaType).toBe("text/plain");
   });
 
   it("rejects a display payload with unknown media type", () => {
@@ -191,6 +191,57 @@ describe("bridge protocol payload schemas", () => {
       decodeDisplay({
         mediaType: "text/html",
         text: "<b>bold</b>",
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a bounded rich bundle and display lifecycle facts", () => {
+    expect(
+      decodeDisplay({
+        kind: "display-data",
+        bundle: {
+          representations: [
+            { mediaType: "text/plain", encoding: "text", data: "fallback" },
+            {
+              mediaType: "application/vnd.plotly.v1+json",
+              encoding: "json",
+              data: '{"data":[]}',
+            },
+          ],
+          metadataJson: "{}",
+        },
+        displayId: "display-1",
+      }),
+    ).toMatchObject({ kind: "display-data", displayId: "display-1" });
+    expect(decodeDisplay({ kind: "clear-output", wait: true })).toEqual({
+      kind: "clear-output",
+      wait: true,
+    });
+  });
+
+  it("rejects unbounded or non-canonical rich representations", () => {
+    expect(() =>
+      decodeDisplay({
+        kind: "display-data",
+        bundle: {
+          representations: [{ mediaType: "Text/Plain", encoding: "text", data: "fallback" }],
+          metadataJson: null,
+        },
+        displayId: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeDisplay({
+        kind: "display-data",
+        bundle: {
+          representations: Array.from({ length: 33 }, (_unused, index) => ({
+            mediaType: `application/x-${String(index)}`,
+            encoding: "text",
+            data: "x",
+          })),
+          metadataJson: null,
+        },
+        displayId: null,
       }),
     ).toThrow();
   });

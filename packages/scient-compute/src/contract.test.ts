@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { ComputeOutput, ComputeTransportEvent, ComputeVariableSnapshot } from "./contract.ts";
+import {
+  ComputeOutput,
+  ComputeTransportEvent,
+  ComputeVariableSnapshot,
+  computeOutputByteLength,
+} from "./contract.ts";
 
 const decodeOutput = Schema.decodeUnknownSync(ComputeOutput);
 const decodeTransportEvent = Schema.decodeUnknownSync(ComputeTransportEvent);
@@ -46,6 +51,34 @@ describe("compute contract", () => {
       event: "runtime-warning",
       detail: "Inconsistent kernel metadata.",
     });
+  });
+
+  it("accepts ordered display lifecycle facts while keeping their content bounded", () => {
+    const displayed = decodeOutput({
+      _tag: "display-data",
+      sequence: 4,
+      observedAt: "2026-08-19T00:00:00.000Z",
+      bundle: {
+        representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "42" } }],
+        metadataJson: "{}",
+      },
+      displayId: "answer",
+    });
+    const cleared = decodeOutput({
+      _tag: "clear-output",
+      sequence: 5,
+      observedAt: "2026-08-19T00:00:01.000Z",
+      wait: true,
+    });
+
+    expect(displayed).toMatchObject({ _tag: "display-data", displayId: "answer" });
+    expect(computeOutputByteLength(displayed)).toBe(
+      new TextEncoder().encode(`${JSON.stringify(displayed)}\n`).length,
+    );
+    expect(computeOutputByteLength(cleared)).toBe(
+      new TextEncoder().encode(`${JSON.stringify(cleared)}\n`).length,
+    );
+    expect(computeOutputByteLength(cleared)).toBeGreaterThan(0);
   });
 
   it("keeps older retained diagnostics readable without structured frames", () => {
@@ -96,6 +129,7 @@ describe("compute contract", () => {
         origin: { _tag: "runtime-display" },
       },
       image: { bytes: pngSignature },
+      resources: [],
     });
     expect(event).toMatchObject({
       _tag: "output",
@@ -126,6 +160,7 @@ describe("compute contract", () => {
         },
       },
       image: { bytes },
+      resources: [],
     });
     expect(event).toMatchObject({
       _tag: "output",
@@ -150,6 +185,7 @@ describe("compute contract", () => {
         text: "hello\n",
       },
       image: null,
+      resources: [],
     });
     expect(event).toMatchObject({ _tag: "output", image: null });
   });

@@ -11,6 +11,7 @@ import {
   ComputeTransportKind,
   INITIAL_COMPUTE_SESSION_GENERATION,
   nextComputeSessionGeneration,
+  projectComputeOutputs,
   type ComputeChannel,
   type ComputeRuntimeProfile,
   type ComputeTransportEvent,
@@ -48,6 +49,32 @@ interface IntegrationHarness {
   readonly channel: ComputeChannel;
   readonly events: Queue.Dequeue<ComputeTransportEvent>;
   readonly ready: ReadyEvent;
+}
+
+function outputText(event: ComputeTransportEvent): string | null {
+  if (event._tag !== "output") return null;
+  if (event.output._tag === "stream") return event.output.text;
+  if (event.output._tag !== "display-data" && event.output._tag !== "execute-result") return null;
+  const plain = event.output.bundle.representations.find(
+    (representation) => representation.mediaType === "text/plain",
+  );
+  return plain?.data._tag === "text" ? plain.data.text : null;
+}
+
+function richResource(event: ComputeTransportEvent, mediaType: "image/png" | "image/svg+xml") {
+  if (
+    event._tag !== "output" ||
+    (event.output._tag !== "display-data" && event.output._tag !== "execute-result")
+  ) {
+    return null;
+  }
+  const representation = event.output.bundle.representations.find(
+    (candidate) => candidate.mediaType === mediaType && candidate.data._tag === "resource",
+  );
+  if (representation?.data._tag !== "resource") return null;
+  const contentHash = representation.data.contentHash;
+  const resource = event.resources.find((candidate) => candidate.contentHash === contentHash);
+  return resource ?? null;
 }
 
 function hostEnvironment(): Record<string, string> {
@@ -151,6 +178,63 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
 });
 
 describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
+  it.live("retains complete MIME bundles and projects display updates and delayed clears", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* integration();
+        const observed = yield* execute(
+          harness,
+          "rich-display-lifecycle",
+          [
+            "from IPython.display import display, update_display, clear_output",
+            "class Rich:",
+            "    def __init__(self, label): self.label = label",
+            "    def _repr_mimebundle_(self, include=None, exclude=None):",
+            "        return ({",
+            "            'text/plain': self.label,",
+            "            'application/json': {'label': self.label},",
+            "            'image/svg+xml': f'<svg xmlns=\"http://www.w3.org/2000/svg\"><text>{self.label}</text></svg>',",
+            "        }, {'image/svg+xml': {'isolated': True}})",
+            "first_handle = display(Rich('first'), display_id='shared-display')",
+            "update_display(Rich('updated'), display_id='shared-display')",
+            "clear_output(wait=True)",
+            "final_handle = display(Rich('final'))",
+          ].join("\n"),
+        );
+        const outputs = observed.flatMap((event) =>
+          event._tag === "output" ? [event.output] : [],
+        );
+        expect(outputs.map(({ _tag }) => _tag)).toEqual([
+          "display-data",
+          "display-update",
+          "clear-output",
+          "display-data",
+        ]);
+        const first = outputs[0];
+        if (first?._tag !== "display-data") throw new Error("Expected display data.");
+        expect(first.bundle.representations.map(({ mediaType }) => mediaType)).toEqual([
+          "text/plain",
+          "application/json",
+          "image/svg+xml",
+        ]);
+        expect(first.displayId).toBe("shared-display");
+        const projected = projectComputeOutputs(outputs);
+        expect(projected).toHaveLength(1);
+        expect(projected[0]).toMatchObject({
+          _tag: "representation",
+          kind: "display-data",
+          displayId: null,
+        });
+        const final = projected[0];
+        if (final?._tag !== "representation") throw new Error("Expected final representation.");
+        expect(
+          final.bundle.representations.find(({ mediaType }) => mediaType === "text/plain"),
+        ).toMatchObject({ data: { _tag: "text", text: "final" } });
+        yield* harness.channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
+      }),
+    ).pipe(Effect.provide(Live), Effect.timeout("60 seconds")),
+  );
+
   it.live("executes statefully, maps output and PNG, interrupts, restarts, and shuts down", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -164,26 +248,12 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
 
         const arithmetic = yield* execute(harness, "arithmetic", "1 + 1");
         yield* Effect.logInfo("real-kernel: arithmetic complete");
-        expect(
-          arithmetic.some(
-            (event) =>
-              event._tag === "output" &&
-              event.output._tag === "stream" &&
-              event.output.text.includes("2"),
-          ),
-        ).toBe(true);
+        expect(arithmetic.some((event) => outputText(event)?.includes("2") === true)).toBe(true);
 
         yield* execute(harness, "state-write", "answer = 41");
         const stateRead = yield* execute(harness, "state-read", "answer + 1");
         yield* Effect.logInfo("real-kernel: state retention complete");
-        expect(
-          stateRead.some(
-            (event) =>
-              event._tag === "output" &&
-              event.output._tag === "stream" &&
-              event.output.text.includes("42"),
-          ),
-        ).toBe(true);
+        expect(stateRead.some((event) => outputText(event)?.includes("42") === true)).toBe(true);
 
         const variables = yield* harness.channel.inspectVariables({
           requestId: ComputeRequestId.make("variables-after-state"),
@@ -232,13 +302,8 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           "import matplotlib.pyplot as plt\nplt.plot([1, 2], [3, 4])\nplt.show()",
         );
         yield* Effect.logInfo("real-kernel: figure complete");
-        const image = figure.find(
-          (event) => event._tag === "output" && event.output._tag === "image",
-        );
-        expect(image?._tag).toBe("output");
-        if (image?._tag === "output") {
-          expect(image.image?.bytes.byteLength).toBeGreaterThan(100);
-        }
+        const image = figure.map((event) => richResource(event, "image/png")).find(Boolean);
+        expect(image?.bytes.byteLength).toBeGreaterThan(100);
 
         const svgFigure = yield* execute(
           harness,
@@ -251,16 +316,10 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           ].join("\n"),
         );
         yield* Effect.logInfo("real-kernel: SVG figure complete");
-        const svgImage = svgFigure.find(
-          (event) =>
-            event._tag === "output" &&
-            event.output._tag === "image" &&
-            event.output.mediaType === "image/svg+xml",
-        );
-        expect(svgImage?._tag).toBe("output");
-        if (svgImage?._tag === "output") {
-          expect(new TextDecoder().decode(svgImage.image?.bytes)).toContain("<svg");
-        }
+        const svgImage = svgFigure
+          .map((event) => richResource(event, "image/svg+xml"))
+          .find(Boolean);
+        expect(new TextDecoder().decode(svgImage?.bytes)).toContain("<svg");
 
         const loopId = ComputeRequestId.make("interrupt-loop");
         NodeProcess.stderr.write("real-kernel send: interrupt-loop\n");
@@ -384,14 +443,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
         expect(corrupting.at(-1)).toMatchObject({ _tag: "completed", outcome: "succeeded" });
 
         const afterwards = yield* execute(harness, "after-raw-fd", "7 * 6");
-        expect(
-          afterwards.some(
-            (event) =>
-              event._tag === "output" &&
-              event.output._tag === "stream" &&
-              event.output.text.includes("42"),
-          ),
-        ).toBe(true);
+        expect(afterwards.some((event) => outputText(event)?.includes("42") === true)).toBe(true);
 
         yield* harness.channel.shutdown({
           expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
@@ -424,14 +476,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
         expect(text.split("\n").filter((line) => line.length > 0)).toHaveLength(20000);
 
         const afterwards = yield* execute(harness, "after-flood", "6 * 7");
-        expect(
-          afterwards.some(
-            (event) =>
-              event._tag === "output" &&
-              event.output._tag === "stream" &&
-              event.output.text.includes("42"),
-          ),
-        ).toBe(true);
+        expect(afterwards.some((event) => outputText(event)?.includes("42") === true)).toBe(true);
         yield* harness.channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
       }),
     ).pipe(Effect.provide(Live), Effect.timeout("120 seconds")),
@@ -448,12 +493,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           const observed = yield* execute(harness, `rapid-${index}`, `${index} * 3 + 1`);
           expect(observed.at(-1)).toMatchObject({ _tag: "completed", outcome: "succeeded" });
           expect(
-            observed.some(
-              (event) =>
-                event._tag === "output" &&
-                event.output._tag === "stream" &&
-                event.output.text.includes(String(index * 3 + 1)),
-            ),
+            observed.some((event) => outputText(event)?.includes(String(index * 3 + 1)) === true),
           ).toBe(true);
         }
 
@@ -483,14 +523,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
         // a row must not have cost it.
         yield* execute(harness, "storm-state-write", "survivor = 11");
         const read = yield* execute(harness, "storm-state-read", "survivor + 1");
-        expect(
-          read.some(
-            (event) =>
-              event._tag === "output" &&
-              event.output._tag === "stream" &&
-              event.output.text.includes("12"),
-          ),
-        ).toBe(true);
+        expect(read.some((event) => outputText(event)?.includes("12") === true)).toBe(true);
         yield* harness.channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
       }),
     ).pipe(Effect.provide(Live), Effect.timeout("240 seconds")),

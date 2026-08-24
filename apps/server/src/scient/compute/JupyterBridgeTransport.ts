@@ -4,9 +4,11 @@ import * as NodeCrypto from "node:crypto";
 import {
   COMPUTE_PROTOCOL_VERSION,
   ComputeLanguageId,
+  ComputeRepresentationBundle,
   ComputeSessionGeneration,
   ComputeTransportError,
   ComputeTransportKind,
+  computeOutputByteLength,
   encodeComputeProtocolMessage,
   decodeComputeProtocolMessage,
   makeComputeFrameDecoder,
@@ -30,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as MutableRef from "effect/MutableRef";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -40,6 +43,7 @@ import {
   makeBridgeSequenceTracker,
   validateBridgeSequence,
   type BridgeMessage,
+  type DisplayPayload,
 } from "./BridgeProtocol.ts";
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 
@@ -53,6 +57,9 @@ const MAX_LOST_REASON_LENGTH = 4096;
 const MAX_STDERR_TAIL_BYTES = 64 * 1024;
 const MAX_PNG_DECODED_BYTES = 8 * 1024 * 1024;
 const MAX_SVG_DECODED_BYTES = 8 * 1024 * 1024;
+const decodeRepresentationBundle = Schema.decodeUnknownOption(ComputeRepresentationBundle);
+
+type RichDisplayPayload = Extract<DisplayPayload, { readonly kind: unknown }>;
 
 /**
  * The transport does not need to know where the bridge script lives.
@@ -118,13 +125,27 @@ function estimateOutputBytes(output: ComputeOutput): number {
       return 256;
     case "system":
       return output.detail === null ? 64 : 64 + estimateTextBytes(output.detail);
+    case "display-data":
+    case "execute-result":
+    case "display-update":
+      // Resource bytes are not carried by this bridge event yet, but counting
+      // them here is a conservative bound and keeps the queue safe when the
+      // transport gains neutral resource payloads.
+      return computeOutputByteLength(output) + 64;
+    case "clear-output":
+      return 64;
   }
 }
 
 function estimateEventBytes(event: ComputeTransportEvent): number {
   switch (event._tag) {
     case "output":
-      return estimateOutputBytes(event.output) + (event.image?.bytes.byteLength ?? 0) + 64;
+      return (
+        estimateOutputBytes(event.output) +
+        (event.image?.bytes.byteLength ?? 0) +
+        event.resources.reduce((total, resource) => total + resource.bytes.byteLength, 0) +
+        64
+      );
     case "runtime-error":
       return (
         estimateTextBytes(event.report.name) +
@@ -174,6 +195,107 @@ function decodeSvgPayload(data: string): Uint8Array | string {
     return "An image output was dropped: its data was not an SVG.";
   }
   return bytes;
+}
+
+function decodeBase64Payload(data: string): Uint8Array | string {
+  if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+    return "A rich representation was dropped: its data was not readable base64.";
+  }
+  const bytes = new Uint8Array(Buffer.from(data, "base64"));
+  if (bytes.byteLength > MAX_PNG_DECODED_BYTES) {
+    return "A rich representation was dropped: it exceeded the decoded byte limit.";
+  }
+  return bytes;
+}
+
+function materializeRichDisplay(payload: Exclude<RichDisplayPayload, { kind: "clear-output" }>) {
+  const representations: Array<{
+    mediaType: string;
+    data:
+      | { _tag: "text"; text: string }
+      | { _tag: "json"; json: string }
+      | { _tag: "resource"; contentHash: string; byteLength: number };
+  }> = [];
+  const resources: Array<{
+    mediaType: string;
+    contentHash: string;
+    bytes: Uint8Array;
+  }> = [];
+  let warning: string | null = null;
+  const seenMediaTypes = new Set<string>();
+
+  for (const representation of payload.bundle.representations) {
+    if (seenMediaTypes.has(representation.mediaType)) {
+      warning = "A duplicate rich representation was dropped.";
+      continue;
+    }
+    seenMediaTypes.add(representation.mediaType);
+    if (representation.encoding === "text" && representation.mediaType !== "image/svg+xml") {
+      representations.push({
+        mediaType: representation.mediaType,
+        data: { _tag: "text", text: representation.data },
+      });
+      continue;
+    }
+    if (representation.encoding === "json") {
+      try {
+        JSON.parse(representation.data);
+      } catch {
+        warning = "A rich JSON representation was dropped because it was invalid.";
+        continue;
+      }
+      representations.push({
+        mediaType: representation.mediaType,
+        data: { _tag: "json", json: representation.data },
+      });
+      continue;
+    }
+    const decoded =
+      representation.encoding === "text"
+        ? decodeSvgPayload(representation.data)
+        : representation.mediaType === "image/png"
+          ? decodePngPayload(representation.data)
+          : decodeBase64Payload(representation.data);
+    if (typeof decoded === "string") {
+      warning = decoded;
+      continue;
+    }
+    if (
+      representation.mediaType === "image/svg+xml" &&
+      inspectComputeStaticImage("image/svg+xml", decoded) === null
+    ) {
+      warning = "An image output was dropped: its data was not an SVG.";
+      continue;
+    }
+    const contentHash = `sha256:${NodeCrypto.createHash("sha256").update(decoded).digest("hex")}`;
+    representations.push({
+      mediaType: representation.mediaType,
+      data: { _tag: "resource", contentHash, byteLength: decoded.byteLength },
+    });
+    resources.push({ mediaType: representation.mediaType, contentHash, bytes: decoded });
+  }
+
+  let metadataJson = payload.bundle.metadataJson;
+  if (metadataJson !== null) {
+    try {
+      const metadata: unknown = JSON.parse(metadataJson);
+      if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+        metadataJson = null;
+        warning = "Invalid rich representation metadata was dropped.";
+      }
+    } catch {
+      metadataJson = null;
+      warning = "Invalid rich representation metadata was dropped.";
+    }
+  }
+
+  const decoded = decodeRepresentationBundle({
+    representations,
+    metadataJson,
+  });
+  return Option.isNone(decoded)
+    ? "A rich representation was dropped because its bounded bundle was invalid."
+    : { bundle: decoded.value, resources, warning };
 }
 
 function hasCapabilities(
@@ -318,6 +440,7 @@ export function makeJupyterBridgeTransport(
                 detail: "Output was dropped because the consumer fell behind.",
               },
               image: null,
+              resources: [],
             });
           });
 
@@ -456,15 +579,97 @@ export function makeJupyterBridgeTransport(
                     text: payload.text,
                   },
                   image: null,
+                  resources: [],
                 });
                 break;
               }
 
               case "display": {
-                const payload = message.payload as
-                  | { mediaType: "image/png"; data: string }
-                  | { mediaType: "image/svg+xml"; data: string }
-                  | { mediaType: "text/plain"; text: string };
+                const payload = message.payload as DisplayPayload;
+                if ("kind" in payload) {
+                  if (payload.kind === "clear-output") {
+                    yield* emit({
+                      _tag: "output",
+                      requestId: message.requestId,
+                      generation: message.generation,
+                      output: {
+                        _tag: "clear-output",
+                        sequence: message.sequence,
+                        observedAt: yield* timestamp,
+                        wait: payload.wait,
+                      },
+                      image: null,
+                      resources: [],
+                    });
+                    break;
+                  }
+                  const materialized = materializeRichDisplay(payload);
+                  if (typeof materialized === "string") {
+                    yield* emit({
+                      _tag: "output",
+                      requestId: message.requestId,
+                      generation: message.generation,
+                      output: {
+                        _tag: "system",
+                        sequence: message.sequence,
+                        observedAt: yield* timestamp,
+                        event: "output-truncated",
+                        detail: materialized,
+                      },
+                      image: null,
+                      resources: [],
+                    });
+                    break;
+                  }
+                  const common = {
+                    sequence: message.sequence,
+                    observedAt: yield* timestamp,
+                    bundle: materialized.bundle,
+                  };
+                  const output =
+                    payload.kind === "display-data"
+                      ? {
+                          _tag: "display-data" as const,
+                          ...common,
+                          displayId: payload.displayId,
+                        }
+                      : payload.kind === "execute-result"
+                        ? {
+                            _tag: "execute-result" as const,
+                            ...common,
+                            executionCount: payload.executionCount,
+                          }
+                        : {
+                            _tag: "display-update" as const,
+                            ...common,
+                            displayId: payload.displayId,
+                          };
+                  yield* emit({
+                    _tag: "output",
+                    requestId: message.requestId,
+                    generation: message.generation,
+                    output,
+                    image: null,
+                    resources: materialized.resources,
+                  });
+                  if (materialized.warning !== null) {
+                    yield* emit({
+                      _tag: "output",
+                      requestId: message.requestId,
+                      generation: message.generation,
+                      output: {
+                        _tag: "system",
+                        sequence: message.sequence,
+                        observedAt: yield* timestamp,
+                        event: "output-truncated",
+                        detail: materialized.warning,
+                      },
+                      image: null,
+                      resources: [],
+                    });
+                  }
+                  break;
+                }
                 if (payload.mediaType === "text/plain") {
                   yield* emit({
                     _tag: "output",
@@ -478,6 +683,7 @@ export function makeJupyterBridgeTransport(
                       text: payload.text,
                     },
                     image: null,
+                    resources: [],
                   });
                   break;
                 }
@@ -498,6 +704,7 @@ export function makeJupyterBridgeTransport(
                       detail: imageBytes,
                     },
                     image: null,
+                    resources: [],
                   });
                   break;
                 }
@@ -522,6 +729,7 @@ export function makeJupyterBridgeTransport(
                     origin: { _tag: "runtime-display" },
                   },
                   image: { bytes: imageBytes },
+                  resources: [],
                 });
                 break;
               }
@@ -560,6 +768,7 @@ export function makeJupyterBridgeTransport(
                     detail: payload.detail,
                   },
                   image: null,
+                  resources: [],
                 });
                 break;
               }

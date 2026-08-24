@@ -5,7 +5,7 @@ Owner: Yaacov
 Created: 2026-08-18
 Purpose: Defines the architecture, domain model, transport boundary, persistence semantics, delivered foundation phases, and post-baseline capability roadmap for stateful interactive scientific compute sessions in Scient. Written as a companion to the accepted `scient-analysis-runtime-foundation.md`, which governs one-shot terminal execution.
 Doc type: Architecture decision record
-Implementation maturity: Phases 1-4 and the figure-viewing extension are committed and locally qualified on macOS
+Implementation maturity: Phases 1-4 and the figure-viewing extension are committed and locally qualified on macOS; the Phase 5B shared-representation foundation is a locally qualified child candidate
 Product maturity: Phase 4 core workflow and the figure-viewing extension are owner-accepted locally
 Release maturity: Not approved
 
@@ -88,6 +88,20 @@ the authority for hosted status on each published head; this record does not
 self-certify the documentation commit that contains its own evidence ledger.
 Evidence is always exact-snapshot evidence: no result qualifies Windows or a
 later rebased head.
+
+The Phase 5B shared-representation child candidate was then qualified on the
+2026-08-24 integration checkpoint. Its final local tree passes 117 compute,
+332 contract, 678 client-runtime, 3,803 web, 3,847 server, and 85 Python-bridge
+tests; the server suite contains 344 passing files with 7 files/36 tests skipped
+behind explicit gates. Nine explicitly enabled real-kernel/product tests pass,
+including durable rich SVG resolution, display update and delayed clear,
+Matplotlib PNG, interruption, process loss, a 20,000-line flood, 40 rapid
+executions, and restart storms. All five affected typecheck boundaries,
+formatting, lint, seam and brand checks, the production web/server/desktop
+build, byte-identical bridge staging, release smoke, and Electron smoke also
+pass. This qualifies the neutral retained-representation and projection
+foundation locally; it does not imply acceptance of the separately gated
+interactive, active-HTML, widget, notebook, or additional-language renderers.
 
 It coordinates with, but does not duplicate:
 
@@ -1134,6 +1148,35 @@ retained result. The registry owns validation, size and complexity bounds,
 authority, fallback, actions, and disposal; the compute UI does not branch on
 Python or Jupyter media choices.
 
+Structured data has a separate durable truth and presentation state. A typed
+dataset representation retains exact values, logical types, units, missingness,
+provenance, total-size knowledge, and truthful truncation. Sorting, filtering,
+searching, selection, formatting, column visibility, and viewport position are
+disposable views unless the user explicitly saves a derived view or artifact;
+they never mutate the source dataset implicitly. Compact chat and Results
+surfaces may provide bounded interaction over retained preview data. Large-data
+inspection, expensive transforms, editing, and durable view composition belong
+in an explicitly opened explorer or Studio surface backed by authorized lazy
+data access.
+
+"Exact values" cannot mean coercing scientific scalars through JavaScript's
+ordinary number and string conveniences. The accepted dataset encoding must
+represent relevant integer widths, decimal values, non-finite floats,
+timestamps/time zones, null/missing distinctions, categorical values, and
+binary values without silent precision or semantic loss. Display formatting is
+derived metadata and never becomes the value used for sorting, export, or
+chart handoff.
+
+The representation contract does not select a grid component. The first table
+renderer should prefer semantic, accessible application-owned markup and the
+smallest headless behavior engine that passes representative fixtures. A
+virtualized or canvas renderer is a later surface-specific optimization, not a
+second dataset model, and requires measured need plus keyboard, assistive-
+technology, RTL, clipboard, testing, and performance evidence. A full grid
+product or commercially licensed capability requires a separate product and
+licensing decision. Scient does not ship several overlapping grid engines to
+avoid making that decision.
+
 The contract also reserves display updates (`update_display_data` with a stable
 display identity), clear-output semantics (including delayed clear), and input
 requests. Updates and clears are appended as facts and folded into a visible
@@ -1141,11 +1184,17 @@ projection; they never rewrite earlier transcript entries. Unknown or
 unsupported representations retain a truthful bounded fallback when available;
 they must not cause execution failure or silently gain script authority.
 
-First-class HTML support does not mean unsandboxed HTML. Inert or sanitized
-HTML may ship before active documents. Any executable HTML or widget support
-requires an isolated execution context with no ambient Scient origin, storage,
-credentials, filesystem authority, or host APIs, plus an explicit user-visible
-trust decision where one is necessary.
+First-class HTML support does not mean unsandboxed HTML or arbitrary active
+HTML/CSS inside a conversation. A compact surface may render a bounded inert
+fragment only after both markup and CSS are sanitized and contained with no
+scripts, event handlers, forms, navigation, imports, external resource loads,
+host overlays, storage, or network authority. Active documents appear in chat
+as a safe preview or artifact card and open in the isolated Browser/artifact
+surface with a stable authorized base, explicit navigation/network policy, and
+no ambient Scient origin, credentials, filesystem authority, or host APIs.
+Stateful widgets remain a separate session capability rather than an HTML
+exception. An explicit user-visible trust decision is required wherever inert
+content is upgraded to accepted active authority.
 
 The initial bridge normalizes Jupyter messages correctly even when the client
 does not yet render every representation. Later adapters may produce the same
@@ -1627,26 +1676,37 @@ malicious Python code.
 
 Treat these as initial engineering limits, not permanent product guarantees:
 
-| Resource                       |               Initial limit |
-| ------------------------------ | --------------------------: |
-| Submitted code                 |                       1 MiB |
-| Bridge frame                   |                      16 MiB |
-| Pending executions             |                          16 |
-| Single text output event       |                     256 KiB |
-| Retained output per execution  |                       8 MiB |
-| Retained output per session    |                      32 MiB |
-| PNG decoded representation     |                       8 MiB |
-| SVG UTF-8 representation       |                       8 MiB |
-| Store image defense-in-depth   |                      32 MiB |
-| Project-output inventory       |               4,096 entries |
-| Project-output directory depth |                    8 levels |
-| Project images per execution   |                          32 |
-| In-memory recent transcript    | Bounded by events and bytes |
-| Bridge shutdown stage          |                   5 seconds |
-| Transport shutdown round trip  |                  15 seconds |
-| Idle/running liveness interval |                    1 second |
+| Resource                        |               Initial limit |
+| ------------------------------- | --------------------------: |
+| Submitted code                  |                       1 MiB |
+| Bridge frame                    |                      16 MiB |
+| Pending executions              |                          16 |
+| Single text output event        |                     256 KiB |
+| Inline rich representation      |                       1 MiB |
+| Rich bundle metadata            |                     256 KiB |
+| Representations per MIME bundle |                          32 |
+| Retained MIME bundle            |                       8 MiB |
+| Retained output per execution   |                       8 MiB |
+| Retained output per session     |                      32 MiB |
+| PNG decoded representation      |                       8 MiB |
+| SVG UTF-8 representation        |                       8 MiB |
+| Store legacy-image defense      |                      32 MiB |
+| Project-output inventory        |               4,096 entries |
+| Project-output directory depth  |                    8 levels |
+| Project images per execution    |                          32 |
+| In-memory recent transcript     | Bounded by events and bytes |
+| Bridge shutdown stage           |                   5 seconds |
+| Transport shutdown round trip   |                  15 seconds |
+| Idle/running liveness interval  |                    1 second |
 
 Every truncation must produce a visible persisted marker.
+
+Retained-output accounting charges the encoded newline-delimited JSON fact and
+the bytes of every resource it references. An otherwise empty lifecycle fact,
+including `clear-output`, is therefore never free, and repeated references are
+charged repeatedly even when content-addressed storage deduplicates their
+physical bytes. The limit bounds what runtime code may produce rather than how
+efficiently the store happens to represent it.
 
 Limits should be configurable in tests and evaluated using real scientific
 workloads before general release.
@@ -2638,17 +2698,27 @@ not a static-image exception.
 Build the neutral representation bundle and renderer registry described in
 Section 10.2, then add important formats in independently testable slices:
 
-1. Markdown, LaTeX, PDF, validated static image formats, and structured JSON.
-2. Plotly, Vega, and Vega-Lite with bounded schema validation and the existing
+1. The bounded representation bundle, authorized lazy resources, and append-only
+   display-update/clear projection used by every later renderer.
+2. Markdown, LaTeX, PDF, validated static image formats, and structured JSON.
+3. Typed bounded datasets and interactive tables with exact-value preservation,
+   truthful preview scope, and explicit selection-to-chart handoff.
+4. Plotly, Vega, and Vega-Lite with bounded schema validation and the existing
    Scient-owned renderer seams where applicable.
-3. Safe HTML documents and fragments with explicit inert/sanitized and
+5. Safe HTML documents and fragments with explicit inert/sanitized and
    sandboxed-active modes; active HTML never shares the Scient origin or host
-   authority.
-4. Supported audio/video representations through ordinary typed viewers.
-5. Display updates and clear-output semantics without rewriting immutable
-   historical executions.
-6. Stateful widgets/comms and interactive input only after their lifecycle,
+   authority and does not execute inline in chat.
+6. Supported audio/video representations through ordinary typed viewers.
+7. Stateful widgets/comms and interactive input only after their lifecycle,
    authority, timeout, disconnect, and history semantics are accepted.
+
+Chat is a compact presentation surface, not the full data or application
+workspace. It may host lightweight, bounded interaction whose state is
+disposable: chart manipulation, table sorting/filtering/search/selection, and
+an inert HTML fragment. The expanded viewer or Studio owns high-density table
+exploration, durable derived views, multi-panel composition, and active HTML
+applications. Notebook Results reuse the same accepted renderers incrementally;
+they do not create notebook-only table, chart, or HTML systems.
 
 Every renderer must define size bounds, validation, fallback, persistence,
 copy/download/open behavior, remote delivery, and failure presentation. A
@@ -2675,6 +2745,152 @@ against one JupyterLab release or its extension ecosystem. Scient implements a
 native notebook document capability; it does not embed a JupyterLab application
 or adopt Jupyter Server, Contents Manager, Session Manager, workspace, renderer,
 or extension-manager authority.
+
+##### Agent-written notebook integration investigation — encouraged to be challenged
+
+> **Authorship and review status:** This entire subsection is agent-written and
+> explicitly encouraged to be challenged. It records a source and package audit
+> performed on 2026-08-23; it is not independent maintainer validation or owner
+> acceptance. Package contents, versions, measurements, and upstream quality may
+> change. Before implementation freezes any choice, reviewers should reproduce
+> the evidence, challenge the ownership and security conclusions, and replace
+> this recommendation when better evidence exists. The accepted product
+> principles and authority boundaries outside this subsection remain governing.
+
+The current agent recommendation is to keep the existing Scient workspace,
+compute, provenance, history, and presentation foundation. Build a
+Scient-native notebook document and interaction layer over that foundation,
+while adopting upstream standards and narrowly scoped low-level libraries. Do
+not cherry-pick or embed a complete upstream notebook application, and do not
+allow an upstream component to introduce a second filesystem, document store,
+kernel/session coordinator, renderer registry, collaboration model, or trust
+authority.
+
+The recommended adoption boundary is:
+
+| Source or project                      | Agent recommendation                                                                            | What Scient should take                                                                                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Official Jupyter nbformat              | Adopt the standard, schemas, and compatibility evidence; do not adopt a foreign document owner  | Versioned nbformat schemas, MIME/output semantics, cell-ID rules, and representative fixtures                                                                                      |
+| Official Jupyter messaging             | Continue the existing standards-based integration                                               | Kernel execution, completion, inspection, completeness, stdin, display-update/clear, and comm semantics through Scient's transport                                                 |
+| CodeMirror 6                           | Preferred direct, lazy dependency, conditional on the Phase 5C-N0 qualification                 | The modular editor state/view and language packages behind a thin Scient-owned cell-editor wrapper                                                                                 |
+| JupyterLab                             | Reference and fixture source only                                                               | Notebook edge cases, accessibility/keyboard behavior, schemas, and compatibility tests; not its notebook model, shell, services, rendermime stack, Y document, or extension system |
+| nteract                                | Reference selectively; do not adopt its application/runtime architecture                        | MIME-priority and safe-fallback cases, cell interaction ideas, and interoperability fixtures                                                                                       |
+| VS Code Jupyter and notebook renderers | Reference selectively; do not embed VS Code extension APIs or its renderer host                 | Renderer compatibility behavior, metadata edge cases, and test fixtures                                                                                                            |
+| marimo                                 | UX, performance, and stress-reference only                                                      | Cell-focus and navigation ideas, large-notebook virtualization lessons, and stale/reactive-state test cases; not its Python-first document/runtime model                           |
+| Datalayer Jupyter React                | Do not add as a production dependency or use as the notebook base                               | Requirements and behavior references only; do not inherit its JupyterLab service/model, collaboration, renderer, widget, filesystem, or state ownership                            |
+| ipywidgets                             | Evaluate later through a dedicated isolated adapter; do not implement the protocol from scratch | Official common widget models/views where compatible, behind a Scient-owned comm, module-policy, lifecycle, and authority boundary                                                 |
+| JupyterLite                            | Possible later optional runtime adapter, not a notebook UI or document base                     | Browser-runtime ideas only after a separate filesystem, persistence, packaging, and environment-authority decision                                                                 |
+| Existing Scient presenters             | Reuse and make producer-neutral where needed                                                    | Static image, Plotly, Vega/Vega-Lite, Markdown/math, PDF, Browser/document, copy/download, and full-view behavior                                                                  |
+
+This is deliberately an **adopt standards, adapt narrow libraries, reference
+applications, reject foreign authorities** strategy. Permissive MIT, BSD, or
+Apache licensing makes reuse possible, but it does not make an upstream
+architecture appropriate. Any copied source still requires attribution and
+license review; prefer a direct upstream dependency when its ownership boundary
+fits, and prefer small independent Scient code when the useful upstream logic is
+trivial. There is currently no upstream repository from which a broad git
+cherry-pick is recommended.
+
+The evidence behind this recommendation is also provisional and challengeable:
+
+- The inspected `@datalayer/jupyter-react` 2.0.14 package declared 109 direct
+  dependencies and included JupyterLab application, notebook, service,
+  collaboration/Yjs, rendermime, widget, file-browser, Plotly, Pyodide, and
+  independent state-management layers. Its top-level notebook and cell
+  components construct or consume Jupyter models and service managers rather
+  than accepting Scient's existing authorities. The inspected source also
+  contained lifecycle cleanup and unsanitized HTML/ANSI rendering patterns that
+  must not enter Scient. This evidence rejects direct adoption; it is not a
+  judgment that the project has no useful UX or compatibility knowledge.
+- The inspected JupyterLab notebook model intentionally normalizes documents:
+  it can raise format versions, insert an initial cell, and add language or
+  kernelspec metadata. Those behaviors are reasonable within JupyterLab but
+  conflict with Scient's inert-open, explicit-mutation, and lossless ordinary-
+  project-file requirements. JupyterLab remains authoritative evidence about
+  its ecosystem, not the owner of Scient's notebook document.
+- The inspected `@jupyterlab/nbformat` package was a small interface and helper
+  package rather than a complete lossless parser and validator. The preferred
+  starting point is therefore a Scient-owned opaque JSON model with conformance
+  tests against pinned official schemas and fixtures. A production dependency
+  should be added only if a later proof shows that it provides material value
+  without importing foreign types or authority.
+- A synthetic direct CodeMirror 6 browser bundle measured approximately 91 KiB
+  gzip for a minimal core, 134 KiB gzip for a standalone core-plus-Python probe,
+  and 177 KiB gzip for a standalone core-plus-Markdown probe. These are
+  planning measurements, not production bundle acceptance. Phase 5C-N0 must
+  still measure shared chunks, lazy loading, many-cell lifecycle, memory,
+  virtualization, IME/composition, bidirectional text, keyboard behavior,
+  accessibility, theming, and Electron/web/mobile constraints.
+- The official widget packages avoid inventing the ipywidgets protocol, but the
+  current HTML-manager stack is large and brings JupyterLab rendermime/output
+  and legacy widget dependencies. Common live widgets therefore remain a
+  Phase 6D isolated-adapter decision, not an implicit dependency of the notebook
+  authoring core or ordinary representation renderer.
+
+The investigation identifies the following bounded Scient-owned foundation
+extensions. These extend the accepted architecture; they do not justify a
+second compute or project-file system:
+
+1. Add a focused pure notebook document package, provisionally
+   `@scientfactory/notebook`, containing bounded parse/validate operations,
+   opaque-field preservation, narrow cell/metadata/output edits,
+   serialization, and structural undo commands. It must not depend on React,
+   RPC, filesystem, kernel, renderer, Jupyter services, or collaborative
+   document state.
+2. Add a distinct notebook-cell member to `ComputeExecutionSource`. It carries
+   the project path, persistent cell ID, base document revision,
+   saved-versus-dirty truth, and source hash relationship. It must not overload
+   the existing range-based script `# %%` cell origin, and the immutable request
+   continues to store the exact submitted bytes and hash once.
+3. Add a server-controlled, bounded notebook/document read operation that
+   reuses `WorkspaceFileSystem` path containment, symlink, full-content
+   revision, atomic-write, watcher, and conflict semantics. The generic preview
+   limit must not simply be raised globally: output-heavy `.ipynb` files need a
+   measured document limit, truthful rejection, and a full-content revision
+   rather than a hash of a truncated prefix.
+4. Complete the Phase 5B neutral representation foundation before notebook
+   execution freezes its output model. Durable compute facts need bounded MIME
+   bundles plus ordered execute-result, display-data, display-update, and clear-
+   output semantics. Notebook output projection consumes those facts; it does
+   not define a notebook-only transport or rewrite immutable execution history.
+5. Reuse existing Scient presentation runtimes through producer-neutral
+   adapters. Static image behavior can reuse the compute viewer directly.
+   Plotly, Vega/Vega-Lite, Markdown/math, PDF, and Browser/document runtimes may
+   need their reusable rendering cores separated from chat- or file-specific
+   card chrome. Notebook HTML needs explicit inert/sanitized and isolated-
+   active adapters; a full-document Browser surface is not automatically a
+   safe inline notebook renderer.
+6. Build the notebook cell editor as a thin Scient wrapper over direct,
+   lazily-loaded CodeMirror packages if the N0 proof accepts them. Do not extend
+   the single ordinary-file editor into a simulated cell collection and do not
+   import JupyterLab's CodeMirror bundle, all-language registry, services, or
+   Y-document integration merely to obtain an editor.
+7. Keep opening an older pre-nbformat-4.5 notebook inert. Because persistent
+   cell IDs are required for stable execution provenance, the first edit or
+   execution should prepare a visible in-memory migration to nbformat 4.5,
+   assign unique valid IDs, and mark the ordinary document buffer dirty. It must
+   never save that migration silently; the user can save or discard it. A file
+   that already claims 4.5 or later but contains missing, malformed, or
+   duplicate IDs fails validation rather than being silently repaired.
+8. Bind notebooks to bounded live sessions through the existing
+   `ComputeSession` coordinator. Lift the one-live-project-session UI policy only
+   after resource and idle-retention gates are accepted. Closing a notebook
+   cannot silently kill its session, and reopening a notebook cannot start a
+   kernel or replay code.
+9. Keep common widgets and comms out of the authoring and basic-execution core.
+   Phase 6D may reuse official widget implementations only through a
+   session-scoped Scient comm adapter, bounded state and message handling,
+   approved packaged modules, restart/disconnect/close semantics, and an honest
+   static or text fallback. Arbitrary remote widget modules are not enabled by
+   default.
+
+Durable decisions from this investigation belong in this ADR only after owner
+review. Exact dependency versions, synthetic bundle commands, fixture lists,
+threshold candidates, and spike procedures belong in the disposable Phase 5/6
+implementation plan. If later evidence accepts a different editor or upstream
+component while preserving the same authority and product invariants, amend
+this subsection rather than preserving the present agent recommendation by
+inertia.
 
 A complete first-party notebook experience includes:
 
@@ -2802,6 +3018,13 @@ notebook corruption or silently executed.
 
 **Purpose:** Make live scientific state inspectable without turning the UI into
 an unbounded object browser.
+
+Track B owns the producer-neutral typed-dataset representation and table
+presentation. Track D owns language/runtime-specific extraction, lazy slicing,
+inspection, and any attributable mutation of live values. A pandas frame,
+Polars frame, R data frame, MATLAB table, imported CSV, and notebook table
+should converge on the same accepted presentation contract instead of adding
+one grid per producer.
 
 Add incrementally:
 
@@ -2955,10 +3178,11 @@ continuous reliability and mainline-integration evidence:
 - Phase 6B notebook execution requires the representation bundle plus durable
   display-update/clear projection and an accepted bounded multiple-session
   policy. It does not require every later representation;
-- Plotly/Vega and safe HTML require the representation bundle. Notebook rich
-  output adopts each accepted renderer incrementally, while common widgets also
-  require the comm lifecycle, packaged-module policy, and isolated-authority
-  model;
+- typed tables, Plotly/Vega, and safe HTML require the representation bundle
+  but do not block notebook document authoring or basic cell execution.
+  Notebook rich output adopts each accepted renderer incrementally in Phase 6C,
+  while common widgets also require the Phase 6D comm lifecycle,
+  packaged-module policy, and isolated-authority model;
 - each managed language runtime requires its own acquisition decision and does
   not inherit approval from Python;
 - portable result promotion can proceed independently once its publication and
@@ -3089,18 +3313,20 @@ The focused suite covers:
 Keep evidence here, or in a later dedicated qualification record, rather than
 encoding it into the architecture status.
 
-| Gate                                           | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Status                                        |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| Architecture                                   | Product principles and domain/dependency boundaries accepted by the owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Accepted                                      |
-| Phase 1-3 implementation baseline              | Rebased feature-branch commit `9116f21613`; focused foundation qualification before replay plus the complete rebased repository suite, real Python kernel, typechecks, format/lint, seam check, and production server build after replay                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Locally requalified on macOS                  |
-| Phase 4 implementation candidate               | Rebased commit `84adc8270a` contains Scientific Computing settings, RPC/authorization, server-derived project identity, saved-source validation, bounded client folding/gap recovery, Code/Split/Results with explicit caret-aware `# %%` cells, focused run history, bounded transient live variables, inline signed PNG/SVG viewing, secondary project history, and workspace refresh                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Committed locally                             |
-| Combined backend and client qualification      | The rebased candidate passed the complete repository suite, including 418 web files/3,659 tests and 336 passing server files/3,712 passing tests with 7 files/32 tests explicitly skipped. It also passed 83 bridge tests and 8 explicitly enabled real-kernel/product tests covering state and safe variables after success/failure/restart, ordinary `plt.show()` PNG, explicit SVG display, interruption, restart, loss, output flood, 40 rapid executions, restart storms, durable history, bounded generated-project-image capture, and immutable retained bytes. All 26 typecheck boundaries, formatting, lint, seam, and brand gates passed; lint emitted only pre-existing warnings outside the compute diff.                                                                                                                                                                                                                                                                                                                                                                                                                      | Passed locally on rebased macOS tree          |
-| Phase 4 visual product acceptance              | The owner rejected the initial composer/history-first surface, then manually tested and accepted the replacement file-first Code/Split/Results workflow. The owner subsequently tested and accepted figure following, floating presentation, direct figure actions, and side-by-side/stacked layouts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Accepted locally                              |
-| Phase 5 and Phase 6 roadmap                    | Phase 5A managed Python, Phase 5B shared representations, the bounded 5C proofs, and the complete Phase 6A-6E native-notebook product are specified by dependency and acceptance gates in this ADR. The roadmap change is architectural planning only; no Phase 5 or Phase 6 product implementation is claimed by this row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Accepted roadmap; implementation not begun    |
-| Stable rebased candidate                       | Product checkpoint `580b31eac8` contains current `origin/main` snapshot `ad8566cbd4`, including the current upstream T3 sync. It passes 100 compute, 328 contract, 678 client-runtime, 83 bridge, 3,767 web, and 3,760 server tests plus all 26 typecheck boundaries, formatting/lint/seam/brand gates, production builds, byte-identical bridge staging, release and Electron smoke, and 8 explicitly enabled real-kernel/product tests. Published predecessor `99fe3419e0` passed every configured hosted check, including all three server shards and the macOS/Linux real-kernel matrix on Python 3.10 and 3.12. Immutable PR checks remain authoritative for each later published head.                                                                                                                                                                                                                                                                                                                                                                                                                                               | Stable and locally requalified; see PR checks |
-| Post-Phase 4 UI extension candidate            | Rebased figure-follow and interaction hardening through `b955ebef5f` provides stable project-file and saved full-file runtime references, immutable historical snapshots, explicit full and floating presentation destinations, passive no-resurrection updates, deterministic cross-session revision ordering, gap recovery, same-content zoom continuity, decode-before-swap image transitions, and bounded keyboard move/resize/Escape controls. Commit `158a05635a` adds producer-neutral static-image actions, `a652181437` adds persisted side-by-side/stacked Results layouts through a shared axis-neutral split hook, and `414e46f961` exposes direct open, float, copy, and download actions consistently across result, viewer, and floating surfaces. Commit `578a0613a1` keeps the implementation in the generic preview layer while restoring the inherited viewer's existing compatibility seam. The rebased source passed exact-diff seam checks, focused image coverage through the complete web suite, web typecheck, production web and desktop/server builds, exact bridge staging, release smoke, and Electron smoke. | Owner-accepted and locally qualified          |
-| Phase 2 real-kernel portability                | ADR requires macOS, Windows, and Linux. Exact head `fcf7c22fab` passed hosted macOS 15 and Ubuntu 24.04 real-kernel jobs on Python 3.10 and 3.12; Windows is absent from the current workflow matrix and remains incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | macOS/Linux passed; Windows pending           |
-| Packaged cross-platform and release acceptance | Product checkpoint `580b31eac8` passes local production web, desktop, and server builds, exact bridge staging, release smoke, and Electron smoke on current `origin/main` snapshot `ad8566cbd4`. Published predecessor `99fe3419e0` passes every configured required hosted check; immutable PR checks remain authoritative for each later published head. The release-qualification track's installed-app tests on supported platforms and explicit release approval remain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Local assembly passed; release pending        |
+| Gate                                           | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Status                                                      |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Architecture                                   | Product principles and domain/dependency boundaries accepted by the owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Accepted                                                    |
+| Phase 1-3 implementation baseline              | Rebased feature-branch commit `9116f21613`; focused foundation qualification before replay plus the complete rebased repository suite, real Python kernel, typechecks, format/lint, seam check, and production server build after replay                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Locally requalified on macOS                                |
+| Phase 4 implementation candidate               | Rebased commit `84adc8270a` contains Scientific Computing settings, RPC/authorization, server-derived project identity, saved-source validation, bounded client folding/gap recovery, Code/Split/Results with explicit caret-aware `# %%` cells, focused run history, bounded transient live variables, inline signed PNG/SVG viewing, secondary project history, and workspace refresh                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Committed locally                                           |
+| Combined backend and client qualification      | The rebased candidate passed the complete repository suite, including 418 web files/3,659 tests and 336 passing server files/3,712 passing tests with 7 files/32 tests explicitly skipped. It also passed 83 bridge tests and 8 explicitly enabled real-kernel/product tests covering state and safe variables after success/failure/restart, ordinary `plt.show()` PNG, explicit SVG display, interruption, restart, loss, output flood, 40 rapid executions, restart storms, durable history, bounded generated-project-image capture, and immutable retained bytes. All 26 typecheck boundaries, formatting, lint, seam, and brand gates passed; lint emitted only pre-existing warnings outside the compute diff.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Passed locally on rebased macOS tree                        |
+| Phase 4 visual product acceptance              | The owner rejected the initial composer/history-first surface, then manually tested and accepted the replacement file-first Code/Split/Results workflow. The owner subsequently tested and accepted figure following, floating presentation, direct figure actions, and side-by-side/stacked layouts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Accepted locally                                            |
+| Phase 5 and Phase 6 roadmap                    | Phase 5A managed Python, Phase 5B shared representations, the bounded 5C proofs, and the complete Phase 6A-6E native-notebook product are specified by dependency and acceptance gates in this ADR. The roadmap remains broader than any one implementation slice; the row below records the bounded Phase 5B foundation candidate separately.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Accepted roadmap; implementation gated                      |
+| Phase 5B representation foundation candidate   | The child candidate adds bounded, canonical MIME keys; bounded inline text, exact encoded JSON, content-addressed resource alternatives and metadata; append-only display-data, execute-result, display-update, and clear-output facts; exact retained-byte accounting that charges every encoded fact plus every referenced resource; deterministic caller-owned renderer selection with truthful unsupported fallback; and a linear-time, generation-scoped projector whose clear behavior is output-area-local while display-ID updates can span output areas. The Python/Jupyter bridge now retains complete bounded MIME bundles in kernel order, preserves metadata and display identity, and carries neutral resource bytes to the service. The service proves exact bundle/resource correspondence, verifies hashes, stores every resource before its durable fact, refuses ambiguous MIME authority, and keeps legacy records readable. The existing Results and figure-following surfaces render reviewed SVG/PNG alternatives through signed assets, use plain text when available, and truthfully name unsupported formats. Exact final-tree local evidence is 117 compute, 332 contract, 678 client-runtime, 3,803 web, 3,847 server, and 85 Python-bridge tests plus 9 explicitly enabled real-kernel/product tests; all five affected typecheck boundaries, formatting/lint/seam/brand gates, production builds, exact bridge staging, release smoke, and Electron smoke pass. Plotly, Vega/Vega-Lite, isolated HTML, and other reviewed renderer adapters remain separate Phase 5B gates rather than implied completion. | Activated and locally qualified; renderer expansion pending |
+| Notebook open-source integration investigation | The Track C subsection titled “Agent-written notebook integration investigation — encouraged to be challenged” records the 2026-08-23 source/package audit, adoption matrix, provisional dependency evidence, and proposed Scient-owned extensions. It explicitly does not convert agent judgment into owner acceptance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Agent recommendation; owner review pending                  |
+| Stable rebased candidate                       | Product checkpoint `580b31eac8` contains current `origin/main` snapshot `ad8566cbd4`, including the current upstream T3 sync. It passes 100 compute, 328 contract, 678 client-runtime, 83 bridge, 3,767 web, and 3,760 server tests plus all 26 typecheck boundaries, formatting/lint/seam/brand gates, production builds, byte-identical bridge staging, release and Electron smoke, and 8 explicitly enabled real-kernel/product tests. Published predecessor `99fe3419e0` passed every configured hosted check, including all three server shards and the macOS/Linux real-kernel matrix on Python 3.10 and 3.12. Immutable PR checks remain authoritative for each later published head.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Stable and locally requalified; see PR checks               |
+| Post-Phase 4 UI extension candidate            | Rebased figure-follow and interaction hardening through `b955ebef5f` provides stable project-file and saved full-file runtime references, immutable historical snapshots, explicit full and floating presentation destinations, passive no-resurrection updates, deterministic cross-session revision ordering, gap recovery, same-content zoom continuity, decode-before-swap image transitions, and bounded keyboard move/resize/Escape controls. Commit `158a05635a` adds producer-neutral static-image actions, `a652181437` adds persisted side-by-side/stacked Results layouts through a shared axis-neutral split hook, and `414e46f961` exposes direct open, float, copy, and download actions consistently across result, viewer, and floating surfaces. Commit `578a0613a1` keeps the implementation in the generic preview layer while restoring the inherited viewer's existing compatibility seam. The rebased source passed exact-diff seam checks, focused image coverage through the complete web suite, web typecheck, production web and desktop/server builds, exact bridge staging, release smoke, and Electron smoke.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Owner-accepted and locally qualified                        |
+| Phase 2 real-kernel portability                | ADR requires macOS, Windows, and Linux. Exact head `fcf7c22fab` passed hosted macOS 15 and Ubuntu 24.04 real-kernel jobs on Python 3.10 and 3.12; Windows is absent from the current workflow matrix and remains incomplete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | macOS/Linux passed; Windows pending                         |
+| Packaged cross-platform and release acceptance | Product checkpoint `580b31eac8` passes local production web, desktop, and server builds, exact bridge staging, release smoke, and Electron smoke on current `origin/main` snapshot `ad8566cbd4`. Published predecessor `99fe3419e0` passes every configured required hosted check; immutable PR checks remain authoritative for each later published head. The release-qualification track's installed-app tests on supported platforms and explicit release approval remain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Local assembly passed; release pending                      |
 
 Local test counts are evidence for one exact snapshot, not a substitute for a
 gate above. Phase 2 real-kernel portability and packaged-app release acceptance
@@ -3148,7 +3374,10 @@ Implement and qualify the following architectural direction:
     not an embedded JupyterLab application.
 15. Rich output is a language-neutral representation platform covering
     important static, document, structured-data, interactive, HTML, media, and
-    later widget formats, each with explicit validation and authority.
+    later widget formats, each with explicit validation and authority. Compact
+    chat/Results interaction remains bounded and disposable; large-data
+    exploration, durable views, and active HTML use explicit full surfaces over
+    the same source and representation identities.
 16. No managed runtime or shared artifact migration without separate evidence
     and explicit user choice.
 17. Prove the foundation with Python, then validate transport-host/kernel

@@ -502,6 +502,124 @@ describe("jupyter bridge output mapping", () => {
     ),
   );
 
+  it.effect("materializes a complete rich bundle with resource bytes and display identity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, reader } = yield* harness();
+        yield* reader.next;
+        const bytes = pngBytes(12, 9);
+        yield* bridge.say({
+          type: "display",
+          payload: {
+            kind: "display-data",
+            bundle: {
+              representations: [
+                { mediaType: "text/plain", encoding: "text", data: "fallback" },
+                {
+                  mediaType: "application/vnd.plotly.v1+json",
+                  encoding: "json",
+                  data: '{"data":[]}',
+                },
+                {
+                  mediaType: "image/png",
+                  encoding: "base64",
+                  data: Buffer.from(bytes).toString("base64"),
+                },
+              ],
+              metadataJson: '{"image/png":{"width":12}}',
+            },
+            displayId: "display-1",
+          },
+          requestId: "run-1",
+        });
+        const event = yield* reader.next;
+        if (event._tag !== "output" || event.output._tag !== "display-data") {
+          throw new Error("Expected rich display data.");
+        }
+        expect(event.output.displayId).toBe("display-1");
+        expect(event.output.bundle.representations.map(({ mediaType }) => mediaType)).toEqual([
+          "text/plain",
+          "application/vnd.plotly.v1+json",
+          "image/png",
+        ]);
+        expect(event.resources).toHaveLength(1);
+        expect(event.resources[0]?.bytes).toEqual(bytes);
+        expect(event.image).toBeNull();
+      }),
+    ),
+  );
+
+  it.effect("keeps valid alternatives when malformed rich data is isolated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, reader } = yield* harness();
+        yield* reader.next;
+        yield* bridge.say({
+          type: "display",
+          payload: {
+            kind: "display-data",
+            bundle: {
+              representations: [
+                { mediaType: "text/plain", encoding: "text", data: "fallback" },
+                { mediaType: "application/json", encoding: "json", data: "not-json" },
+                { mediaType: "text/plain", encoding: "text", data: "duplicate" },
+              ],
+              metadataJson: "[]",
+            },
+            displayId: null,
+          },
+          requestId: "run-1",
+        });
+        const event = yield* reader.next;
+        if (event._tag !== "output" || event.output._tag !== "display-data") {
+          throw new Error("Expected the valid rich display alternative.");
+        }
+        expect(event.output.bundle).toEqual({
+          representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "fallback" } }],
+          metadataJson: null,
+        });
+        const warning = yield* reader.next;
+        expect(warning).toMatchObject({
+          _tag: "output",
+          output: { _tag: "system", event: "output-truncated" },
+        });
+      }),
+    ),
+  );
+
+  it.effect("maps updates and delayed clears into ordered durable facts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, reader } = yield* harness();
+        yield* reader.next;
+        yield* bridge.say({
+          type: "display",
+          payload: {
+            kind: "display-update",
+            bundle: {
+              representations: [{ mediaType: "text/plain", encoding: "text", data: "new" }],
+              metadataJson: null,
+            },
+            displayId: "display-1",
+          },
+          requestId: "run-1",
+        });
+        yield* bridge.say({
+          type: "display",
+          payload: { kind: "clear-output", wait: true },
+          requestId: "run-1",
+        });
+        expect((yield* reader.next)._tag).toBe("output");
+        const clear = yield* reader.next;
+        expect(clear).toMatchObject({
+          _tag: "output",
+          output: { _tag: "clear-output", wait: true },
+          resources: [],
+        });
+      }),
+    ),
+  );
+
   it.effect("drops a payload labelled as SVG when it has no SVG root", () =>
     Effect.scoped(
       Effect.gen(function* () {

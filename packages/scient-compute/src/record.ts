@@ -238,7 +238,7 @@ export const ComputeSessionJournalEntry = Schema.Struct({
 export type ComputeSessionJournalEntry = typeof ComputeSessionJournalEntry.Type;
 
 /**
- * Names one stored image without naming a file.
+ * Names one stored compute representation without naming a file.
  *
  * The content hash is the identity, and the file name is derived from it. A
  * reference that carried a file name would let a corrupted record choose which
@@ -247,7 +247,7 @@ export type ComputeSessionJournalEntry = typeof ComputeSessionJournalEntry.Type;
 export const ComputeOutputResourceRef = Schema.Struct({
   projectId: ComputeProjectId,
   sessionId: ComputeSessionId,
-  // Null for an image a session produced outside any execution. Rare -- a
+  // Null for a resource a session produced outside any execution. Rare -- a
   // background thread drawing a figure -- but the transport allows it, and a
   // reference that could not express it would make such an image permanently
   // unreachable rather than merely unusual.

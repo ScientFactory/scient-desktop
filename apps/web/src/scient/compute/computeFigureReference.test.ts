@@ -133,6 +133,35 @@ describe("compute figure references", () => {
     expect(matchComputeFigureOutput(reference, outputs)?.contentHash).toBe(hash("b"));
   });
 
+  it("matches a projected rich figure by the same runtime-display ordinal", () => {
+    const reference: ComputeFigureReference = {
+      _tag: "runtime-display",
+      projectId,
+      languageId,
+      path: "analysis.py",
+      ordinal: 1,
+    };
+    const outputs: ReadonlyArray<ComputeOutput> = [
+      {
+        _tag: "display-data",
+        sequence: 1,
+        observedAt: "2026-08-23T12:00:00.000Z",
+        bundle: {
+          representations: [
+            { mediaType: "text/plain", data: { _tag: "text", text: "fallback" } },
+            {
+              mediaType: "image/png",
+              data: { _tag: "resource", contentHash: hash("r"), byteLength: 10 },
+            },
+          ],
+          metadataJson: null,
+        },
+        displayId: "display-1",
+      },
+    ];
+    expect(matchComputeFigureOutput(reference, outputs)?.contentHash).toBe(hash("r"));
+  });
+
   it("isolates runtime followers by project, language, source path, and saved-file authority", () => {
     const reference: ComputeFigureReference = {
       _tag: "runtime-display",

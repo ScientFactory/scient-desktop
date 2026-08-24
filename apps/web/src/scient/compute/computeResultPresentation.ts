@@ -1,8 +1,38 @@
-import type { ComputeExecutionRecord, ComputeOutput } from "@t3tools/contracts";
+import {
+  sameComputeRepresentationBundle,
+  type ComputeExecutionRecord,
+  type ComputeOutput,
+  type ComputeProjectedOutput,
+} from "@t3tools/contracts";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 type ComputeExecutionStatus = NonNullable<ComputeExecutionRecord["result"]>["status"];
 type ComputeSystemEvent = Extract<ComputeOutput, { readonly _tag: "system" }>["event"];
+export type ComputeStaticImageOutput = Extract<ComputeOutput, { readonly _tag: "image" }>;
+
+/** Adapts one projected rich bundle into the existing producer-neutral image surface. */
+export function computeProjectedStaticImage(
+  output: Extract<ComputeProjectedOutput, { readonly _tag: "representation" }>,
+): ComputeStaticImageOutput | null {
+  for (const mediaType of ["image/svg+xml", "image/png"] as const) {
+    const representation = output.bundle.representations.find(
+      (candidate) => candidate.mediaType === mediaType && candidate.data._tag === "resource",
+    );
+    if (representation?.data._tag !== "resource") continue;
+    return {
+      _tag: "image",
+      sequence: output.sequence,
+      observedAt: output.observedAt,
+      mediaType,
+      contentHash: representation.data.contentHash,
+      byteLength: representation.data.byteLength,
+      width: null,
+      height: null,
+      origin: { _tag: "runtime-display" },
+    };
+  }
+  return null;
+}
 
 function sameOutput(left: ComputeOutput, right: ComputeOutput): boolean {
   if (left.sequence !== right.sequence || left._tag !== right._tag) return false;
@@ -34,6 +64,26 @@ function sameOutput(left: ComputeOutput, right: ComputeOutput): boolean {
       return right._tag === "image" && left.contentHash === right.contentHash;
     case "system":
       return right._tag === "system" && left.event === right.event && left.detail === right.detail;
+    case "display-data":
+      return (
+        right._tag === "display-data" &&
+        left.displayId === right.displayId &&
+        sameComputeRepresentationBundle(left.bundle, right.bundle)
+      );
+    case "execute-result":
+      return (
+        right._tag === "execute-result" &&
+        left.executionCount === right.executionCount &&
+        sameComputeRepresentationBundle(left.bundle, right.bundle)
+      );
+    case "display-update":
+      return (
+        right._tag === "display-update" &&
+        left.displayId === right.displayId &&
+        sameComputeRepresentationBundle(left.bundle, right.bundle)
+      );
+    case "clear-output":
+      return right._tag === "clear-output" && left.wait === right.wait;
   }
 }
 

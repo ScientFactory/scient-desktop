@@ -7,6 +7,7 @@ import {
   ComputeTransportKind,
   INITIAL_COMPUTE_SESSION_GENERATION,
   MAXIMUM_PENDING_COMPUTE_EXECUTIONS,
+  computeOutputByteLength,
   nextComputeSessionGeneration,
   createSimulatedComputeTransport,
   type ComputeCapability,
@@ -93,6 +94,13 @@ const streamOutput = (sequence: number, text: string): ComputeOutput => ({
   text,
 });
 
+const clearOutput = (sequence: number): ComputeOutput => ({
+  _tag: "clear-output",
+  sequence,
+  observedAt: OBSERVED_AT,
+  wait: false,
+});
+
 const imageOutput: ComputeOutput = {
   _tag: "image",
   sequence: 0,
@@ -102,6 +110,23 @@ const imageOutput: ComputeOutput = {
   byteLength: PNG_BYTES.byteLength,
   width: 4,
   height: 3,
+};
+
+const richImageOutput: ComputeOutput = {
+  _tag: "display-data",
+  sequence: 0,
+  observedAt: OBSERVED_AT,
+  bundle: {
+    representations: [
+      { mediaType: "text/plain", data: { _tag: "text", text: "fallback" } },
+      {
+        mediaType: "image/png",
+        data: { _tag: "resource", contentHash: PNG_HASH, byteLength: PNG_BYTES.byteLength },
+      },
+    ],
+    metadataJson: null,
+  },
+  displayId: "display-1",
 };
 
 /**
@@ -139,6 +164,26 @@ const script = (code: string): SimulatedComputeExecution => {
         outcome: "succeeded",
         imageBytes: new Map([[0, PNG_BYTES]]),
       };
+    case "rich-figure":
+      return {
+        _tag: "completes",
+        outputs: [richImageOutput],
+        outcome: "succeeded",
+        resourceBytes: new Map([
+          [
+            0,
+            [
+              {
+                mediaType: "image/png",
+                contentHash: PNG_HASH,
+                bytes: PNG_BYTES,
+              },
+            ],
+          ],
+        ]),
+      };
+    case "phantom-rich-figure":
+      return { _tag: "completes", outputs: [richImageOutput], outcome: "succeeded" };
     // A transport breaking its own contract: an image line with no bytes under
     // it. Scripted rather than hypothetical because a real one is a mislabelled
     // media type or a bug in a future adapter, and either would arrive here.
@@ -152,6 +197,12 @@ const script = (code: string): SimulatedComputeExecution => {
           streamOutput(1, "b".repeat(40)),
           streamOutput(2, "c".repeat(40)),
         ],
+        outcome: "succeeded",
+      };
+    case "empty-display-flood":
+      return {
+        _tag: "completes",
+        outputs: Array.from({ length: 50 }, (_unused, index) => clearOutput(index)),
         outcome: "succeeded",
       };
     case "die":
@@ -583,7 +634,9 @@ describe("compute session execution", () => {
           );
           expect(finished.result?.outcome).toBe("succeeded");
           expect(finished.result?.outputCount).toBe(1);
-          expect(finished.result?.outputBytes).toBe(2);
+          expect(finished.result?.outputBytes).toBe(
+            computeOutputByteLength(streamOutput(0, "1\n")),
+          );
           expect(finished.result?.truncated).toBe(false);
           expect(finished.result?.startedAt).not.toBeNull();
           expect(finished.result?.finishedAt).not.toBeNull();
@@ -854,9 +907,67 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("stores every rich resource before publishing the bundle that names it", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("rich-figure", "execution-1");
+          const finished = yield* waitUntil(
+            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          );
+          expect(finished.result?.imageCount).toBe(1);
+          const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
+          expect(transcript.outputs).toEqual([richImageOutput]);
+          const resolved = yield* service.resolveOutputImage({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: ComputeExecutionId.make("execution-1"),
+            contentHash: PNG_HASH,
+          });
+          expect(resolved).toMatchObject({
+            mediaType: "image/png",
+            contentHash: PNG_HASH,
+            byteLength: PNG_BYTES.byteLength,
+          });
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("never publishes a rich bundle whose resource bytes are absent", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("phantom-rich-figure", "execution-1");
+          const finished = yield* waitUntil(
+            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          );
+          expect(finished.result?.truncated).toBe(true);
+          const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
+          expect(transcript.outputs).toMatchObject([{ _tag: "system", event: "output-truncated" }]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("stops keeping output once an execution reaches its ceiling, and says so", () =>
     Effect.gen(function* () {
-      const test = yield* harness({ service: { maximumExecutionOutputBytes: 60 } });
+      const firstOutput = streamOutput(0, "a".repeat(40));
+      const test = yield* harness({
+        service: {
+          maximumExecutionOutputBytes:
+            computeOutputByteLength(firstOutput) +
+            computeOutputByteLength(streamOutput(1, "b".repeat(40))) -
+            1,
+        },
+      });
 
       yield* test.use(
         Effect.gen(function* () {
@@ -872,7 +983,7 @@ describe("compute session execution", () => {
 
           const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
           expect(transcript.outputs).toHaveLength(2);
-          expect(transcript.outputs[0]).toEqual(streamOutput(0, "a".repeat(40)));
+          expect(transcript.outputs[0]).toEqual(firstOutput);
           // The marker takes the dropped output's own place in the transcript,
           // and only one is written however much follows it.
           expect(transcript.outputs[1]).toMatchObject({
@@ -886,11 +997,49 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("charges empty display facts so they cannot bypass durable output ceilings", () =>
+    Effect.gen(function* () {
+      const clearCharge = computeOutputByteLength(clearOutput(0));
+      const test = yield* harness({
+        service: { maximumExecutionOutputBytes: clearCharge * 4 },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("empty-display-flood", "execution-1");
+          const finished = yield* waitUntil(
+            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          );
+
+          expect(finished.result?.truncated).toBe(true);
+          expect(finished.result?.outputBytes).toBeGreaterThan(0);
+          const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
+          expect(transcript.outputs).toHaveLength(5);
+          expect(transcript.outputs.slice(0, 4)).toEqual([
+            clearOutput(0),
+            clearOutput(1),
+            clearOutput(2),
+            clearOutput(3),
+          ]);
+          expect(transcript.outputs[4]).toMatchObject({
+            _tag: "system",
+            event: "output-truncated",
+            sequence: 4,
+          });
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("stops keeping output once a session reaches its ceiling, across executions", () =>
     Effect.gen(function* () {
-      // Two bytes of output each, so the first execution fits and the second is
-      // what crosses a ceiling neither of them could cross alone.
-      const test = yield* harness({ service: { maximumSessionOutputBytes: 3 } });
+      const oneOutput = computeOutputByteLength(streamOutput(0, "1\n"));
+      // One retained fact fits and a second equal fact crosses the session
+      // ceiling, including each fact's durable envelope.
+      const test = yield* harness({
+        service: { maximumSessionOutputBytes: oneOutput * 2 - 1 },
+      });
 
       yield* test.use(
         Effect.gen(function* () {
@@ -926,7 +1075,10 @@ describe("compute session execution", () => {
 
   it.effect("keeps the session output ceiling spent across a runtime restart", () =>
     Effect.gen(function* () {
-      const test = yield* harness({ service: { maximumSessionOutputBytes: 3 } });
+      const oneOutput = computeOutputByteLength(streamOutput(0, "1\n"));
+      const test = yield* harness({
+        service: { maximumSessionOutputBytes: oneOutput * 2 - 1 },
+      });
 
       yield* test.use(
         Effect.gen(function* () {
@@ -1359,7 +1511,7 @@ describe("compute session recovery", () => {
             // Counted from the transcript rather than trusted from a result
             // file that was being written when the server stopped.
             outputCount: 1,
-            outputBytes: 8,
+            outputBytes: computeOutputByteLength(streamOutput(0, "working\n")),
           });
           expect(byId.get(ComputeExecutionId.make("execution-2"))?.result).toMatchObject({
             status: "cancelled",

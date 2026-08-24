@@ -18,6 +18,7 @@ import {
   type ComputeTransport,
   type ComputeTransportEvent,
   type ComputeTransportOpenRequest,
+  type ComputeTransportResourceEvent,
 } from "./contract.ts";
 import { missingComputeCapabilities } from "./capabilities.ts";
 import { Sequence } from "./primitives.ts";
@@ -60,6 +61,10 @@ function completionBoundary(
  * pass here by accident.
  */
 export type SimulatedComputeImageBytes = ReadonlyMap<number, Uint8Array>;
+export type SimulatedComputeResourceBytes = ReadonlyMap<
+  number,
+  ReadonlyArray<ComputeTransportResourceEvent>
+>;
 
 /**
  * A raw runtime error a scripted execution reports before it ends.
@@ -93,12 +98,14 @@ export type SimulatedComputeExecution =
       readonly outputs: ReadonlyArray<ComputeOutput>;
       readonly outcome: "succeeded" | "failed";
       readonly imageBytes?: SimulatedComputeImageBytes;
+      readonly resourceBytes?: SimulatedComputeResourceBytes;
       readonly runtimeError?: SimulatedComputeRuntimeError;
     }
   | {
       readonly _tag: "runs-until-interrupted";
       readonly outputs: ReadonlyArray<ComputeOutput>;
       readonly imageBytes?: SimulatedComputeImageBytes;
+      readonly resourceBytes?: SimulatedComputeResourceBytes;
     }
   | { readonly _tag: "loses-runtime"; readonly reason: string };
 
@@ -244,6 +251,7 @@ export function createSimulatedComputeTransport(plan: SimulatedComputeRuntime): 
               }
               MutableRef.set(inFlightBoundary, completionBoundary(scripted));
               const imageBytes = scripted.imageBytes;
+              const resourceBytes = scripted.resourceBytes;
               const announce = emit({
                 _tag: "accepted",
                 requestId: executeRequest.requestId,
@@ -261,6 +269,7 @@ export function createSimulatedComputeTransport(plan: SimulatedComputeRuntime): 
                         generation: MutableRef.get(generation),
                         output,
                         image: bytes === undefined ? null : { bytes },
+                        resources: [...(resourceBytes?.get(output.sequence) ?? [])],
                       });
                     },
                     { discard: true },

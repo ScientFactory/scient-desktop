@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import base64
 import contextlib
 import json
 import os
 import queue
+import re
 import signal
 import struct
 import subprocess
@@ -46,8 +48,10 @@ MAX_TRACEBACK_LINES = 200
 MAX_TRACEBACK_LINE = 4096
 MAX_ERROR_NAME = 256
 MAX_ERROR_VALUE = 16 * 1024
-MAX_PNG_BASE64 = 11 * 1024 * 1024
-MAX_SVG_TEXT = 8 * 1024 * 1024
+MAX_INLINE_REPRESENTATION = 1024 * 1024
+MAX_REPRESENTATION_METADATA = 256 * 1024
+MAX_REPRESENTATION_BUNDLE = 8 * 1024 * 1024
+MAX_REPRESENTATIONS = 32
 MAX_DETAIL = 4096
 MAX_DIAGNOSTIC = 1024
 
@@ -190,7 +194,16 @@ VARIABLE_INSPECTION_EXPRESSION = r"""
 )
 """.strip()
 
-UNSUPPORTED_IOPUB_TYPES = {"update_display_data", "clear_output"}
+MEDIA_TYPE_PATTERN = re.compile(
+    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+)
+BINARY_JUPYTER_MEDIA_TYPES = {
+    "application/pdf",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
 
 class ProtocolViolation(Exception):
     """An inbound message violated the stateful bridge protocol."""
@@ -328,7 +341,6 @@ class ExecuteMapping:
         self.iopub_busy = False
         self.iopub_idle = False
         self.interrupt_requested = False
-        self.warned_message_types: set[str] = set()
 
     def is_complete(self) -> bool:
         """Whether both channels have said everything they are going to say.
@@ -370,7 +382,6 @@ class ExecuteMapping:
         self.iopub_busy = False
         self.iopub_idle = False
         self.interrupt_requested = False
-        self.warned_message_types = set()
 
 
 # ---------------------------------------------------------------------------
@@ -1198,8 +1209,14 @@ class ScientBridge:
             return
         if msg_type == "stream":
             self._map_stream(content, request_id)
-        elif msg_type in {"execute_result", "display_data"}:
-            self._map_display(content, request_id)
+        elif msg_type in {"execute_result", "display_data", "update_display_data"}:
+            self._map_display(msg_type, content, request_id)
+        elif msg_type == "clear_output":
+            self._send(
+                "display",
+                {"kind": "clear-output", "wait": content.get("wait") is True},
+                request_id,
+            )
         elif msg_type == "error":
             self._map_error(content, request_id)
         elif msg_type == "status" and request_id == self._mapping.active_request_id:
@@ -1208,12 +1225,6 @@ class ScientBridge:
                 self._mapping.iopub_busy = True
             elif status == "idle":
                 self._mapping.iopub_idle = True
-        elif msg_type in UNSUPPORTED_IOPUB_TYPES:
-            # Rate limited to once per execution: a cell that redraws in a loop
-            # would otherwise bury its own real output under identical warnings.
-            if msg_type not in self._mapping.warned_message_types:
-                self._mapping.warned_message_types.add(msg_type)
-                self._send_warning("runtime-warning", f"{msg_type} is not supported.", request_id)
 
     def _map_stream(self, content: dict[str, Any], request_id: Optional[str]) -> None:
         stream_name = content.get("name", "stdout")
@@ -1224,54 +1235,142 @@ class ScientBridge:
         if truncated:
             self._send_warning("output-truncated", "Stream text exceeded limit.", request_id)
 
-    def _map_display(self, content: dict[str, Any], request_id: Optional[str]) -> None:
+    def _map_display(
+        self,
+        msg_type: str,
+        content: dict[str, Any],
+        request_id: Optional[str],
+    ) -> None:
         data = content.get("data", {})
         if not isinstance(data, dict):
             return
-        png = data.get("image/png")
-        if isinstance(png, str):
-            # Measured as UTF-8, which is how it is about to be encoded into a
-            # frame.  Base64 is ASCII, so for a real image the two readings are
-            # the same number; what this closes is a ``_repr_png_`` that returns
-            # something else entirely, where an ASCII-only reading would call
-            # twenty megabytes of text small and the frame that could not hold it
-            # would take the session down with it.
-            if len(png.encode("utf-8")) > MAX_PNG_BASE64:
-                self._send_warning("output-truncated", "PNG exceeded limit.", request_id)
-            else:
-                self._send("display", {"mediaType": "image/png", "data": png}, request_id)
-            return
-        svg = data.get("image/svg+xml")
-        if isinstance(svg, str):
-            if len(svg.encode("utf-8")) > MAX_SVG_TEXT:
-                self._send_warning("output-truncated", "SVG exceeded limit.", request_id)
+        representations: list[dict[str, str]] = []
+        retained_bytes = 0
+        dropped: list[str] = []
+        for raw_media_type, value in data.items():
+            media_type = raw_media_type if isinstance(raw_media_type, str) else ""
+            if (
+                len(representations) >= MAX_REPRESENTATIONS
+                or not MEDIA_TYPE_PATTERN.fullmatch(media_type)
+            ):
+                dropped.append(str(raw_media_type))
+                continue
+            if isinstance(value, str):
+                encoded = value.encode("utf-8")
+                if media_type in BINARY_JUPYTER_MEDIA_TYPES:
+                    wire = {"mediaType": media_type, "encoding": "base64", "data": value}
+                    decoded_bytes = (len(value) * 3) // 4
+                elif len(encoded) <= MAX_INLINE_REPRESENTATION:
+                    wire = {"mediaType": media_type, "encoding": "text", "data": value}
+                    decoded_bytes = len(encoded)
+                else:
+                    wire = {
+                        "mediaType": media_type,
+                        "encoding": "base64",
+                        "data": base64.b64encode(encoded).decode("ascii"),
+                    }
+                    decoded_bytes = len(encoded)
             else:
                 try:
-                    self._send(
-                        "display", {"mediaType": "image/svg+xml", "data": svg}, request_id
+                    exact_json = json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        allow_nan=False,
                     )
-                except ValueError:
-                    # Escaping can make a JSON string larger than its UTF-8
-                    # source. Preserve the session and record the dropped
-                    # figure instead of letting frame encoding fail execution.
-                    self._send_warning("output-truncated", "SVG exceeded frame limit.", request_id)
+                except (TypeError, ValueError):
+                    dropped.append(media_type)
+                    continue
+                encoded = exact_json.encode("utf-8")
+                if len(encoded) <= MAX_INLINE_REPRESENTATION:
+                    wire = {"mediaType": media_type, "encoding": "json", "data": exact_json}
+                else:
+                    wire = {
+                        "mediaType": media_type,
+                        "encoding": "base64",
+                        "data": base64.b64encode(encoded).decode("ascii"),
+                    }
+                decoded_bytes = len(encoded)
+            if decoded_bytes > MAX_REPRESENTATION_BUNDLE or (
+                retained_bytes + decoded_bytes > MAX_REPRESENTATION_BUNDLE
+            ):
+                dropped.append(media_type)
+                continue
+            retained_bytes += decoded_bytes
+            representations.append(wire)
+
+        metadata_json: Optional[str] = None
+        metadata = content.get("metadata")
+        if isinstance(metadata, dict):
+            try:
+                candidate = json.dumps(
+                    metadata,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+            except (TypeError, ValueError):
+                dropped.append("metadata")
+            else:
+                metadata_bytes = len(candidate.encode("utf-8"))
+                if (
+                    metadata_bytes <= MAX_REPRESENTATION_METADATA
+                    and retained_bytes + metadata_bytes <= MAX_REPRESENTATION_BUNDLE
+                ):
+                    metadata_json = candidate
+                elif metadata:
+                    dropped.append("metadata")
+
+        if not representations:
+            self._send_warning(
+                "output-truncated" if dropped else "runtime-warning",
+                "Output carried no bounded representations.",
+                request_id,
+            )
             return
-        plain = data.get("text/plain")
-        if isinstance(plain, str):
-            text, truncated = truncate_utf8(plain, MAX_STREAM_TEXT)
-            self._send("display", {"mediaType": "text/plain", "text": text}, request_id)
-            if truncated:
-                self._send_warning("output-truncated", "Text display exceeded limit.", request_id)
+
+        display_id = None
+        transient = content.get("transient")
+        if isinstance(transient, dict):
+            candidate_id = transient.get("display_id")
+            if isinstance(candidate_id, str) and 0 < len(candidate_id) <= 256:
+                display_id = candidate_id
+
+        bundle = {"representations": representations, "metadataJson": metadata_json}
+        if msg_type == "execute_result":
+            count = content.get("execution_count")
+            payload = {
+                "kind": "execute-result",
+                "bundle": bundle,
+                "executionCount": count if isinstance(count, int) and count >= 0 else None,
+            }
+        elif msg_type == "update_display_data":
+            if display_id is None:
+                self._send_warning(
+                    "runtime-warning",
+                    "A display update without a valid display identity was ignored.",
+                    request_id,
+                )
+                return
+            payload = {"kind": "display-update", "bundle": bundle, "displayId": display_id}
+        else:
+            payload = {"kind": "display-data", "bundle": bundle, "displayId": display_id}
+        try:
+            self._send("display", payload, request_id)
+        except ValueError:
+            self._send_warning(
+                "output-truncated",
+                "Representation bundle exceeded frame limit.",
+                request_id,
+            )
             return
-        # Neither representation the protocol carries. Say what was dropped
-        # rather than letting the output vanish: someone who rendered a plot
-        # through an SVG-only backend should learn that, not see nothing at all.
-        dropped = ", ".join(sorted(str(key) for key in data)[:8])
-        self._send_warning(
-            "runtime-warning",
-            f"Unsupported output media types: {dropped}" if dropped else "Output carried no data.",
-            request_id,
-        )
+        if dropped:
+            summary = ", ".join(dropped[:8])
+            self._send_warning(
+                "output-truncated",
+                f"Some representations were dropped: {summary}.",
+                request_id,
+            )
 
     def _map_error(self, content: dict[str, Any], request_id: Optional[str]) -> None:
         name, _ = truncate_utf8(content.get("ename", "UnknownError"), MAX_ERROR_NAME)

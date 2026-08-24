@@ -69,7 +69,7 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("analysis-artifact", {
     ...AnalysisArtifactResourceRef.fields,
   }),
-  // An image a compute session produced. Addressed by content hash rather than
+  // A resource a compute session produced. Addressed by content hash rather than
   // by position in a transcript, so a reference stays valid however the
   // transcript around it is later read, trimmed, or re-rendered.
   Schema.TaggedStruct("compute-output", {

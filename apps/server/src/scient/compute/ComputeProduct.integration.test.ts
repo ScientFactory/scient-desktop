@@ -9,6 +9,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   INITIAL_COMPUTE_SESSION_GENERATION,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
+  projectComputeOutputs,
+  type ComputeOutput,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -29,6 +31,26 @@ import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
 
 const TEST_PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const PYTHON = ComputeLanguageId.make("python");
+
+function richStaticImages(outputs: ReadonlyArray<ComputeOutput>) {
+  return projectComputeOutputs(outputs).flatMap((output) => {
+    if (output._tag !== "representation") return [];
+    const representation = output.bundle.representations.find(
+      (candidate) =>
+        (candidate.mediaType === "image/png" || candidate.mediaType === "image/svg+xml") &&
+        candidate.data._tag === "resource",
+    );
+    return representation?.data._tag === "resource"
+      ? [
+          {
+            mediaType: representation.mediaType,
+            contentHash: representation.data.contentHash,
+            byteLength: representation.data.byteLength,
+          },
+        ]
+      : [];
+  });
+}
 
 const waitForTerminal = Effect.fn("ComputeProduct.waitForTerminal")(function* (
   gateway: ReturnType<typeof makeComputeRpcGateway>,
@@ -259,11 +281,11 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
           sessionId,
           executionId: figureId,
         });
-        const svg = figureOutput.outputs.find(
-          (item) => item._tag === "image" && item.mediaType === "image/svg+xml",
+        const svg = richStaticImages(figureOutput.outputs).find(
+          (item) => item.mediaType === "image/svg+xml",
         );
-        expect(svg?._tag).toBe("image");
-        if (svg?._tag === "image") {
+        expect(svg?.mediaType).toBe("image/svg+xml");
+        if (svg !== undefined) {
           const resolved = yield* compute.resolveOutputImage({
             projectId: session.projectId,
             sessionId,
@@ -278,6 +300,44 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
           expect(resolved.fileName.endsWith(".svg")).toBe(true);
           expect(new TextDecoder().decode(yield* fs.readFile(resolved.path))).toContain("<svg");
         }
+
+        const lifecycleId = ComputeExecutionId.make("phase-5b-display-lifecycle");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: lifecycleId,
+          expectedGeneration: session.generation,
+          code: [
+            "from IPython.display import display, update_display, clear_output",
+            "first = display('first', display_id='shared')",
+            "update_display('updated', display_id='shared')",
+            "clear_output(wait=True)",
+            "final = display('final')",
+          ].join("\n"),
+          source: { _tag: "console" },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, lifecycleId)).result?.status,
+        ).toBe("succeeded");
+        const lifecycleOutput = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId,
+          executionId: lifecycleId,
+        });
+        expect(lifecycleOutput.outputs.map(({ _tag }) => _tag)).toEqual([
+          "display-data",
+          "display-update",
+          "clear-output",
+          "display-data",
+        ]);
+        const visibleLifecycle = projectComputeOutputs(lifecycleOutput.outputs);
+        expect(visibleLifecycle).toHaveLength(1);
+        expect(visibleLifecycle[0]).toMatchObject({
+          _tag: "representation",
+          bundle: {
+            representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "'final'" } }],
+          },
+        });
 
         const followedRuntimeHashes: Array<ReadonlyArray<string>> = [];
         for (const revision of ["first", "second"] as const) {
@@ -318,9 +378,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
             sessionId,
             executionId,
           });
-          const runtimeImages = outputs.outputs.flatMap((item) =>
-            item._tag === "image" && item.origin?._tag === "runtime-display" ? [item] : [],
-          );
+          const runtimeImages = richStaticImages(outputs.outputs);
           expect(runtimeImages).toHaveLength(2);
           followedRuntimeHashes.push(runtimeImages.map((item) => item.contentHash));
         }

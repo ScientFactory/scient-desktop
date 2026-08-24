@@ -2,10 +2,12 @@ import type {
   ComputeExecutionId,
   ComputeExecutionRecord,
   ComputeOutput,
+  ComputeProjectedOutput,
   ComputeSessionRecord,
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { projectComputeOutputs, selectComputeRepresentation } from "@t3tools/contracts";
 import { CircleAlert, Image as ImageIcon, Info, LoaderCircle, RotateCcw } from "lucide-react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -24,12 +26,34 @@ import {
   computeFigurePresentation,
   type ComputeFigurePresentation,
 } from "./computeFigurePresentation";
-import { computeSystemEventLabel } from "./computeResultPresentation";
+import { computeProjectedStaticImage, computeSystemEventLabel } from "./computeResultPresentation";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
-function outputKey(output: ComputeOutput, index: number): string {
+function outputKey(output: ComputeProjectedOutput, index: number): string {
   return `${output.sequence}:${output._tag}:${index}`;
+}
+
+function ComputeRepresentationFallback(props: {
+  readonly output: Extract<ComputeProjectedOutput, { readonly _tag: "representation" }>;
+}) {
+  const selection = selectComputeRepresentation(props.output.bundle, ["text/plain"]);
+  if (selection._tag === "supported" && selection.representation.data._tag === "text") {
+    return (
+      <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
+        {selection.representation.data.text}
+      </pre>
+    );
+  }
+  return (
+    <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
+      <Info className="mt-0.5 size-3 shrink-0" />
+      <span>
+        No available renderer for{" "}
+        {props.output.bundle.representations.map((item) => item.mediaType).join(", ")}.
+      </span>
+    </div>
+  );
 }
 
 function ComputeFigure(props: {
@@ -158,7 +182,7 @@ export function ComputeOutputView(props: {
           {props.corruptLineCount === 1 ? "" : "s"}).
         </p>
       ) : null}
-      {props.outputs.map((output, index) => {
+      {projectComputeOutputs(props.outputs).map((output, index) => {
         switch (output._tag) {
           case "stream":
             return (
@@ -243,6 +267,34 @@ export function ComputeOutputView(props: {
                 </span>
               </div>
             );
+          case "representation": {
+            const image = computeProjectedStaticImage(output);
+            if (image === null) {
+              return (
+                <ComputeRepresentationFallback key={outputKey(output, index)} output={output} />
+              );
+            }
+            imageOrdinal += 1;
+            runtimeDisplayOrdinal += 1;
+            return (
+              <ComputeFigure
+                key={outputKey(output, index)}
+                presentation={computeFigurePresentation({
+                  allowFollowing: props.allowFigureFollowing ?? false,
+                  cwd: props.cwd,
+                  session: props.session,
+                  executionId: props.executionId,
+                  output: image,
+                  displayOrdinal: imageOrdinal,
+                  runtimeDisplayOrdinal,
+                  source: props.source ?? null,
+                })}
+                environmentId={props.environmentId}
+                dimensions={image.mediaType === "image/svg+xml" ? "SVG" : "PNG"}
+                threadRef={props.threadRef}
+              />
+            );
+          }
         }
       })}
     </div>

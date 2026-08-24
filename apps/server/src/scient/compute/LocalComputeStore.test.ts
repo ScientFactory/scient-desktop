@@ -112,6 +112,35 @@ const streamOutput = decodeOutput({
   text: "hello",
 });
 
+const displayOutputs = [
+  decodeOutput({
+    _tag: "display-data",
+    sequence: 2,
+    observedAt: OBSERVED_AT,
+    bundle: {
+      representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "before" } }],
+      metadataJson: "{}",
+    },
+    displayId: "progress",
+  }),
+  decodeOutput({
+    _tag: "display-update",
+    sequence: 3,
+    observedAt: OBSERVED_AT,
+    bundle: {
+      representations: [{ mediaType: "text/plain", data: { _tag: "text", text: "after" } }],
+      metadataJson: "{}",
+    },
+    displayId: "progress",
+  }),
+  decodeOutput({
+    _tag: "clear-output",
+    sequence: 4,
+    observedAt: OBSERVED_AT,
+    wait: true,
+  }),
+] as const;
+
 const journalEntry = decodeJournalEntry({
   sequence: 0,
   observedAt: OBSERVED_AT,
@@ -233,6 +262,35 @@ describe("LocalComputeStore durability", () => {
           expect(yield* store.loadSession(PROJECT_ID, SESSION_ID)).toBeNull();
           expect(yield* store.loadExecutions(PROJECT_ID, SESSION_ID)).toEqual([]);
           expect(yield* store.loadJournal(PROJECT_ID, SESSION_ID)).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("retains display updates and clears as append-only facts across lifetimes", () =>
+    Effect.gen(function* () {
+      const { use } = yield* harness("scient-compute-store-display-facts-");
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* store.writeSession(session);
+          yield* store.appendOutputs({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: null,
+            outputs: displayOutputs,
+          });
+        }),
+      );
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          expect(yield* store.loadOutputs(PROJECT_ID, SESSION_ID, null)).toEqual({
+            outputs: displayOutputs,
+            corruptLineCount: 0,
+          });
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1229,6 +1287,122 @@ describe("LocalComputeStore under load", () => {
           expect(measured.totalBytes).toBe(measured.outputBytes);
         }),
       );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("resolves a non-image rich resource only when the transcript names it", () =>
+    Effect.gen(function* () {
+      const { use } = yield* harness("scient-compute-store-rich-resource-");
+      const bytes = new TextEncoder().encode("%PDF-scient-fixture");
+      const contentHash = yield* Effect.promise(() => sha256(bytes));
+
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* store.writeOutputResource({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: EXECUTION_ID,
+            contentHash,
+            mediaType: "application/pdf",
+            bytes,
+          });
+          yield* store.appendOutputs({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: EXECUTION_ID,
+            outputs: [
+              {
+                _tag: "display-data",
+                sequence: 0,
+                observedAt: OBSERVED_AT,
+                bundle: {
+                  representations: [
+                    {
+                      mediaType: "application/pdf",
+                      data: { _tag: "resource", contentHash, byteLength: bytes.byteLength },
+                    },
+                  ],
+                  metadataJson: null,
+                },
+                displayId: null,
+              },
+            ],
+          });
+          expect(
+            yield* store.resolveOutputResource({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              executionId: EXECUTION_ID,
+              contentHash,
+            }),
+          ).toMatchObject({ mediaType: "application/pdf", byteLength: bytes.byteLength });
+          expect(
+            yield* store.resolveOutputImage({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              executionId: EXECUTION_ID,
+              contentHash,
+            }),
+          ).toBeNull();
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses a content hash recorded with ambiguous media types", () =>
+    Effect.gen(function* () {
+      const { use } = yield* harness("scient-compute-store-rich-resource-ambiguous-");
+      const bytes = new TextEncoder().encode("shared bytes");
+      const contentHash = yield* Effect.promise(() => sha256(bytes));
+
+      const resolved = yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* store.writeOutputResource({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: EXECUTION_ID,
+            contentHash,
+            mediaType: "application/pdf",
+            bytes,
+          });
+          yield* store.appendOutputs({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: EXECUTION_ID,
+            outputs: [
+              {
+                _tag: "display-data",
+                sequence: 0,
+                observedAt: OBSERVED_AT,
+                bundle: {
+                  representations: [
+                    {
+                      mediaType: "application/pdf",
+                      data: { _tag: "resource", contentHash, byteLength: bytes.byteLength },
+                    },
+                    {
+                      mediaType: "text/html",
+                      data: { _tag: "resource", contentHash, byteLength: bytes.byteLength },
+                    },
+                  ],
+                  metadataJson: null,
+                },
+                displayId: null,
+              },
+            ],
+          });
+          return yield* store.resolveOutputResource({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: EXECUTION_ID,
+            contentHash,
+          });
+        }),
+      );
+
+      expect(resolved).toBeNull();
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

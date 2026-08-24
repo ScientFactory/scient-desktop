@@ -186,6 +186,7 @@ describe("simulated compute transport", () => {
         expect(yield* events.next).toMatchObject({
           _tag: "output",
           image: { bytes },
+          resources: [],
           output: { _tag: "image", sequence: 4 },
         });
         expect(yield* events.next).toMatchObject({ _tag: "completed", outcome: "succeeded" });
@@ -498,6 +499,7 @@ describe("simulated compute transport", () => {
             text: "hi\n",
           },
           image: null,
+          resources: [],
         });
         expect(yield* events.next).toEqual({
           _tag: "completed",
