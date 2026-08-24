@@ -52,7 +52,8 @@ describe("pure runtime helpers", () => {
   it("scales the inference timeout by 3x with a floor and a hard cap", () => {
     expect(resolveWhisperInferenceTimeoutMs(1_000)).toBe(45_000); // floor
     expect(resolveWhisperInferenceTimeoutMs(60_000)).toBe(180_000); // 3x
-    expect(resolveWhisperInferenceTimeoutMs(10_000_000)).toBe(360_000); // cap
+    expect(resolveWhisperInferenceTimeoutMs(180_000)).toBe(540_000); // 3x at clip ceiling
+    expect(resolveWhisperInferenceTimeoutMs(10_000_000)).toBe(540_000); // cap
     expect(resolveWhisperInferenceTimeoutMs(1_000, 1_000)).toBe(3_000); // custom floor, 3x wins
   });
 

@@ -15,6 +15,7 @@ import {
   describeVoiceRecorderError,
   formatVoiceTimer,
 } from "./ScientVoiceComposerControl.tsx";
+import { MAX_RECORDING_MS } from "./useVoiceRecorder.ts";
 
 function stubVoiceBridge(): void {
   const voice = {
@@ -39,6 +40,13 @@ function stubVoiceBridge(): void {
           displayName: "Multilingual Medium",
           description: "Test Medium model",
           byteSize: 2,
+          state: { state: "missing" },
+        },
+        {
+          id: "whisper-large-v3-turbo-multilingual-q5_0",
+          displayName: "Multilingual Turbo",
+          description: "Test Turbo model",
+          byteSize: 3,
           state: { state: "missing" },
         },
       ],
@@ -83,6 +91,10 @@ describe("ScientVoiceComposerControl rendering", () => {
 });
 
 describe("formatVoiceTimer", () => {
+  it("allows three-minute composer recordings", () => {
+    expect(MAX_RECORDING_MS).toBe(180_000);
+  });
+
   it("formats sub-minute durations as mm:ss", () => {
     expect(formatVoiceTimer(0)).toBe("00:00");
     expect(formatVoiceTimer(5_000)).toBe("00:05");

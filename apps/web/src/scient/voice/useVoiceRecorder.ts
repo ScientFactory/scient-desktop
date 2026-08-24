@@ -23,7 +23,7 @@ export type VoiceRecorderErrorKind =
   | "unsupported"
   | "unknown";
 
-export const MAX_RECORDING_MS = 120_000;
+export const MAX_RECORDING_MS = 180_000;
 export const VOICE_WAVEFORM_LEVEL_COUNT = 96;
 const WORKLET_FLUSH_TIMEOUT_MS = 500;
 

@@ -11,7 +11,7 @@ describe("VoiceTranscribeRequest", () => {
       audioBase64: "A".repeat(VOICE_AUDIO_BASE64_MAX_CHARS),
       mimeType: "audio/wav",
       sampleRateHz: 24_000,
-      durationMs: 120_000,
+      durationMs: 180_000,
     } as const;
     expect(decodeVoiceRequest(request)).toEqual(request);
   });
@@ -22,7 +22,7 @@ describe("VoiceTranscribeRequest", () => {
         audioBase64: "A".repeat(VOICE_AUDIO_BASE64_MAX_CHARS + 1),
         mimeType: "audio/wav",
         sampleRateHz: 24_000,
-        durationMs: 120_000,
+        durationMs: 180_000,
       }),
     ).toThrow();
   });

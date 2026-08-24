@@ -39,6 +39,13 @@ describe("makeDesktopVoiceBridge", () => {
           byteSize: 200,
           state: { state: "missing" },
         },
+        {
+          id: "whisper-large-v3-turbo-multilingual-q5_0",
+          displayName: "Multilingual Turbo",
+          description: "Most capable local multilingual transcription.",
+          byteSize: 300,
+          state: { state: "missing" },
+        },
       ],
     });
     const listener = vi.fn();
