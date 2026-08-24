@@ -7,7 +7,11 @@ export function hasManagedProviderUpdate(provider: ServerProvider): boolean {
 }
 
 export function hasExternalProviderUpdate(provider: ServerProvider): boolean {
-  return provider.versionAdvisory?.status === "behind_latest" && provider.versionAdvisory.canUpdate;
+  return (
+    provider.connection?.runtime?.source !== "scient_managed" &&
+    provider.versionAdvisory?.status === "behind_latest" &&
+    provider.versionAdvisory.canUpdate
+  );
 }
 
 export async function startReviewedProviderRuntimeAction(
