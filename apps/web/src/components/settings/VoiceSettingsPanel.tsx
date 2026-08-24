@@ -1,4 +1,5 @@
 import { CheckIcon, DownloadIcon, Mic2Icon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { VoiceModelId, VoiceModelSummary, VoiceModelsSnapshot } from "@t3tools/contracts";
 
@@ -13,6 +14,12 @@ import {
   PopoverTrigger,
 } from "../ui/popover";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 function formatBytes(bytes: number): string {
@@ -226,6 +233,13 @@ function VoiceModelCard({
 
 export function VoiceSettingsPanel(): ReactNode {
   const client = useMemo(() => getVoiceBridge(), []);
+  const correctionEnabled = useClientSettings(
+    (settings) => settings.voiceTranscriptCorrectionEnabled,
+  );
+  const selectedTextModel = usePrimarySettings(
+    (settings) => settings.textGenerationModelSelection.model,
+  );
+  const updateClientSettings = useUpdateClientSettings();
   const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
   const [localDownloadModelId, setLocalDownloadModelId] = useState<VoiceModelId | null>(null);
@@ -366,6 +380,30 @@ export function VoiceSettingsPanel(): ReactNode {
     <SettingsPageContainer>
       <SettingsSection title="Voice" icon={<Mic2Icon className="size-4 text-muted-foreground" />}>
         <div className="space-y-3 px-3 sm:px-4">
+          <div className="flex items-center justify-between gap-4 py-1">
+            <div className="min-w-0">
+              <h3 className="font-medium text-sm">Correct transcripts with AI</h3>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                <span>Fix spelling and punctuation. May add a few seconds.</span>
+                <span className="text-muted-foreground">{selectedTextModel}</span>
+                <Button
+                  className="h-auto px-1 py-0"
+                  render={<Link hash="text-generation-model" to="/settings/general" />}
+                  size="micro"
+                  variant="ghost-muted"
+                >
+                  Manage
+                </Button>
+              </div>
+            </div>
+            <Switch
+              aria-label="Correct voice transcripts with AI"
+              checked={correctionEnabled}
+              onCheckedChange={(checked) =>
+                updateClientSettings({ voiceTranscriptCorrectionEnabled: Boolean(checked) })
+              }
+            />
+          </div>
           <p className="text-sm text-muted-foreground">
             Voice transcription runs locally on this computer. Larger models can improve accuracy,
             but use more memory, storage, and processing power. Scient marks the best fit for this

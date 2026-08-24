@@ -50,6 +50,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
+  voiceTranscriptCorrectionEnabled: false,
   wordWrap: true,
 };
 

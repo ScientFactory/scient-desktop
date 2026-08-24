@@ -8,9 +8,52 @@
 
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderDriverKind } from "./providerInstance.ts";
 
 /** The decoded request is limited to 10 MiB by the voice core. */
 export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3);
+
+/**
+ * A three-minute recording is normally far smaller than this. The bound is
+ * deliberately generous while still preventing an untrusted client from
+ * turning transcript correction into an unbounded provider request.
+ */
+export const VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS = 20_000;
+
+export const VoiceTranscriptCorrectionText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS),
+);
+export type VoiceTranscriptCorrectionText = typeof VoiceTranscriptCorrectionText.Type;
+
+export const VoiceTranscriptCorrectionRequest = Schema.Struct({
+  transcript: VoiceTranscriptCorrectionText,
+});
+export type VoiceTranscriptCorrectionRequest = typeof VoiceTranscriptCorrectionRequest.Type;
+
+export const VoiceTranscriptCorrectionResult = Schema.Struct({
+  text: VoiceTranscriptCorrectionText,
+  provider: ProviderDriverKind,
+});
+export type VoiceTranscriptCorrectionResult = typeof VoiceTranscriptCorrectionResult.Type;
+
+export const VoiceTranscriptCorrectionFailureKind = Schema.Literals([
+  "unsupported",
+  "provider-unavailable",
+  "authentication",
+  "timeout",
+  "provider-error",
+  "malformed-response",
+]);
+export type VoiceTranscriptCorrectionFailureKind = typeof VoiceTranscriptCorrectionFailureKind.Type;
+
+/** Safe, content-free failure returned to the client before it falls back. */
+export class VoiceTranscriptCorrectionError extends Schema.TaggedErrorClass<VoiceTranscriptCorrectionError>()(
+  "VoiceTranscriptCorrectionError",
+  {
+    kind: VoiceTranscriptCorrectionFailureKind,
+    message: TrimmedNonEmptyString,
+  },
+) {}
 
 /** Transcription engine identifier. Engine-neutral; only `local` ships now. */
 export const VoiceEngineId = Schema.Literals(["local"]);

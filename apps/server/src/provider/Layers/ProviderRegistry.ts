@@ -633,6 +633,13 @@ export const ProviderRegistryLive = Layer.effect(
       return instance?.managedRuntimeActions;
     });
 
+    const getVoiceTranscriptCorrectionForInstance = Effect.fn(
+      "getVoiceTranscriptCorrectionForInstance",
+    )(function* (instanceId: ProviderInstanceId) {
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      return instance?.voiceTranscriptCorrection;
+    });
+
     const stopProviderSessions = Effect.fn("stopProviderSessions")(function* (
       provider: ProviderDriverKind,
     ) {
@@ -875,6 +882,7 @@ export const ProviderRegistryLive = Layer.effect(
       getProviderMaintenanceCapabilitiesForInstance,
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,
+      getVoiceTranscriptCorrectionForInstance,
       stopProviderSessions,
       setProviderMaintenanceActionState,
       setProviderConnectionOperation,

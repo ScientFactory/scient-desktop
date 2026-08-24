@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  EnvironmentId,
   VoiceModelDownloadProgress,
   VoiceModelId,
   VoiceModelsSnapshot,
@@ -11,6 +12,10 @@ import type { VoiceTranscriptionClient } from "./voiceClient.ts";
 import { describeVoiceError } from "./voiceErrorPresentation.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
 import { useRecordScientAnalytics } from "../analytics/client.ts";
+import {
+  correctVoiceTranscript,
+  type VoiceTranscriptCorrectionClient,
+} from "./voiceTranscriptCorrectionClient.ts";
 
 export type VoicePhase =
   | "idle"
@@ -18,7 +23,8 @@ export type VoicePhase =
   | "downloading"
   | "requesting-permission"
   | "recording"
-  | "transcribing";
+  | "transcribing"
+  | "correcting";
 
 const MODEL_SETUP_FAILED_MESSAGE = "Voice setup didn't finish. Try again.";
 const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
@@ -26,6 +32,9 @@ const ARM_DELAY_MS = 250;
 
 interface VoiceControllerOptions {
   readonly client: VoiceTranscriptionClient | null;
+  readonly correctionClient?: VoiceTranscriptCorrectionClient | null;
+  readonly correctionEnabled?: boolean;
+  readonly environmentId?: EnvironmentId;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
 }
@@ -37,6 +46,14 @@ interface VoiceCompletionCallbacks {
 
 interface VoiceCompletionCallbacksRef {
   current: VoiceCompletionCallbacks;
+}
+
+interface PendingVoiceCorrection {
+  readonly transcript: string;
+  readonly send: boolean;
+  readonly startedAt: number;
+  readonly audioDurationMs: number;
+  readonly abortController: AbortController;
 }
 
 export function routeCompletedVoiceTranscription(
@@ -65,6 +82,7 @@ export interface ScientVoiceController {
   dismissSetup: () => void;
   stop: (send: boolean) => Promise<void>;
   cancel: () => Promise<void>;
+  useOriginal: () => void;
 }
 
 export function formatVoiceTimer(ms: number): string {
@@ -96,6 +114,9 @@ function percent(progress: VoiceModelDownloadProgress | null): number {
 
 export function useScientVoiceController({
   client,
+  correctionClient = null,
+  correctionEnabled = false,
+  environmentId,
   onTranscript,
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
@@ -109,6 +130,7 @@ export function useScientVoiceController({
   const operationRef = useRef(0);
   const recordingStartedAtRef = useRef(0);
   const downloadModelIdRef = useRef<VoiceModelId | null>(null);
+  const pendingCorrectionRef = useRef<PendingVoiceCorrection | null>(null);
   const autoStopRef = useRef<(clip: VoiceWavClip | null) => void>(() => undefined);
   const completionCallbacksRef = useRef<VoiceCompletionCallbacks>({
     onTranscript,
@@ -158,8 +180,8 @@ export function useScientVoiceController({
         const transcript = await client.transcribe(request);
         if (operation !== operationRef.current) return;
         const text = transcript.text.trim();
-        setPhase("idle");
         if (!text) {
+          setPhase("idle");
           setErrorMessage(EMPTY_TRANSCRIPT_MESSAGE);
           recordAnalytics({
             name: "voice.transcription.failed",
@@ -167,7 +189,43 @@ export function useScientVoiceController({
           });
           return;
         }
-        routeCompletedVoiceTranscription(completionCallbacksRef, text, send);
+
+        const correctionRequested =
+          correctionEnabled && correctionClient !== null && environmentId !== undefined;
+        if (!correctionRequested) {
+          setPhase("idle");
+          routeCompletedVoiceTranscription(completionCallbacksRef, text, send);
+          recordAnalytics({
+            name: "voice.transcription.completed",
+            properties: {
+              engineClass: "local-whisper",
+              durationMs: performance.now() - transcriptionStartedAt,
+              audioDurationMs: clip.durationMs,
+            },
+          });
+          return;
+        }
+
+        const abortController = new AbortController();
+        pendingCorrectionRef.current = {
+          transcript: text,
+          send,
+          startedAt: transcriptionStartedAt,
+          audioDurationMs: clip.durationMs,
+          abortController,
+        };
+        setPhase("correcting");
+        const corrected = await correctVoiceTranscript({
+          enabled: true,
+          client: correctionClient,
+          environmentId,
+          transcript: text,
+          signal: abortController.signal,
+        });
+        if (operation !== operationRef.current) return;
+        pendingCorrectionRef.current = null;
+        setPhase("idle");
+        routeCompletedVoiceTranscription(completionCallbacksRef, corrected.text, send);
         recordAnalytics({
           name: "voice.transcription.completed",
           properties: {
@@ -178,6 +236,7 @@ export function useScientVoiceController({
         });
       } catch (error) {
         if (operation !== operationRef.current) return;
+        pendingCorrectionRef.current = null;
         setPhase("idle");
         setErrorMessage(describeVoiceError(error));
         recordAnalytics({
@@ -186,8 +245,26 @@ export function useScientVoiceController({
         });
       }
     },
-    [client, recordAnalytics, setPhase],
+    [client, correctionClient, correctionEnabled, environmentId, recordAnalytics, setPhase],
   );
+
+  const useOriginal = useCallback((): void => {
+    const pending = pendingCorrectionRef.current;
+    if (!pending) return;
+    pendingCorrectionRef.current = null;
+    pending.abortController.abort();
+    operationRef.current += 1;
+    setPhase("idle");
+    routeCompletedVoiceTranscription(completionCallbacksRef, pending.transcript, pending.send);
+    recordAnalytics({
+      name: "voice.transcription.completed",
+      properties: {
+        engineClass: "local-whisper",
+        durationMs: performance.now() - pending.startedAt,
+        audioDurationMs: pending.audioDurationMs,
+      },
+    });
+  }, [recordAnalytics, setPhase]);
 
   const beginRecording = useCallback(async (): Promise<void> => {
     const operation = (operationRef.current += 1);
@@ -292,6 +369,10 @@ export function useScientVoiceController({
 
   const cancel = useCallback(async (): Promise<void> => {
     const cancelledPhase = phaseRef.current;
+    if (cancelledPhase === "correcting") {
+      pendingCorrectionRef.current?.abortController.abort();
+      pendingCorrectionRef.current = null;
+    }
     const operation = (operationRef.current += 1);
     const cancelDownload =
       phaseRef.current === "downloading"
@@ -370,6 +451,8 @@ export function useScientVoiceController({
   useEffect(
     () => () => {
       operationRef.current += 1;
+      pendingCorrectionRef.current?.abortController.abort();
+      pendingCorrectionRef.current = null;
       void cancelRecording();
       void client?.cancelTranscription();
     },
@@ -388,5 +471,6 @@ export function useScientVoiceController({
     dismissSetup,
     stop,
     cancel,
+    useOriginal,
   };
 }

@@ -3592,6 +3592,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   {showMobilePendingAnswerActions ? null : inlineTasksBadge}
                   {showMobilePendingAnswerActions ? null : inlineStashBadge}
                   <ScientVoiceComposerControl
+                    environmentId={environmentId}
                     onTranscript={(text) => {
                       applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
                     }}

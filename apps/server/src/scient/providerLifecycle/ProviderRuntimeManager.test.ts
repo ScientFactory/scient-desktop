@@ -11,7 +11,10 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
+import type {
+  ProviderManagedRuntimeActions,
+  ProviderVoiceTranscriptCorrection,
+} from "../../provider/ProviderDriver.ts";
 import { ProviderAdapterProcessError } from "../../provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
 import {
@@ -118,6 +121,9 @@ function makeHarness(
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
       getProviderManagedRuntimeActionsForInstance: () => Ref.get(actionsRef),
+      getVoiceTranscriptCorrectionForInstance: () =>
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
+        Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       stopProviderSessions: (provider) =>
         Ref.update(stopCountRef, (count) => count + 1).pipe(
           Effect.andThen(stopProviderSessions(provider)),

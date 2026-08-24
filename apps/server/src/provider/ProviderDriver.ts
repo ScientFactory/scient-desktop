@@ -22,6 +22,7 @@
  * @module provider/ProviderDriver
  */
 import type {
+  ModelSelection,
   ProviderAuthorizationUrlKind,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
@@ -31,6 +32,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -58,6 +60,14 @@ export interface ProviderDriverMetadata {
   readonly supportsMultipleInstances?: boolean;
 }
 
+/** Optional, tightly sandboxed one-shot cleanup for local voice transcripts. */
+export interface ProviderVoiceTranscriptCorrection {
+  readonly correct: (input: {
+    readonly transcript: string;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
+}
+
 /**
  * One materialized provider instance. Held by the registry, looked up by
  * `instanceId`, torn down by closing the scope it was created in.
@@ -77,6 +87,8 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /** Optional provider capability; unsupported drivers leave it absent. */
+  readonly voiceTranscriptCorrection?: ProviderVoiceTranscriptCorrection | undefined;
   /** Scient-owned optional lifecycle seam; absent drivers keep pure T3 behavior. */
   readonly connectionActions?: ProviderConnectionActions | undefined;
   /** Scient-owned optional app-private runtime seam; absent drivers keep pure T3 behavior. */

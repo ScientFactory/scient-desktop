@@ -21,6 +21,7 @@ import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts"
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
+  ProviderVoiceTranscriptCorrection,
 } from "../ProviderDriver.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 
@@ -82,6 +83,11 @@ export interface ProviderRegistryShape {
   readonly getProviderManagedRuntimeActionsForInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderManagedRuntimeActions | undefined>;
+
+  /** Resolve the optional transcript-correction capability for one live instance. */
+  readonly getVoiceTranscriptCorrectionForInstance: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ProviderVoiceTranscriptCorrection | undefined>;
 
   /** Stop every live session using one shared provider runtime before mutating it. */
   readonly stopProviderSessions: (

@@ -47,6 +47,16 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings voice transcript correction", () => {
+  it("defaults off and accepts an explicit opt-in", () => {
+    expect(decodeClientSettings({}).voiceTranscriptCorrectionEnabled).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptCorrectionEnabled: true })
+        .voiceTranscriptCorrectionEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

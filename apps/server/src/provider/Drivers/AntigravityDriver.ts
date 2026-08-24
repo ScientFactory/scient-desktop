@@ -63,6 +63,7 @@ import {
   withAntigravitySessionShutdown,
 } from "../../scient/providerLifecycle/AntigravityConnectionActions.ts";
 import { makeAntigravityManagedRuntimeResolution } from "../../scient/providerLifecycle/AntigravityManagedRuntimeActions.ts";
+import { makeAntigravityVoiceTranscriptCorrection } from "../../scient/voice/AntigravityVoiceTranscriptCorrection.ts";
 import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
@@ -182,6 +183,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         instanceId,
       });
       const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
+      const voiceTranscriptCorrection = yield* makeAntigravityVoiceTranscriptCorrection(
+        effectiveConfig,
+        processEnv,
+      );
 
       // Connection actions for the antigravity_google auth method.
       const connectionActions = yield* makeAntigravityConnectionActions(
@@ -243,6 +248,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         snapshot,
         adapter,
         textGeneration,
+        voiceTranscriptCorrection,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
