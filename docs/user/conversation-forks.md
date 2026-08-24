@@ -9,6 +9,10 @@ your own title. If you leave it unchanged, Scient selects the next available
 number when it creates the fork. After it opens, you can choose any available
 provider and model in the composer before sending the first message.
 
+After a conversation has started, the model picker offers a compact **Fork**
+action to continue it with another provider. The fork starts from the latest
+completed response, and any unsent text or images move into the new conversation.
+
 **New worktree** is off by default, so the fork uses the current workspace
 without rewinding its files. Turn it on to create an isolated worktree at the
 selected checkpoint. The switch is unavailable when the project is not a Git

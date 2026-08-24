@@ -44,6 +44,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   isProviderSetupAvailable?: (entry: ProviderInstanceEntry) => boolean;
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
+  onForkToSwitchProvider?: () => void;
+  forkToSwitchProviderDisabled?: boolean;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -222,6 +224,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             ? { isProviderSetupAvailable: props.isProviderSetupAvailable }
             : {})}
           {...(props.renderProviderSetup ? { renderProviderSetup: props.renderProviderSetup } : {})}
+          {...(props.onForkToSwitchProvider
+            ? { onForkToSwitchProvider: props.onForkToSwitchProvider }
+            : {})}
+          forkToSwitchProviderDisabled={props.forkToSwitchProviderDisabled ?? false}
           onInstanceModelChange={handleInstanceModelChange}
         />
       </PopoverPopup>

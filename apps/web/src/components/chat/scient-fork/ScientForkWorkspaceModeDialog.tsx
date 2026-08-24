@@ -24,7 +24,11 @@ import { Label } from "../../ui/label";
 import { Switch } from "../../ui/switch";
 
 type ForkWorkspaceMode = "new-worktree" | "local";
-export type ScientForkSource = "latest-response" | "this-response" | "this-message";
+export type ScientForkSource =
+  | "latest-response"
+  | "this-response"
+  | "this-message"
+  | "switch-provider";
 
 export function scientForkDialogCopy(source: ScientForkSource): {
   readonly title: string;
@@ -45,6 +49,11 @@ export function scientForkDialogCopy(source: ScientForkSource): {
       return {
         title: "Fork this message",
         description: "Create a new conversation from this message.",
+      };
+    case "switch-provider":
+      return {
+        title: "Fork to switch provider",
+        description: "Continue this conversation with another provider.",
       };
   }
 }
