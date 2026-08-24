@@ -5,7 +5,7 @@ description: Assess whether a project or workspace contains enough grounded cont
 
 # Workspace Readiness Review
 
-Readiness means a capable collaborator can understand the work's purpose, find its authoritative material, respect its constraints, and judge whether results are correct.
+The goal is to assess the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results—and to identify meaningful improvements when needed.
 
 Evaluate the workspace from evidence actually present. Judge it by its purpose—code, research, study, writing, or a mixture—not by a universal repository template.
 
@@ -13,7 +13,7 @@ Consider whether essential context is documented clearly enough and still agrees
 
 Consider whether files and folders make sources of truth, responsibilities, inputs, and outputs reasonably discoverable. Do not enforce a conventional structure. Flag documentation or organization only when it could materially cause misunderstanding, unsafe action, irreproducible work, or unverifiable results. Distinguish blockers from useful refinements and uncertainty from deficiency. Do not invent missing requirements or score the workspace.
 
-Use judgment about which evidence matters; there is no fixed checklist. Inspect only as much as needed for a grounded conclusion. The review is read-only: do not modify files or broaden permissions. This skill provides guidance only and grants no tools or authority.
+Use judgment about which evidence matters; there is no fixed checklist. Inspect enough to reach a grounded conclusion. The review is read-only: do not modify files or broaden permissions. This skill provides guidance only and grants no tools or authority.
 
 Report concisely:
 

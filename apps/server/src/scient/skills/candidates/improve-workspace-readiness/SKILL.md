@@ -5,7 +5,7 @@ description: Apply safe, targeted changes that materially improve a workspace's 
 
 # Improve Workspace Readiness
 
-The goal is to help a capable human or agent collaborator understand the workspace, work in it safely, reproduce its work, and verify its results—while preserving its purpose and the user's intent.
+The goal is to improve the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results—while preserving the workspace's purpose and the user's intent.
 
 Use a recent readiness review when available, but verify the relevant workspace evidence before changing it. Without a review, inspect enough to identify grounded improvements.
 
