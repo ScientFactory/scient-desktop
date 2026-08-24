@@ -33,6 +33,11 @@ const DesktopSettingsPatch = Schema.Struct({
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  voiceSelectedModelId: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Literals(["whisper-small-multilingual-q5_1", "whisper-medium-multilingual-q5_0"]),
+    ),
+  ),
   wslOnly: Schema.optionalKey(Schema.Boolean),
 });
 
@@ -116,9 +121,35 @@ describe("DesktopSettings", () => {
         wslBackendEnabled: false,
         wslOnly: false,
         wslDistro: null,
+        voiceSelectedModelId: null,
       } satisfies DesktopAppSettings.DesktopSettings,
     );
   });
+
+  it.effect("persists and reloads the selected voice model", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.setVoiceSelectedModelId("whisper-medium-multilingual-q5_0");
+        assert.equal(
+          (yield* settings.get).voiceSelectedModelId,
+          "whisper-medium-multilingual-q5_0",
+        );
+        assert.include(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          "whisper-medium-multilingual-q5_0",
+        );
+
+        assert.equal(
+          (yield* settings.load).voiceSelectedModelId,
+          "whisper-medium-multilingual-q5_0",
+        );
+      }),
+    ),
+  );
 
   it.effect("loads persisted settings and applies semantic updates", () =>
     withSettings(
@@ -145,6 +176,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
 
         const exposure = yield* settings.setServerExposureMode("local-only");
@@ -252,6 +284,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
@@ -308,6 +341,7 @@ describe("DesktopSettings", () => {
             wslBackendEnabled: false,
             wslOnly: false,
             wslDistro: null,
+            voiceSelectedModelId: null,
           } satisfies DesktopAppSettings.DesktopSettings);
         }),
       ),
@@ -356,6 +390,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -384,6 +419,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -411,6 +447,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),

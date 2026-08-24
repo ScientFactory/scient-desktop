@@ -1,5 +1,5 @@
 // @effect-diagnostics globalTimers:off -- plain Electron preload adapter.
-import type { DesktopVoiceBridge, VoiceModelState } from "@t3tools/contracts";
+import type { DesktopVoiceBridge, VoiceModelsSnapshot } from "@t3tools/contracts";
 import type { IpcRenderer } from "electron";
 
 import * as IpcChannels from "../../ipc/channels.ts";
@@ -11,22 +11,29 @@ export function makeDesktopVoiceBridge(
   ipcRenderer: Pick<IpcRenderer, "invoke">,
 ): DesktopVoiceBridge {
   return {
-    getModelState: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL),
-    downloadModel: () => ipcRenderer.invoke(IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL),
-    cancelModelDownload: () => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL),
-    removeModel: () => ipcRenderer.invoke(IpcChannels.VOICE_REMOVE_MODEL_CHANNEL),
+    getModelsState: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_MODELS_STATE_CHANNEL),
+    downloadModel: (request) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL, request),
+    cancelModelDownload: (request) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL, request),
+    selectModel: (request) => ipcRenderer.invoke(IpcChannels.VOICE_SELECT_MODEL_CHANNEL, request),
+    removeModel: (request) => ipcRenderer.invoke(IpcChannels.VOICE_REMOVE_MODEL_CHANNEL, request),
     transcribe: (request) => ipcRenderer.invoke(IpcChannels.VOICE_TRANSCRIBE_CHANNEL, request),
     cancelTranscription: () => ipcRenderer.invoke(IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL),
     onModelDownloadProgress: (listener) => {
       let cancelled = false;
       const poll = () => {
         void ipcRenderer
-          .invoke(IpcChannels.VOICE_GET_MODEL_STATE_CHANNEL)
-          .then((state: VoiceModelState) => {
-            if (cancelled || state.state !== "downloading") return;
+          .invoke(IpcChannels.VOICE_GET_MODELS_STATE_CHANNEL)
+          .then((snapshot: VoiceModelsSnapshot) => {
+            const model = snapshot.models.find(
+              (candidate) => candidate.id === snapshot.activeDownloadModelId,
+            );
+            if (cancelled || !model || model.state.state !== "downloading") return;
             listener({
-              downloadedBytes: state.downloadedBytes,
-              totalBytes: state.totalBytes,
+              modelId: model.id,
+              downloadedBytes: model.state.downloadedBytes,
+              totalBytes: model.state.totalBytes,
             });
           })
           .catch(() => {

@@ -10,19 +10,49 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   EMPTY_TRANSCRIPT_MESSAGE,
-  MODEL_DOWNLOAD_LABEL,
   ScientVoiceComposerControl,
-  describeTranscriptionError,
+  describeVoiceError,
   describeVoiceRecorderError,
   formatVoiceTimer,
 } from "./ScientVoiceComposerControl.tsx";
 
 function stubVoiceBridge(): void {
   const voice = {
-    getModelState: vi.fn().mockResolvedValue({ state: "missing" }),
-    downloadModel: vi.fn().mockResolvedValue({ state: "ready", byteSize: 1 }),
+    getModelsState: vi.fn().mockResolvedValue({
+      runtimeAvailable: true,
+      selectedModelId: null,
+      recommendation: {
+        modelId: "whisper-small-multilingual-q5_1",
+        reason: "Test recommendation",
+      },
+      activeDownloadModelId: null,
+      models: [
+        {
+          id: "whisper-small-multilingual-q5_1",
+          displayName: "Multilingual Small",
+          description: "Test Small model",
+          byteSize: 1,
+          state: { state: "missing" },
+        },
+        {
+          id: "whisper-medium-multilingual-q5_0",
+          displayName: "Multilingual Medium",
+          description: "Test Medium model",
+          byteSize: 2,
+          state: { state: "missing" },
+        },
+      ],
+    }),
+    downloadModel: vi.fn().mockResolvedValue({
+      runtimeAvailable: true,
+      selectedModelId: "whisper-small-multilingual-q5_1",
+      recommendation: null,
+      activeDownloadModelId: null,
+      models: [],
+    }),
     cancelModelDownload: vi.fn().mockResolvedValue(undefined),
-    removeModel: vi.fn().mockResolvedValue({ state: "missing" }),
+    selectModel: vi.fn().mockResolvedValue({}),
+    removeModel: vi.fn().mockResolvedValue({}),
     transcribe: vi.fn().mockResolvedValue({ text: "hello", engine: "local" }),
     cancelTranscription: vi.fn().mockResolvedValue(undefined),
     onModelDownloadProgress: vi.fn().mockReturnValue(() => undefined),
@@ -76,15 +106,13 @@ describe("describeVoiceRecorderError", () => {
   });
 });
 
-describe("describeTranscriptionError", () => {
+describe("describeVoiceError", () => {
   it("prefers the host safeMessage when present", () => {
-    expect(describeTranscriptionError({ safeMessage: "Model is warming up" })).toBe(
-      "Model is warming up",
-    );
+    expect(describeVoiceError({ safeMessage: "Model is warming up" })).toBe("Model is warming up");
   });
 
   it("sanitizes a raw error message, stripping stack frames and paths", () => {
-    const shown = describeTranscriptionError(
+    const shown = describeVoiceError(
       new Error("No speech detected\n    at file:///Users/x/secret.ts:1:1"),
     );
     expect(shown).toBe("No speech detected");
@@ -92,16 +120,12 @@ describe("describeTranscriptionError", () => {
   });
 
   it("falls back to a non-empty generic line for opaque non-errors", () => {
-    expect(describeTranscriptionError(null).length).toBeGreaterThan(0);
-    expect(describeTranscriptionError({}).length).toBeGreaterThan(0);
+    expect(describeVoiceError(null).length).toBeGreaterThan(0);
+    expect(describeVoiceError({}).length).toBeGreaterThan(0);
   });
 });
 
 describe("voice copy constants", () => {
-  it("labels the one-time model download with its size", () => {
-    expect(MODEL_DOWNLOAD_LABEL).toContain("182 MB");
-  });
-
   it("has a dedicated empty-transcript message", () => {
     expect(EMPTY_TRANSCRIPT_MESSAGE).toBe("No speech detected");
   });
