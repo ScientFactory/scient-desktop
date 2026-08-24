@@ -649,7 +649,7 @@ export interface ChatComposerProps {
   ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  onForkConversation: () => void;
+  onForkConversation: (options?: { readonly preserveComposerDraft?: boolean }) => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1089,6 +1089,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     active: false,
   });
   const isMobileViewport = useMediaQuery("max-sm");
+
+  const handleForkToSwitchProvider = useCallback(() => {
+    onForkConversation({ preserveComposerDraft: true });
+  }, [onForkConversation]);
+
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
 
@@ -3531,6 +3536,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       getModelDisabledReason={getModelDisabledReason}
                       isProviderSetupAvailable={isProviderSetupAvailable}
                       renderProviderSetup={renderProviderSetup}
+                      onForkToSwitchProvider={handleForkToSwitchProvider}
+                      forkToSwitchProviderDisabled={
+                        phase === "running" ||
+                        isSendBusy ||
+                        isConnecting ||
+                        isPreparingWorktree ||
+                        environmentUnavailable !== null
+                      }
                       onInstanceModelChange={onProviderModelSelect}
                     />
                   )}

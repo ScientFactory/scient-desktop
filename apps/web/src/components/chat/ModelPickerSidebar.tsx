@@ -1,6 +1,6 @@
 import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import { SparklesIcon, StarIcon } from "lucide-react";
+import { ChevronRightIcon, SparklesIcon, SplitIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -10,23 +10,62 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 
-/**
- * Build the hover tooltip for an instance button. Mirrors the old
- * kind-based copy but uses the entry's configured `displayName` so custom
- * instances get their user-authored name (e.g. "Codex Personal — Unavailable.").
- */
-function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
-  const label = entry.displayName;
+/** Build concise picker guidance without exposing server diagnostics in the composer. */
+function unavailableSettingsAction(
+  entry: ProviderInstanceEntry,
+  hasSetupSurface: boolean,
+): "enable" | "install or reconnect" | null {
   if (!entry.enabled || entry.status === "disabled") {
-    return `${label} — Disabled in settings.`;
+    return "enable";
   }
   if (entry.status === "ready" && entry.isAvailable) {
-    return label;
+    return null;
   }
-  const kind =
-    entry.status === "error" ? "Unavailable" : entry.status === "warning" ? "Limited" : "Not ready";
-  const msg = entry.snapshot.message?.trim();
-  return msg ? `${label} — ${kind}. ${msg}` : `${label} — ${kind}.`;
+  if (hasSetupSurface) {
+    return null;
+  }
+  return "install or reconnect";
+}
+
+function describeUnavailableInstance(
+  entry: ProviderInstanceEntry,
+  hasSetupSurface: boolean,
+): string {
+  const settingsAction = unavailableSettingsAction(entry, hasSetupSurface);
+  if (settingsAction) {
+    const state = settingsAction === "enable" ? "disabled" : "unavailable";
+    return `${entry.displayName} is ${state}. Open Settings → Providers to ${settingsAction} it.`;
+  }
+  if (entry.status === "ready" && entry.isAvailable) {
+    return entry.displayName;
+  }
+  return `${entry.displayName} needs setup. Select it to install or reconnect.`;
+}
+
+function SettingsPathTooltip(props: { label: string; action: "enable" | "install or reconnect" }) {
+  const state = props.action === "enable" ? "disabled" : "unavailable";
+  return (
+    <span className="block text-left leading-snug [text-wrap:wrap]">
+      <span className="block">
+        {props.label} is {state}.
+      </span>
+      <span className="mt-0.5 block">
+        Open{" "}
+        <span className="inline-flex rounded bg-muted px-1 py-px text-[11px] font-medium text-primary/80">
+          Settings
+        </span>
+        <ChevronRightIcon
+          className="mx-0.5 inline size-3 align-[-0.1em] text-muted-foreground/70"
+          aria-hidden
+        />
+        <span className="sr-only">then</span>
+        <span className="inline-flex rounded bg-muted px-1 py-px text-[11px] font-medium text-primary/80">
+          Providers
+        </span>{" "}
+        to {props.action} it.
+      </span>
+    </span>
+  );
 }
 
 const SELECTED_INDICATOR_CLASS =
@@ -39,6 +78,7 @@ const NEW_BADGE_CLASS = `${BADGE_BASE_CLASS} text-update-foreground `;
 const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
 const PICKER_TOOLTIP_CLASS = "max-w-64 text-balance font-normal leading-snug";
+const SETTINGS_TOOLTIP_CLASS = "max-w-64 text-left font-normal leading-snug";
 
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectedInstanceId: ProviderInstanceId | "favorites";
@@ -146,14 +186,19 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
+            const settingsAction = isUnavailable
+              ? unavailableSettingsAction(entry, hasSetupSurface)
+              : null;
 
-            const tooltip = isUnavailable
-              ? describeUnavailableInstance(entry)
+            const tooltip = settingsAction
+              ? describeUnavailableInstance(entry, hasSetupSurface)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
-                : showNewBadge
-                  ? `${entry.displayName} — New`
-                  : entry.displayName;
+                : isUnavailable
+                  ? describeUnavailableInstance(entry, hasSetupSurface)
+                  : showNewBadge
+                    ? `${entry.displayName} — New`
+                    : entry.displayName;
 
             const button = (
               <button
@@ -174,7 +219,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled={isDisabled}
                 type="button"
                 aria-label={
-                  isUnavailable
+                  isUnavailable || isContextDisabled
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`
@@ -225,9 +270,21 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     side={PICKER_TOOLTIP_SIDE}
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
-                    className={PICKER_TOOLTIP_CLASS}
+                    className={settingsAction ? SETTINGS_TOOLTIP_CLASS : PICKER_TOOLTIP_CLASS}
                   >
-                    {tooltip}
+                    {settingsAction ? (
+                      <SettingsPathTooltip label={entry.displayName} action={settingsAction} />
+                    ) : isContextDisabled ? (
+                      <span className="flex items-center gap-1.5">
+                        <SplitIcon
+                          className="size-3.5 shrink-0 rotate-90 text-primary/80"
+                          aria-hidden
+                        />
+                        <span className="min-w-0 text-left [text-wrap:wrap]">{tooltip}</span>
+                      </span>
+                    ) : (
+                      tooltip
+                    )}
                   </TooltipPopup>
                 </Tooltip>
               </div>

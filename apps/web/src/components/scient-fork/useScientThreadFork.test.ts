@@ -6,6 +6,7 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import type { ChatAttachment } from "~/types";
 import {
   clearStagedUserForkDraft,
+  moveAcceptedForkComposerDraft,
   prepareForkDraftAttachments,
   stageUserForkDraft,
 } from "./useScientThreadFork";
@@ -94,5 +95,39 @@ describe("user-message fork draft staging", () => {
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)],
     ).toBeUndefined();
+  });
+});
+
+describe("accepted fork composer draft movement", () => {
+  beforeEach(resetComposerDraftStore);
+
+  it("moves portable unsent text and images into the accepted fork", () => {
+    const sourceRef = scopeThreadRef(
+      EnvironmentId.make("fork-draft-environment"),
+      ThreadId.make("fork-draft-origin"),
+    );
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(sourceRef, "Continue this with another provider");
+    store.addImages(sourceRef, [
+      {
+        type: "image",
+        id: "draft-image",
+        name: "draft.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUrl: "blob:draft-image",
+        file: new File([new Uint8Array([1, 2, 3])], "draft.png", { type: "image/png" }),
+      },
+    ]);
+
+    moveAcceptedForkComposerDraft({ sourceRef, destinationRef });
+
+    expect(store.getComposerDraft(sourceRef)).toBeNull();
+    expect(store.getComposerDraft(destinationRef)?.prompt).toBe(
+      "Continue this with another provider",
+    );
+    expect(store.getComposerDraft(destinationRef)?.images.map((image) => image.id)).toEqual([
+      "draft-image",
+    ]);
   });
 });
