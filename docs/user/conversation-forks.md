@@ -6,7 +6,8 @@ Running `/fork` selects the latest completed response.
 
 The confirmation dialog proposes a numbered thread title. Replace it to choose
 your own title. If you leave it unchanged, Scient selects the next available
-number when it creates the fork.
+number when it creates the fork. After it opens, you can choose any available
+provider and model in the composer before sending the first message.
 
 **New worktree** is off by default, so the fork uses the current workspace
 without rewinding its files. Turn it on to create an isolated worktree at the
