@@ -680,6 +680,8 @@ Land the manager-lifetime production change after PR 1A establishes the behavior
   stall either explicit user cancellation or layer teardown. Scient currently waits up to five
   seconds for that provider-owned step before interrupting the supervisor and continuing cleanup;
   explicit cancelled-state publication follows cleanup.
+- Keep the lifecycle reservation through terminal publication and post-disconnect refresh, releasing
+  it in an `ensuring` finalizer so a completed older operation cannot overwrite a newer one.
 - Preserve truthful terminal ownership: final connection verification holds the transition claim
   because its probe decides success or failure, while runtime reload remains cancellable because it
   reconciles an already-finished mutation before terminal publication.

@@ -173,9 +173,12 @@ leaves no synthetic operation behind.
 
 Explicit connection cancellation uses that same cleanup path. An unresponsive provider can delay it
 for up to the configured provider-cancel bound (currently five seconds) before Scient interrupts its
-supervisor and continues resource cleanup; cancelled state is published after that cleanup. Final
-account verification is different: it decides whether the connection actually succeeded, so it keeps
-the transition claim through the probe and terminal publication. A cancel requested after provider
+supervisor and continues resource cleanup. After owned resources stop, Scient publishes the terminal
+state while the lifecycle reservation is still held, then releases that reservation in an `ensuring`
+finalizer. Failed connection startup, explicit cancellation, and post-disconnect refresh all follow
+that ordering, so an older terminal write cannot overwrite a newer operation. Final account
+verification is different: it decides whether the connection actually succeeded, so it keeps the
+transition claim through the probe and terminal publication. A cancel requested after provider
 completion waits for that decision and cannot replace truthful `connected` or `failed` state. Runtime
 reload remains cancellable until terminal publication because it reconciles an already-finished
 runtime mutation instead of deciding its result.

@@ -172,16 +172,31 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       return [current, next] as const;
     });
 
-  const cleanupActive = Effect.fn("ProviderRuntimeManager.cleanupActive")(function* (
+  const cleanupOwnedResources = Effect.fn("ProviderRuntimeManager.cleanupOwnedResources")(
+    function* (active: ActiveRuntimeOperation, mode: ActiveRuntimeCleanupMode) {
+      if (mode === "interrupt") {
+        const fiber = yield* Ref.get(active.fiberRef);
+        if (fiber) yield* Fiber.interrupt(fiber);
+      }
+    },
+  );
+
+  const settleActive = <A, E, R>(
     active: ActiveRuntimeOperation,
     mode: ActiveRuntimeCleanupMode,
-  ) {
-    if (mode === "interrupt") {
-      const fiber = yield* Ref.get(active.fiberRef);
-      if (fiber) yield* Fiber.interrupt(fiber);
-    }
-    yield* lifecycleCoordinator.release({ operationId: active.operationId });
-  });
+    terminalPublication: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    // Stop owned resources first, but keep lifecycle ownership until the
+    // terminal write settles so an older operation cannot overwrite a newer one.
+    cleanupOwnedResources(active, mode).pipe(
+      Effect.andThen(terminalPublication),
+      Effect.ensuring(
+        lifecycleCoordinator.release({ operationId: active.operationId }).pipe(Effect.asVoid),
+      ),
+    );
+
+  const cleanupActive = (active: ActiveRuntimeOperation, mode: ActiveRuntimeCleanupMode) =>
+    settleActive(active, mode, Effect.void);
 
   const cleanupIfCurrent = (
     instanceId: ProviderInstanceId,
@@ -229,13 +244,19 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
 
   const cleanupInterruptedStart = Effect.fn("ProviderRuntimeManager.cleanupInterruptedStart")(
     function* (instanceId: ProviderInstanceId, operationId: string) {
-      const active = yield* cleanupIfCurrent(instanceId, operationId, "interrupt");
+      const active = yield* takeIfCurrent(instanceId, operationId);
       if (!active) return;
-      const visibleOperation = (yield* providerRegistry.getProviders).find(
-        (provider) => provider.instanceId === instanceId,
-      )?.connection?.runtime?.operation;
-      if (visibleOperation?.operationId !== operationId) return;
-      yield* publishCancelled(instanceId, active);
+      yield* settleActive(
+        active,
+        "interrupt",
+        Effect.gen(function* () {
+          const visibleOperation = (yield* providerRegistry.getProviders).find(
+            (provider) => provider.instanceId === instanceId,
+          )?.connection?.runtime?.operation;
+          if (visibleOperation?.operationId !== operationId) return;
+          yield* publishCancelled(instanceId, active);
+        }),
+      );
     },
   );
 
@@ -547,8 +568,11 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider runtime operation is no longer active.",
         });
       }
-      yield* cleanupActive(active, "interrupt");
-      const providers = yield* publishCancelled(input.instanceId, active);
+      const providers = yield* settleActive(
+        active,
+        "interrupt",
+        publishCancelled(input.instanceId, active),
+      );
       return { providers };
     },
   );

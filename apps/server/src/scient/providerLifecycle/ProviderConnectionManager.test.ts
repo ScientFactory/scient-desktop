@@ -597,6 +597,60 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
+  it.effect("holds the lifecycle reservation until cancelled state is published", () =>
+    Effect.gen(function* () {
+      const cancellationPublicationStarted = yield* Deferred.make<void>();
+      const releaseCancellationPublication = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://auth.openai.com/",
+            authorizationUrlKind: "primary",
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Effect.never,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, lifecycleCoordinator, lifecycleReleaseCountRef } = yield* makeHarness({
+        actions,
+        beforeSetProviderConnectionOperation: (operation) =>
+          operation?.status === "cancelled"
+            ? Deferred.succeed(cancellationPublicationStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCancellationPublication)),
+              )
+            : Effect.void,
+      });
+      const started = yield* manager.start({
+        instanceId: CODEX_INSTANCE,
+        method: "codex_browser",
+      });
+      const operationId = started.providers[0]?.connection?.operation?.operationId;
+      assert.ok(operationId);
+
+      const cancelFiber = yield* manager
+        .cancel({ instanceId: CODEX_INSTANCE, operationId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(cancellationPublicationStarted);
+
+      assert.strictEqual(
+        (yield* lifecycleCoordinator.current(CODEX_INSTANCE))?.operationId,
+        operationId,
+      );
+      const overlappingStart = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.flip);
+      assert.strictEqual(overlappingStart.reason, "already_running");
+
+      yield* Deferred.succeed(releaseCancellationPublication, undefined);
+      const cancelled = yield* Fiber.join(cancelFiber);
+      assert.strictEqual(cancelled.providers[0]?.connection?.operation?.status, "cancelled");
+      assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
+
   it.effect(
     "keeps cancellation authoritative when completion resolves before supervision runs",
     () =>
@@ -921,6 +975,49 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
+  it.effect("holds the lifecycle reservation until failed start state is published", () =>
+    Effect.gen(function* () {
+      const failurePublicationStarted = yield* Deferred.make<void>();
+      const releaseFailurePublication = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.fail(
+            new ProviderConnectionActionError({ message: "The provider rejected sign in." }),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager, lifecycleCoordinator, lifecycleReleaseCountRef } = yield* makeHarness({
+        actions,
+        beforeSetProviderConnectionOperation: (operation) =>
+          operation?.status === "failed"
+            ? Deferred.succeed(failurePublicationStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFailurePublication)),
+              )
+            : Effect.void,
+      });
+
+      const startFiber = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(failurePublicationStarted);
+      const reservation = yield* lifecycleCoordinator.current(CODEX_INSTANCE);
+      assert.ok(reservation);
+
+      const overlappingStart = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.flip);
+      assert.strictEqual(overlappingStart.reason, "already_running");
+
+      yield* Deferred.succeed(releaseFailurePublication, undefined);
+      const failed = yield* Fiber.join(startFiber);
+      assert.strictEqual(failed._tag, "Failure");
+      if (failed._tag === "Failure") assert.strictEqual(failed.failure.reason, "connection_failed");
+      assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
+
   it.effect("supports provider-owned browser launch without publishing an invented URL", () =>
     Effect.gen(function* () {
       const actions: ProviderConnectionActions = {
@@ -1149,6 +1246,44 @@ describe("ProviderConnectionManager", () => {
       yield* manager.disconnect({ instanceId: CODEX_INSTANCE });
       assert.strictEqual(yield* Ref.get(disconnects), 1);
       assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
+    }),
+  );
+
+  it.effect("holds the lifecycle reservation through post-disconnect refresh", () =>
+    Effect.gen(function* () {
+      const refreshStarted = yield* Deferred.make<void>();
+      const releaseRefresh = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () => Effect.die(new Error("must not start")),
+        disconnect: Effect.void,
+      };
+      const { manager, lifecycleCoordinator, lifecycleReleaseCountRef } = yield* makeHarness({
+        actions,
+        provider: authenticatedProvider(disconnectedProvider),
+        beforeRefreshInstance: (_instanceId, refreshCount) =>
+          refreshCount === 1
+            ? Deferred.succeed(refreshStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRefresh)),
+              )
+            : Effect.void,
+      });
+
+      const disconnectFiber = yield* manager
+        .disconnect({ instanceId: CODEX_INSTANCE })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(refreshStarted);
+
+      assert.strictEqual((yield* lifecycleCoordinator.current(CODEX_INSTANCE))?.kind, "connection");
+      const overlappingDisconnect = yield* manager
+        .disconnect({ instanceId: CODEX_INSTANCE })
+        .pipe(Effect.flip);
+      assert.strictEqual(overlappingDisconnect.reason, "already_running");
+
+      yield* Deferred.succeed(releaseRefresh, undefined);
+      yield* Fiber.join(disconnectFiber);
+      assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
     }),
   );
 });

@@ -153,11 +153,19 @@ function makeHarness(
       streamChanges: Stream.empty,
     };
     const coordinator = yield* makeLifecycleCoordinator;
+    const lifecycleReleaseCountRef = yield* Ref.make(0);
+    const trackedCoordinator = ProviderLifecycleCoordinator.of({
+      ...coordinator,
+      release: (input) =>
+        Ref.update(lifecycleReleaseCountRef, (count) => count + 1).pipe(
+          Effect.andThen(coordinator.release(input)),
+        ),
+    });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
     const manager = yield* make().pipe(
       Effect.provideService(ProviderRegistry, registry),
-      Effect.provideService(ProviderLifecycleCoordinator, coordinator),
+      Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
       Effect.provide(NodeServices.layer),
       Scope.provide(managerScope),
     );
@@ -167,7 +175,8 @@ function makeHarness(
       reloadCountRef,
       reloadOperationsRef,
       stopCountRef,
-      coordinator,
+      coordinator: trackedCoordinator,
+      lifecycleReleaseCountRef,
       closeManager: Scope.close(managerScope, Exit.void),
     };
   });
@@ -422,6 +431,60 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.source, "system");
       yield* Effect.yieldNow;
       assert.strictEqual(yield* Ref.get(reloadCountRef), 0);
+    }),
+  );
+
+  it.effect("holds the lifecycle reservation until cancelled runtime state is published", () =>
+    Effect.gen(function* () {
+      const cancellationPublicationStarted = yield* Deferred.make<void>();
+      const releaseCancellationPublication = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.never,
+      };
+      const { manager, coordinator, lifecycleReleaseCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        () => Effect.void,
+        undefined,
+        Effect.void,
+        {
+          beforeSetRuntime: (runtime) =>
+            runtime?.operation?.status === "cancelled"
+              ? Deferred.succeed(cancellationPublicationStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseCancellationPublication)),
+                )
+              : Effect.void,
+        },
+      );
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+      assert.ok(operationId);
+
+      const cancelFiber = yield* manager
+        .cancel({ instanceId: INSTANCE, operationId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(cancellationPublicationStarted);
+
+      assert.strictEqual((yield* coordinator.current(INSTANCE))?.operationId, operationId);
+      const overlappingStart = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.flip);
+      assert.strictEqual(overlappingStart.reason, "runtime_busy");
+
+      yield* Deferred.succeed(releaseCancellationPublication, undefined);
+      const cancelled = yield* Fiber.join(cancelFiber);
+      assert.strictEqual(
+        cancelled.providers[0]?.connection?.runtime?.operation?.status,
+        "cancelled",
+      );
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
