@@ -108,6 +108,7 @@ import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfEx
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
+import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
 import {
   prepareEnvironmentFileOpen,
   watchEnvironmentFile,
@@ -528,6 +529,10 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
+        registry: providerRegistry,
+        serverSettings,
+      });
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1652,6 +1657,12 @@ const makeWsRpcLayer = (
               : providerRegistry.refresh()
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.voiceCorrectTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceCorrectTranscript,
+            voiceTranscriptCorrection.correct(input),
+            { "rpc.aggregate": "voice" },
           ),
         [WS_METHODS.providerUploadFeedback]: (input) =>
           observeRpcEffect(

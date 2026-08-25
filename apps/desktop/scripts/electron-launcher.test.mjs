@@ -4,7 +4,9 @@ import { assert, describe, it } from "vite-plus/test";
 
 import {
   makeDevelopmentCommandScript,
+  makeDevelopmentCodeSigningCommand,
   makeDevelopmentLauncherScript,
+  resolveDevelopmentCodeSigningIdentity,
   resolveElectronBinaryPath,
   resolveDevelopmentAppDisplayName,
   resolveMacLauncherIconPaths,
@@ -13,7 +15,11 @@ import {
 
 describe("electron development launcher", () => {
   it("gives the canonical launcher a distinct stable display name", () => {
-    assert.equal(resolveDevelopmentAppDisplayName({}), "Scient (Dev)");
+    assert.equal(resolveDevelopmentAppDisplayName({}, "/repo/scient-desktop"), "Scient (Dev)");
+    assert.equal(
+      resolveDevelopmentAppDisplayName({}, "/repo/scient-desktop-voice-model-management-20260824"),
+      "Scient (Dev) · voice-model-management",
+    );
     assert.equal(
       resolveDevelopmentAppDisplayName({ SCIENT_DEV_APP_ROLE: "stable" }),
       "Scient (Dev) Stable",
@@ -38,12 +44,53 @@ describe("electron development launcher", () => {
     );
     assert.notInclude(script, "\nexport VITE_DEV_SERVER_URL=");
     assert.include(script, 'if [ "${SCIENT_NEXT_DEV_RUNNER_ACTIVE:-}" != "1" ]; then');
+    assert.include(script, 'if [ -n "${SCIENT_DEV_APP_ENV_FILE:-}" ]; then');
+    assert.include(script, '. "$SCIENT_DEV_APP_ENV_FILE"');
+    assert.include(script, 'mv -f "$dev_pid_file_tmp" "$SCIENT_DEV_APP_PID_FILE"');
     assert.notInclude(script, "osascript");
     assert.notInclude(script, "open -a Terminal");
     assert.include(script, "run-scient-next-dev.command");
     assert.include(
       script,
       "exec '/repo/node_modules/electron/Electron' --t3code-dev-root='/repo/apps/desktop' '/repo/apps/desktop/dist-electron/main.cjs' \"$@\"",
+    );
+  });
+
+  it("uses an explicit development signing identity before the first available certificate", () => {
+    assert.equal(
+      resolveDevelopmentCodeSigningIdentity({
+        environment: { SCIENT_DEV_CODESIGN_IDENTITY: "EXPLICIT" },
+        spawnSync: () => assert.fail("security should not be called"),
+      }),
+      "EXPLICIT",
+    );
+    assert.equal(
+      resolveDevelopmentCodeSigningIdentity({
+        environment: {},
+        spawnSync: () => ({
+          status: 0,
+          stdout: '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Development: Example"\n',
+        }),
+      }),
+      "0123456789ABCDEF0123456789ABCDEF01234567",
+    );
+  });
+
+  it("delegates complete bundle signing to Electron's maintained macOS signer", () => {
+    assert.deepEqual(
+      makeDevelopmentCodeSigningCommand({
+        appBundlePath: "/runtime/Scient (Dev).app",
+        identity: "APPLE-DEVELOPMENT-IDENTITY",
+        signerScriptPath: "/repo/apps/desktop/scripts/sign-development-app.mjs",
+      }),
+      {
+        command: process.execPath,
+        args: [
+          "/repo/apps/desktop/scripts/sign-development-app.mjs",
+          "/runtime/Scient (Dev).app",
+          "APPLE-DEVELOPMENT-IDENTITY",
+        ],
+      },
     );
   });
 
@@ -62,7 +109,7 @@ describe("electron development launcher", () => {
     assert.include(script, `export PATH='${NodePath.dirname(process.execPath)}':"$PATH"`);
     assert.include(script, "/tool/pnpm.cjs");
     assert.include(script, "export SCIENT_DEV_APP_ROLE='stable'");
-    assert.include(script, "dev:app");
+    assert.include(script, "dev:app:start");
     assert.include(script, "export SCIENT_NEXT_HOME='/tmp/scient-dev-stable'");
     assert.include(script, "/tmp/scient-dev-stable/local-dev-app.log");
     assert.include(script, "2>&1");

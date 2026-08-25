@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@electron/osx-sign": "1.3.3",
     "@types/node": "catalog:",
     "cross-env": "^10.1.0",
     "electron-builder": "26.15.6",

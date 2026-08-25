@@ -134,6 +134,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import * as ScientForkReactor from "./orchestration/Services/ScientForkReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
+import type { ProviderVoiceTranscriptCorrection } from "./provider/ProviderDriver.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
@@ -669,6 +670,9 @@ const buildAppUnderTest = (options?: {
               ),
             getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
             getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+            getVoiceTranscriptCorrectionForInstance: () =>
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
+              Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
             stopProviderSessions: () => Effect.void,
             setProviderManagedRuntimeSummary: () => Effect.succeed([]),
             setProviderMaintenanceActionState: () => Effect.succeed([]),

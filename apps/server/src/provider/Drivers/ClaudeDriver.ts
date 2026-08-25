@@ -33,6 +33,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeClaudeConnectionActions } from "../../scient/providerLifecycle/ClaudeConnectionActions.ts";
 import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecycle/ClaudeManagedRuntimeActions.ts";
+import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVoiceTranscriptCorrection.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
@@ -222,6 +223,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, effectiveProcessEnv);
+      const voiceTranscriptCorrection = yield* makeClaudeVoiceTranscriptCorrection(
+        effectiveConfig,
+        effectiveProcessEnv,
+      );
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
       const capabilitiesProbeCache = yield* Cache.make({
@@ -303,6 +308,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        voiceTranscriptCorrection,
         ...(connectionActions ? { connectionActions } : {}),
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;

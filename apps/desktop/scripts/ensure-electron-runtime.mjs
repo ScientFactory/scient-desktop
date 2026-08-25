@@ -75,6 +75,36 @@ function isMachO(filePath) {
   return result.status === 0 && result.stdout.includes("Mach-O");
 }
 
+export function findInvalidDarwinRuntimeAliases(electronDir) {
+  const frameworkRoot = NodePath.join(
+    electronDir,
+    "dist",
+    "Electron.app",
+    "Contents",
+    "Frameworks",
+    "Electron Framework.framework",
+  );
+  const aliases = [
+    ["Electron Framework", "Versions/Current/Electron Framework"],
+    ["Helpers", "Versions/Current/Helpers"],
+    ["Libraries", "Versions/Current/Libraries"],
+    ["Resources", "Versions/Current/Resources"],
+    [NodePath.join("Versions", "Current"), "A"],
+  ];
+
+  return aliases.flatMap(([relativePath, expectedTarget]) => {
+    const aliasPath = NodePath.join(frameworkRoot, relativePath);
+    try {
+      return NodeFS.lstatSync(aliasPath).isSymbolicLink() &&
+        NodeFS.readlinkSync(aliasPath) === expectedTarget
+        ? []
+        : [aliasPath];
+    } catch {
+      return [aliasPath];
+    }
+  });
+}
+
 function missingRuntimePaths(electronDir, platformPath) {
   return getRequiredRuntimePaths(electronDir, platformPath).filter((runtimePath) => {
     return !NodeFS.existsSync(runtimePath);
@@ -86,7 +116,7 @@ function invalidRuntimePaths(electronDir, platformPath) {
     return [];
   }
 
-  return [
+  const invalidBinaries = [
     NodePath.join(electronDir, "dist", platformPath),
     NodePath.join(
       electronDir,
@@ -98,6 +128,7 @@ function invalidRuntimePaths(electronDir, platformPath) {
       "Electron Framework",
     ),
   ].filter((runtimePath) => NodeFS.existsSync(runtimePath) && !isMachO(runtimePath));
+  return [...invalidBinaries, ...findInvalidDarwinRuntimeAliases(electronDir)];
 }
 
 function runChecked(command, args) {
@@ -127,7 +158,7 @@ function installElectronRuntime(electronDir, version) {
       zipPath,
     ]);
     if (hostPlatform === "darwin") {
-      runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
+      runChecked("/usr/bin/unzip", ["-q", zipPath, "-d", NodePath.join(electronDir, "dist")]);
     } else {
       runChecked("python3", [
         "-c",

@@ -138,6 +138,11 @@ import {
   ProviderRuntimeStartInput,
 } from "./providerLifecycle.ts";
 import {
+  VoiceTranscriptCorrectionError,
+  VoiceTranscriptCorrectionRequest,
+  VoiceTranscriptCorrectionResult,
+} from "./voice.ts";
+import {
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
@@ -406,6 +411,9 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
 
+  // Scient-owned optional voice transcript correction.
+  voiceCorrectTranscript: "voice.correctTranscript",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -571,6 +579,12 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTranscript, {
+  payload: VoiceTranscriptCorrectionRequest,
+  success: VoiceTranscriptCorrectionResult,
+  error: Schema.Union([VoiceTranscriptCorrectionError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1409,6 +1423,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsVoiceCorrectTranscriptRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

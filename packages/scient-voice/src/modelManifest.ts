@@ -55,7 +55,7 @@ const WHISPER_LARGE_V3_TURBO_MULTILINGUAL_Q5_0: VoiceModelDefinition = Object.fr
   id: "whisper-large-v3-turbo-multilingual-q5_0",
   fileName: "ggml-large-v3-turbo-q5_0-39422170.bin",
   displayName: "Multilingual Turbo",
-  description: "Most capable for demanding dictation on powerful computers.",
+  description: "Most capable for multilingual dictation on powerful computers.",
   byteSize: 574_041_195,
   sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
   headerHex: GGML_MAGIC_HEADER_HEX,
