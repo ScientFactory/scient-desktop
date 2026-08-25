@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-24-upstream-sync-e6a109b9f7.md`](docs/internals/2026-08-24-upstream-sync-e6a109b9f7.md)
+[`docs/internals/2026-08-25-upstream-sync-99960383d0.md`](docs/internals/2026-08-25-upstream-sync-99960383d0.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `e6a109b9f74552eb735968986845e500b98c3c73` into the refresh
+checkpoint `99960383d094b850f0001d3067fa604aa3adf7d6` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`b1670ac7d9b5b7bb9d7ebd969f27384daee22813`. Later observed T3
+`e6a109b9f74552eb735968986845e500b98c3c73`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -260,6 +260,17 @@ collapsed to one renderer: T3 owns classification and generic loading, while
 Scient's card remains only where its extra workspace actions apply. The exact
 record distinguishes verified ancestry from the separately recorded upstream
 review cursor.
+
+The 2026-08-25 sync through `99960383d0` receives seven official commits
+covering composer update-banner masking, same-release nightly version-skew
+detection, usage-page loading alignment and token sorting, terminal-link hover
+accuracy, Windows and spaced Markdown file links, and file-viewer-first agent
+file links. The sole textual conflict keeps Scient's workspace-relative preview
+route alongside T3's normalized Windows path lookup. A narrow compatibility
+adaptation preserves the explicit workspace-HTML browser route while PDFs stay
+on Scient's range-aware file surface. Scient identity, release commands, rich
+Markdown, workspace images, scientific surfaces, provider lifecycle, cloud,
+updater, and publication boundaries remain intact.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
