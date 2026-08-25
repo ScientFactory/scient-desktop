@@ -34,8 +34,9 @@ const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_STATUS_TIMEOUT = "20 seconds";
 const AUTH_OUTPUT_DRAIN_TIMEOUT = "2 seconds";
 const URL_IN_OUTPUT = /https?:\/\/[^\s<>"']+/giu;
-const SENSITIVE_OUTPUT_VALUE =
-  /["']?\b((?:(?:access|refresh|id|auth(?:entication|orization)?|oauth|user|client|api|session|private)[ _-]?(?:token|code|key|secret|id))|token|challenge|secret|password|credential|cookie|jwt)["']?\s*[:=]\s*["']?[^\s,;}"']+["']?/giu;
+const SENSITIVE_OUTPUT_ASSIGNMENT =
+  /["']?\b((?:(?:access|refresh|id|auth(?:entication|orization)?|oauth|user|client|api|session|private)[ _-]?(?:token|code|key|secret|id))|token|challenge|secret|password|credential|cookie|jwt)["']?\s*[:=]\s*/giu;
+const UNQUOTED_OUTPUT_VALUE_BOUNDARY = /[\s,;}"']/u;
 const BEARER_OUTPUT_VALUE = /\bbearer\s+[^\s,;]+/giu;
 const connectionError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -55,6 +56,48 @@ function isCursorAuthorizationUrl(url: URL): boolean {
 
 export function findCursorAuthorizationUrl(output: string): string | undefined {
   return findTerminalAuthorizationUrl(output, isCursorAuthorizationUrl);
+}
+
+function sensitiveOutputValueEnd(line: string, start: number): number {
+  const quote = line[start];
+  if (quote === "\\" && (line[start + 1] === '"' || line[start + 1] === "'")) {
+    return line.length;
+  }
+  if (quote !== '"' && quote !== "'") {
+    let end = start;
+    while (end < line.length && !UNQUOTED_OUTPUT_VALUE_BOUNDARY.test(line[end] ?? "")) {
+      end += 1;
+    }
+    return end;
+  }
+
+  let escaped = false;
+  for (let index = start + 1; index < line.length; index += 1) {
+    const character = line[index];
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === quote) {
+      return index + 1;
+    }
+  }
+  return line.length;
+}
+
+export function redactCursorLoginFailureLine(line: string): string {
+  let redacted = "";
+  let retainedFrom = 0;
+  for (const match of line.matchAll(SENSITIVE_OUTPUT_ASSIGNMENT)) {
+    const matchStart = match.index;
+    const key = match[1];
+    if (matchStart < retainedFrom || !key) continue;
+
+    const valueStart = matchStart + match[0].length;
+    redacted += `${line.slice(retainedFrom, matchStart)}${key}=[redacted]`;
+    retainedFrom = sensitiveOutputValueEnd(line, valueStart);
+  }
+  return `${redacted}${line.slice(retainedFrom)}`;
 }
 
 function stripUnsafeOutputControls(value: string): string {
@@ -79,7 +122,7 @@ function cursorLoginExitFailure(
   output: string,
   exitCode: ChildProcessSpawner.ExitCode,
 ): ProviderConnectionActionError {
-  const summary = normalizeTerminalOutput(output)
+  const candidate = normalizeTerminalOutput(output)
     .replace(URL_IN_OUTPUT, "[secure sign-in URL]")
     .split(/\r?\n/u)
     .map((line) => stripUnsafeOutputControls(line).trim())
@@ -88,11 +131,13 @@ function cursorLoginExitFailure(
         line.length > 0 &&
         !/^waiting for browser authentication\b/iu.test(line) &&
         !/^open (?:a browser|this link|\[secure sign-in url\])/iu.test(line),
-    )
-    ?.replace(SENSITIVE_OUTPUT_VALUE, "$1=[redacted]")
-    .replace(BEARER_OUTPUT_VALUE, "Bearer [redacted]")
-    .replace(/^error:\s*/iu, "")
-    .slice(0, MAX_LOGIN_ERROR_LENGTH);
+    );
+  const summary = candidate
+    ? redactCursorLoginFailureLine(candidate)
+        .replace(BEARER_OUTPUT_VALUE, "Bearer [redacted]")
+        .replace(/^error:\s*/iu, "")
+        .slice(0, MAX_LOGIN_ERROR_LENGTH)
+    : undefined;
   const code = Number(exitCode);
   return connectionError(
     summary

@@ -17,10 +17,12 @@ import {
   makeCursorConnectionActions,
   makeCursorConnectionActionsFromRuntime,
   officialCursorAccountEnvironment,
+  redactCursorLoginFailureLine,
   withCursorSessionShutdown,
 } from "./CursorConnectionActions.ts";
 
 const cursorSettings = Schema.decodeSync(CursorSettings)({ binaryPath: "cursor-agent" });
+const customCursorSettings = Schema.decodeSync(CursorSettings)({ binaryPath: process.execPath });
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function makeHandle(input: {
@@ -68,6 +70,20 @@ describe("Cursor authorization output", () => {
         "\u001b]8;;https://cursor.com/loginDeepControl?challenge=scient\u0007Sign in\u001b]8;;\u0007.",
       ),
     ).toBe("https://cursor.com/loginDeepControl?challenge=scient");
+  });
+
+  it.each([
+    ['password="secret with spaces"', "password=[redacted]"],
+    ['{"refresh_token":"secret with spaces"}', "{refresh_token=[redacted]}"],
+    ["credential='secret with spaces' status=failed", "credential=[redacted] status=failed"],
+    ['token="secret with \\"quoted\\" value" status=failed', "token=[redacted] status=failed"],
+    ["token='secret with \\'quoted\\' value' status=failed", "token=[redacted] status=failed"],
+    ['credential="unterminated secret with spaces', "credential=[redacted]"],
+    [String.raw`token=\"secret with spaces\" status=failed`, "token=[redacted]"],
+    ["apiKey=secret-token status=failed", "apiKey=[redacted] status=failed"],
+    ["proxy connection failed status=401", "proxy connection failed status=401"],
+  ])("redacts bounded credential assignments from %j", (input, expected) => {
+    expect(redactCursorLoginFailureLine(input)).toBe(expected);
   });
 
   it("keeps account-storage and network essentials while excluding credentials", () => {
@@ -171,7 +187,7 @@ describe("Cursor connection actions", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("runs Cursor's browser login and verifies the account with a fresh about probe", () =>
+  it.effect("runs managed Cursor login and verification with managed-only arguments", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const loginExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -239,6 +255,62 @@ describe("Cursor connection actions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("uses an explicit custom Cursor executable without managed-only arguments", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const loginExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const commands = yield* Ref.make<ReadonlyArray<ChildProcess.StandardCommand>>([]);
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            assert.ok(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("Expected a standard command");
+            }
+            yield* Ref.update(commands, (current) => [...current, command]);
+            if (command.args.includes("login")) {
+              return makeHandle({
+                all: "Open https://cursor.com/loginDeepControl?challenge=scient\n",
+                exitCode: Deferred.await(loginExit),
+              });
+            }
+            if (command.args.includes("about")) {
+              return makeHandle({
+                stdout: encodeUnknownJson({
+                  cliVersion: "2026.08.11-e8db854",
+                  userEmail: "scientist@example.test",
+                  subscriptionTier: "Pro",
+                }),
+              });
+            }
+            return yield* Effect.die(`Unexpected Cursor command: ${command.args.join(" ")}`);
+          }),
+        );
+        const actions = yield* makeCursorConnectionActions(
+          customCursorSettings,
+          { HOME: "/Users/test" },
+          spawner,
+        );
+
+        const attempt = yield* actions.start("cursor_browser");
+        yield* Deferred.succeed(loginExit, ChildProcessSpawner.ExitCode(0));
+        yield* attempt.waitForCompletion;
+
+        const spawned = yield* Ref.get(commands);
+        assert.deepStrictEqual(
+          spawned.map((command) => ({ command: command.command, args: command.args })),
+          [
+            { command: process.execPath, args: ["login"] },
+            { command: process.execPath, args: ["about", "--format", "json"] },
+          ],
+        );
+        for (const command of spawned) {
+          assert.strictEqual(command.options.extendEnv, false);
+          assert.strictEqual(command.options.env?.SCIENT_MANAGED_CURSOR_RUNTIME, undefined);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("does not let process exit outrun the final authorization URL", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -289,14 +361,14 @@ describe("Cursor connection actions", () => {
   it.effect("verifies a login that completes before Cursor emits an authorization URL", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const commands = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
+        const commands = yield* Ref.make<ReadonlyArray<ChildProcess.StandardCommand>>([]);
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             assert.ok(ChildProcess.isStandardCommand(command));
             if (!ChildProcess.isStandardCommand(command)) {
               return yield* Effect.die("Expected a standard command");
             }
-            yield* Ref.update(commands, (current) => [...current, command.args]);
+            yield* Ref.update(commands, (current) => [...current, command]);
             if (command.args.includes("login")) {
               return makeHandle({ all: "Already authenticated.\n" });
             }
@@ -324,10 +396,17 @@ describe("Cursor connection actions", () => {
         assert.strictEqual(attempt.authorizationUrlKind, undefined);
         yield* attempt.waitForCompletion;
 
-        assert.deepStrictEqual(yield* Ref.get(commands), [
-          ["login"],
-          ["about", "--format", "json"],
-        ]);
+        const spawned = yield* Ref.get(commands);
+        assert.deepStrictEqual(
+          spawned.map((command) => ({ command: command.command, args: command.args })),
+          [
+            { command: "cursor-agent", args: ["login"] },
+            { command: "cursor-agent", args: ["about", "--format", "json"] },
+          ],
+        );
+        for (const command of spawned) {
+          assert.strictEqual(command.options.env?.SCIENT_MANAGED_CURSOR_RUNTIME, undefined);
+        }
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -410,9 +489,9 @@ describe("Cursor connection actions", () => {
           Effect.succeed(
             makeHandle({
               all:
-                "Error: access_token=access-secret refreshToken=refresh-secret " +
-                'client_secret=client-secret apiKey=api-secret "id_token":"id-secret" ' +
-                'session_id=session-secret oauthToken=oauth-secret credential="credential-secret\n',
+                "Error: access_token=\"access secret\" refreshToken='refresh secret' " +
+                'client_secret=client-secret apiKey=api-secret "id_token":"id secret" ' +
+                'session_id=session-secret oauthToken=oauth-secret credential="credential secret\n',
               exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(17)),
             }),
           ),
@@ -426,7 +505,7 @@ describe("Cursor connection actions", () => {
         const failure = yield* actions.start("cursor_browser").pipe(Effect.flip);
 
         expect(failure.message).not.toMatch(
-          /access-secret|refresh-secret|client-secret|api-secret|id-secret|session-secret|oauth-secret|credential-secret/u,
+          /access secret|refresh secret|client-secret|api-secret|id secret|session-secret|oauth-secret|credential secret/u,
         );
         for (const key of [
           "access_token",
