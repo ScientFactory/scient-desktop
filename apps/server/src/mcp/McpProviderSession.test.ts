@@ -5,7 +5,6 @@ import {
   clearAllMcpProviderSessions,
   readMcpProviderSession,
   setMcpProviderSession,
-  setMcpProviderSessionSelectedSkills,
 } from "./McpProviderSession.ts";
 
 describe("McpProviderSession", () => {
@@ -32,33 +31,5 @@ describe("McpProviderSession", () => {
 
     (firstRead.capabilities as Set<string>).add("sources:write");
     expect(readMcpProviderSession(threadId)?.capabilities).toEqual(new Set(["preview"]));
-  });
-
-  it("replaces and defensively copies turn-local skill selections", () => {
-    const threadId = ThreadId.make("thread-skill-selection");
-    setMcpProviderSession({
-      environmentId: EnvironmentId.make("environment-skill-selection"),
-      threadId,
-      providerSessionId: "provider-session-skill-selection",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      endpoint: "http://127.0.0.1:43123/mcp",
-      authorizationHeader: "Bearer test",
-      capabilities: new Set(["skills:read"]),
-    });
-    const selected = new Set(["release-1"]);
-    setMcpProviderSessionSelectedSkills(threadId, selected);
-    selected.clear();
-
-    const firstRead = readMcpProviderSession(threadId);
-    expect(firstRead).toBeDefined();
-    if (!firstRead) throw new Error("Expected the provider session to be stored");
-    expect(firstRead.selectedScientSkillReleaseKeys).toEqual(new Set(["release-1"]));
-    (firstRead.selectedScientSkillReleaseKeys as Set<string>).clear();
-    expect(readMcpProviderSession(threadId)?.selectedScientSkillReleaseKeys).toEqual(
-      new Set(["release-1"]),
-    );
-
-    setMcpProviderSessionSelectedSkills(threadId, new Set());
-    expect(readMcpProviderSession(threadId)?.selectedScientSkillReleaseKeys).toEqual(new Set());
   });
 });

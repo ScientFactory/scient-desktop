@@ -391,6 +391,31 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
   },
 );
 
+export const writeCodexSkillConfig = Effect.fn("writeCodexSkillConfig")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  input: { readonly name: string; readonly path: string; readonly enabled: boolean },
+) {
+  return yield* client.request("skills/config/write", input);
+});
+
+export const setCodexSkillEnabled = Effect.fn("setCodexSkillEnabled")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly name: string;
+  readonly path: string;
+  readonly enabled: boolean;
+}) {
+  const { client } = yield* openCodexAppServerConnection(input);
+  return yield* writeCodexSkillConfig(client, {
+    enabled: input.enabled,
+    name: input.name,
+    path: input.path,
+  });
+});
+
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;

@@ -61,19 +61,28 @@ describe("Scient skill policy", () => {
 
         yield* policy.setUserSkillActivation(release, true, "automatic");
         expect((yield* policy.snapshot).userSkills).toEqual([
-          { release, invocationPolicy: "automatic" },
+          { release, active: true, invocationPolicy: "automatic" },
         ]);
         const persistedContents = yield* Effect.promise(() =>
           NodeFSP.readFile(NodePath.join(config.stateDir, "scient-skills.json"), "utf8"),
         );
         const persisted = yield* decodeUnknownJson(persistedContents);
         expect(persisted).toMatchObject({
-          formatVersion: 2,
-          userSkills: [{ release, invocationPolicy: "automatic" }],
+          formatVersion: 3,
+          userSkills: [{ release, active: true, invocationPolicy: "automatic" }],
         });
 
         yield* policy.setUserSkillActivation(release, false, "explicit");
-        expect((yield* policy.snapshot).userSkills).toEqual([]);
+        expect((yield* policy.snapshot).userSkills).toEqual([
+          { release, active: false, invocationPolicy: "explicit" },
+        ]);
+        const disabledContents = yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(config.stateDir, "scient-skills.json"), "utf8"),
+        );
+        expect(yield* decodeUnknownJson(disabledContents)).toMatchObject({
+          formatVersion: 3,
+          userSkills: [{ release, active: false, invocationPolicy: "explicit" }],
+        });
       }).pipe(Effect.provide(Layer.merge(configLayer, policyLayer)));
     }),
   );
@@ -131,7 +140,41 @@ describe("Scient skill policy", () => {
         return yield* policy.snapshot;
       }).pipe(Effect.provide(ScientSkillPolicy.layer.pipe(Layer.provide(configLayer))));
 
-      expect(snapshot.userSkills).toEqual([{ release, invocationPolicy: "explicit" }]);
+      expect(snapshot.userSkills).toEqual([
+        { release, active: true, invocationPolicy: "explicit" },
+      ]);
+    }),
+  );
+
+  it.effect("migrates v2 activations to explicit active preferences", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(fixture);
+      const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configLayer));
+      const encodedV2 = yield* encodeUnknownJson({
+        formatVersion: 2,
+        userSkills: [{ release, invocationPolicy: "automatic" }],
+        trustedProjects: [],
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(config.stateDir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(config.stateDir, "scient-skills.json"),
+          encodedV2,
+          "utf8",
+        );
+      });
+
+      const snapshot = yield* Effect.gen(function* () {
+        const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+        return yield* policy.snapshot;
+      }).pipe(Effect.provide(ScientSkillPolicy.layer.pipe(Layer.provide(configLayer))));
+
+      expect(snapshot.userSkills).toEqual([
+        { release, active: true, invocationPolicy: "automatic" },
+      ]);
     }),
   );
 });

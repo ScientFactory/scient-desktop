@@ -37,6 +37,22 @@ describe("getProviderSkillsForSlashMenu", () => {
       "ask-matt",
     ]);
   });
+
+  it("omits project skills from the global composer menu", () => {
+    expect(
+      getProviderSkillsForSlashMenu(
+        [
+          {
+            name: "project-review",
+            path: "/workspace/.agents/skills/project-review/SKILL.md",
+            scope: "project",
+            enabled: true,
+          },
+        ],
+        true,
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("getProviderSlashCommandsForSlashMenu", () => {

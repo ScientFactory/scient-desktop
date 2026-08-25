@@ -24,3 +24,12 @@ export const setScientSkillUserActivation = createEnvironmentRpcCommand(connecti
   onSuccess: ({ environmentId }, registry) =>
     Effect.sync(() => registry.refresh(scientSkillsInventory({ environmentId, input: {} }))),
 });
+
+export const setProviderSkillEnabled = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:provider-skills:set-enabled",
+  tag: WS_METHODS.providerSkillsSetEnabled,
+  concurrency: {
+    mode: "serial",
+    key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+  },
+});

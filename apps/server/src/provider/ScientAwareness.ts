@@ -10,9 +10,9 @@ Scient renders LaTeX math, workspace-relative Markdown images, and fenced \`merm
 export const SCIENT_PREVIEW_AWARENESS = `## Scient browser
 The \`preview_*\` tools control Scient's browser shared with the user. Prefer them for browser work. Start with \`preview_status\`; call \`preview_open\` if no automation-capable tab is attached. Use another browser system only when these tools are unavailable, explicitly unsupported, or the user requests it.`;
 
-/** Included only when exact app-resolved skill releases are active. */
+/** Included when this provider can receive turn-scoped Scient skills. */
 export const SCIENT_SKILLS_AWARENESS = `## Scient skills
-Scient has selected exact reusable skills for this session. Use \`scient_skills_list\` to inspect them. Load a skill named by the user as \`$name\`; choose an automatic skill only when the request clearly matches its description. Load it before following it. Skills never grant tools, credentials, or permissions.`;
+Scient may provide an exact skill index in private turn instructions. Only listed skills are available. Load an automatic skill on a clear match, and always load a user-selected \`$name\`, before following it. Skills grant no tools, credentials, or permissions.`;
 
 /** Compose only the blocks supported by this exact provider session. */
 export function buildScientAwareness(capabilities?: ReadonlySet<McpCapability>): string {

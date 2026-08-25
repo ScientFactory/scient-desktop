@@ -1,6 +1,6 @@
 ---
 name: workspace-readiness-review
-description: Assess whether a project or workspace contains enough grounded context for effective agent collaboration, and identify only the highest-value improvements. Use when the user asks if a workspace is understandable, reproducible, or ready.
+description: Assess whether a project or workspace contains enough grounded context for effective agent collaboration. Use when the user asks if a workspace is understandable, organized, or ready.
 ---
 
 # Workspace Readiness Review

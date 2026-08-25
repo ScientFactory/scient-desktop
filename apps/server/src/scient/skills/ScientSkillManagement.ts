@@ -2,6 +2,7 @@ import {
   skillReleaseKey,
   toSkillReleaseRef,
   type SkillInvocationPolicy,
+  type SkillRelease,
 } from "@scientfactory/scient-skills";
 import {
   ProviderDriverKind,
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
+import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
 import { SCIENT_SKILL_DELIVERY } from "./ScientSkillSession.ts";
 
 export interface ScientSkillManagementShape {
@@ -46,31 +48,37 @@ const supportedProviders = Object.entries(SCIENT_SKILL_DELIVERY)
   .filter(([, delivery]) => delivery === "mcp")
   .map(([provider]) => ProviderDriverKind.make(provider));
 
+const compareReleasesForPresentation = (left: SkillRelease, right: SkillRelease): number =>
+  left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
+
 const make = Effect.fn("ScientSkillManagement.make")(function* () {
   const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
 
   const list = Effect.gen(function* () {
     const snapshot = yield* policy.snapshot;
-    const activationByReleaseKey = new Map(
-      snapshot.userSkills.map(
-        (activation) => [skillReleaseKey(activation.release), activation] as const,
+    const effectiveByReleaseKey = new Map(
+      resolveEffectiveUserSkillPolicies(registry, snapshot).map(
+        (effective) => [skillReleaseKey(effective.release), effective] as const,
       ),
     );
     return {
-      skills: registry.catalog.releases.map((release) => {
-        const activation = activationByReleaseKey.get(skillReleaseKey(release));
+      skills: [...registry.catalog.releases].sort(compareReleasesForPresentation).map((release) => {
+        const effective = effectiveByReleaseKey.get(skillReleaseKey(release));
         return {
           releaseKey: skillReleaseKey(release),
           id: release.id,
           version: release.version,
           name: release.name,
           description: release.description,
+          category: release.category,
+          categoryDescription: release.categoryDescription,
           origin: release.origin,
           supportedScopes: [...release.supportedScopes],
           defaultInvocationPolicy: release.defaultInvocationPolicy,
-          active: activation !== undefined,
-          invocationPolicy: activation?.invocationPolicy ?? release.defaultInvocationPolicy,
+          defaultActive: effective?.defaultActive ?? false,
+          active: effective?.active ?? false,
+          invocationPolicy: effective?.invocationPolicy ?? release.defaultInvocationPolicy,
         };
       }),
       supportedProviders,

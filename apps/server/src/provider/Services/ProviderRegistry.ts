@@ -21,6 +21,7 @@ import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts"
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
+  ProviderSkillActions,
   ProviderVoiceTranscriptCorrection,
 } from "../ProviderDriver.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
@@ -83,6 +84,11 @@ export interface ProviderRegistryShape {
   readonly getProviderManagedRuntimeActionsForInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderManagedRuntimeActions | undefined>;
+
+  /** Resolve the optional provider-owned native skill management seam. */
+  readonly getProviderSkillActionsForInstance: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ProviderSkillActions | undefined>;
 
   /** Resolve the optional transcript-correction capability for one live instance. */
   readonly getVoiceTranscriptCorrectionForInstance: (

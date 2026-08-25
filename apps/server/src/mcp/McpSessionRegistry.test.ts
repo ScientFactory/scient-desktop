@@ -128,6 +128,49 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
   }),
 );
 
+it.effect("atomically replaces only the target thread's exact skill scope", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-dynamic-skill-scope");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["skills:read"]),
+      skillScope: { releaseKeys: new Set(), skills: [] },
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const replacement = {
+      releaseKeys: new Set(["scient.review@0.1.0#sha256:next"]),
+      skills: [
+        {
+          releaseKey: "scient.review@0.1.0#sha256:next",
+          id: "scient.review",
+          name: "review",
+          description: "Review the workspace.",
+          invocationPolicy: "automatic" as const,
+        },
+      ],
+    };
+
+    yield* registry.replaceSkillScope(threadId, replacement);
+    replacement.releaseKeys.clear();
+    replacement.skills[0]!.name = "mutated";
+
+    expect((yield* registry.resolve(token))?.skillScope).toEqual({
+      releaseKeys: new Set(["scient.review@0.1.0#sha256:next"]),
+      skills: [
+        {
+          releaseKey: "scient.review@0.1.0#sha256:next",
+          id: "scient.review",
+          name: "review",
+          description: "Review the workspace.",
+          invocationPolicy: "automatic",
+        },
+      ],
+    });
+  }),
+);
+
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [

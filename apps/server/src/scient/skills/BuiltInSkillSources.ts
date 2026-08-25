@@ -1,5 +1,7 @@
 export interface BuiltInSkillSource {
   readonly directoryName: string;
+  /** Scient-owned product policy. Portable skill manifests cannot self-activate. */
+  readonly defaultActive: boolean;
   readonly files: Readonly<Record<string, string>>;
 }
 
@@ -23,7 +25,7 @@ This skill provides guidance only and grants no tools or authority. After making
 
 const workspaceReadinessReview = `---
 name: workspace-readiness-review
-description: Assess whether a project or workspace contains enough grounded context for effective agent collaboration, and identify only the highest-value improvements. Use when the user asks if a workspace is understandable, reproducible, or ready.
+description: Assess whether a project or workspace contains enough grounded context for effective agent collaboration. Use when the user asks if a workspace is understandable, organized, or ready.
 ---
 
 # Workspace Readiness Review
@@ -56,15 +58,19 @@ When material improvements exist, ask whether the user wants them applied. If th
  */
 export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.freeze([
   Object.freeze({
-    directoryName: "improve-workspace-readiness",
+    directoryName: "workspace-readiness-review",
+    defaultActive: true,
     files: Object.freeze({
-      "SKILL.md": improveWorkspaceReadiness,
+      "SKILL.md": workspaceReadinessReview,
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
-  "id": "scient.improve-workspace-readiness",
+  "id": "scient.workspace-readiness-review",
   "version": "0.1.0",
+  "category": "Workspace readiness",
+  "categoryDescription": "Review and improve a workspace so people and agents can understand it and work safely.",
+  "displayOrder": 10,
   "supportedScopes": ["user", "project"],
-  "defaultInvocationPolicy": "explicit",
+  "defaultInvocationPolicy": "automatic",
   "origin": {
     "kind": "scient"
   }
@@ -73,15 +79,19 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
     }),
   }),
   Object.freeze({
-    directoryName: "workspace-readiness-review",
+    directoryName: "improve-workspace-readiness",
+    defaultActive: true,
     files: Object.freeze({
-      "SKILL.md": workspaceReadinessReview,
+      "SKILL.md": improveWorkspaceReadiness,
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
-  "id": "scient.workspace-readiness-review",
+  "id": "scient.improve-workspace-readiness",
   "version": "0.1.0",
+  "category": "Workspace readiness",
+  "categoryDescription": "Review and improve a workspace so people and agents can understand it and work safely.",
+  "displayOrder": 20,
   "supportedScopes": ["user", "project"],
-  "defaultInvocationPolicy": "automatic",
+  "defaultInvocationPolicy": "explicit",
   "origin": {
     "kind": "scient"
   }

@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 describe("Scient skill management", () => {
-  it.effect("lists inactive built-ins and persists one exact personal activation", () =>
+  it.effect("applies shipping defaults and persists an explicit disabled preference", () =>
     Effect.gen(function* () {
       const baseDir = yield* Effect.promise(async () => {
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-skills-manage-"));
@@ -41,10 +41,20 @@ describe("Scient skill management", () => {
         const management = yield* ScientSkillManagement.ScientSkillManagement;
         const initial = yield* management.list;
         expect(initial.skills.map((skill) => skill.name)).toEqual([
-          "improve-workspace-readiness",
           "workspace-readiness-review",
+          "improve-workspace-readiness",
         ]);
-        expect(initial.skills.every((skill) => !skill.active)).toBe(true);
+        expect(initial.skills.map((skill) => skill.category)).toEqual([
+          "Workspace readiness",
+          "Workspace readiness",
+        ]);
+        expect(new Set(initial.skills.map((skill) => skill.categoryDescription))).toEqual(
+          new Set([
+            "Review and improve a workspace so people and agents can understand it and work safely.",
+          ]),
+        );
+        expect(initial.skills.every((skill) => skill.defaultActive)).toBe(true);
+        expect(initial.skills.every((skill) => skill.active)).toBe(true);
         expect(initial.supportedProviders).not.toContain("antigravity");
         expect(initial.supportedProviders).not.toContain("cursor");
 
@@ -53,12 +63,12 @@ describe("Scient skill management", () => {
         )!;
         const updated = yield* management.setUserActivation({
           releaseKey: selected.releaseKey,
-          active: true,
-          invocationPolicy: "automatic",
+          active: false,
+          invocationPolicy: "explicit",
         });
         expect(
           updated.skills.find((skill) => skill.releaseKey === selected.releaseKey),
-        ).toMatchObject({ active: true, invocationPolicy: "automatic" });
+        ).toMatchObject({ defaultActive: true, active: false, invocationPolicy: "explicit" });
       }).pipe(Effect.provide(managementLayer));
     }),
   );

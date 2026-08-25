@@ -1,7 +1,7 @@
 # Scient skills core
 
-Status: phase-one personal skill management implemented with two inactive
-built-in skills. Add-on installation remains a later phase.
+Status: phase-one personal skill management implemented with two built-in
+skills. Add-on installation remains a later phase.
 
 ## Purpose
 
@@ -20,8 +20,9 @@ Every Scient-managed release is a reviewed directory containing:
 
 - `SKILL.md`, following the current [Agent Skills
   specification](https://agentskills.io/specification);
-- `scient.skill.json`, carrying Scient's stable ID, exact SemVer, supported
-  activation scopes, default invocation policy, and origin; and
+- `scient.skill.json`, carrying Scient's stable ID, exact SemVer, presentation
+  category, category description, and order, supported activation scopes,
+  default invocation policy, and origin; and
 - optional `scripts/`, `references/`, `assets/`, or other bounded resources.
 
 The loader rejects symlinked roots or entries, non-regular files, malformed
@@ -37,8 +38,18 @@ never converts it into authority.
 
 ## Identity and activation
 
-A release is selected only by the exact tuple `id`, `version`, `origin`, and
-SHA-256 digest. There is no implicit latest-version resolution.
+A delivered release is selected only by the exact tuple `id`, `version`,
+`origin`, and SHA-256 digest. There is no implicit latest-version resolution in
+the runtime authority boundary.
+
+Scient-owned shipping defaults live beside the built-in catalog rather than in
+portable skill manifests, so an add-on cannot declare itself active. Personal
+preferences store an explicit active or inactive decision plus invocation
+policy. The effective policy is the user preference when one exists, otherwise
+the Scient-owned shipping default. A preference follows a stable skill ID only
+within the same origin, while every turn still authorizes the exact current
+release. This lets a trusted Scient app update preserve user intent without
+allowing an add-on update to inherit authority across origins.
 
 The manifest declares whether a release may be activated at `user`, `project`,
 or both scopes. Scope is independent from release origin:
@@ -54,34 +65,37 @@ trust receipt. Provider-native locations such as `.agents/skills` are neither
 scanned nor copied; Codex and Claude continue to own their native skill
 systems.
 
-## Provider-session delivery
+## Provider-turn delivery
 
-At session start, the server snapshots personal activation and the current
-project/worktree lock into an exact release-key set. A policy can allow agent
-selection (`automatic`) or require the user to name the skill (`explicit`).
-Activation controls availability; it does not itself invoke the skill. If the
-set is empty, no skill capability or MCP credential is added merely for this
-feature.
+At the start of every turn, the server snapshots personal activation and the
+current project/worktree lock. A policy can allow agent selection
+(`automatic`) or require the user to name the skill (`explicit`). Activation
+controls availability; it does not itself invoke the skill. A running turn
+keeps its immutable snapshot, while activation and policy changes apply to the
+next turn without restarting the provider session.
 
 For supported adapters the existing authenticated Scient MCP session receives:
 
 - the `skills:read` capability;
-- the exact allowed release keys; and
+- the exact release keys visible in that turn; and
 - `scient_skills_list`, `scient_skill_load`, and
   `scient_skill_read_resource`.
 
-The bearer-token record owns a defensive copy of that scope, and every handler
-checks both the capability and exact release allowlist. Loading returns
-instructions and resource metadata. Resources remain separate and are read on
-demand, preserving progressive disclosure.
+Supported providers keep the authenticated skill transport available with an
+empty initial scope. Immediately before a turn, the server atomically replaces
+that scope with active automatic skills plus active explicit skills selected
+as `$name`. Unselected explicit and inactive skills are absent from both the
+agent-facing list and the MCP allowlist. Every handler checks the capability
+and exact turn allowlist. Loading returns instructions and resource metadata;
+resources remain separate and are read on demand.
 
 Codex, Claude, Droid, Grok, and OpenCode currently support the full Phase 1
-delivery path. Their private awareness context tells the agent to list active
-skills and to select an automatic skill only on a clear match. A visible
-`$skill-name` token adds a turn-local private routing instruction for the exact
-active release; it does not alter the message stored in the conversation. The
-MCP loader also checks that turn-local selection before serving an `explicit`
-release, so **Only with $name** is enforced rather than advisory.
+delivery path. Their stable private awareness explains the routing rule; a
+turn-local private index supplies only the exact automatic and selected skills
+available now. A visible `$skill-name` token adds the selected exact release to
+that index and allowlist without altering the message stored in the
+conversation. **Only with $name** is therefore enforced by omission, not by a
+secondary denial after discovery.
 
 Antigravity has no MCP transport, and Cursor has no reviewed private awareness
 seam. Both are therefore reported as unsupported instead of receiving partial
@@ -92,20 +106,42 @@ the same name.
 
 ## Phase-one product surface
 
-**Settings → Skills** lists the built-in releases and lets the user make each
-one available personally. An active skill can be set to **Agent may use** or
-**Only with $name**. Changes are persisted in app-private state and take effect
-for new or restarted provider sessions. The composer exposes the same active
-inventory through its existing `$` and optional `/` skill menus. Loading a
-skill appears as a concise work-log event.
+**Settings → Skills** groups built-in releases by their manifest category and
+lists them in manifest presentation order. The user can make each one available
+personally. An active skill can be set to **Agent may use** or **Only with
+$name**. Changes are persisted in app-private state and take effect on the next
+turn. The composer exposes the same active inventory through its existing `$`
+and optional `/` skill menus. Loading a skill appears as a concise work-log
+event.
 
-The built-in releases are deliberately inactive until the user enables them:
+The initial built-in shipping policy is:
 
-- `workspace-readiness-review`, defaulting to automatic selection; and
-- `improve-workspace-readiness`, defaulting to explicit selection.
+- `workspace-readiness-review`: active, with automatic selection; and
+- `improve-workspace-readiness`: active, with explicit `$name` selection.
+
+Changing these catalog defaults affects only skills without an explicit user
+preference. Enabling or disabling a skill always creates a durable preference,
+so a later product-default change cannot override that choice.
 
 The exact project lock and trust model is implemented in the server core, but
 project activation management has no product UI in this phase.
+
+### Provider-owned external skills
+
+**Settings → Skills → External skills** presents the native skill inventory
+already reported by each connected provider instance. Providers remain the
+source of truth: Scient does not scan, copy, import, or rewrite their skill
+files. Personal, provider-bundled, system, and otherwise unclassified global
+skills are shown; project and repository skills stay out of this global page
+and out of the global `$` and `/` menus.
+
+Each provider instance is collapsed independently. Native skill controls are
+capability-gated: Codex currently exposes its reviewed `skills/config/write`
+API, so its skills can be activated or deactivated in Scient. Claude and
+OpenCode remain read-only because they do not expose an equivalent reviewed
+mutation API. The server validates the exact provider instance, skill name,
+and provider-owned path against the latest snapshot before dispatching a
+change, then refreshes the provider inventory. The UI never predicts success.
 
 ## Deliberate phase-one exclusions
 
@@ -127,10 +163,13 @@ Automated coverage must continue to prove:
 3. exact-lock trust invalidation after any lock-byte change;
 4. no discovery of provider-native skill directories;
 5. truthful unsupported delivery for Antigravity and Cursor;
-6. exact credential-scope copying and handler authorization; and
-7. no skill awareness or MCP capability when no effective release exists;
-8. inactive-by-default built-ins and persisted exact personal activation; and
-9. deterministic explicit `$skill` routing without changing stored user text.
+6. exact turn-scope copying and handler authorization;
+7. empty initial transport plus next-turn scope replacement without provider
+   restart;
+8. product-owned built-in defaults plus durable active and inactive personal
+   preferences; and
+9. deterministic explicit `$skill` routing that hides unselected explicit
+   skills without changing stored user text.
 
 The fork-owned roots and inherited integration points are recorded in
 `scient-skills-seams.json` and checked by `pnpm skills:seams:check`.

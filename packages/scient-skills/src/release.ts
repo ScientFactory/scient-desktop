@@ -66,6 +66,16 @@ function requiredString(
   return trimmed;
 }
 
+function requiredDisplayOrder(record: Readonly<Record<string, unknown>>): number {
+  const value = record.displayOrder;
+  if (!Number.isInteger(value) || typeof value !== "number" || value < 0 || value > 10_000) {
+    throw new SkillReleaseValidationError(
+      "Skill manifest field 'displayOrder' must be an integer from 0 to 10000.",
+    );
+  }
+  return value;
+}
+
 function parseOrigin(value: unknown): SkillOrigin {
   const record = requireRecord(value, "Skill manifest origin");
   const kind = requiredString(record, "kind", 32);
@@ -113,6 +123,9 @@ export function parseSkillReleaseManifest(contents: string): SkillReleaseManifes
   const apiVersion = requiredString(record, "apiVersion");
   const id = requiredString(record, "id");
   const version = requiredString(record, "version", 64);
+  const category = requiredString(record, "category", 64);
+  const categoryDescription = requiredString(record, "categoryDescription", 160);
+  const displayOrder = requiredDisplayOrder(record);
   const defaultInvocationPolicy = requiredString(record, "defaultInvocationPolicy", 32);
   if (apiVersion !== "scient.skills/v1alpha1") {
     throw new SkillReleaseValidationError("Unsupported skill manifest apiVersion.");
@@ -129,6 +142,9 @@ export function parseSkillReleaseManifest(contents: string): SkillReleaseManifes
     apiVersion,
     id,
     version,
+    category,
+    categoryDescription,
+    displayOrder,
     supportedScopes: parseSupportedScopes(record.supportedScopes),
     defaultInvocationPolicy: defaultInvocationPolicy as SkillInvocationPolicy,
     origin: parseOrigin(record.origin),
@@ -310,6 +326,9 @@ function releaseFromFiles(
     origin: skillOriginKey(manifest.origin),
     name: parsed.metadata.name,
     description: parsed.metadata.description,
+    category: manifest.category,
+    categoryDescription: manifest.categoryDescription,
+    displayOrder: manifest.displayOrder,
     supportedScopes: frozenManifest.supportedScopes,
     defaultInvocationPolicy: manifest.defaultInvocationPolicy,
   });

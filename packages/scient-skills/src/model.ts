@@ -19,6 +19,9 @@ export interface SkillReleaseManifest {
   readonly apiVersion: "scient.skills/v1alpha1";
   readonly id: string;
   readonly version: string;
+  readonly category: string;
+  readonly categoryDescription: string;
+  readonly displayOrder: number;
   /** Activation is user/project policy, not release provenance. */
   readonly supportedScopes: ReadonlyArray<SkillActivationScope>;
   readonly defaultInvocationPolicy: SkillInvocationPolicy;
@@ -51,6 +54,9 @@ export interface SkillReleaseRef {
 export interface SkillReleaseSummary extends SkillReleaseRef {
   readonly name: string;
   readonly description: string;
+  readonly category: string;
+  readonly categoryDescription: string;
+  readonly displayOrder: number;
   readonly supportedScopes: ReadonlyArray<SkillActivationScope>;
   readonly defaultInvocationPolicy: SkillInvocationPolicy;
 }
@@ -84,6 +90,9 @@ export function toSkillReleaseSummary(release: SkillRelease): SkillReleaseSummar
     ...toSkillReleaseRef(release),
     name: release.name,
     description: release.description,
+    category: release.category,
+    categoryDescription: release.categoryDescription,
+    displayOrder: release.displayOrder,
     supportedScopes: release.supportedScopes,
     defaultInvocationPolicy: release.defaultInvocationPolicy,
   };

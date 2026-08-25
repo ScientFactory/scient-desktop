@@ -12,9 +12,12 @@ const inventory: ScientSkillInventory = {
       version: "0.1.0",
       name: "review",
       description: "Review the workspace.",
+      category: "Workspace readiness",
+      categoryDescription: "Review and improve workspace readiness.",
       origin: "scient",
       supportedScopes: ["user", "project"],
       defaultInvocationPolicy: "automatic",
+      defaultActive: true,
       active: true,
       invocationPolicy: "automatic",
     },
@@ -49,5 +52,21 @@ describe("effective provider skill inventory", () => {
         inventory,
       }),
     ).toEqual([]);
+  });
+
+  it("keeps project-native skills out of global composer menus", () => {
+    const projectSkill = {
+      name: "test-t3-app",
+      path: "/workspace/.agents/skills/test-t3-app/SKILL.md",
+      scope: "project",
+      enabled: true,
+    };
+    expect(
+      mergeEffectiveProviderSkills({
+        provider: ProviderDriverKind.make("codex"),
+        providerSkills: [projectSkill],
+        inventory,
+      }).some((skill) => skill.name === projectSkill.name),
+    ).toBe(false);
   });
 });

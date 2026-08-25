@@ -32,6 +32,11 @@ const ProjectTrustReceiptSchema = Schema.Struct({
 });
 const UserSkillActivationSchema = Schema.Struct({
   release: SkillReleaseRefSchema,
+  active: Schema.Boolean,
+  invocationPolicy: Schema.Literals(["automatic", "explicit"]),
+});
+const LegacyUserSkillActivationSchema = Schema.Struct({
+  release: SkillReleaseRefSchema,
   invocationPolicy: Schema.Literals(["automatic", "explicit"]),
 });
 const PersistedPolicyV1Schema = Schema.Struct({
@@ -43,16 +48,29 @@ const PersistedPolicyV1Schema = Schema.Struct({
 });
 const PersistedPolicyV2Schema = Schema.Struct({
   formatVersion: Schema.Literal(2),
+  userSkills: Schema.Array(LegacyUserSkillActivationSchema).pipe(
+    Schema.check(Schema.isMaxLength(500)),
+  ),
+  trustedProjects: Schema.Array(ProjectTrustReceiptSchema).pipe(
+    Schema.check(Schema.isMaxLength(500)),
+  ),
+});
+const PersistedPolicyV3Schema = Schema.Struct({
+  formatVersion: Schema.Literal(3),
   userSkills: Schema.Array(UserSkillActivationSchema).pipe(Schema.check(Schema.isMaxLength(500))),
   trustedProjects: Schema.Array(ProjectTrustReceiptSchema).pipe(
     Schema.check(Schema.isMaxLength(500)),
   ),
 });
-const PersistedPolicySchema = Schema.Union([PersistedPolicyV1Schema, PersistedPolicyV2Schema]);
+const PersistedPolicySchema = Schema.Union([
+  PersistedPolicyV1Schema,
+  PersistedPolicyV2Schema,
+  PersistedPolicyV3Schema,
+]);
 const PersistedPolicyJson = Schema.fromJsonString(PersistedPolicySchema);
 const decodePersistedPolicy = Schema.decodeUnknownExit(PersistedPolicyJson);
-const PersistedPolicyV2Json = Schema.fromJsonString(PersistedPolicyV2Schema);
-const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyV2Json);
+const PersistedPolicyV3Json = Schema.fromJsonString(PersistedPolicyV3Schema);
+const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyV3Json);
 
 export interface ProjectSkillTrustReceipt {
   readonly projectId: string;
@@ -62,6 +80,8 @@ export interface ProjectSkillTrustReceipt {
 
 export interface UserSkillActivation {
   readonly release: SkillReleaseRef;
+  /** Explicit user preference; false must remain persisted. */
+  readonly active: boolean;
   readonly invocationPolicy: SkillInvocationPolicy;
 }
 
@@ -110,7 +130,9 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
 }
 
 function releaseIdentity(release: SkillReleaseRef): string {
-  return `${release.id}@${release.version}`;
+  // User preference follows the stable logical skill within one trusted
+  // origin. Runtime delivery still resolves and authorizes an exact release.
+  return `${release.origin}:${release.id}`;
 }
 
 function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPolicySnapshot {
@@ -181,11 +203,14 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
           value.formatVersion === 1
             ? value.userSkills.map((release) => ({
                 release,
+                active: true,
                 // The dormant v1 foundation had no product UI. If a hand-edited
                 // file exists, migrate it to the safer user-only invocation mode.
                 invocationPolicy: "explicit" as const,
               }))
-            : value.userSkills,
+            : value.formatVersion === 2
+              ? value.userSkills.map((activation) => ({ ...activation, active: true }))
+              : value.userSkills,
         trustedProjects: value.trustedProjects,
       });
     },
@@ -209,7 +234,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
   ) {
     const normalized = normalizeSnapshot(next);
     const encoded = yield* encodePersistedPolicy({
-      formatVersion: 2,
+      formatVersion: 3,
       userSkills: [...normalized.userSkills],
       trustedProjects: [...normalized.trustedProjects],
     }).pipe(
@@ -266,16 +291,12 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
     setUserSkillActivation: (release, active, invocationPolicy) =>
       update((current) => ({
         ...current,
-        userSkills: active
-          ? [
-              ...current.userSkills.filter(
-                (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
-              ),
-              { release, invocationPolicy },
-            ]
-          : current.userSkills.filter(
-              (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
-            ),
+        userSkills: [
+          ...current.userSkills.filter(
+            (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
+          ),
+          { release, active, invocationPolicy },
+        ],
       })),
     trustProjectLock: Effect.fn("ScientSkillPolicy.trustProjectLock")(function* (projectRoot) {
       const lock = yield* inspectProjectLock(projectRoot);

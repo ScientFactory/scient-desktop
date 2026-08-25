@@ -7,7 +7,6 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as McpProviderSession from "../../McpProviderSession.ts";
 import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 import { ScientSkillToolError, ScientSkillsToolkit } from "./tools.ts";
 
@@ -24,7 +23,7 @@ const requireSkillScope = Effect.fn("ScientSkillsToolkit.requireSkillScope")(fun
   if (!invocation.capabilities.has("skills:read") || !invocation.skillScope) {
     return yield* toolError(
       "capability-unavailable",
-      "This provider session has no active Scient skills.",
+      "This provider cannot receive Scient skills.",
     );
   }
   return { invocation, skillScope: invocation.skillScope };
@@ -45,7 +44,7 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
   if (!skillScope.releaseKeys.has(requestedReleaseKey)) {
     return yield* toolError(
       "not-found",
-      "That exact skill release is not active in this Scient session.",
+      "That exact skill release is not available in this Scient turn.",
     );
   }
   const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
@@ -58,19 +57,7 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
   }
   const descriptor = skillScope.skills.find((skill) => skill.releaseKey === requestedReleaseKey);
   if (!descriptor) {
-    return yield* toolError("not-found", "That skill is not indexed in this Scient session.");
-  }
-  if (descriptor.invocationPolicy === "explicit") {
-    const providerSession = McpProviderSession.readMcpProviderSession(invocation.threadId);
-    if (
-      providerSession?.providerSessionId !== invocation.providerSessionId ||
-      !providerSession.selectedScientSkillReleaseKeys?.has(requestedReleaseKey)
-    ) {
-      return yield* toolError(
-        "not-found",
-        "That skill requires the user to select its exact $name in the current turn.",
-      );
-    }
+    return yield* toolError("not-found", "That skill is not indexed in this Scient turn.");
   }
   return { release, invocationPolicy: descriptor.invocationPolicy };
 });

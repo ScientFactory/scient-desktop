@@ -29,7 +29,9 @@ export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
-  return showSkillsInSlashMenu ? skills.filter((skill) => skill.enabled) : [];
+  return showSkillsInSlashMenu
+    ? skills.filter((skill) => skill.enabled && isGlobalProviderSkill(skill))
+    : [];
 }
 
 export function getProviderSlashCommandsForSlashMenu(
@@ -51,7 +53,6 @@ export function resolveProviderSkillSourceKind(
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
     return "app";
   }
-
   const normalizedScope = skill.scope?.trim().toLowerCase();
   switch (normalizedScope) {
     case "repo":
@@ -65,6 +66,7 @@ export function resolveProviderSkillSourceKind(
     case "personal":
       return "personal";
     case "system":
+    case "admin":
       return "system";
     case undefined:
     case "":
@@ -72,4 +74,9 @@ export function resolveProviderSkillSourceKind(
     default:
       return "other";
   }
+}
+
+export function isGlobalProviderSkill(skill: Pick<ServerProviderSkill, "path" | "scope">): boolean {
+  const source = resolveProviderSkillSourceKind(skill);
+  return source !== "repo" && source !== "project";
 }

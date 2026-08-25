@@ -14,4 +14,17 @@ describe("matchesSlashSkillQuery", () => {
     expect(matchesSlashSkillQuery(browserSkill, "skill")).toBe(true);
     expect(matchesSlashSkillQuery(browserSkill, "skill:brow")).toBe(true);
   });
+
+  it("does not expose project skills in the global skill picker", () => {
+    expect(
+      matchesSlashSkillQuery(
+        {
+          ...browserSkill,
+          path: "/workspace/.agents/skills/browser/SKILL.md",
+          scope: "project",
+        },
+        "skill",
+      ),
+    ).toBe(false);
+  });
 });

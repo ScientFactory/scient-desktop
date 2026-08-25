@@ -13,12 +13,12 @@ import {
   BotIcon,
   GitBranchIcon,
   KeyboardIcon,
+  Layers3Icon,
   Link2Icon,
   Mic2Icon,
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
-  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -53,7 +53,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
-  "/settings/skills": SparklesIcon,
+  "/settings/skills": Layers3Icon,
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,

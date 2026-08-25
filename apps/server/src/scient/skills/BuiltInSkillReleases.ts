@@ -14,3 +14,11 @@ export const BUILT_IN_SKILL_RELEASES: ReadonlyArray<SkillRelease> = Object.freez
     loadEmbeddedSkillRelease(source.directoryName, source.files),
   ),
 );
+
+/** Product-owned defaults keyed by stable Scient skill ID. */
+export const BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID: ReadonlyMap<string, boolean> = new Map(
+  BUILT_IN_SKILL_SOURCES.map((source, index) => [
+    BUILT_IN_SKILL_RELEASES[index]!.id,
+    source.defaultActive,
+  ]),
+);

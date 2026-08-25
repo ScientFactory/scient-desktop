@@ -80,6 +80,8 @@ export interface ProviderServiceLiveOptions {
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
   /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
   readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
+  /** Test seam for replacing the stable credential's exact turn-local skill scope. */
+  readonly replaceMcpSkillScope?: typeof McpSessionRegistry.replaceActiveMcpSkillScope;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -235,6 +237,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const revokeMcpCredential =
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
+  const replaceMcpSkillScope =
+    options?.replaceMcpSkillScope ?? McpSessionRegistry.replaceActiveMcpSkillScope;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   /**
@@ -264,37 +268,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
-    projectRoot?: string,
   ) =>
     Effect.gen(function* () {
-      const [browserAccessEnabled, skillPlan] = yield* Effect.all(
-        [
-          agentBrowserAccessEnabled,
-          skillSessionPlanner.resolve({
-            provider,
-            ...(projectRoot !== undefined ? { projectRoot } : {}),
-          }),
-        ],
-        { concurrency: "unbounded" },
-      );
-      yield* Effect.forEach(
-        skillPlan.diagnostics,
-        (diagnostic) =>
-          Effect.logWarning("Scient skill delivery was withheld", {
-            code: diagnostic.code,
-            message: diagnostic.message,
-            provider,
-            ...(skillPlan.projectRoot ? { projectRoot: skillPlan.projectRoot } : {}),
-          }),
-        { discard: true },
-      );
+      const browserAccessEnabled = yield* agentBrowserAccessEnabled;
+      const supportsScientSkills =
+        ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
       const capabilities = new Set<McpCapability>([
         ...(browserAccessEnabled
           ? (["preview", "sources:read", "sources:write"] satisfies ReadonlyArray<McpCapability>)
           : []),
-        ...(skillPlan.delivery === "mcp"
-          ? (["skills:read"] satisfies ReadonlyArray<McpCapability>)
-          : []),
+        ...(supportsScientSkills ? (["skills:read"] satisfies ReadonlyArray<McpCapability>) : []),
       ]);
       if (capabilities.size === 0) {
         // Revoke as well as clear. Every other prepare path reaches
@@ -311,11 +294,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId,
         providerInstanceId,
         capabilities,
-        ...(skillPlan.delivery === "mcp"
+        ...(supportsScientSkills
           ? {
               skillScope: {
-                releaseKeys: skillPlan.releaseKeys,
-                skills: skillPlan.skills,
+                releaseKeys: new Set<string>(),
+                skills: [],
               },
             }
           : {}),
@@ -500,12 +483,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(
-        input.binding.threadId,
-        bindingInstanceId,
-        input.binding.provider,
-        persistedCwd,
-      );
+      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, input.binding.provider);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -568,6 +546,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         instanceId,
         threadId: input.threadId,
         runtimeMode: binding.runtimeMode,
+        projectRoot: readPersistedCwd(binding.runtimePayload),
         isActive: true,
       } as const;
     }
@@ -578,6 +557,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         instanceId,
         threadId: input.threadId,
         runtimeMode: binding.runtimeMode,
+        projectRoot: readPersistedCwd(binding.runtimePayload),
         isActive: false,
       } as const;
     }
@@ -591,6 +571,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       instanceId,
       threadId: input.threadId,
       runtimeMode: recovered.session.runtimeMode,
+      projectRoot: readPersistedCwd(binding.runtimePayload),
       isActive: true,
     } as const;
   });
@@ -701,7 +682,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId, resolvedProvider, effectiveCwd);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, resolvedProvider);
         const session = yield* adapter
           .startSession({
             ...input,
@@ -837,12 +818,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const scientSkills = McpProviderSession.readMcpProviderSession(input.threadId)?.scientSkills;
-      const skillTurn = prepareScientSkillTurn(input.input, scientSkills);
-      McpProviderSession.setMcpProviderSessionSelectedSkills(
-        input.threadId,
-        skillTurn.selectedReleaseKeys,
+      const skillPlan = yield* skillSessionPlanner.resolve({
+        provider: routed.adapter.provider,
+        ...(routed.projectRoot ? { projectRoot: routed.projectRoot } : {}),
+      });
+      yield* Effect.forEach(
+        skillPlan.diagnostics,
+        (diagnostic) =>
+          Effect.logWarning("Scient skill delivery was withheld", {
+            code: diagnostic.code,
+            message: diagnostic.message,
+            provider: routed.adapter.provider,
+            ...(skillPlan.projectRoot ? { projectRoot: skillPlan.projectRoot } : {}),
+          }),
+        { discard: true },
       );
+      const skillTurn = prepareScientSkillTurn(
+        input.input,
+        skillPlan.delivery === "mcp" ? skillPlan.skills : [],
+      );
+      if (ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp") {
+        // The bearer token remains stable for the provider process, but its
+        // exact skill authority is replaced immediately before this turn.
+        // Policy changes made while it runs therefore apply only to the next
+        // turn, never halfway through an in-flight request.
+        yield* replaceMcpSkillScope(input.threadId, skillTurn.skillScope);
+      }
       const turn = yield* routed.adapter.sendTurn({
         ...input,
         ...(skillTurn.input !== undefined ? { input: skillTurn.input } : {}),

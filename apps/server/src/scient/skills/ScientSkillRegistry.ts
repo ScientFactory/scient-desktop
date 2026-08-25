@@ -8,7 +8,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { BUILT_IN_SKILL_RELEASES } from "./BuiltInSkillReleases.ts";
+import {
+  BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
+  BUILT_IN_SKILL_RELEASES,
+} from "./BuiltInSkillReleases.ts";
 
 const EMPTY_CATALOG: SkillCatalog = Object.freeze({
   releases: Object.freeze([]),
@@ -18,13 +21,19 @@ const EMPTY_CATALOG: SkillCatalog = Object.freeze({
 export interface ScientSkillRegistryShape {
   readonly catalog: SkillCatalog;
   readonly resolveReleaseKey: (releaseKey: string) => SkillRelease | undefined;
+  readonly defaultActive: (release: SkillRelease) => boolean;
 }
 
-const fromCatalog = (catalog: SkillCatalog): ScientSkillRegistryShape => {
+const fromCatalog = (
+  catalog: SkillCatalog,
+  defaultActiveById: ReadonlyMap<string, boolean> = new Map(),
+): ScientSkillRegistryShape => {
   const byReleaseKey = catalogByReleaseKey(catalog);
   return {
     catalog,
     resolveReleaseKey: (releaseKey) => byReleaseKey.get(releaseKey),
+    defaultActive: (release) =>
+      release.origin === "scient" ? (defaultActiveById.get(release.id) ?? false) : false,
   };
 };
 
@@ -34,8 +43,10 @@ export class ScientSkillRegistry extends Context.Reference<ScientSkillRegistrySh
   { defaultValue: () => fromCatalog(EMPTY_CATALOG) },
 ) {}
 
-export const layerFromCatalog = (catalog: SkillCatalog) =>
-  Layer.succeed(ScientSkillRegistry, fromCatalog(catalog));
+export const layerFromCatalog = (
+  catalog: SkillCatalog,
+  defaultActiveById?: ReadonlyMap<string, boolean>,
+) => Layer.succeed(ScientSkillRegistry, fromCatalog(catalog, defaultActiveById));
 
 export const layer = Layer.effect(
   ScientSkillRegistry,
@@ -54,6 +65,6 @@ export const layer = Layer.effect(
         { discard: true },
       ),
     ),
-    Effect.map(fromCatalog),
+    Effect.map((catalog) => fromCatalog(catalog, BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID)),
   ),
 );

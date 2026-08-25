@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
+import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
 
 /** Every built-in provider has an explicit delivery decision. */
 export const SCIENT_SKILL_DELIVERY = {
@@ -110,14 +111,12 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       string,
       { readonly release: SkillRelease; readonly invocationPolicy: SkillInvocationPolicy }
     >();
-    for (const activation of snapshot.userSkills) {
-      const release = resolveRelease(activation.release, "user", diagnostics);
-      if (release) {
-        releases.set(skillReleaseKey(release), {
-          release,
-          invocationPolicy: activation.invocationPolicy,
-        });
-      }
+    for (const effective of resolveEffectiveUserSkillPolicies(registry, snapshot)) {
+      if (!effective.active) continue;
+      releases.set(skillReleaseKey(effective.release), {
+        release: effective.release,
+        invocationPolicy: effective.invocationPolicy,
+      });
     }
 
     let projectRoot: string | undefined;

@@ -3,6 +3,7 @@ import type {
   ScientSkillInventory,
   ServerProviderSkill,
 } from "@t3tools/contracts";
+import { isGlobalProviderSkill } from "@t3tools/client-runtime/providerSkills";
 
 const SCIENT_SKILL_PATH_PREFIX = "scient://skills/";
 
@@ -12,11 +13,14 @@ export function mergeEffectiveProviderSkills(input: {
   readonly inventory: ScientSkillInventory | null;
 }): ReadonlyArray<ServerProviderSkill> {
   const { inventory, provider, providerSkills } = input;
-  if (!inventory?.supportedProviders.includes(provider)) return providerSkills;
+  const visibleProviderSkills = providerSkills.filter(isGlobalProviderSkill);
+  if (!inventory?.supportedProviders.includes(provider)) return visibleProviderSkills;
 
   // Provider-native behavior remains authoritative. A Scient skill with the
   // same visible name is withheld so `$name` can never route ambiguously.
-  const occupiedNames = new Set(providerSkills.map((skill) => skill.name.trim().toLowerCase()));
+  const occupiedNames = new Set(
+    visibleProviderSkills.map((skill) => skill.name.trim().toLowerCase()),
+  );
   const scientSkills = inventory.skills
     .filter((skill) => skill.active && !occupiedNames.has(skill.name.trim().toLowerCase()))
     .map(
@@ -30,5 +34,7 @@ export function mergeEffectiveProviderSkills(input: {
       }),
     )
     .sort((left, right) => left.name.localeCompare(right.name));
-  return scientSkills.length === 0 ? providerSkills : [...providerSkills, ...scientSkills];
+  return scientSkills.length === 0
+    ? visibleProviderSkills
+    : [...visibleProviderSkills, ...scientSkills];
 }

@@ -262,6 +262,9 @@ import {
   AnalysisVerifyRuntimeInput,
 } from "./scientAnalysis.ts";
 import {
+  ProviderSkillManagementError,
+  ProviderSkillSetEnabledInput,
+  ProviderSkillSetEnabledResult,
   ScientSkillInventory,
   ScientSkillManagementError,
   ScientSkillSetUserActivationInput,
@@ -294,6 +297,7 @@ export const WS_METHODS = {
   // Scient-owned reusable skills
   skillsList: "skills.list",
   skillsSetUserActivation: "skills.setUserActivation",
+  providerSkillsSetEnabled: "providerSkills.setEnabled",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -566,6 +570,12 @@ export const WsSkillsSetUserActivationRpc = Rpc.make(WS_METHODS.skillsSetUserAct
   payload: ScientSkillSetUserActivationInput,
   success: ScientSkillInventory,
   error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderSkillsSetEnabledRpc = Rpc.make(WS_METHODS.providerSkillsSetEnabled, {
+  payload: ProviderSkillSetEnabledInput,
+  success: ProviderSkillSetEnabledResult,
+  error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1316,6 +1326,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVoiceCorrectTranscriptRpc,
   WsSkillsListRpc,
   WsSkillsSetUserActivationRpc,
+  WsProviderSkillsSetEnabledRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

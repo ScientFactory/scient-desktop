@@ -20,6 +20,10 @@ import * as Layer from "effect/Layer";
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
+import {
+  BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
+  BUILT_IN_SKILL_RELEASES,
+} from "./BuiltInSkillReleases.ts";
 import { BUILT_IN_DRIVERS } from "../../provider/builtInDrivers.ts";
 
 const fixtures: string[] = [];
@@ -48,6 +52,9 @@ async function writeRelease(
       apiVersion: "scient.skills/v1alpha1",
       id: `scient.${name}`,
       version: "0.1.0",
+      category: "Testing",
+      categoryDescription: "Skills used by focused tests.",
+      displayOrder: 100,
       supportedScopes: [activationScope],
       defaultInvocationPolicy: "automatic",
       origin: { kind: "scient" },
@@ -66,6 +73,7 @@ const resolvePlan = (
   catalog: SkillCatalog,
   snapshot: ScientSkillPolicy.ScientSkillPolicySnapshot,
   input: Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0],
+  defaultActiveById?: ReadonlyMap<string, boolean>,
 ) =>
   Effect.gen(function* () {
     const planner = yield* ScientSkillSession.ScientSkillSessionPlanner;
@@ -75,7 +83,7 @@ const resolvePlan = (
       ScientSkillSession.layer.pipe(
         Layer.provide(
           Layer.merge(
-            ScientSkillRegistry.layerFromCatalog(catalog),
+            ScientSkillRegistry.layerFromCatalog(catalog, defaultActiveById),
             ScientSkillPolicy.layerFromSnapshot(snapshot),
           ),
         ),
@@ -158,7 +166,13 @@ describe("Scient skill session planning", () => {
         const catalog = yield* Effect.promise(() => loadSkillCatalog([root]));
         const release = catalog.releases[0]!;
         const snapshot = {
-          userSkills: [{ release: toSkillReleaseRef(release), invocationPolicy: "automatic" }],
+          userSkills: [
+            {
+              release: toSkillReleaseRef(release),
+              active: true,
+              invocationPolicy: "automatic",
+            },
+          ],
           trustedProjects: [],
         } satisfies ScientSkillPolicy.ScientSkillPolicySnapshot;
 
@@ -184,6 +198,42 @@ describe("Scient skill session planning", () => {
           "provider-unsupported",
         );
       }),
+  );
+
+  it.effect("delivers shipping defaults unless an explicit user preference disables one", () =>
+    Effect.gen(function* () {
+      const catalog: SkillCatalog = { releases: BUILT_IN_SKILL_RELEASES, diagnostics: [] };
+      const initial = yield* resolvePlan(
+        catalog,
+        { userSkills: [], trustedProjects: [] },
+        { provider: ProviderDriverKind.make("codex") },
+        BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
+      );
+      expect(initial.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
+        ["improve-workspace-readiness", "explicit"],
+        ["workspace-readiness-review", "automatic"],
+      ]);
+
+      const review = BUILT_IN_SKILL_RELEASES.find(
+        (candidate) => candidate.name === "workspace-readiness-review",
+      )!;
+      const disabled = yield* resolvePlan(
+        catalog,
+        {
+          userSkills: [
+            {
+              release: toSkillReleaseRef(review),
+              active: false,
+              invocationPolicy: "automatic",
+            },
+          ],
+          trustedProjects: [],
+        },
+        { provider: ProviderDriverKind.make("codex") },
+        BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
+      );
+      expect(disabled.skills.map((skill) => skill.name)).toEqual(["improve-workspace-readiness"]);
+    }),
   );
 
   it.effect("does not scan provider-native .agents skills", () =>

@@ -49,6 +49,9 @@ async function writeRelease(
         apiVersion: "scient.skills/v1alpha1",
         id: input.id ?? "scient.evidence-review",
         version: input.version ?? "0.1.0",
+        category: "Evidence",
+        categoryDescription: "Review evidence carefully.",
+        displayOrder: 100,
         supportedScopes: ["project"],
         defaultInvocationPolicy: "automatic",
         origin: input.origin ?? { kind: "scient" },
@@ -97,6 +100,9 @@ describe("Scient skill releases", () => {
     expect(first.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(second.digest).toBe(first.digest);
     expect(first.origin).toBe("scient");
+    expect(first.category).toBe("Evidence");
+    expect(first.categoryDescription).toBe("Review evidence carefully.");
+    expect(first.displayOrder).toBe(100);
     expect(first.metadata.allowedTools).toBe("Bash(git:*)");
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.manifest)).toBe(true);
@@ -132,6 +138,9 @@ describe("Scient skill releases", () => {
         apiVersion: "scient.skills/v1alpha1",
         id: "scient.embedded-review",
         version: "0.1.0",
+        category: "Evidence",
+        categoryDescription: "Review evidence carefully.",
+        displayOrder: 100,
         supportedScopes: ["user"],
         defaultInvocationPolicy: "explicit",
         origin: { kind: "scient" },
