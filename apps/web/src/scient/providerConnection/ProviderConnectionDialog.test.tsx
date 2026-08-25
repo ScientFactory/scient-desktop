@@ -250,36 +250,79 @@ describe("ProviderConnectionDialog", () => {
     },
   );
 
-  it("keeps maintenance and enable available for a disabled managed provider", () => {
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+  ] as const)(
+    "gates a disabled %s before an explicitly requested runtime action",
+    (driver, displayName) => {
+      const markup = renderToStaticMarkup(
+        <ProviderConnectionDialog
+          displayName={displayName}
+          environmentId={EnvironmentId.make("local")}
+          initialRuntimeAction="install"
+          onOpenChange={vi.fn()}
+          open
+          provider={{
+            ...provider,
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+            displayName,
+            enabled: false,
+            installed: false,
+            status: "disabled",
+            auth: { status: "unauthenticated", required: true },
+            connection: {
+              methods: [],
+              canDisconnect: false,
+              operation: null,
+              runtime: {
+                ...provider.connection!.runtime!,
+                source: "system",
+                actions: ["install"],
+                managedVersion: null,
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(markup).toContain(`${displayName} is disabled`);
+      expect(markup).toContain(">Enable<");
+      expect(markup).not.toContain("Compact managed runtime actions");
+      expect(markup).not.toContain("confirmation requested");
+      expect(markup).not.toContain(`${displayName} lifecycle surface`);
+    },
+  );
+
+  it("uses the same enablement gate for a disabled generic provider", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
-        displayName="Droid"
+        displayName="OpenCode"
         environmentId={EnvironmentId.make("local")}
         onOpenChange={vi.fn()}
         open
         provider={{
           ...provider,
-          instanceId: ProviderInstanceId.make("droid"),
-          driver: ProviderDriverKind.make("droid"),
-          displayName: "Droid",
+          instanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          displayName: "OpenCode",
           enabled: false,
           installed: false,
           status: "disabled",
-          auth: { status: "unauthenticated", required: true },
-          connection: {
-            methods: ["droid_device_pairing"],
-            canDisconnect: false,
-            operation: null,
-            runtime: provider.connection!.runtime!,
-          },
+          auth: { status: "unauthenticated", required: false },
+          connection: { methods: [], canDisconnect: false, operation: null },
         }}
       />,
     );
 
-    expect(markup).toContain("Compact managed runtime actions");
-    expect(markup).toContain("Droid is disabled");
+    expect(markup).toContain("OpenCode is disabled");
     expect(markup).toContain(">Enable<");
-    expect(markup).not.toContain("Droid lifecycle surface");
+    expect(markup).not.toContain("Managed runtime actions");
   });
 
   it("reveals sign-in after a managed install settles instead of leaving runtime focus blank", () => {

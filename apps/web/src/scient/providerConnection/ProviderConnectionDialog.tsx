@@ -54,6 +54,7 @@ import {
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import {
   AssistedProviderSetupHost,
+  DisabledProviderSetup,
   supportsAssistedProviderSetupSurface,
 } from "./AssistedProviderSetupHost";
 import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
@@ -81,6 +82,9 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     props.open,
   );
 
+  if (!props.provider.enabled) {
+    return <DisabledProviderConnectionDialog {...props} />;
+  }
   const contentProps = {
     ...props,
     onRuntimeActionSucceeded: reportRuntimeActionSucceeded,
@@ -123,6 +127,34 @@ function ProviderConnectionDialogTitle(props: {
         </span>
       ) : null}
     </>
+  );
+}
+
+function DisabledProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogPopup className="max-w-[26rem]" showCloseButton>
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2.5">
+            <ProviderConnectionDialogTitle
+              displayName={props.displayName}
+              driver={props.provider.driver}
+              repairSucceededRecently={false}
+            />
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Enable {props.displayName} before installing or connecting it.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <DisabledProviderSetup
+            displayName={props.displayName}
+            environmentId={props.environmentId}
+            provider={props.provider}
+          />
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

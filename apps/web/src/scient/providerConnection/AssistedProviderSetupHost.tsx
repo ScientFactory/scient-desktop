@@ -225,7 +225,7 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   );
 }
 
-function DisabledProviderSetup(props: {
+export function DisabledProviderSetup(props: {
   readonly displayName: string;
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
