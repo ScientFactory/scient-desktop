@@ -14,7 +14,7 @@ describe("reviewed Antigravity runtime manifest", () => {
     const artifact = resolveReviewedAntigravityArtifact(target);
 
     expect(artifact?.provider).toBe("antigravity");
-    expect(artifact?.version).toBe("1.1.19");
+    expect(artifact?.version).toBe("1.1.20");
     expect(artifact?.supportTier).toBe("fully_assisted");
     expect(artifact?.checksum).toEqual({
       algorithm: "sha512",

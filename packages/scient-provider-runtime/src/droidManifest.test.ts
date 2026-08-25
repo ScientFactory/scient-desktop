@@ -14,7 +14,7 @@ describe("reviewed Droid runtime manifest", () => {
     const artifact = resolveReviewedDroidArtifact(target);
 
     expect(artifact?.provider).toBe("droid");
-    expect(artifact?.version).toBe("0.202.0");
+    expect(artifact?.version).toBe("0.203.0");
     expect(artifact?.supportTier).toBe("fully_assisted");
     expect(artifact?.archiveFormat).toBe("raw");
     expect(artifact?.checksum).toEqual({
@@ -26,7 +26,7 @@ describe("reviewed Droid runtime manifest", () => {
       FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
     });
     expect(artifact?.url).toMatch(
-      /^https:\/\/downloads\.factory\.ai\/factory-cli\/releases\/0\.202\.0\//u,
+      /^https:\/\/downloads\.factory\.ai\/factory-cli\/releases\/0\.203\.0\//u,
     );
   });
 
