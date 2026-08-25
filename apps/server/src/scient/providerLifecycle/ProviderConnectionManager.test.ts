@@ -6,10 +6,12 @@ import {
   type ProviderConnectionOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -17,6 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   ProviderRegistry,
+  ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
@@ -25,7 +28,11 @@ import type {
   ProviderVoiceTranscriptCorrection,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
-import { make } from "./ProviderConnectionManager.ts";
+import {
+  layer as ProviderConnectionManagerLayer,
+  make,
+  ProviderConnectionManager,
+} from "./ProviderConnectionManager.ts";
 import {
   make as makeLifecycleCoordinator,
   ProviderLifecycleCoordinator,
@@ -86,6 +93,8 @@ function makeHarness(options?: {
     refreshCount: number,
   ) => Effect.Effect<void>;
   readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
+  readonly failStrictRefreshAt?: number;
+  readonly useProductionLayer?: boolean;
 }) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
@@ -111,22 +120,34 @@ function makeHarness(options?: {
           );
         });
 
+    const refreshInstance = (instanceId: ProviderInstanceId, strict: boolean) =>
+      Effect.gen(function* () {
+        const refreshCount = yield* Ref.updateAndGet(refreshCountRef, (count) => count + 1);
+        yield* options?.beforeRefreshInstance?.(instanceId, refreshCount) ?? Effect.void;
+        if (strict && options?.failStrictRefreshAt === refreshCount) {
+          return yield* new ProviderRegistryRefreshError({
+            operation: "refresh",
+            instanceId,
+            message: "Simulated strict refresh failure.",
+          });
+        }
+        return yield* Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((provider) =>
+            provider.instanceId === instanceId
+              ? (options?.refreshProvider?.(provider, refreshCount) ?? provider)
+              : provider,
+          ),
+        );
+      });
+
     const registry: ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: (instanceId) =>
-        Effect.gen(function* () {
-          const refreshCount = yield* Ref.updateAndGet(refreshCountRef, (count) => count + 1);
-          yield* options?.beforeRefreshInstance?.(instanceId, refreshCount) ?? Effect.void;
-          return yield* Ref.updateAndGet(providersRef, (providers) =>
-            providers.map((provider) =>
-              provider.instanceId === instanceId
-                ? (options?.refreshProvider?.(provider, refreshCount) ?? provider)
-                : provider,
-            ),
-          );
-        }),
+        refreshInstance(instanceId, false).pipe(Effect.catch(() => Ref.get(providersRef))),
+      refreshInstanceStrict: (instanceId) => refreshInstance(instanceId, true),
       reloadInstance: () => Ref.get(providersRef),
+      reloadInstanceStrict: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
@@ -154,12 +175,27 @@ function makeHarness(options?: {
     });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
-    const manager = yield* make().pipe(
-      Effect.provideService(ProviderRegistry, registry),
-      Effect.provideService(ProviderLifecycleCoordinator, trackedLifecycleCoordinator),
-      Effect.provide(NodeServices.layer),
-      Scope.provide(managerScope),
-    );
+    const manager = options?.useProductionLayer
+      ? yield* Layer.build(
+          ProviderConnectionManagerLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ProviderRegistry, registry),
+                Layer.succeed(ProviderLifecycleCoordinator, trackedLifecycleCoordinator),
+                NodeServices.layer,
+              ),
+            ),
+          ),
+        ).pipe(
+          Scope.provide(managerScope),
+          Effect.map((services) => Context.get(services, ProviderConnectionManager)),
+        )
+      : yield* make().pipe(
+          Effect.provideService(ProviderRegistry, registry),
+          Effect.provideService(ProviderLifecycleCoordinator, trackedLifecycleCoordinator),
+          Effect.provide(NodeServices.layer),
+          Scope.provide(managerScope),
+        );
     return {
       manager,
       providersRef,
@@ -802,9 +838,13 @@ describe("ProviderConnectionManager", () => {
             }),
           disconnect: Effect.void,
         };
-        const { manager, transitionsRef, lifecycleCoordinator, closeManager } = yield* makeHarness({
-          actions,
-        });
+        const {
+          manager,
+          transitionsRef,
+          lifecycleCoordinator,
+          lifecycleReleaseCountRef,
+          closeManager,
+        } = yield* makeHarness({ actions, useProductionLayer: true });
         const started = yield* manager.start({
           instanceId: CODEX_INSTANCE,
           method: "codex_browser",
@@ -822,6 +862,7 @@ describe("ProviderConnectionManager", () => {
         assert.strictEqual(yield* Ref.get(supervisorInterruptions), 1);
         assert.strictEqual(yield* Ref.get(operationScopeClosures), 1);
         assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
+        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
         assert.deepStrictEqual(
           (yield* Ref.get(transitionsRef)).map((item) => item?.status ?? null),
           ["starting", "waiting_for_browser"],
@@ -835,6 +876,7 @@ describe("ProviderConnectionManager", () => {
         assert.strictEqual(yield* Ref.get(attemptCancellations), 1);
         assert.strictEqual(yield* Ref.get(supervisorInterruptions), 1);
         assert.strictEqual(yield* Ref.get(operationScopeClosures), 1);
+        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
       }),
   );
 
@@ -1179,6 +1221,42 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
+  it.effect("fails completion when the strict post-auth refresh itself fails", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef, lifecycleReleaseCountRef } = yield* makeHarness({
+        actions,
+        failStrictRefreshAt: 2,
+      });
+
+      yield* manager.start({ instanceId: CODEX_INSTANCE, method: "codex_browser" });
+      yield* Deferred.succeed(completed, undefined);
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+
+      assert.deepStrictEqual(
+        transitions.map((item) => item?.status ?? null),
+        ["starting", "waiting_for_browser", "verifying", "failed"],
+      );
+      assert.strictEqual(
+        transitions.at(-1)?.message,
+        "The provider finished sign in, but Scient could not verify the connected account.",
+      );
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
+
   it.effect("validates provider availability before starting a flow", () =>
     Effect.gen(function* () {
       const unsupported = yield* makeHarness();
@@ -1227,6 +1305,33 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
+  it.effect("does not start sign in when the strict preflight refresh fails", () =>
+    Effect.gen(function* () {
+      const starts = yield* Ref.make(0);
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () => Ref.update(starts, (count) => count + 1).pipe(Effect.andThen(Effect.never)),
+        disconnect: Effect.void,
+      };
+      const { manager, lifecycleReleaseCountRef } = yield* makeHarness({
+        actions,
+        failStrictRefreshAt: 1,
+      });
+
+      const failure = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser" })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(failure.reason, "connection_failed");
+      assert.strictEqual(
+        failure.message,
+        "Scient could not verify the provider before starting sign in. Try again.",
+      );
+      assert.strictEqual(yield* Ref.get(starts), 0);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 0);
+    }),
+  );
+
   it.effect("disconnects through the provider owner and refreshes the authoritative snapshot", () =>
     Effect.gen(function* () {
       const disconnects = yield* Ref.make(0);
@@ -1252,6 +1357,32 @@ describe("ProviderConnectionManager", () => {
       yield* manager.disconnect({ instanceId: CODEX_INSTANCE });
       assert.strictEqual(yield* Ref.get(disconnects), 1);
       assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
+    }),
+  );
+
+  it.effect("reports an unverifiable account state after provider-owned sign out completes", () =>
+    Effect.gen(function* () {
+      const disconnects = yield* Ref.make(0);
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () => Effect.die(new Error("must not start")),
+        disconnect: Ref.update(disconnects, (count) => count + 1),
+      };
+      const { manager, lifecycleReleaseCountRef } = yield* makeHarness({
+        actions,
+        provider: authenticatedProvider(disconnectedProvider),
+        failStrictRefreshAt: 1,
+      });
+
+      const failure = yield* manager.disconnect({ instanceId: CODEX_INSTANCE }).pipe(Effect.flip);
+
+      assert.strictEqual(failure.reason, "disconnect_failed");
+      assert.strictEqual(
+        failure.message,
+        "The provider completed sign out, but Scient could not verify the current account state.",
+      );
+      assert.strictEqual(yield* Ref.get(disconnects), 1);
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
     }),
   );
 

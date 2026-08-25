@@ -49,6 +49,15 @@ describe("ProviderConnectionActions primitives", () => {
     ).toContain("https://login.example.test/authorize");
   });
 
+  it("keeps later URLs hidden when an OSC sequence never terminates", () => {
+    expect(
+      findTerminalAuthorizationUrl(
+        "\u001b]0;unfinished metadata\nOpen https://login.example.test/authorize",
+        acceptsExampleLogin,
+      ),
+    ).toBeUndefined();
+  });
+
   it("rejects untrusted, malformed, control-bearing, and oversized candidates", () => {
     expect(
       findTerminalAuthorizationUrl(

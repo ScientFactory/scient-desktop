@@ -1591,6 +1591,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
               cachedProvider,
             ]);
+            const strictRefreshError = yield* registry
+              .refreshInstanceStrict(codexInstanceId)
+              .pipe(Effect.flip);
+            assert.strictEqual(strictRefreshError.operation, "refresh");
+            assert.strictEqual(strictRefreshError.instanceId, codexInstanceId);
+            assert.deepStrictEqual(yield* registry.reloadInstance(codexInstanceId), [
+              cachedProvider,
+            ]);
+            const strictReloadError = yield* registry
+              .reloadInstanceStrict(codexInstanceId)
+              .pipe(Effect.flip);
+            assert.strictEqual(strictReloadError.operation, "reload");
+            assert.strictEqual(strictReloadError.instanceId, codexInstanceId);
+
+            const missingInstanceId = ProviderInstanceId.make("missing");
+            const missingRefreshError = yield* registry
+              .refreshInstanceStrict(missingInstanceId)
+              .pipe(Effect.flip);
+            assert.strictEqual(missingRefreshError.operation, "refresh");
+            assert.strictEqual(missingRefreshError.instanceId, missingInstanceId);
+            const missingReloadError = yield* registry
+              .reloadInstanceStrict(missingInstanceId)
+              .pipe(Effect.flip);
+            assert.strictEqual(missingReloadError.operation, "reload");
+            assert.strictEqual(missingReloadError.instanceId, missingInstanceId);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

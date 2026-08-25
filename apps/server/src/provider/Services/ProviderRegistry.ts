@@ -15,6 +15,7 @@ import type {
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -26,6 +27,13 @@ import type {
 import type { ProviderAdapterError } from "../Errors.ts";
 
 export type ProviderMaintenanceActionKind = "update";
+
+export class ProviderRegistryRefreshError extends Data.TaggedError("ProviderRegistryRefreshError")<{
+  readonly operation: "refresh" | "reload";
+  readonly instanceId: ProviderInstanceId;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 export interface ProviderRegistryShape {
   /**
@@ -57,6 +65,15 @@ export interface ProviderRegistryShape {
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Refresh one instance without substituting cached state when its live probe
+   * fails. Lifecycle operations use this when fresh state decides whether an
+   * operation may start or can truthfully be reported as complete.
+   */
+  readonly refreshInstanceStrict: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
+
+  /**
    * Recreate one provider instance from unchanged settings, attach its fresh
    * snapshot source, and run a probe before returning. Used when an external
    * dependency such as a managed provider executable changed atomically.
@@ -64,6 +81,14 @@ export interface ProviderRegistryShape {
   readonly reloadInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Rebuild and refresh one instance without recovering to cached state.
+   * Managed-runtime reconciliation uses this after a durable runtime change.
+   */
+  readonly reloadInstanceStrict: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
 
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.

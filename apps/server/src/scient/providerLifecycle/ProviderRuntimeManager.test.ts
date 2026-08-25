@@ -6,10 +6,12 @@ import {
   type ProviderRuntimeSummary,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -22,13 +24,18 @@ import { ProviderAdapterProcessError } from "../../provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
 import {
   ProviderRegistry,
+  ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/Services/ProviderRegistry.ts";
 import {
   make as makeLifecycleCoordinator,
   ProviderLifecycleCoordinator,
 } from "./ProviderLifecycleCoordinator.ts";
-import { make } from "./ProviderRuntimeManager.ts";
+import {
+  layer as ProviderRuntimeManagerLayer,
+  make,
+  ProviderRuntimeManager,
+} from "./ProviderRuntimeManager.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
 const INSTANCE = ProviderInstanceId.make("codex");
@@ -96,10 +103,11 @@ function makeHarness(
   initialProviders: ReadonlyArray<ServerProvider> = [provider],
   stopProviderSessions: ProviderRegistryShape["stopProviderSessions"] = () => Effect.void,
   actionsAfterReload?: ProviderManagedRuntimeActions,
-  reloadBarrier: Effect.Effect<void> = Effect.void,
+  reloadBarrier: Effect.Effect<void, ProviderRegistryRefreshError> = Effect.void,
   hooks: {
     readonly beforeSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
     readonly afterSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
+    readonly useProductionLayer?: boolean;
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -124,22 +132,24 @@ function makeHarness(
         yield* hooks.afterSetRuntime?.(input.runtime) ?? Effect.void;
         return providers;
       });
+    const reloadInstance = Effect.gen(function* () {
+      yield* Ref.update(reloadCountRef, (count) => count + 1);
+      const providers = yield* Ref.get(providersRef);
+      const operationStatus =
+        providers.find((candidate) => candidate.instanceId === INSTANCE)?.connection?.runtime
+          ?.operation?.status ?? null;
+      yield* Ref.update(reloadOperationsRef, (statuses) => [...statuses, operationStatus]);
+      if (actionsAfterReload) yield* Ref.set(actionsRef, actionsAfterReload);
+      yield* reloadBarrier;
+      return providers;
+    });
     const registry: ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
-      reloadInstance: () =>
-        Effect.gen(function* () {
-          yield* Ref.update(reloadCountRef, (count) => count + 1);
-          const providers = yield* Ref.get(providersRef);
-          const operationStatus =
-            providers.find((candidate) => candidate.instanceId === INSTANCE)?.connection?.runtime
-              ?.operation?.status ?? null;
-          yield* Ref.update(reloadOperationsRef, (statuses) => [...statuses, operationStatus]);
-          if (actionsAfterReload) yield* Ref.set(actionsRef, actionsAfterReload);
-          yield* reloadBarrier;
-          return providers;
-        }),
+      refreshInstanceStrict: () => Ref.get(providersRef),
+      reloadInstance: () => reloadInstance.pipe(Effect.catch(() => Ref.get(providersRef))),
+      reloadInstanceStrict: () => reloadInstance,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
@@ -169,12 +179,27 @@ function makeHarness(
     });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
-    const manager = yield* make().pipe(
-      Effect.provideService(ProviderRegistry, registry),
-      Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
-      Effect.provide(NodeServices.layer),
-      Scope.provide(managerScope),
-    );
+    const manager = hooks.useProductionLayer
+      ? yield* Layer.build(
+          ProviderRuntimeManagerLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ProviderRegistry, registry),
+                Layer.succeed(ProviderLifecycleCoordinator, trackedCoordinator),
+                NodeServices.layer,
+              ),
+            ),
+          ),
+        ).pipe(
+          Scope.provide(managerScope),
+          Effect.map((services) => Context.get(services, ProviderRuntimeManager)),
+        )
+      : yield* make().pipe(
+          Effect.provideService(ProviderRegistry, registry),
+          Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
+          Effect.provide(NodeServices.layer),
+          Scope.provide(managerScope),
+        );
     return {
       manager,
       providersRef,
@@ -253,6 +278,50 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(yield* Ref.get(reloadCountRef), 2);
       assert.strictEqual(yield* Ref.get(stopCountRef), 1);
       assert.deepStrictEqual(yield* Ref.get(reloadOperationsRef), ["downloading", "downloading"]);
+    }),
+  );
+
+  it.effect("does not report success when post-mutation runtime reconciliation fails", () =>
+    Effect.gen(function* () {
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed({
+          ...missingRuntime,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "0.147.0",
+          message: "Managed Codex is ready.",
+        }),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.void,
+      };
+      const reloadFailure = new ProviderRegistryRefreshError({
+        operation: "reload",
+        instanceId: INSTANCE,
+        message: "Simulated strict reload failure.",
+      });
+      const { manager, providersRef, lifecycleReleaseCountRef } = yield* makeHarness(
+        actions,
+        [provider],
+        () => Effect.void,
+        undefined,
+        reloadFailure,
+      );
+
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const completed = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "failed",
+      );
+
+      assert.strictEqual(
+        completed[0]?.connection?.runtime?.operation?.message,
+        "The runtime change finished, but Scient could not verify the resulting provider state.",
+      );
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
     }),
   );
 
@@ -509,9 +578,10 @@ describe("ProviderRuntimeManager", () => {
               Effect.onInterrupt(() => Ref.update(runInterruptions, (count) => count + 1)),
             ),
         };
-        const { manager, providersRef, coordinator, closeManager } = yield* makeHarness(actions, [
-          systemProvider,
-        ]);
+        const { manager, providersRef, coordinator, lifecycleReleaseCountRef, closeManager } =
+          yield* makeHarness(actions, [systemProvider], () => Effect.void, undefined, Effect.void, {
+            useProductionLayer: true,
+          });
         const started = yield* manager.start({
           instanceId: INSTANCE,
           action: "install",
@@ -525,6 +595,7 @@ describe("ProviderRuntimeManager", () => {
 
         assert.strictEqual(yield* Ref.get(runInterruptions), 1);
         assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
         assert.strictEqual(
           (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
           "preparing",
@@ -536,6 +607,7 @@ describe("ProviderRuntimeManager", () => {
 
         yield* closeManager;
         assert.strictEqual(yield* Ref.get(runInterruptions), 1);
+        assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
       }),
   );
 
@@ -631,7 +703,7 @@ describe("ProviderRuntimeManager", () => {
       }),
   );
 
-  it.effect("keeps an installed runtime cancellable while provider reload is still running", () =>
+  it.effect("does not cancel a committed runtime while provider reload is still running", () =>
     Effect.gen(function* () {
       const reloadGate = yield* Deferred.make<void>();
       const actions: ProviderManagedRuntimeActions = {
@@ -649,13 +721,14 @@ describe("ProviderRuntimeManager", () => {
             message: "Activating the verified provider runtime.",
           }),
       };
-      const { manager, providersRef, reloadCountRef } = yield* makeHarness(
-        actions,
-        [provider],
-        () => Effect.void,
-        undefined,
-        Deferred.await(reloadGate),
-      );
+      const { manager, providersRef, reloadCountRef, lifecycleReleaseCountRef } =
+        yield* makeHarness(
+          actions,
+          [provider],
+          () => Effect.void,
+          undefined,
+          Deferred.await(reloadGate),
+        );
       const started = yield* manager.start({
         instanceId: INSTANCE,
         action: "install",
@@ -665,16 +738,28 @@ describe("ProviderRuntimeManager", () => {
       assert.ok(operationId);
       yield* yieldUntil(Ref.get(reloadCountRef), (count) => count === 1);
 
-      const cancelled = yield* manager.cancel({ instanceId: INSTANCE, operationId });
+      const cancellationFailure = yield* manager
+        .cancel({ instanceId: INSTANCE, operationId })
+        .pipe(Effect.flip);
 
+      assert.strictEqual(cancellationFailure.reason, "runtime_operation_not_found");
       assert.strictEqual(
-        cancelled.providers[0]?.connection?.runtime?.operation?.status,
-        "cancelled",
+        cancellationFailure.message,
+        "The runtime change is already being finalized and can no longer be cancelled.",
       );
       assert.strictEqual(
         (yield* Ref.get(providersRef))[0]?.connection?.runtime?.operation?.status,
-        "cancelled",
+        "activating",
       );
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 0);
+
+      yield* Deferred.succeed(reloadGate, undefined);
+      const completed = yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+      );
+      assert.strictEqual(completed[0]?.connection?.runtime?.operation?.status, "succeeded");
+      assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
     }),
   );
 

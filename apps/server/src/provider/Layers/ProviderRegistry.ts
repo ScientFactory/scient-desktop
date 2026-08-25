@@ -45,7 +45,11 @@ import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
+import {
+  ProviderRegistry,
+  ProviderRegistryRefreshError,
+  type ProviderRegistryShape,
+} from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -871,14 +875,67 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* Ref.get(providersRef);
     });
 
+    const failStrictRefresh = (
+      operation: ProviderRegistryRefreshError["operation"],
+      instanceId: ProviderInstanceId,
+    ) =>
+      Effect.catchCause((cause: Cause.Cause<unknown>) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.fail(
+              new ProviderRegistryRefreshError({
+                operation,
+                instanceId,
+                message: `Provider ${operation} failed for ${instanceId}.`,
+                cause,
+              }),
+            ),
+      );
+
+    const refreshInstanceStrict = Effect.fn("ProviderRegistry.refreshInstanceStrict")(function* (
+      instanceId: ProviderInstanceId,
+    ) {
+      const sources = yield* getLiveSources;
+      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
+      if (!providerSource) {
+        return yield* new ProviderRegistryRefreshError({
+          operation: "refresh",
+          instanceId,
+          message: `Provider refresh failed for ${instanceId}: no live source is available.`,
+        });
+      }
+      return yield* refreshOneSource(providerSource).pipe(failStrictRefresh("refresh", instanceId));
+    });
+
+    const reloadInstanceStrict = Effect.fn("ProviderRegistry.reloadInstanceStrict")(function* (
+      instanceId: ProviderInstanceId,
+    ) {
+      return yield* Effect.gen(function* () {
+        yield* instanceRegistry.rebuildInstance(instanceId);
+        yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
+        const sources = yield* getLiveSources;
+        const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
+        if (!providerSource) {
+          return yield* new ProviderRegistryRefreshError({
+            operation: "reload",
+            instanceId,
+            message: `Provider reload failed for ${instanceId}: no live source is available.`,
+          });
+        }
+        return yield* refreshOneSource(providerSource);
+      }).pipe(failStrictRefresh("reload", instanceId));
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshInstanceStrict,
       reloadInstance: (instanceId: ProviderInstanceId) =>
         reloadInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      reloadInstanceStrict,
       getProviderMaintenanceCapabilitiesForInstance,
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,
