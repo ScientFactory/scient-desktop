@@ -57,6 +57,7 @@ export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefin
 export function ProviderOnboardingPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly reconnectEntry?: ProviderInstanceEntry;
   readonly compact?: boolean;
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
@@ -64,6 +65,7 @@ export function ProviderOnboardingPicker(props: {
   readonly autoSelectReadyProvider?: boolean;
 }) {
   const navigate = useNavigate();
+  const reconnectEntry = props.reconnectEntry;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<ProviderDriverKind | null>(null);
   const [query, setQuery] = useState("");
@@ -71,10 +73,14 @@ export function ProviderOnboardingPicker(props: {
   const open = props.open ?? uncontrolledOpen;
   const setOpen = useCallback(
     (nextOpen: boolean) => {
+      if (nextOpen && reconnectEntry) {
+        setSelectedDriver(reconnectEntry.driverKind);
+        setQuery("");
+      }
       props.onOpenChange?.(nextOpen);
       if (props.open === undefined) setUncontrolledOpen(nextOpen);
     },
-    [props.onOpenChange, props.open],
+    [props.onOpenChange, props.open, reconnectEntry],
   );
 
   useEffect(() => {
@@ -100,6 +106,15 @@ export function ProviderOnboardingPicker(props: {
   );
   const selectedEntry = selectedDriver ? entriesByDriver.get(selectedDriver) : undefined;
   const showHome = selectedDefinition === undefined || normalizedQuery.length > 0;
+  const reconnectDefinition = reconnectEntry
+    ? PROVIDER_CLIENT_DEFINITIONS.find(
+        (definition) => definition.value === reconnectEntry.driverKind,
+      )
+    : undefined;
+  const TriggerIcon = reconnectDefinition?.icon ?? BlocksIcon;
+  const triggerLabel = reconnectEntry
+    ? `Reconnect ${reconnectEntry.displayName}`
+    : "Choose your AI";
 
   const readyModel = readyProviderDefaultModel(selectedEntry);
   useEffect(() => {
@@ -138,7 +153,7 @@ export function ProviderOnboardingPicker(props: {
         <PopoverTrigger
           render={
             <ComposerControl
-              aria-label="Choose and connect your AI"
+              aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
               className={cn(
                 "-ms-px min-w-0 justify-between whitespace-nowrap ps-0",
                 props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
@@ -148,9 +163,9 @@ export function ProviderOnboardingPicker(props: {
           }
         >
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            <BlocksIcon aria-hidden className="size-4 shrink-0" />
-            <span className="truncate">Choose your AI</span>
-            {!open ? (
+            <TriggerIcon aria-hidden className="size-4 shrink-0" />
+            <span className="truncate">{triggerLabel}</span>
+            {!open && !reconnectEntry ? (
               <span aria-hidden className="ms-0.5 flex shrink-0 items-center -space-x-0.5">
                 {previewDefinitions.map((definition) => {
                   const Icon = definition.icon;

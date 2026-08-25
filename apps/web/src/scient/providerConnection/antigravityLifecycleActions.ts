@@ -34,12 +34,6 @@ export async function cancelAntigravitySignIn(
   return controller.cancelConnection(operationId);
 }
 
-export async function disconnectAntigravity(
-  controller: ProviderLifecycleController,
-): Promise<ServerProvider> {
-  return controller.disconnect();
-}
-
 export function updateAntigravityRuntime(
   controller: ProviderLifecycleController,
   provider: ServerProvider,

@@ -22,7 +22,10 @@ vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({}),
 }));
 
-import { ProviderLifecycleSetupSurface } from "./ProviderOnboardingPicker";
+import {
+  ProviderLifecycleSetupSurface,
+  ProviderOnboardingPicker,
+} from "./ProviderOnboardingPicker";
 
 it.each([
   ["grok", "Grok", "grok_account", "Grok inline lifecycle"],
@@ -74,3 +77,42 @@ it.each([
     expect(markup).not.toContain("Open provider settings");
   },
 );
+
+it("uses a reconnect trigger for a locked conversation without changing the default trigger", () => {
+  const provider: ServerProvider = {
+    instanceId: ProviderInstanceId.make("antigravity"),
+    driver: ProviderDriverKind.make("antigravity"),
+    displayName: "Antigravity",
+    enabled: true,
+    installed: true,
+    version: "1.1.19",
+    status: "warning",
+    auth: { status: "unauthenticated", required: true },
+    checkedAt: "2026-08-25T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  };
+  const [entry] = deriveProviderInstanceEntries([provider]);
+  if (!entry) throw new Error("Expected the Antigravity provider entry.");
+
+  const defaultMarkup = renderToStaticMarkup(
+    <ProviderOnboardingPicker
+      environmentId={EnvironmentId.make("local")}
+      instanceEntries={[entry]}
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  const reconnectMarkup = renderToStaticMarkup(
+    <ProviderOnboardingPicker
+      environmentId={EnvironmentId.make("local")}
+      instanceEntries={[entry]}
+      reconnectEntry={entry}
+      onInstanceModelChange={() => {}}
+    />,
+  );
+
+  expect(defaultMarkup).toContain("Choose your AI");
+  expect(reconnectMarkup).toContain("Reconnect Antigravity");
+  expect(reconnectMarkup).not.toContain("Choose your AI");
+});

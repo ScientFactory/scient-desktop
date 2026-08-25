@@ -949,6 +949,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderConnectionKind === "setting-up" ||
       selectedProviderConnectionKind === "not-connected" ||
       selectedProviderConnectionKind === "connecting");
+  const reconnectProviderEntry =
+    lockedProvider !== null &&
+    selectedProviderEntry !== undefined &&
+    (selectedProviderConnectionKind === "not-connected" ||
+      selectedProviderConnectionKind === "connecting")
+      ? selectedProviderEntry
+      : undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -3509,6 +3516,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact={isComposerFooterCompact}
                       environmentId={environmentId}
                       instanceEntries={providerInstanceEntries}
+                      {...(reconnectProviderEntry
+                        ? { reconnectEntry: reconnectProviderEntry }
+                        : {})}
                       onInstanceModelChange={onProviderModelSelect}
                     />
                   ) : (

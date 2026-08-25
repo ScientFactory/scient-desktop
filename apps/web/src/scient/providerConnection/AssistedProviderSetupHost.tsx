@@ -35,11 +35,10 @@ export type AssistedProviderSetupSurface = "composer" | "management";
 
 export function supportsAssistedProviderSetupSurface(
   driver: ProviderDriverKind,
-  surface: AssistedProviderSetupSurface,
+  _surface: AssistedProviderSetupSurface,
 ): boolean {
   switch (driver) {
     case "antigravity":
-      return surface === "composer";
     case "claudeAgent":
     case "codex":
     case "cursor":
@@ -162,14 +161,14 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   let setup: ReactNode;
   switch (props.provider.driver) {
     case "antigravity":
-      setup =
-        props.surface === "composer" ? (
-          <AntigravityInlineSetup
-            controller={controller}
-            displayName={displayName}
-            provider={props.provider}
-          />
-        ) : null;
+      setup = (
+        <AntigravityInlineSetup
+          {...managementProps}
+          controller={controller}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
       break;
     case "claudeAgent":
       setup = (

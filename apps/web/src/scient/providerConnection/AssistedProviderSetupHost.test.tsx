@@ -112,6 +112,7 @@ describe("AssistedProviderSetupHost", () => {
   it.each([
     ["codex", "Codex"],
     ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
     ["cursor", "Cursor"],
     ["droid", "Droid"],
     ["grok", "Grok"],
@@ -226,13 +227,13 @@ describe("AssistedProviderSetupHost", () => {
     expect(markup).not.toContain(">Enable<");
   });
 
-  it("leaves Antigravity management and unsupported providers to the generic fallback", () => {
+  it("keeps unsupported providers on the generic fallback", () => {
     expect(
       supportsAssistedProviderSetupSurface(ProviderDriverKind.make("antigravity"), "composer"),
     ).toBe(true);
     expect(
       supportsAssistedProviderSetupSurface(ProviderDriverKind.make("antigravity"), "management"),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       supportsAssistedProviderSetupSurface(ProviderDriverKind.make("opencode"), "composer"),
     ).toBe(false);
@@ -258,8 +259,10 @@ describe("AssistedProviderSetupHost", () => {
       />,
     );
 
-    expect(antigravityMarkup).toBe("");
+    expect(antigravityMarkup).toContain("Antigravity setup");
+    expect(antigravityMarkup).toContain("shared runtime");
+    expect(antigravityMarkup).toContain("Sign out");
     expect(unsupportedMarkup).toBe("");
-    expect(controllerFactory).not.toHaveBeenCalled();
+    expect(controllerFactory).toHaveBeenCalledOnce();
   });
 });
