@@ -2259,55 +2259,46 @@ describe("session activity performance", () => {
     expect(appendedEntries[1]).toBe(initialEntries[1]);
   });
 
-  it("updates 20,000 ordered tool activities within 100 ms", () => {
-    const measureAppendUpdate = (sample: number) => {
-      const activities = Array.from({ length: 20_000 }, (_, index) =>
-        makeActivity({
-          id: `benchmark-tool-${sample}-${index}`,
-          createdAt: new Date(1_700_000_000_000 + index).toISOString(),
-          kind: "tool.completed",
-          summary: "Ran command",
-          sequence: index,
-          payload: {
-            itemType: "command_execution",
-            title: "Ran command",
-            data: {
-              toolCallId: `benchmark-tool-${sample}-${index}`,
-              item: { command: ["git", "status"] },
-            },
+  // Cache reuse is the deterministic performance contract; absolute wall-clock
+  // budgets are not portable across shared CI runners.
+  it("reuses entries when appending to 20,000 ordered tool activities", () => {
+    const activities = Array.from({ length: 20_000 }, (_, index) =>
+      makeActivity({
+        id: `benchmark-tool-${index}`,
+        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: `benchmark-tool-${index}`,
+            item: { command: ["git", "status"] },
           },
-        }),
-      );
-      deriveWorkLogEntries(activities);
-      const updatedActivities = [
-        ...activities,
-        makeActivity({
-          id: `benchmark-tool-${sample}-appended`,
-          createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
-          kind: "tool.completed",
-          summary: "Ran command",
-          sequence: activities.length,
-          payload: {
-            itemType: "command_execution",
-            title: "Ran command",
-            data: {
-              toolCallId: `benchmark-tool-${sample}-appended`,
-              item: { command: ["git", "diff"] },
-            },
-          },
-        }),
-      ];
+        },
+      }),
+    );
+    const initialEntries = deriveWorkLogEntries(activities);
+    const appendedActivity = makeActivity({
+      id: "benchmark-tool-appended",
+      createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
+      kind: "tool.completed",
+      summary: "Ran command",
+      sequence: activities.length,
+      payload: {
+        itemType: "command_execution",
+        title: "Ran command",
+        data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
+      },
+    });
 
-      const startedAt = performance.now();
-      expect(deriveWorkLogEntries(updatedActivities)).toHaveLength(20_001);
-      return performance.now() - startedAt;
-    };
+    const updatedEntries = deriveWorkLogEntries([...activities, appendedActivity]);
 
-    // Shared runners can briefly deschedule a worker. Fresh samples keep the
-    // 100 ms regression budget while preventing one scheduler pause from failing CI.
-    const medianDuration = [0, 1, 2]
-      .map(measureAppendUpdate)
-      .toSorted((left, right) => left - right)[1];
-    expect(medianDuration).toBeLessThan(100);
+    expect(updatedEntries).toHaveLength(20_001);
+    expect(updatedEntries[0]).toBe(initialEntries[0]);
+    expect(updatedEntries[10_000]).toBe(initialEntries[10_000]);
+    expect(updatedEntries[19_999]).toBe(initialEntries[19_999]);
+    expect(updatedEntries[20_000]?.id).toBe("benchmark-tool-appended");
   });
 });
