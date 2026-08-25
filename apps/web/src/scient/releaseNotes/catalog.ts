@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.7",
+    publishedAt: "2026-08-25",
+    kicker: "Reusable guidance, simpler connections, and better local voice.",
+    headline: "Guide agents with Skills, manage providers easily, and dictate more accurately",
+    summary:
+      "Scient 0.6.7 introduces reusable Skills, makes AI providers easier to install and manage, lets you continue a conversation with another provider, and gives you more choices for private voice dictation.",
+    highlights: [
+      {
+        id: "scient-skills",
+        title: "Teach agents how you like to work",
+        description:
+          "Skills are reusable instructions for common tasks. Open Settings → Skills to activate Scient's built-in skills, let agents use them automatically or call them yourself with $name, and see skills available from your connected providers.",
+      },
+      {
+        id: "provider-management",
+        title: "Set up and manage providers in one place",
+        description:
+          "Install, sign in, repair, update, or remove supported providers from a consistent screen. Keep using an existing installation or let Scient manage a private copy without changing the one already on your computer.",
+      },
+      {
+        id: "continue-with-another-ai",
+        title: "Start with one AI and continue with another",
+        description:
+          "Begin a conversation with one AI, then continue its context using a different provider or model. Scient creates a connected copy, keeps the original conversation unchanged, and carries over your unfinished message after you confirm.",
+      },
+      {
+        id: "multilingual-voice-models",
+        title: "Choose the right voice model for your computer",
+        description:
+          "Select Multilingual Small, Medium, or Turbo, choose your language, and continue editing while recording. Optional AI correction can improve spelling and punctuation; recorded audio remains on your computer.",
+      },
+      {
+        id: "thread-and-attachment-refinements",
+        title: "Smoother work across threads and attachments",
+        description:
+          "Attach HEIC photos, keep pull requests connected to their conversations, and open agent and file links more reliably across macOS and Windows.",
+      },
+    ],
+  },
+  {
     version: "0.6.6",
     publishedAt: "2026-08-23",
     kicker: "More ways to connect. Less friction once you're working.",
