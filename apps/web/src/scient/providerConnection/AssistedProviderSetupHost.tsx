@@ -87,7 +87,24 @@ export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps)
       />
     );
   }
+  if (props.provider.probePending === true) {
+    return <ProviderProbePendingSetup displayName={displayName} />;
+  }
   return <SupportedAssistedProviderSetupHost {...props} />;
+}
+
+export function ProviderProbePendingSetup(props: { readonly displayName: string }) {
+  return (
+    <AssistedSetupFrame>
+      <div
+        aria-label={`Checking ${props.displayName} status`}
+        className="flex min-h-8 items-center justify-center text-muted-foreground"
+        role="status"
+      >
+        <LoaderIcon aria-hidden className="size-5 animate-spin" />
+      </div>
+    </AssistedSetupFrame>
+  );
 }
 
 function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {

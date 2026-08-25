@@ -185,6 +185,31 @@ describe("AssistedProviderSetupHost", () => {
     expect(controllerFactory).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+  ] as const)("shows only a spinner while the enabled %s probe settles", (driver, name) => {
+    controllerFactory.mockClear();
+    const markup = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        displayName={name}
+        environmentId={EnvironmentId.make("local")}
+        provider={{ ...provider(driver, name), installed: false, probePending: true }}
+        surface="composer"
+      />,
+    );
+
+    expect(markup).toContain(`aria-label="Checking ${name} status"`);
+    expect(markup).toContain("lucide-loader");
+    expect(markup).not.toContain(`${name} setup`);
+    expect(markup).not.toContain("Checking provider");
+    expect(controllerFactory).not.toHaveBeenCalled();
+  });
+
   it("explains read-only access without offering a broken enable action", () => {
     enableState.access = "denied";
     enableState.canEnable = false;

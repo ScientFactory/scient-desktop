@@ -55,6 +55,7 @@ import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import {
   AssistedProviderSetupHost,
   DisabledProviderSetup,
+  ProviderProbePendingSetup,
   supportsAssistedProviderSetupSurface,
 } from "./AssistedProviderSetupHost";
 import { useTransientRepairSuccess } from "./useTransientRepairSuccess";
@@ -85,6 +86,9 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   if (!props.provider.enabled) {
     return <DisabledProviderConnectionDialog {...props} />;
   }
+  if (props.provider.probePending === true) {
+    return <ProbePendingProviderConnectionDialog {...props} />;
+  }
   const contentProps = {
     ...props,
     onRuntimeActionSucceeded: reportRuntimeActionSucceeded,
@@ -94,6 +98,30 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
     <AssistedProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
   ) : (
     <GenericProviderConnectionDialog key={props.provider.instanceId} {...contentProps} />
+  );
+}
+
+function ProbePendingProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogPopup className="max-w-[26rem]" showCloseButton>
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2.5">
+            <ProviderConnectionDialogTitle
+              displayName={props.displayName}
+              driver={props.provider.driver}
+              repairSucceededRecently={false}
+            />
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Checking {props.displayName} installation and sign-in status.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <ProviderProbePendingSetup displayName={props.displayName} />
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

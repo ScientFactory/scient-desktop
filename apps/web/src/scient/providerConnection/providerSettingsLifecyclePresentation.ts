@@ -78,6 +78,15 @@ export function providerSettingsLifecyclePresentation(
       busy: false,
     };
   }
+  if (provider.probePending === true) {
+    return {
+      kind: "checking",
+      statusLabel: null,
+      detail: null,
+      ...NO_ACTION,
+      busy: true,
+    };
+  }
 
   const runtimeOperation = provider.connection?.runtime?.operation ?? null;
   if (runtimeOperation?.status === "failed") {

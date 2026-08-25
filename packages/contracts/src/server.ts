@@ -187,6 +187,13 @@ export const ServerProvider = Schema.Struct({
   status: ServerProviderState,
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
+  /**
+   * True only for the in-memory placeholder published while the provider's
+   * first status probe is still running. Consumers must not derive terminal
+   * lifecycle actions from that provisional snapshot. The flag is transient
+   * and is never persisted to the provider status cache.
+   */
+  probePending: Schema.optionalKey(Schema.Boolean),
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and
   // an absent value is interpreted as `"available"` by consumers (see

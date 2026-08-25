@@ -145,6 +145,21 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(render(value)).toContain(">Enable<");
   });
 
+  it("renders only an accessible spinner while the enabled provider probe settles", () => {
+    const markup = render({
+      ...provider({ source: "system" }),
+      installed: false,
+      probePending: true,
+    });
+
+    expect(markup).toContain('aria-label="Checking Codex status"');
+    expect(markup).toContain("lucide-loader");
+    expect(markup).not.toContain(">Install<");
+    expect(markup).not.toContain(">Sign in<");
+    expect(markup).not.toContain(">Manage<");
+    expect(markup).not.toContain(">Checking<");
+  });
+
   it("falls back to Manage when the current session cannot enable the provider", () => {
     enableState.access = "denied";
     enableState.canEnable = false;

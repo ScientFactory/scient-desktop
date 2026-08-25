@@ -86,6 +86,52 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+  ] as const)(
+    "suppresses provisional lifecycle actions while %s is being checked",
+    (driver, displayName) => {
+      expect(
+        providerSettingsLifecyclePresentation(
+          provider({
+            driver: ProviderDriverKind.make(driver),
+            displayName,
+            probePending: true,
+            connection: {
+              methods: [],
+              canDisconnect: false,
+              operation: null,
+              runtime: {
+                source: "system",
+                supportTier: "fully_assisted",
+                target: "darwin-arm64",
+                actions: ["install"],
+                managedVersion: null,
+                previousManagedVersion: null,
+                operation: null,
+                message: "System runtime detected.",
+              },
+            },
+          }),
+          displayName,
+        ),
+      ).toEqual({
+        kind: "checking",
+        statusLabel: null,
+        detail: null,
+        actionKind: null,
+        actionLabel: null,
+        runtimeAction: null,
+        busy: true,
+      });
+    },
+  );
+
   it("offers installation when runtime discovery is missing even if readiness is stale", () => {
     expect(
       providerSettingsLifecyclePresentation(

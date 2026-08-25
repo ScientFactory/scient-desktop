@@ -151,6 +151,11 @@ account from one whose account state is not yet known. The optional `connection`
 supported actions, transient progress, and runtime ownership. Existing `installed`, `auth`,
 `models`, version, update, instance, and driver facts remain canonical.
 
+An enabled provider's first in-memory placeholder is marked `probePending` until its initial status
+probe publishes authoritative runtime and account facts. Lifecycle surfaces show only a passive
+spinner during that handoff instead of deriving `Install`, `Sign in`, or `Manage` from provisional
+values. The marker is process-local and is removed from the persistent provider status cache.
+
 ### Operation ownership and concurrency
 
 The connection and runtime managers are constructed once per server process and shared by every

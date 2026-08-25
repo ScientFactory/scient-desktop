@@ -83,6 +83,17 @@ export function ProviderSettingsLifecycleAction(props: {
   readonly externalUpdateRunning?: boolean | undefined;
 }) {
   const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
+  if (presentation.kind === "checking") {
+    return (
+      <span
+        aria-label={`Checking ${props.displayName} status`}
+        className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground"
+        role="status"
+      >
+        <LoaderIcon aria-hidden className="size-4 animate-spin" />
+      </span>
+    );
+  }
   const primaryAction = resolveProviderSettingsPrimaryAction({
     provider: props.provider,
     presentation,

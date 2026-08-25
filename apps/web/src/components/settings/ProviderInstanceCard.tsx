@@ -424,7 +424,9 @@ export function ProviderInstanceCard({
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const connectionPresentation = providerSettingsLifecyclePresentation(liveProvider, displayName);
   const showConnectionStatus =
-    liveProvider !== undefined && connectionPresentation.kind !== "manual";
+    liveProvider !== undefined &&
+    connectionPresentation.kind !== "manual" &&
+    connectionPresentation.statusLabel !== null;
   const connectionBadgeVariant =
     connectionPresentation.kind === "ready"
       ? "success"

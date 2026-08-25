@@ -53,7 +53,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     PubSub.shutdown,
   );
   const initialSettings = yield* input.getSettings;
-  const initialSnapshot = yield* input.initialSnapshot(initialSettings);
+  const rawInitialSnapshot = yield* input.initialSnapshot(initialSettings);
+  const initialSnapshot = rawInitialSnapshot.enabled
+    ? { ...rawInitialSnapshot, probePending: true as const }
+    : rawInitialSnapshot;
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,

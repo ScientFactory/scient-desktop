@@ -21,17 +21,21 @@ const decodeProviderStatusCache = Schema.decodeUnknownEffect(
 const CLAUDE_AGENT_DRIVER = "claudeAgent";
 
 /**
- * Runtime and connection operations are owned by the current server process.
- * Persisting them can resurrect an operation that no longer exists after a
- * restart, leaving clients permanently stuck on states such as "Removing".
+ * Runtime operations and initial probe placeholders are owned by the current
+ * server process. Persisting them can resurrect work that no longer exists
+ * after a restart, leaving clients permanently stuck in a transient state.
  */
-const withoutTransientOperations = (provider: ServerProvider): ServerProvider => {
-  const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
-  const connection = providerWithoutUpdateState.connection;
-  if (!connection) return providerWithoutUpdateState;
+const withoutTransientProviderState = (provider: ServerProvider): ServerProvider => {
+  const {
+    probePending: _probePending,
+    updateState: _updateState,
+    ...providerWithoutTransientState
+  } = provider;
+  const connection = providerWithoutTransientState.connection;
+  if (!connection) return providerWithoutTransientState;
 
   return {
-    ...providerWithoutUpdateState,
+    ...providerWithoutTransientState,
     connection: {
       ...connection,
       operation: null,
@@ -100,9 +104,13 @@ export const hydrateCachedProvider = (input: {
     return input.fallbackProvider;
   }
 
-  const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
+  const {
+    message: _fallbackMessage,
+    probePending: _fallbackProbePending,
+    ...fallbackWithoutTransientState
+  } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
-    ...fallbackWithoutMessage,
+    ...fallbackWithoutTransientState,
     models: mergeProviderModels(
       input.fallbackProvider,
       input.fallbackProvider.models,
@@ -186,7 +194,7 @@ export const readProviderStatusCache = (filePath: string) =>
           }).pipe(Effect.as(undefined)),
         // Older builds could persist in-flight lifecycle operations. Never
         // hydrate those process-local states into a new server process.
-        onSuccess: (provider) => Effect.succeed(withoutTransientOperations(provider)),
+        onSuccess: (provider) => Effect.succeed(withoutTransientProviderState(provider)),
       }),
     );
   });
@@ -195,7 +203,7 @@ export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
 }) => {
-  const durableProvider = withoutTransientOperations(input.provider);
+  const durableProvider = withoutTransientProviderState(input.provider);
   return writeFileStringAtomically({
     filePath: input.filePath,
     contents: `${JSON.stringify(durableProvider, null, 2)}\n`,

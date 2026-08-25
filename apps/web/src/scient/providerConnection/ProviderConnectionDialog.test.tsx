@@ -258,6 +258,51 @@ describe("ProviderConnectionDialog", () => {
     ["droid", "Droid"],
     ["grok", "Grok"],
   ] as const)(
+    "suppresses provisional %s dialog actions while detection settles",
+    (driver, displayName) => {
+      const markup = renderToStaticMarkup(
+        <ProviderConnectionDialog
+          displayName={displayName}
+          environmentId={EnvironmentId.make("local")}
+          initialRuntimeAction="install"
+          onOpenChange={vi.fn()}
+          open
+          provider={{
+            ...provider,
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+            displayName,
+            installed: false,
+            probePending: true,
+            connection: {
+              ...provider.connection!,
+              runtime: {
+                ...provider.connection!.runtime!,
+                source: "system",
+                actions: ["install"],
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(markup).toContain(`aria-label="Checking ${displayName} status"`);
+      expect(markup).toContain("lucide-loader");
+      expect(markup).not.toContain("Managed runtime actions");
+      expect(markup).not.toContain("confirmation requested");
+      expect(markup).not.toContain(`${displayName} lifecycle surface`);
+      expect(markup).not.toContain(">Install<");
+    },
+  );
+
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+  ] as const)(
     "gates a disabled %s before an explicitly requested runtime action",
     (driver, displayName) => {
       const markup = renderToStaticMarkup(
