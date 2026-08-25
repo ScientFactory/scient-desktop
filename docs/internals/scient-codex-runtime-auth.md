@@ -1,5 +1,8 @@
 # Scient Codex runtime and authentication
 
+> Codex-specific deep dive. Shared lifecycle ownership and action semantics are documented in
+> [Provider lifecycle architecture](./provider-lifecycle.md).
+
 Scient owns the assisted Codex lifecycle around T3's existing Codex driver. T3 remains authoritative
 for provider instances, app-server transport, sessions, model discovery, skills, and agent turns.
 Scient adds runtime selection, managed-runtime actions, authentication supervision, and recovery

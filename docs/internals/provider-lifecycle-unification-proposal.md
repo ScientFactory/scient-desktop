@@ -1,11 +1,13 @@
 # Provider Lifecycle Unification Proposal
 
-> Status: shared architecture proposal and integration plan. Implementation lands through focused
-> child pull requests and remains unreleased until the complete integration branch passes final
-> validation.
-> This is a living proposal, not a fixed implementation mandate. Every decision must be re-evaluated
-> against the code, tests, provider behavior, platform evidence, and user experience during
-> implementation. Update this document whenever evidence shows that a decision should change.
+> Status: historical implementation proposal. Phases 1–5 have landed on the draft integration branch;
+> Phase 6 qualification and final integration review remain open. Current accepted behavior is
+> documented in [Provider lifecycle architecture](./provider-lifecycle.md), with evidence and open
+> questions in the [capability audit](./provider-lifecycle-capability-audit.md).
+>
+> Preserve this document as the rationale and delivery record. Do not use it as a second source of
+> current behavior. Mark it superseded after the final Phase 6 qualification pass and PR #150's
+> integration decision are recorded.
 
 ## Executive summary
 
@@ -132,9 +134,10 @@ ready to release. Partial lifecycle implementation does not land on `main`.
 - Collaborators must not share one mutable checkout or push unrelated work into another owner's
   implementation branch. Coordinate through branch ownership, draft pull requests, and explicit
   dependency notes.
-- No implementation PR may silently reinterpret this proposal. When evidence changes an architectural
-  decision, update this document and the relevant canonical internal documentation in the same PR,
-  recording the reason, affected providers, compatibility impact, and validation required.
+- No implementation PR may silently change the accepted architecture. When evidence changes an
+  architectural decision, update the canonical lifecycle document and capability audit in the same
+  PR, recording the reason, affected providers, compatibility impact, and validation required.
+  Update this proposal only when its historical provenance or delivery status changes.
 - Each provider migration must revalidate and update the companion capability audit. Open findings in
   the audit remain investigation gates, not implicit authorization to add parity features.
 - Keep PR #150 in draft until every planned stage, cross-provider regression suite, required platform
@@ -969,19 +972,19 @@ The documentation must explain:
    the managers, runtime engine, routing tables, update machinery, or visual state model.
 8. **Testing and qualification:** which contract, provider-specific, T3-compatibility, packaged-app,
    platform, and manual lifecycle evidence is required before advertising support.
-9. **Change discipline:** how to revise the architecture and this proposal when implementation evidence
-   reveals a better boundary, while keeping documentation synchronized with the code.
+9. **Change discipline:** how to revise the canonical architecture and evidence audit when
+   implementation evidence reveals a better boundary, while keeping documentation synchronized with
+   the code.
 
 Use tables for ownership and provider differences where they improve scanning, but keep the prose
 focused on behavior and rationale rather than file-by-file narration. Link to provider-specific user
 documentation for installation/account instructions instead of duplicating it internally.
 
-After Phase 6 and the final qualification pass, fold every accepted architectural rule into the
-canonical lifecycle documentation, mark this proposal superseded, and link the canonical document and
-landed implementation pull requests. Preserve this proposal as historical design context rather than
-maintaining it as a second source of current truth. The companion audit should then remain as the
-canonical provider matrix or be folded into that same documentation without losing its evidence and
-provider-specific rationale.
+The canonical lifecycle document now carries the accepted architecture, and the companion audit
+carries evidence status, provider-specific rationale, and open qualification questions. After Phase
+6 and the final qualification pass, recheck both against the integrated implementation, mark this
+proposal superseded, and link the landed implementation pull requests. Preserve this proposal as
+historical design context rather than maintaining it as a second source of current truth.
 
 ## User-experience target
 
