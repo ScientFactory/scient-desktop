@@ -95,13 +95,12 @@ export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps)
 export function ProviderProbePendingSetup(props: { readonly displayName: string }) {
   return (
     <AssistedSetupFrame>
-      <div
-        aria-label={`Checking ${props.displayName} status`}
-        className="flex min-h-8 items-center justify-center text-muted-foreground"
+      <AssistedSetupStatus
+        body="Verifying installation and connection status."
+        icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
         role="status"
-      >
-        <LoaderIcon aria-hidden className="size-5 animate-spin" />
-      </div>
+        title={`Checking ${props.displayName}…`}
+      />
     </AssistedSetupFrame>
   );
 }

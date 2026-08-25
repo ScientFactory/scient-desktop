@@ -114,7 +114,7 @@ function ProbePendingProviderConnectionDialog(props: ProviderConnectionDialogPro
             />
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Checking {props.displayName} installation and sign-in status.
+            Checking {props.displayName} installation and connection status.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

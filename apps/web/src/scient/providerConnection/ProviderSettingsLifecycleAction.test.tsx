@@ -131,19 +131,20 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(render(value)).not.toContain(">Enable<");
   });
 
-  it("renders only an accessible spinner while the enabled provider probe settles", () => {
+  it("renders a compact status while the enabled provider probe settles", () => {
     const markup = render({
       ...provider({ source: "system" }),
       installed: false,
       probePending: true,
     });
 
-    expect(markup).toContain('aria-label="Checking Codex status"');
     expect(markup).toContain("lucide-loader");
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain(">Checking<");
+    expect(markup).toContain("Codex status");
     expect(markup).not.toContain(">Install<");
     expect(markup).not.toContain(">Sign in<");
     expect(markup).not.toContain(">Manage<");
-    expect(markup).not.toContain(">Checking<");
   });
 
   it("keeps Codex browser sign-in direct and routes provider choosers through the dialog", () => {

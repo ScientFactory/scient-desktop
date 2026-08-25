@@ -193,7 +193,7 @@ describe("AssistedProviderSetupHost", () => {
     ["cursor", "Cursor"],
     ["droid", "Droid"],
     ["grok", "Grok"],
-  ] as const)("shows only a spinner while the enabled %s probe settles", (driver, name) => {
+  ] as const)("shows a compact status while the enabled %s probe settles", (driver, name) => {
     controllerFactory.mockClear();
     const markup = renderToStaticMarkup(
       <AssistedProviderSetupHost
@@ -204,10 +204,11 @@ describe("AssistedProviderSetupHost", () => {
       />,
     );
 
-    expect(markup).toContain(`aria-label="Checking ${name} status"`);
+    expect(markup).toContain(`Checking ${name}…`);
+    expect(markup).toContain("Verifying installation and connection status.");
     expect(markup).toContain("lucide-loader");
+    expect(markup).toContain('role="status"');
     expect(markup).not.toContain(`${name} setup`);
-    expect(markup).not.toContain("Checking provider");
     expect(controllerFactory).not.toHaveBeenCalled();
   });
 
