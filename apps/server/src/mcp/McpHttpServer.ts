@@ -24,6 +24,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
+import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -78,8 +80,8 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
         const invocation = yield* registry.resolve(token);
         if (!invocation) {
           // Without this the only symptom of a dead credential is the agent
-          // quietly losing the whole `t3-code` toolkit for the rest of its
-          // session, with nothing on the server to explain why.
+          // quietly losing its provider-scoped MCP capabilities for the rest
+          // of the session, with nothing on the server to explain why.
           yield* Effect.logWarning("rejected MCP request with an unusable credential", {
             reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
           });
@@ -222,6 +224,10 @@ export const ScientSourcesToolkitRegistrationLive = McpServer.toolkit(ScientSour
   Layer.provide(ScientSourcesToolkitHandlersLive),
 );
 
+export const ScientSkillsToolkitRegistrationLive = McpServer.toolkit(ScientSkillsToolkit).pipe(
+  Layer.provide(ScientSkillsToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
   version: packageJson.version,
@@ -232,4 +238,5 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   ScientSourcesToolkitRegistrationLive,
+  ScientSkillsToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

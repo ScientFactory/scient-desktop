@@ -6,6 +6,7 @@ import {
   SCIENT_AWARENESS_DELIVERY,
   SCIENT_CORE_AWARENESS,
   SCIENT_PREVIEW_AWARENESS,
+  SCIENT_SKILLS_AWARENESS,
 } from "./ScientAwareness.ts";
 
 const wordCount = (value: string): number => value.trim().split(/\s+/u).length;
@@ -21,6 +22,16 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).toContain("Do not emit HTML");
     expect(SCIENT_CORE_AWARENESS).toContain("not durable project artifacts");
     expect(SCIENT_CORE_AWARENESS).not.toContain("sources_");
+  });
+
+  it("mentions Scient skills only when exact skill access is granted", () => {
+    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(50);
+    expect(buildScientAwareness(new Set(["skills:read"]))).toBe(
+      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
+    );
+    expect(buildScientAwareness(new Set(["preview", "skills:read"]))).toBe(
+      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_PREVIEW_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
+    );
   });
 
   it("adds compact browser awareness only for an actually granted preview capability", () => {

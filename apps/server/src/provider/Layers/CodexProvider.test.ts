@@ -1,10 +1,45 @@
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+
+import type * as CodexClient from "effect-codex-app-server/client";
 
 import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
+  writeCodexSkillConfig,
 } from "./CodexProvider.ts";
+
+it.effect("uses Codex's native skill configuration method", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ method: string; input: unknown }> = [];
+    const client = {
+      request: (method: string, input: unknown) =>
+        Effect.sync(() => {
+          requests.push({ method, input });
+          return { effectiveEnabled: false };
+        }),
+    } as unknown as CodexClient.CodexAppServerClient["Service"];
+
+    const result = yield* writeCodexSkillConfig(client, {
+      name: "review",
+      path: "/Users/test/.codex/skills/review/SKILL.md",
+      enabled: false,
+    });
+
+    assert.deepStrictEqual(requests, [
+      {
+        method: "skills/config/write",
+        input: {
+          name: "review",
+          path: "/Users/test/.codex/skills/review/SKILL.md",
+          enabled: false,
+        },
+      },
+    ]);
+    assert.deepStrictEqual(result, { effectiveEnabled: false });
+  }),
+);
 
 it("keeps current Codex models out of legacy models", () => {
   assert.deepStrictEqual(

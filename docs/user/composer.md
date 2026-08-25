@@ -21,6 +21,11 @@ same `$name` skill token to your message. The original skill name remains search
 also reports that skill as a native slash command, T3 Code hides the duplicate native entry and keeps
 the `/skill:Skill Name` label.
 
+Scient-managed skills are available from **Settings → Skills** on supported providers. **Agent may
+use** lets the agent select a skill when the request clearly matches it. **Only with $name** keeps the
+skill available only when you add its exact `$name` token. Skills provide instructions; they do not
+add tools or permissions. Changes apply to new or restarted agent sessions.
+
 On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New

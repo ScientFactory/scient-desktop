@@ -48,6 +48,8 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as ScientSkillSession from "./scient/skills/ScientSkillSession.ts";
+import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -300,6 +302,10 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntime.layer),
 );
 
+const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
+  Layer.provideMerge(ScientSkillSession.live),
+);
+
 // `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
 // by looking up the default `ProviderInstance` per driver in the instance
 // registry. Adapter construction itself moved inside each driver's
@@ -309,6 +315,7 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 const ProviderLayerLive = ProviderServiceLive.pipe(
   Layer.provide(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+  Layer.provideMerge(ScientSkillsLayerLive),
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));

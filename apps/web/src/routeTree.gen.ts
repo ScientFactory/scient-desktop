@@ -17,6 +17,7 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsVoiceRouteImport } from './routes/settings.voice'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsScientificComputingRouteImport } from './routes/settings.scientific-computing'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
@@ -30,6 +31,7 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
+import { Route as SettingsSkillsExternalRouteImport } from './routes/settings.skills_.external'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -70,6 +72,11 @@ const SettingsVoiceRoute = SettingsVoiceRouteImport.update({
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsScientificComputingRoute =
@@ -138,6 +145,11 @@ const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
   path: '/getting-started',
   getParentRoute: () => ChatRoute,
 } as any)
+const SettingsSkillsExternalRoute = SettingsSkillsExternalRouteImport.update({
+  id: '/skills_/external',
+  path: '/skills/external',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -169,10 +181,12 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scientific-computing': typeof SettingsScientificComputingRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/skills/external': typeof SettingsSkillsExternalRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -192,11 +206,13 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scientific-computing': typeof SettingsScientificComputingRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/skills/external': typeof SettingsSkillsExternalRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -218,11 +234,13 @@ export interface FileRoutesById {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scientific-computing': typeof SettingsScientificComputingRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/settings/skills_/external': typeof SettingsSkillsExternalRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -245,10 +263,12 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/scientific-computing'
+    | '/settings/skills'
     | '/settings/source-control'
     | '/settings/voice'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/settings/skills/external'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -268,11 +288,13 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/scientific-computing'
+    | '/settings/skills'
     | '/settings/source-control'
     | '/settings/voice'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/settings/skills/external'
   id:
     | '__root__'
     | '/_chat'
@@ -293,11 +315,13 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/scientific-computing'
+    | '/settings/skills'
     | '/settings/source-control'
     | '/settings/voice'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/settings/skills_/external'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -366,6 +390,13 @@ declare module '@tanstack/react-router' {
       path: '/source-control'
       fullPath: '/settings/source-control'
       preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/scientific-computing': {
@@ -459,6 +490,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatGettingStartedRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/skills_/external': {
+      id: '/settings/skills_/external'
+      path: '/skills/external'
+      fullPath: '/settings/skills/external'
+      preLoaderRoute: typeof SettingsSkillsExternalRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -504,8 +542,10 @@ interface SettingsRouteChildren {
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsScientificComputingRoute: typeof SettingsScientificComputingRoute
+  SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsVoiceRoute: typeof SettingsVoiceRoute
+  SettingsSkillsExternalRoute: typeof SettingsSkillsExternalRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -518,8 +558,10 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsScientificComputingRoute: SettingsScientificComputingRoute,
+  SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsVoiceRoute: SettingsVoiceRoute,
+  SettingsSkillsExternalRoute: SettingsSkillsExternalRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

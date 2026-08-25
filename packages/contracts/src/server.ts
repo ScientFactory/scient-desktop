@@ -103,6 +103,8 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  /** Provider-owned capability. Absent means Scient must render this skill read-only. */
+  canSetEnabled: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

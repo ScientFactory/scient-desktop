@@ -29,7 +29,9 @@ export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
-  return showSkillsInSlashMenu ? skills.filter((skill) => skill.enabled) : [];
+  return showSkillsInSlashMenu
+    ? skills.filter((skill) => skill.enabled && isGlobalProviderSkill(skill))
+    : [];
 }
 
 export function getProviderSlashCommandsForSlashMenu(
@@ -44,23 +46,36 @@ export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {
   const normalizedPath = normalizePathSeparators(skill.path);
+  const normalizedScope = skill.scope?.trim().toLowerCase();
+  // A provider's explicit project scope is authoritative even when the path
+  // resembles a plugin or personal root.
+  if (normalizedScope === "repo" || normalizedScope === "repository") {
+    return "repo";
+  }
+  if (
+    normalizedScope === "project" ||
+    normalizedScope === "workspace" ||
+    normalizedScope === "local"
+  ) {
+    return "project";
+  }
+  // SCIENT-FORK: built-in Scient releases are app-owned, not provider or user files.
+  if (normalizedPath.startsWith("scient://skills/")) {
+    return "app";
+  }
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
     return "app";
   }
-
-  const normalizedScope = skill.scope?.trim().toLowerCase();
   switch (normalizedScope) {
-    case "repo":
-    case "repository":
-      return "repo";
-    case "project":
-    case "workspace":
-    case "local":
-      return "project";
+    case "app":
+    case "builtin":
+    case "bundled":
+      return "app";
     case "user":
     case "personal":
       return "personal";
     case "system":
+    case "admin":
       return "system";
     case undefined:
     case "":
@@ -68,4 +83,9 @@ export function resolveProviderSkillSourceKind(
     default:
       return "other";
   }
+}
+
+export function isGlobalProviderSkill(skill: Pick<ServerProviderSkill, "path" | "scope">): boolean {
+  const source = resolveProviderSkillSourceKind(skill);
+  return source !== "repo" && source !== "project";
 }

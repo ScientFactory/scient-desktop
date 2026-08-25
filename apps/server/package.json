@@ -39,6 +39,7 @@
     "@scientfactory/pdf-validation": "workspace:*",
     "@scientfactory/project-init": "workspace:*",
     "@scientfactory/provider-runtime": "workspace:*",
+    "@scientfactory/scient-skills": "workspace:*",
     "@scientfactory/scient-sources": "workspace:*",
     "effect": "catalog:",
     "fast-xml-parser": "5.8.0",

@@ -925,6 +925,22 @@ function extractWorkLogToolLifecycleStatus(
   return undefined;
 }
 
+function scientSkillUsageLabel(itemValue: unknown): string | null {
+  const item = asRecord(itemValue);
+  if (asTrimmedString(item?.tool) !== "scient_skill_load") return null;
+  const args = asRecord(item?.arguments);
+  const releaseKey = asTrimmedString(args?.releaseKey);
+  if (!releaseKey) return null;
+  const id = releaseKey.split("@")[0]?.split(".").at(-1);
+  if (!id) return null;
+  const displayName = id
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+  return displayName ? `Used ${displayName}` : null;
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
   if (cachedEntry) {
@@ -996,6 +1012,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     const data = asRecord(payload?.data);
     if (data?.item !== undefined) {
       entry.toolData = data.item;
+      const skillUsageLabel = scientSkillUsageLabel(data.item);
+      if (skillUsageLabel) {
+        entry.label = skillUsageLabel;
+        entry.toolTitle = skillUsageLabel;
+      }
     }
   }
   if (itemType) {

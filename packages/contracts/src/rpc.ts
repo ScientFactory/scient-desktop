@@ -285,6 +285,14 @@ import {
   ComputeSubmitProjectExecutionInput,
   ComputeVerifyRuntimeInput,
 } from "./scientCompute.ts";
+import {
+  ProviderSkillManagementError,
+  ProviderSkillSetEnabledInput,
+  ProviderSkillSetEnabledResult,
+  ScientSkillInventory,
+  ScientSkillManagementError,
+  ScientSkillSetUserActivationInput,
+} from "./scientSkills.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -325,6 +333,11 @@ export const WS_METHODS = {
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
   subscribeComputeSessions: "subscribe.computeSessions",
+
+  // Scient-owned reusable skills
+  skillsList: "skills.list",
+  skillsSetUserActivation: "skills.setUserActivation",
+  providerSkillsSetEnabled: "providerSkills.setEnabled",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -585,6 +598,24 @@ export const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTrans
   payload: VoiceTranscriptCorrectionRequest,
   success: VoiceTranscriptCorrectionResult,
   error: Schema.Union([VoiceTranscriptCorrectionError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
+  payload: Schema.Struct({}),
+  success: ScientSkillInventory,
+  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsSetUserActivationRpc = Rpc.make(WS_METHODS.skillsSetUserActivation, {
+  payload: ScientSkillSetUserActivationInput,
+  success: ScientSkillInventory,
+  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderSkillsSetEnabledRpc = Rpc.make(WS_METHODS.providerSkillsSetEnabled, {
+  payload: ProviderSkillSetEnabledInput,
+  success: ProviderSkillSetEnabledResult,
+  error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1424,6 +1455,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsVoiceCorrectTranscriptRpc,
+  WsSkillsListRpc,
+  WsSkillsSetUserActivationRpc,
+  WsProviderSkillsSetEnabledRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

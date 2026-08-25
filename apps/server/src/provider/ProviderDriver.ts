@@ -95,6 +95,21 @@ export interface ProviderInstance {
   readonly connectionActions?: ProviderConnectionActions | undefined;
   /** Scient-owned optional app-private runtime seam; absent drivers keep pure T3 behavior. */
   readonly managedRuntimeActions?: ProviderManagedRuntimeActions | undefined;
+  /** Optional provider-owned native skill management seam. */
+  readonly skillActions?: ProviderSkillActions | undefined;
+}
+
+export interface ProviderSkillActionFailure {
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+export interface ProviderSkillActions {
+  readonly setEnabled: (input: {
+    readonly name: string;
+    readonly path: string;
+    readonly enabled: boolean;
+  }) => Effect.Effect<{ readonly effectiveEnabled: boolean }, ProviderSkillActionFailure>;
 }
 
 export interface ProviderConnectionActionFailure {

@@ -35,6 +35,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
+import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
+import { scientSkillsInventory } from "../../scient/skills/scientSkillsState.ts";
+import { useEnvironmentQuery } from "../../state/query.ts";
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
 import {
   ProviderLifecycleSetupSurface,
@@ -972,6 +975,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
+  const scientSkills = useEnvironmentQuery(
+    scientSkillsInventory({ environmentId, input: {} }),
+  ).data;
+  const effectiveSelectedProviderSkills = useMemo(
+    () =>
+      mergeEffectiveProviderSkills({
+        provider: selectedProvider,
+        providerSkills: selectedProviderStatus?.skills ?? [],
+        inventory: scientSkills,
+      }),
+    [scientSkills, selectedProvider, selectedProviderStatus?.skills],
+  );
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
@@ -1216,7 +1231,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
-        selectedProviderStatus?.skills ?? [],
+        effectiveSelectedProviderSkills,
         settings.showSkillsInSlashMenu,
       );
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
@@ -1250,7 +1265,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
+      return searchProviderSkills(effectiveSelectedProviderSkills, composerTrigger.query).map(
         (skill) => ({
           id: `skill:${selectedProvider}:${skill.name}`,
           type: "skill" as const,
@@ -1270,6 +1285,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeUiEnabled,
     selectedProvider,
     selectedProviderStatus,
+    effectiveSelectedProviderSkills,
     settings.showSkillsInSlashMenu,
     workspaceEntries.entries,
   ]);
