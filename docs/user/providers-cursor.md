@@ -18,12 +18,14 @@ delete a custom or system Cursor installation. If a healthy system runtime is ac
 
 ## Sign in
 
-Choose **Sign in to Cursor**. Scient starts Cursor in its documented no-open-browser mode, validates
-the official Cursor authorization URL, and opens that page once. While the operation is active,
+Choose **Sign in to Cursor**. Scient asks Cursor not to open a browser itself, validates the official
+Cursor authorization URL, and opens that page once. While the operation is active,
 **Reopen Cursor sign-in** can open the same validated page again.
 
 Cursor's flow does not accept a code pasted into Scient. After the browser flow finishes, Scient uses
-a fresh Cursor account probe before reporting the provider as connected and ready.
+a fresh Cursor account probe before reporting the provider as connected and ready. If Cursor
+finishes before returning a page, Scient verifies the completed account directly instead of asking
+the user to sign in again.
 
 When an API endpoint, API key, or token configuration owns authentication, Scient does not show an
 irrelevant browser sign-in or sign-out action.

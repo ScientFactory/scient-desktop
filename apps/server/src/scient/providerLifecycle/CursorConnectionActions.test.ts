@@ -27,6 +27,7 @@ function makeHandle(input: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly all?: string;
+  readonly allStream?: Stream.Stream<Uint8Array>;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
   readonly onKill?: () => void;
 }) {
@@ -39,7 +40,7 @@ function makeHandle(input: {
     stdin: Sink.drain,
     stdout: Stream.encodeText(Stream.make(input.stdout ?? "")),
     stderr: Stream.encodeText(Stream.make(input.stderr ?? "")),
-    all: Stream.encodeText(Stream.make(input.all ?? "")),
+    all: input.allStream ?? Stream.encodeText(Stream.make(input.all ?? "")),
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
   });
@@ -234,6 +235,170 @@ describe("Cursor connection actions", () => {
         }
         assert.strictEqual(spawned[0]?.options.env?.NO_OPEN_BROWSER, "1");
         assert.strictEqual(spawned[1]?.options.env?.NO_OPEN_BROWSER, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not let process exit outrun the final authorization URL", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseOutput = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            assert.ok(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("Expected a standard command");
+            }
+            if (command.args.includes("login")) {
+              return makeHandle({
+                allStream: Stream.unwrap(
+                  Deferred.await(releaseOutput).pipe(
+                    Effect.as(
+                      Stream.encodeText(
+                        Stream.make("Open https://cursor.com/loginDeepControl?challenge=scient\n"),
+                      ),
+                    ),
+                  ),
+                ),
+                exitCode: Deferred.succeed(releaseOutput, undefined).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(1)),
+                ),
+              });
+            }
+            return yield* Effect.die(`Unexpected Cursor command: ${command.args.join(" ")}`);
+          }),
+        );
+        const actions = yield* makeCursorConnectionActions(
+          cursorSettings,
+          { HOME: "/Users/test" },
+          spawner,
+        );
+
+        const attempt = yield* actions.start("cursor_browser");
+
+        assert.strictEqual(
+          attempt.authorizationUrl,
+          "https://cursor.com/loginDeepControl?challenge=scient",
+        );
+        const failure = yield* attempt.waitForCompletion.pipe(Effect.flip);
+        assert.match(failure.message, /exit code 1/iu);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("verifies a login that completes before Cursor emits an authorization URL", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const commands = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            assert.ok(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("Expected a standard command");
+            }
+            yield* Ref.update(commands, (current) => [...current, command.args]);
+            if (command.args.includes("login")) {
+              return makeHandle({ all: "Already authenticated.\n" });
+            }
+            if (command.args.includes("about")) {
+              return makeHandle({
+                stdout: encodeUnknownJson({
+                  cliVersion: "2026.08.11-e8db854",
+                  userEmail: "scientist@example.test",
+                  subscriptionTier: "Pro",
+                }),
+              });
+            }
+            return yield* Effect.die(`Unexpected Cursor command: ${command.args.join(" ")}`);
+          }),
+        );
+        const actions = yield* makeCursorConnectionActions(
+          cursorSettings,
+          { HOME: "/Users/test" },
+          spawner,
+        );
+
+        const attempt = yield* actions.start("cursor_browser");
+        assert.strictEqual(attempt.initialStatus, "verifying");
+        assert.strictEqual(attempt.authorizationUrl, undefined);
+        assert.strictEqual(attempt.authorizationUrlKind, undefined);
+        yield* attempt.waitForCompletion;
+
+        assert.deepStrictEqual(yield* Ref.get(commands), [
+          ["login"],
+          ["about", "--format", "json"],
+        ]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a completed login when Cursor still reports no account", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            assert.ok(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("Expected a standard command");
+            }
+            if (command.args.includes("login")) {
+              return makeHandle({ all: "Login process finished.\n" });
+            }
+            if (command.args.includes("about")) {
+              return makeHandle({
+                stdout: encodeUnknownJson({
+                  cliVersion: "2026.08.11-e8db854",
+                  userEmail: null,
+                }),
+              });
+            }
+            return yield* Effect.die(`Unexpected Cursor command: ${command.args.join(" ")}`);
+          }),
+        );
+        const actions = yield* makeCursorConnectionActions(
+          cursorSettings,
+          { HOME: "/Users/test" },
+          spawner,
+        );
+
+        const attempt = yield* actions.start("cursor_browser");
+        assert.strictEqual(attempt.initialStatus, "verifying");
+        const failure = yield* attempt.waitForCompletion.pipe(Effect.flip);
+        assert.match(failure.message, /did not report a connected account/iu);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports bounded sanitized Cursor output when login exits before a secure URL", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeHandle({
+              all:
+                "Error:\u202e proxy connection failed token=very-secret Bearer bearer-secret " +
+                "https://status.example.test/private?challenge=hidden\n",
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(17)),
+            }),
+          ),
+        );
+        const actions = yield* makeCursorConnectionActions(
+          cursorSettings,
+          { HOME: "/Users/test" },
+          spawner,
+        );
+
+        const failure = yield* actions.start("cursor_browser").pipe(Effect.flip);
+
+        assert.match(failure.message, /proxy connection failed/iu);
+        assert.match(failure.message, /token=\[redacted\]/iu);
+        assert.match(failure.message, /Bearer \[redacted\]/u);
+        expect(failure.message).not.toMatch(/very-secret|bearer-secret|hidden|https?:\/\//iu);
+        assert.deepStrictEqual(failure.cause, {
+          exitCode: 17,
+          providerMessage:
+            "proxy connection failed token=[redacted] Bearer [redacted] [secure sign-in URL]",
+        });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
