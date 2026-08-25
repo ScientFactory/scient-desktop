@@ -1185,6 +1185,34 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolData).toEqual(item);
   });
 
+  it("shows a concise work-log label when an agent loads a Scient skill", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "scient_skill_load",
+      arguments: {
+        releaseKey: `scient.workspace-readiness-review@0.1.0#sha256:${"a".repeat(64)}`,
+      },
+      status: "completed",
+    };
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "scient-skill-loaded",
+        kind: "tool.completed",
+        summary: "t3-code · scient_skill_load",
+        payload: {
+          itemType: "mcp_tool_call",
+          title: "Load a Scient skill",
+          data: { item },
+        },
+      }),
+    ]);
+
+    expect(entry?.label).toBe("Used Workspace Readiness Review");
+    expect(entry?.toolTitle).toBe("Used Workspace Readiness Review");
+    expect(entry?.toolData).toEqual(item);
+  });
+
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
       type: "mcpToolCall",

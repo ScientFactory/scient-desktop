@@ -104,6 +104,8 @@ import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRunt
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
+import * as ProviderSkillManagement from "./scient/skills/ProviderSkillManagement.ts";
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
 import {
   prepareEnvironmentFileOpen,
@@ -556,6 +558,9 @@ const makeWsRpcLayer = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const analysis = yield* AnalysisService.AnalysisService;
+      const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
+      const providerSkillManagement =
+        ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
@@ -1671,6 +1676,12 @@ const makeWsRpcLayer = (
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.providerSkillsSetEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerSkillsSetEnabled,
+            providerSkillManagement.setEnabled(input),
+            { "rpc.aggregate": "skills" },
+          ),
         [WS_METHODS.voiceCorrectTranscript]: (input) =>
           observeRpcEffect(
             WS_METHODS.voiceCorrectTranscript,
@@ -1809,6 +1820,16 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.skillsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.skillsList, scientSkillManagement.list, {
+            "rpc.aggregate": "skills",
+          }),
+        [WS_METHODS.skillsSetUserActivation]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsSetUserActivation,
+            scientSkillManagement.setUserActivation(input),
+            { "rpc.aggregate": "skills" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

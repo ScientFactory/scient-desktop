@@ -637,6 +637,13 @@ export const ProviderRegistryLive = Layer.effect(
       return instance?.managedRuntimeActions;
     });
 
+    const getProviderSkillActionsForInstance = Effect.fn("getProviderSkillActionsForInstance")(
+      function* (instanceId: ProviderInstanceId) {
+        const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+        return instance?.skillActions;
+      },
+    );
+
     const getVoiceTranscriptCorrectionForInstance = Effect.fn(
       "getVoiceTranscriptCorrectionForInstance",
     )(function* (instanceId: ProviderInstanceId) {
@@ -939,6 +946,7 @@ export const ProviderRegistryLive = Layer.effect(
       getProviderMaintenanceCapabilitiesForInstance,
       getProviderConnectionActionsForInstance,
       getProviderManagedRuntimeActionsForInstance,
+      getProviderSkillActionsForInstance,
       getVoiceTranscriptCorrectionForInstance,
       stopProviderSessions,
       setProviderMaintenanceActionState,

@@ -7,7 +7,20 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "sources:read" | "sources:write";
+export type McpCapability = "preview" | "skills:read" | "sources:read" | "sources:write";
+
+export interface McpScientSkillDescriptor {
+  readonly releaseKey: string;
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly invocationPolicy: "automatic" | "explicit";
+}
+
+export interface McpScientSkillScope {
+  readonly releaseKeys: ReadonlySet<string>;
+  readonly skills: ReadonlyArray<McpScientSkillDescriptor>;
+}
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -15,6 +28,7 @@ export interface McpInvocationScope {
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
+  readonly skillScope?: McpScientSkillScope;
   readonly issuedAt: number;
 }
 

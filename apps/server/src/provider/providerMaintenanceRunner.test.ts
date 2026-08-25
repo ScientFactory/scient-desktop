@@ -198,6 +198,7 @@ function makeRegistry(
         Effect.succeed(lifecycleFor(provider)),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),

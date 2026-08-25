@@ -14,7 +14,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
-  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -60,6 +59,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 
@@ -2122,11 +2122,28 @@ validation.layer("ProviderServiceLive validation", (it) => {
 describe("agent browser access", () => {
   const revokedThreads: Array<ThreadId> = [];
 
-  const startSessionWith = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
+  const startSessionWith = (
+    enableAgentBrowserAccess: boolean,
+    threadId: ThreadId,
+    skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
+      delivery: "none",
+      releaseKeys: new Set(),
+      skills: [],
+      diagnostics: [],
+    },
+    sessionCwd?: string,
+    observeSkillResolution?: (
+      input: Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0],
+    ) => void,
+  ) =>
     Effect.gen(function* () {
       const issued: Array<{
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
+        readonly skillScope?: {
+          readonly releaseKeys: ReadonlySet<string>;
+          readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
+        };
       }> = [];
       const codex = makeFakeCodexAdapter();
       const providerAdapterLayer = Layer.succeed(
@@ -2145,6 +2162,14 @@ describe("agent browser access", () => {
             issued.push({
               threadId: request.threadId,
               capabilities: new Set(request.capabilities),
+              ...(request.skillScope
+                ? {
+                    skillScope: {
+                      releaseKeys: new Set(request.skillScope.releaseKeys),
+                      skills: request.skillScope.skills.map((skill) => ({ ...skill })),
+                    },
+                  }
+                : {}),
             });
             return undefined;
           }),
@@ -2153,6 +2178,18 @@ describe("agent browser access", () => {
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableAgentBrowserAccess })),
+        Layer.provide(
+          Layer.succeed(
+            ScientSkillSession.ScientSkillSessionPlanner,
+            ScientSkillSession.ScientSkillSessionPlanner.of({
+              resolve: (input) =>
+                Effect.sync(() => {
+                  observeSkillResolution?.(input);
+                  return skillPlan;
+                }),
+            }),
+          ),
+        ),
         Layer.provide(serverConfigTestLayer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
@@ -2170,34 +2207,151 @@ describe("agent browser access", () => {
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
+          ...(sessionCwd ? { cwd: sessionCwd } : {}),
         });
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
     });
 
-  // Credential issuance is the observable that matters: it is the only place a
-  // credential is minted, and `/mcp` accepts nothing else, so withholding it is
-  // what actually denies every provider and external MCP client.
-  it.effect("requests no MCP credential when agent browser access is off", () =>
+  it.effect("re-resolves and replaces the exact visible skill scope on every turn", () =>
     Effect.gen(function* () {
-      const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
+      const threadId = asThreadId("thread-dynamic-skills");
+      const automatic = {
+        releaseKey: "scient.review@0.1.0#sha256:automatic",
+        id: "scient.review",
+        name: "review",
+        description: "Review the workspace.",
+        invocationPolicy: "automatic" as const,
+      };
+      const explicit = {
+        releaseKey: "scient.improve@0.1.0#sha256:explicit",
+        id: "scient.improve",
+        name: "improve",
+        description: "Improve the workspace.",
+        invocationPolicy: "explicit" as const,
+      };
+      let skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
+        delivery: "mcp",
+        projectRoot: "/tmp/dynamic-skills",
+        releaseKeys: new Set([automatic.releaseKey, explicit.releaseKey]),
+        skills: [automatic, explicit],
+        diagnostics: [],
+      };
+      const resolved: Array<
+        Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
+      > = [];
+      const replaced: Array<{
+        readonly releaseKeys: ReadonlySet<string>;
+        readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
+      }> = [];
+      const codex = makeFakeCodexAdapter();
+      const providerAdapterLayer = Layer.succeed(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+      );
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const providerLayer = makeProviderServiceLive({
+        issueMcpCredential: () => Effect.succeed(undefined),
+        replaceMcpSkillScope: (_threadId, scope) =>
+          Effect.sync(() => {
+            replaced.push({
+              releaseKeys: new Set(scope.releaseKeys),
+              skills: scope.skills.map((skill) => ({ ...skill })),
+            });
+          }),
+      }).pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+        Layer.provide(
+          Layer.succeed(
+            ScientSkillSession.ScientSkillSessionPlanner,
+            ScientSkillSession.ScientSkillSessionPlanner.of({
+              resolve: (input) =>
+                Effect.sync(() => {
+                  resolved.push(input);
+                  return skillPlan;
+                }),
+            }),
+          ),
+        ),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
 
-      assert.deepEqual(issued, []);
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/dynamic-skills",
+          runtimeMode: "full-access",
+        });
+        yield* provider.sendTurn({ threadId, input: "Is this workspace organized?" });
+
+        skillPlan = {
+          delivery: "mcp",
+          projectRoot: "/tmp/dynamic-skills",
+          releaseKeys: new Set([explicit.releaseKey]),
+          skills: [explicit],
+          diagnostics: [],
+        };
+        yield* provider.sendTurn({ threadId, input: "Use $improve carefully." });
+        yield* provider.sendTurn({ threadId, input: "What changed?" });
+      }).pipe(Effect.provide(providerLayer));
+
+      assert.equal(codex.startSession.mock.calls.length, 1);
+      assert.deepEqual(
+        resolved,
+        Array.from({ length: 3 }, () => ({
+          provider: CODEX_DRIVER,
+          projectRoot: "/tmp/dynamic-skills",
+        })),
+      );
+      assert.deepEqual(
+        replaced.map((scope) => scope.releaseKeys),
+        [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
+      );
+      const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
+      assert.include(sent[0] ?? "", automatic.releaseKey);
+      assert.notInclude(sent[0] ?? "", explicit.releaseKey);
+      assert.include(sent[1] ?? "", explicit.releaseKey);
+      assert.equal(sent[2], "What changed?");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("revokes an already-issued credential when access is off", () =>
+  it.effect("keeps an empty skill transport available when browser access is off", () =>
+    Effect.gen(function* () {
+      const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
+
+      assert.deepEqual(issued, [
+        {
+          threadId: asThreadId("thread-browser-off"),
+          capabilities: new Set(["skills:read"]),
+          skillScope: { releaseKeys: new Set<string>(), skills: [] },
+        },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not revoke the stable skill transport when browser access is off", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-revoke");
       revokedThreads.length = 0;
 
       yield* startSessionWith(false, threadId);
 
-      // Clearing the in-memory map is not enough: a token issued before the
-      // toggle flipped stays valid against `/mcp` for its whole liveness
-      // window, and later turns refresh it.
-      assert.deepEqual(revokedThreads, [threadId]);
+      assert.deepEqual(revokedThreads, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -2210,9 +2364,55 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         {
           threadId,
-          capabilities: new Set(["preview", "sources:read", "sources:write"]),
+          capabilities: new Set(["preview", "sources:read", "sources:write", "skills:read"]),
+          skillScope: { releaseKeys: new Set<string>(), skills: [] },
         },
       ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not expose active releases before the first turn snapshot", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-skills-only");
+      const releaseKeys = new Set(["scient.review@0.1.0#sha256:exact"]);
+      const skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill> = [
+        {
+          releaseKey: "scient.review@0.1.0#sha256:exact",
+          id: "scient.review",
+          name: "review",
+          description: "Review the workspace.",
+          invocationPolicy: "automatic",
+        },
+      ];
+      const skillResolutionInputs: Array<
+        Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
+      > = [];
+
+      const issued = yield* startSessionWith(
+        false,
+        threadId,
+        {
+          delivery: "mcp",
+          projectRoot: "/tmp/scient-project",
+          releaseKeys,
+          skills,
+          diagnostics: [],
+        },
+        "/tmp/scient-project",
+        (input) => void skillResolutionInputs.push(input),
+      );
+
+      assert.deepEqual(issued, [
+        {
+          threadId,
+          capabilities: new Set(["skills:read"]),
+          skillScope: {
+            releaseKeys: new Set<string>(),
+            skills: [],
+          },
+        },
+      ]);
+      assert.deepEqual(skillResolutionInputs, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

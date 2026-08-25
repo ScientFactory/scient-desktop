@@ -256,7 +256,22 @@ function trimOptional(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-function flattenOpenCodeSkills(input: OpenCodeInventory): ReadonlyArray<ServerProviderSkill> {
+function isSkillInsideWorkspace(cwd: string, candidate: string): boolean {
+  const normalizedCandidate = candidate.replaceAll("\\", "/");
+  if (!normalizedCandidate.startsWith("/") && !/^[A-Za-z]:\//.test(normalizedCandidate)) {
+    return true;
+  }
+  const normalizedRoot = cwd.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  const normalizedAbsolute = normalizedCandidate.toLowerCase();
+  return (
+    normalizedAbsolute === normalizedRoot || normalizedAbsolute.startsWith(`${normalizedRoot}/`)
+  );
+}
+
+function flattenOpenCodeSkills(
+  input: OpenCodeInventory,
+  cwd: string,
+): ReadonlyArray<ServerProviderSkill> {
   const skills: ServerProviderSkill[] = [];
   for (const skill of input.skills ?? []) {
     const name = trimOptional(skill.name);
@@ -269,6 +284,7 @@ function flattenOpenCodeSkills(input: OpenCodeInventory): ReadonlyArray<ServerPr
     skills.push({
       name,
       path,
+      scope: isSkillInsideWorkspace(cwd, path) ? "project" : "user",
       enabled: true,
       ...(description ? { description, shortDescription: description } : {}),
     });
@@ -457,7 +473,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = flattenOpenCodeSkills(inventoryExit.value);
+  const skills = flattenOpenCodeSkills(inventoryExit.value, cwd);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,

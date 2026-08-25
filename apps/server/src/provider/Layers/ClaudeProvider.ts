@@ -45,7 +45,7 @@ import {
   hasExternalClaudeAccountConfiguration,
 } from "../Drivers/ClaudeAuthStatus.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { discoverClaudeSkills, mergeClaudeReportedSkills } from "../Drivers/ClaudeSkills.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -587,6 +587,7 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const CLAUDE_SKILL_RELOAD_TIMEOUT_MS = 5_000;
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -646,7 +647,24 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly skills?: ReadonlyArray<ServerProviderSlashCommand>;
 };
+
+async function reloadClaudeSkills(query: {
+  readonly reloadSkills: () => Promise<{ readonly skills: ReadonlyArray<ClaudeSlashCommand> }>;
+}): Promise<ReadonlyArray<ClaudeSlashCommand>> {
+  const timeoutSignal = AbortSignal.timeout(CLAUDE_SKILL_RELOAD_TIMEOUT_MS);
+  try {
+    return await Promise.race([
+      query.reloadSkills().then((result) => result.skills),
+      new Promise<ReadonlyArray<ClaudeSlashCommand>>((resolve) => {
+        timeoutSignal.addEventListener("abort", () => resolve([]), { once: true });
+      }),
+    ]);
+  } catch {
+    return [];
+  }
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -761,6 +779,7 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
+      const reportedSkills = await reloadClaudeSkills(q);
       const account = init.account as
         | {
             readonly email?: string;
@@ -775,6 +794,7 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        skills: parseClaudeInitializationCommands(reportedSkills),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -985,7 +1005,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  const discoveredSkills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  const skills = mergeClaudeReportedSkills(discoveredSkills, capabilities?.skills ?? []);
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 

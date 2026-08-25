@@ -65,6 +65,7 @@ import {
 import { makeAntigravityManagedRuntimeResolution } from "../../scient/providerLifecycle/AntigravityManagedRuntimeActions.ts";
 import { makeAntigravityVoiceTranscriptCorrection } from "../../scient/voice/AntigravityVoiceTranscriptCorrection.ts";
 import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
+import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
 
 const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
 
@@ -196,8 +197,16 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         ptyAdapter,
         makeAntigravityLocalCredentialStore(processEnv, fileSystem, path, spawner, platform),
       ).pipe(Effect.map((actions) => withAntigravitySessionShutdown(actions, adapter.stopAll())));
-      const checkProvider = checkAntigravityProviderStatus(effectiveConfig, processEnv).pipe(
-        Effect.map(stampIdentity),
+      const checkProvider = Effect.all(
+        {
+          snapshot: checkAntigravityProviderStatus(effectiveConfig, processEnv),
+          skills: discoverAntigravitySkills(processEnv),
+        },
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.map(({ snapshot: checkedSnapshot, skills }) =>
+          stampIdentity({ ...checkedSnapshot, skills }),
+        ),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
