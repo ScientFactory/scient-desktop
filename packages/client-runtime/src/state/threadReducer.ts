@@ -226,6 +226,9 @@ export function applyThreadDetailEvent(
             ? { workspaceRoot: event.payload.workspaceRoot }
             : {}),
           // SCIENT-FORK:END
+          ...(event.payload.linkedPullRequest !== undefined
+            ? { linkedPullRequest: event.payload.linkedPullRequest }
+            : {}),
           updatedAt: event.payload.updatedAt,
         },
       };

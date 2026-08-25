@@ -465,6 +465,9 @@ export function projectEvent(
               ? { workspaceRoot: payload.workspaceRoot }
               : {}),
             // SCIENT-FORK:END
+            ...(payload.linkedPullRequest !== undefined
+              ? { linkedPullRequest: payload.linkedPullRequest }
+              : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
