@@ -544,7 +544,8 @@ export function CursorInlineSetup(props: {
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
-  const canInstallManaged = runtime?.actions.includes("install") ?? false;
+  const canInstallManaged =
+    !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
   const useManaged = () =>
     run(
       "install",

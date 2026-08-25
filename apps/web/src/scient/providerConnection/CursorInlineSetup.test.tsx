@@ -73,9 +73,14 @@ function controller(): ProviderLifecycleController {
   };
 }
 
-function render(value: ServerProvider): string {
+function render(value: ServerProvider, managedRuntimePresentedExternally = false): string {
   return renderToStaticMarkup(
-    <CursorInlineSetup controller={controller()} displayName="Cursor" provider={value} />,
+    <CursorInlineSetup
+      controller={controller()}
+      displayName="Cursor"
+      managedRuntimePresentedExternally={managedRuntimePresentedExternally}
+      provider={value}
+    />,
   );
 }
 
@@ -90,6 +95,11 @@ describe("CursorInlineSetup", () => {
     expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("device code");
     expect(markup).not.toContain("Paste code");
+  });
+
+  it("does not duplicate a managed switch owned by the shared management surface", () => {
+    expect(render(provider())).toContain("Use Scient-managed Cursor");
+    expect(render(provider(), true)).not.toContain("Use Scient-managed Cursor");
   });
 
   it("uses the Cursor mark for composer installation while preserving dialog status styling", () => {
