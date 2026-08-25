@@ -250,6 +250,11 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
             description: "This incomplete SDK row should be skipped.",
             location: "",
           },
+          {
+            name: "project-review",
+            description: "Review this workspace.",
+            location: `${process.cwd()}/.agents/skills/project-review/SKILL.md`,
+          },
         ],
       };
 
@@ -260,6 +265,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           name: skill.name,
           path: skill.path,
           enabled: skill.enabled,
+          scope: skill.scope,
           shortDescription: skill.shortDescription,
         })),
         [
@@ -267,13 +273,22 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
             name: "openclaw-review",
             path: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
             enabled: true,
+            scope: "user",
             shortDescription: "Review OpenClaw workflow changes.",
           },
           {
             name: "openclaw-triage",
             path: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
             enabled: true,
+            scope: "user",
             shortDescription: "Triage OpenClaw routing issues.",
+          },
+          {
+            name: "project-review",
+            path: `${process.cwd()}/.agents/skills/project-review/SKILL.md`,
+            enabled: true,
+            scope: "project",
+            shortDescription: "Review this workspace.",
           },
         ],
       );

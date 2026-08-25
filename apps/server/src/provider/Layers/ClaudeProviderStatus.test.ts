@@ -48,6 +48,7 @@ it.layer(NodeServices.layer)("Claude provider account status", (it) => {
             tokenSource: "oauth",
             apiProvider: "firstParty",
             slashCommands: [],
+            skills: [],
           });
         },
         process.env,
@@ -100,6 +101,7 @@ it.layer(NodeServices.layer)("Claude provider account status", (it) => {
             tokenSource: undefined,
             apiProvider: "firstParty",
             slashCommands: [],
+            skills: [],
           });
         },
         { ...process.env, ANTHROPIC_API_KEY: "configured-for-test" },

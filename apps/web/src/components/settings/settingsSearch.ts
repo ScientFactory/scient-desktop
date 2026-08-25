@@ -6,6 +6,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/voice"
+  | "/settings/skills"
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
@@ -31,6 +32,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/voice": "Voice",
+  "/settings/skills": "Skills",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -221,6 +223,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Voice models",
     to: "/settings/voice",
     desktopOnly: true,
+  },
+  {
+    id: "skills",
+    title: "Skills",
+    to: "/settings/skills",
   },
   {
     id: "agent-browser-access",

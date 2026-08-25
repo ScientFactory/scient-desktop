@@ -44,9 +44,11 @@ that setup intended to create. Recovery continues only when those files are
 absent or still exactly match the recorded contents.
 
 The durable identity retains the compatible format already written by the
-previous Scient app. Its older skills lock, when present, remains untouched and
-does not activate or install anything. An unfinished transaction owned by the
-previous app blocks new writes until it is recovered or rolled back with that
+previous Scient app. Project initialization never writes or trusts a skills
+lock. The separate skills core recognizes only its exact current lock format,
+and even a valid lock remains inactive until Scient records an app-owned trust
+receipt for its exact bytes. An unfinished transaction owned by the previous
+app blocks new writes until it is recovered or rolled back with that
 implementation; the two transaction formats are never guessed across.
 
 ## State model
@@ -74,11 +76,12 @@ work.
 
 ## Deliberate exclusions
 
-This slice does not add project skills, a skills lock, old-app data migration,
-PDF or source ingestion, provider changes, annotations, scientific operations,
-or cloud/mobile UI. Those remain separate product slices. The environment API
-keeps the project foundation usable by remote and selected-cloud clients later;
-mobile presentation should be designed when its product flow is scheduled.
+Project initialization does not create or activate project skills, write a
+skills lock, migrate old-app data, ingest PDFs or sources, change providers,
+add annotations or scientific operations, or add cloud/mobile UI. Those remain
+separate product slices. The environment API keeps the project foundation
+usable by remote and selected-cloud clients later; mobile presentation should
+be designed when its product flow is scheduled.
 
 Folders whose names differ only by boundary whitespace remain an inherited
 filesystem-transport limitation. This slice deliberately does not broaden the

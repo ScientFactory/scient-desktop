@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "owner": "ScientFactory",
+  "ownedRoots": [
+    "apps/server/src/mcp/toolkits/skills",
+    "apps/server/src/scient/skills",
+    "apps/web/src/scient/skills",
+    "packages/scient-skills"
+  ],
+  "ownedFiles": [
+    "apps/server/src/provider/ScientAwareness.ts",
+    "apps/web/src/routes/settings.skills_.external.tsx",
+    "apps/web/src/routes/settings.skills.tsx",
+    "packages/contracts/src/scientSkills.ts"
+  ],
+  "skillDiffSignals": [
+    "@scientfactory/scient-skills",
+    "ScientSkill",
+    "scient_skill",
+    "scient-skills",
+    "skills:read",
+    "skillScope"
+  ],
+  "upstreamMounts": [
+    {
+      "path": "apps/mobile/src/features/threads/composerSlashSkillSearch.ts",
+      "anchor": "isGlobalProviderSkill",
+      "purpose": "Keep project-native skills out of the mobile global skill picker."
+    },
+    {
+      "path": "apps/server/package.json",
+      "anchor": "@scientfactory/scient-skills",
+      "purpose": "Depend on the fork-owned server-side Scient skills package."
+    },
+    {
+      "path": "apps/server/src/auth/RpcAuthorization.ts",
+      "anchor": "WS_METHODS.skillsList",
+      "purpose": "Authorize personal skill inventory and activation RPCs through existing environment scopes."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "ScientSkillsToolkitRegistrationLive",
+      "purpose": "Register the capability-gated Scient skills MCP toolkit."
+    },
+    {
+      "path": "apps/server/src/mcp/McpInvocationContext.ts",
+      "anchor": "skills:read",
+      "purpose": "Carry the semantic capability and exact per-turn skill scope."
+    },
+    {
+      "path": "apps/server/src/mcp/McpProviderSession.ts",
+      "anchor": "capabilities",
+      "purpose": "Carry the stable MCP skill transport into provider adapters without duplicating turn scope."
+    },
+    {
+      "path": "apps/server/src/mcp/McpSessionRegistry.ts",
+      "anchor": "skillScope",
+      "purpose": "Bind defensive copies of exact turn skill authority to bearer credentials."
+    },
+    {
+      "path": "apps/server/src/provider/Layers/ProviderService.ts",
+      "anchor": "ScientSkillSession",
+      "purpose": "Resolve and install the exact effective skill scope before every turn."
+    },
+    {
+      "path": "apps/server/src/provider/ProviderDriver.ts",
+      "anchor": "skillActions",
+      "purpose": "Expose an optional provider-owned native skill mutation capability without coupling Scient policy to provider implementations."
+    },
+    {
+      "path": "apps/server/src/provider/Services/ProviderRegistry.ts",
+      "anchor": "getProviderSkillActionsForInstance",
+      "purpose": "Resolve native skill capabilities for the exact live provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/Layers/ProviderRegistry.ts",
+      "anchor": "getProviderSkillActionsForInstance",
+      "purpose": "Read the optional native skill capability from the existing live provider registry."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
+      "anchor": "skillActions",
+      "purpose": "Publish Codex native skill activation only for snapshots backed by its reviewed app-server API."
+    },
+    {
+      "path": "apps/server/src/provider/Layers/CodexProvider.ts",
+      "anchor": "skills/config/write",
+      "purpose": "Use Codex's authoritative native skill configuration method."
+    },
+    {
+      "path": "apps/server/src/provider/Layers/OpenCodeProvider.ts",
+      "anchor": "isSkillInsideWorkspace",
+      "purpose": "Normalize OpenCode skill scope so project inventory stays out of global skill surfaces."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "ScientSkillsLayerLive",
+      "purpose": "Compose the registry, app-owned policy, session planner, and management service."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "WS_METHODS.providerSkillsSetEnabled",
+      "purpose": "Expose authenticated Scient and provider-native skill management RPCs."
+    },
+    {
+      "path": "apps/web/src/components/ChatView.tsx",
+      "anchor": "mergeEffectiveProviderSkills",
+      "purpose": "Present active Scient skills in messages without replacing provider-native inventory."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "mergeEffectiveProviderSkills",
+      "purpose": "Append active Scient skills to the maintained provider-native composer menus."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsBreadcrumb.tsx",
+      "anchor": "/settings/skills/external",
+      "purpose": "Label the nested external-skills page inside the maintained Settings shell."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
+      "anchor": "/settings/skills",
+      "purpose": "Link the fork-owned skill management page from the maintained Settings shell."
+    },
+    {
+      "path": "apps/web/src/components/settings/settingsSearch.ts",
+      "anchor": "id: \"skills\"",
+      "purpose": "Make the skill management page discoverable through Settings search."
+    },
+    {
+      "path": "apps/web/src/routeTree.gen.ts",
+      "anchor": "SettingsSkillsRouteImport",
+      "purpose": "Generated registration for the fork-owned Settings route."
+    },
+    {
+      "path": "apps/web/src/session-logic.ts",
+      "anchor": "scientSkillUsageLabel",
+      "purpose": "Label managed skill loads concisely in the existing work log."
+    },
+    {
+      "path": "packages/client-runtime/src/providerSkills.ts",
+      "anchor": "isGlobalProviderSkill",
+      "purpose": "Keep project-native skills out of global Settings and composer menus while preserving provider ownership."
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scientSkills.ts",
+      "purpose": "Export the fork-owned skill management contracts."
+    },
+    {
+      "path": "packages/contracts/src/rpc.ts",
+      "anchor": "providerSkillsSetEnabled",
+      "purpose": "Register Scient inventory, personal activation, and capability-gated provider-native mutation contracts."
+    },
+    {
+      "path": "packages/contracts/src/server.ts",
+      "anchor": "canSetEnabled",
+      "purpose": "Carry the optional provider-native mutation capability in provider snapshots."
+    },
+    {
+      "path": "package.json",
+      "anchor": "skills:seams:check",
+      "purpose": "Expose the fork seam audit as a repository command."
+    }
+  ]
+}

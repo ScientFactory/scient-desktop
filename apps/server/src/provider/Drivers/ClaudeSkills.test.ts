@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { discoverClaudeSkills, mergeClaudeReportedSkills } from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -16,6 +16,47 @@ const writeSkill = Effect.fn(function* (
   const skillDir = path.join(skillsDir, directoryName);
   yield* fs.makeDirectory(skillDir, { recursive: true });
   yield* fs.writeFileString(path.join(skillDir, "SKILL.md"), contents);
+});
+
+it("merges SDK-reported bundled skills with filesystem scope metadata", () => {
+  assert.deepEqual(
+    mergeClaudeReportedSkills(
+      [
+        {
+          name: "project-review",
+          path: "/workspace/.agents/skills/project-review/SKILL.md",
+          scope: "project",
+          enabled: true,
+        },
+      ],
+      [
+        {
+          name: "dataviz",
+          description: "Build data visualizations.",
+        },
+        {
+          name: "project-review",
+          description: "Review this project.",
+        },
+      ],
+    ),
+    [
+      {
+        name: "dataviz",
+        description: "Build data visualizations.",
+        path: "claude://skills/dataviz",
+        scope: "app",
+        enabled: true,
+      },
+      {
+        name: "project-review",
+        description: "Review this project.",
+        path: "/workspace/.agents/skills/project-review/SKILL.md",
+        scope: "project",
+        enabled: true,
+      },
+    ],
+  );
 });
 
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {

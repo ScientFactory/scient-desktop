@@ -422,6 +422,8 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import { mergeEffectiveProviderSkills } from "../scient/skills/effectiveSkills";
+import { scientSkillsInventory } from "../scient/skills/scientSkillsState";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -2961,6 +2963,18 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const scientSkills = useEnvironmentQuery(
+    scientSkillsInventory({ environmentId, input: {} }),
+  ).data;
+  const effectiveActiveProviderSkills = useMemo(
+    () =>
+      mergeEffectiveProviderSkills({
+        provider: selectedProvider,
+        providerSkills: activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS,
+        inventory: scientSkills,
+      }),
+    [activeProviderStatus?.skills, scientSkills, selectedProvider],
+  );
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -7389,7 +7403,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={effectiveActiveProviderSkills}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerOverlayHeight}

@@ -36,7 +36,12 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
+import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
+import {
+  checkCodexProviderStatus,
+  makePendingCodexProvider,
+  setCodexSkillEnabled,
+} from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
@@ -108,6 +113,7 @@ const withInstanceIdentity =
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
+    skills: snapshot.skills.map((skill) => ({ ...skill, canSetEnabled: true })),
     connection: {
       methods: snapshot.auth.required === false ? [] : ["codex_browser", "codex_device_code"],
       canDisconnect: snapshot.auth.required !== false && snapshot.auth.status === "authenticated",
@@ -203,6 +209,28 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         processEnv,
         spawner,
       );
+      const skillActions = {
+        setEnabled: (skill: {
+          readonly name: string;
+          readonly path: string;
+          readonly enabled: boolean;
+        }) =>
+          setCodexSkillEnabled({
+            binaryPath: effectiveConfig.binaryPath,
+            ...(effectiveConfig.homePath ? { homePath: effectiveConfig.homePath } : {}),
+            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+            cwd: serverConfig.cwd,
+            environment: processEnv,
+            ...skill,
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError((cause) => ({
+              message: `Codex could not ${skill.enabled ? "enable" : "disable"} '${skill.name}'.`,
+              cause,
+            })),
+          ),
+      };
 
       // Build a managed snapshot whose settings never change — mutations come
       // in as instance rebuilds from the registry rather than in-place
@@ -253,6 +281,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         voiceTranscriptCorrection,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,
+        skillActions,
       } satisfies ProviderInstance;
     }),
 };

@@ -15,6 +15,7 @@ export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
+  readonly skillScope?: McpInvocationContext.McpScientSkillScope;
 }
 
 export interface McpIssuedCredential {
@@ -32,6 +33,11 @@ export interface McpSessionRegistryShape {
    * credential even when it goes a long time without touching an MCP tool.
    */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  /** Replaces the exact skill scope used by the next turn on this thread. */
+  readonly replaceSkillScope: (
+    threadId: ThreadId,
+    skillScope: McpInvocationContext.McpScientSkillScope,
+  ) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -69,7 +75,8 @@ export interface McpSessionRegistryOptions {
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the preview toolkit on a remote-reachable server.
+ * the authority guarding every provider-scoped MCP capability on a
+ * remote-reachable server.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -133,6 +140,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
         capabilities,
+        ...(request.skillScope
+          ? {
+              skillScope: {
+                releaseKeys: new Set(request.skillScope.releaseKeys),
+                skills: request.skillScope.skills.map((skill) => ({ ...skill })),
+              },
+            }
+          : {}),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -168,7 +183,21 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         if (!record) return [undefined, { records: current }] as const;
         const next = new Map(current);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [
+          {
+            ...record.scope,
+            capabilities: new Set(record.scope.capabilities),
+            ...(record.scope.skillScope
+              ? {
+                  skillScope: {
+                    releaseKeys: new Set(record.scope.skillScope.releaseKeys),
+                    skills: record.scope.skillScope.skills.map((skill) => ({ ...skill })),
+                  },
+                }
+              : {}),
+          },
+          { records: next },
+        ] as const;
       });
     },
   );
@@ -189,6 +218,30 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     },
   );
 
+  const replaceSkillScope: McpSessionRegistryShape["replaceSkillScope"] = Effect.fn(
+    "McpSessionRegistry.replaceSkillScope",
+  )(function* (threadId, skillScope) {
+    yield* SynchronizedRef.update(state, ({ records }) => {
+      const next = new Map(records);
+      for (const [tokenHash, record] of records) {
+        if (record.scope.threadId !== threadId || !record.scope.capabilities.has("skills:read")) {
+          continue;
+        }
+        next.set(tokenHash, {
+          ...record,
+          scope: {
+            ...record.scope,
+            skillScope: {
+              releaseKeys: new Set(skillScope.releaseKeys),
+              skills: skillScope.skills.map((skill) => ({ ...skill })),
+            },
+          },
+        });
+      }
+      return { records: next };
+    });
+  });
+
   const revokeWhere = (predicate: (record: CredentialRecord) => boolean) =>
     SynchronizedRef.update(state, ({ records }) => ({
       records: new Map(Array.from(records).filter(([, record]) => !predicate(record))),
@@ -198,6 +251,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
+    replaceSkillScope,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);
@@ -245,6 +299,14 @@ export const issueActiveMcpCredential = (
  */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
+
+export const replaceActiveMcpSkillScope = (
+  threadId: ThreadId,
+  skillScope: McpInvocationContext.McpScientSkillScope,
+): Effect.Effect<void> =>
+  activeMcpSessionRegistry
+    ? activeMcpSessionRegistry.replaceSkillScope(threadId, skillScope)
+    : Effect.void;
 
 export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;

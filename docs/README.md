@@ -51,6 +51,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Scient project initialization](./internals/scient-project-initialization.md)
+- [Scient skills core](./internals/scient-skills.md)
 - [Scient Sources foundation](./internals/scient-sources.md)
 - [Scient PDF export and rendering implementation plan](./internals/scient-pdf-export-rendering-plan.md)
 - [Scient analysis runtime foundation](./internals/scient-analysis-runtime-foundation.md)
