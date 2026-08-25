@@ -81,11 +81,12 @@ export function ProviderSettingsLifecycleAction(props: {
   if (presentation.kind === "checking") {
     return (
       <span
-        aria-label={`Checking ${props.displayName} status`}
-        className="inline-flex size-7 shrink-0 items-center justify-center text-muted-foreground"
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-muted-foreground text-xs"
         role="status"
       >
         <LoaderIcon aria-hidden className="size-4 animate-spin" />
+        <span>Checking</span>
+        <span className="sr-only">{props.displayName} status</span>
       </span>
     );
   }

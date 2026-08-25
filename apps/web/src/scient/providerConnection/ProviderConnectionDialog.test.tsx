@@ -295,8 +295,10 @@ describe("ProviderConnectionDialog", () => {
         />,
       );
 
-      expect(markup).toContain(`aria-label="Checking ${displayName} status"`);
+      expect(markup).toContain(`Checking ${displayName}…`);
+      expect(markup).toContain("Verifying installation and connection status.");
       expect(markup).toContain("lucide-loader");
+      expect(markup).toContain('role="status"');
       expect(markup).not.toContain("Managed runtime actions");
       expect(markup).not.toContain("confirmation requested");
       expect(markup).not.toContain(`${displayName} lifecycle surface`);
