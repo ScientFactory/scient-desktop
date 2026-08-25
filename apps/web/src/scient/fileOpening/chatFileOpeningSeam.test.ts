@@ -33,8 +33,9 @@ describe("universal chat-file opening seam", () => {
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
     expect(chatMarkdownSource).toContain("openEnvironmentHtmlInPreview(fileLinkMeta.filePath)");
     expect(chatMarkdownSource).toContain(
-      'resolveWorkspaceFileLinkOpenTarget(iconPath) === "browser"',
+      'resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"',
     );
+    expect(chatMarkdownSource).toContain("shouldUseMarkdownFileBrowserPrimaryAction({");
     expect(
       chatMarkdownSource.match(/handleOpenInFilePreview\(\);/gu)?.length,
     ).toBeGreaterThanOrEqual(3);
