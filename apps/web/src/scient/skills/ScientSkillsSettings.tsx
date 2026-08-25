@@ -26,7 +26,7 @@ import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSki
 import { collectExternalSkillProviders, summarizeExternalSkills } from "./externalSkills";
 
 function invocationPolicyLabel(policy: ScientSkillInvocationPolicy): string {
-  return policy === "automatic" ? "Agent may use" : "Only with $name";
+  return policy === "automatic" ? "Agent access" : "$name only";
 }
 
 function groupSkillsByCategory(skills: ReadonlyArray<ScientSkillCatalogItem>) {
@@ -166,8 +166,8 @@ export function ScientSkillsSettings() {
                             </SelectValue>
                           </SelectTrigger>
                           <SelectPopup>
-                            <SelectItem value="automatic">Agent may use</SelectItem>
-                            <SelectItem value="explicit">Only with $name</SelectItem>
+                            <SelectItem value="automatic">Agent access</SelectItem>
+                            <SelectItem value="explicit">$name only</SelectItem>
                           </SelectPopup>
                         </Select>
                         <Switch
