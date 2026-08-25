@@ -403,6 +403,47 @@ describe("Cursor connection actions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("redacts compound credential names from Cursor failure output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeHandle({
+              all:
+                "Error: access_token=access-secret refreshToken=refresh-secret " +
+                'client_secret=client-secret apiKey=api-secret "id_token":"id-secret" ' +
+                'session_id=session-secret oauthToken=oauth-secret credential="credential-secret\n',
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(17)),
+            }),
+          ),
+        );
+        const actions = yield* makeCursorConnectionActions(
+          cursorSettings,
+          { HOME: "/Users/test" },
+          spawner,
+        );
+
+        const failure = yield* actions.start("cursor_browser").pipe(Effect.flip);
+
+        expect(failure.message).not.toMatch(
+          /access-secret|refresh-secret|client-secret|api-secret|id-secret|session-secret|oauth-secret|credential-secret/u,
+        );
+        for (const key of [
+          "access_token",
+          "refreshToken",
+          "client_secret",
+          "apiKey",
+          "id_token",
+          "session_id",
+          "oauthToken",
+          "credential",
+        ]) {
+          expect(failure.message).toContain(`${key}=[redacted]`);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("stops a login that never provides an authorization page", () =>
     Effect.scoped(
       Effect.gen(function* () {

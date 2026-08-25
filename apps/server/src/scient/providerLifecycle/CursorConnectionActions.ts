@@ -35,7 +35,7 @@ const AUTH_STATUS_TIMEOUT = "20 seconds";
 const AUTH_OUTPUT_DRAIN_TIMEOUT = "2 seconds";
 const URL_IN_OUTPUT = /https?:\/\/[^\s<>"']+/giu;
 const SENSITIVE_OUTPUT_VALUE =
-  /\b(token|challenge|secret|password|authorization(?:[ _-]?code)?|user[ _-]?code)\s*[:=]\s*[^\s,;]+/giu;
+  /["']?\b((?:(?:access|refresh|id|auth(?:entication|orization)?|oauth|user|client|api|session|private)[ _-]?(?:token|code|key|secret|id))|token|challenge|secret|password|credential|cookie|jwt)["']?\s*[:=]\s*["']?[^\s,;}"']+["']?/giu;
 const BEARER_OUTPUT_VALUE = /\bbearer\s+[^\s,;]+/giu;
 const connectionError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
