@@ -267,6 +267,52 @@ async function readFirstPromptMessage(
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
+const runTerminalClaudeAuthenticationFailure = (input: {
+  readonly error: string;
+  readonly idSuffix: string;
+}) => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const adapter = yield* ClaudeAdapter;
+    const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+      Stream.takeUntil((event) => event.type === "session.exited"),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+
+    const session = yield* adapter.startSession({
+      threadId: THREAD_ID,
+      provider: ProviderDriverKind.make("claudeAgent"),
+      runtimeMode: "full-access",
+    });
+    yield* adapter.sendTurn({
+      threadId: session.threadId,
+      input: "hello",
+      attachments: [],
+    });
+
+    harness.query.emit({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      errors: [input.error],
+      session_id: `sdk-session-${input.idSuffix}`,
+      uuid: `result-${input.idSuffix}`,
+    } as unknown as SDKMessage);
+
+    const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+    return {
+      runtimeEvents,
+      closeCalls: harness.query.closeCalls,
+      hasSession: yield* adapter.hasSession(THREAD_ID),
+      sessionCount: (yield* adapter.listSessions()).length,
+    };
+  }).pipe(
+    Effect.provideService(Random.Random, makeDeterministicRandomService()),
+    Effect.provide(harness.layer),
+  );
+};
+
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
@@ -1576,38 +1622,13 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("retires a Claude session after an authoritative revoked OAuth result", () => {
-    const harness = makeHarness();
     return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.takeUntil((event) => event.type === "session.exited"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
+      const result = yield* runTerminalClaudeAuthenticationFailure({
+        error: "Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
+        idSuffix: "revoked-oauth",
       });
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "hello",
-        attachments: [],
-      });
-
-      harness.query.emit({
-        type: "result",
-        subtype: "error_during_execution",
-        is_error: true,
-        errors: ["Failed to authenticate. API Error: 401 OAuth access token has been revoked."],
-        session_id: "sdk-session-revoked-oauth",
-        uuid: "result-revoked-oauth",
-      } as unknown as SDKMessage);
-
-      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       assert.deepEqual(
-        runtimeEvents.map((event) => event.type),
+        result.runtimeEvents.map((event) => event.type),
         [
           "session.started",
           "session.configured",
@@ -1621,26 +1642,40 @@ describe("ClaudeAdapterLive", () => {
         ],
       );
 
-      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      const runtimeError = result.runtimeEvents.find((event) => event.type === "runtime.error");
       assert.equal(runtimeError?.type, "runtime.error");
       if (runtimeError?.type === "runtime.error") {
         assert.equal(runtimeError.payload.class, "provider_error");
       }
-      const authStatus = runtimeEvents.find((event) => event.type === "auth.status");
+      const authStatus = result.runtimeEvents.find((event) => event.type === "auth.status");
       assert.equal(authStatus?.type, "auth.status");
       if (authStatus?.type === "auth.status") {
         assert.equal(authStatus.payload.requiresReauthentication, true);
         assert.equal(authStatus.payload.error, "Claude authentication expired. Sign in again.");
       }
-      const completions = runtimeEvents.filter((event) => event.type === "turn.completed");
+      const completions = result.runtimeEvents.filter((event) => event.type === "turn.completed");
       assert.equal(completions.length, 1);
-      assert.equal(harness.query.closeCalls, 1);
-      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
-      assert.equal((yield* adapter.listSessions()).length, 0);
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
+      assert.equal(result.closeCalls, 1);
+      assert.equal(result.hasSession, false);
+      assert.equal(result.sessionCount, 0);
+    });
+  });
+
+  it.effect("retires a Claude session after an unrefreshable expired OAuth result", () => {
+    return Effect.gen(function* () {
+      const result = yield* runTerminalClaudeAuthenticationFailure({
+        error: "OAuth session expired and could not be refreshed.",
+        idSuffix: "expired-oauth",
+      });
+      const authStatus = result.runtimeEvents.find((event) => event.type === "auth.status");
+      assert.equal(authStatus?.type, "auth.status");
+      if (authStatus?.type === "auth.status") {
+        assert.equal(authStatus.payload.requiresReauthentication, true);
+      }
+      assert.equal(result.closeCalls, 1);
+      assert.equal(result.hasSession, false);
+      assert.equal(result.sessionCount, 0);
+    });
   });
 
   it.effect("does not retire a reusable Claude session for an unrelated 401 result", () => {

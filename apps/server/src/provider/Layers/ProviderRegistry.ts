@@ -24,6 +24,7 @@
  */
 import {
   defaultInstanceIdForDriver,
+  isProviderAvailable,
   type ProviderConnectionOperation,
   type ProviderRuntimeSummary,
   ProviderDriverKind,
@@ -411,7 +412,13 @@ export const ProviderRegistryLive = Layer.effect(
               runtime: managedRuntime,
             },
           };
-      if (!authenticationFailure || providerWithRuntime.connection.methods.length === 0) {
+      const canPresentAuthenticationFailure =
+        providerWithRuntime.connection.methods.length > 0 &&
+        isProviderAvailable(providerWithRuntime) &&
+        providerWithRuntime.enabled &&
+        providerWithRuntime.installed &&
+        providerWithRuntime.status !== "error";
+      if (!authenticationFailure || !canPresentAuthenticationFailure) {
         return providerWithRuntime;
       }
 
@@ -621,16 +628,17 @@ export const ProviderRegistryLive = Layer.effect(
       },
     );
 
+    const readRefreshedSource = Effect.fn("readRefreshedSource")(function* (
+      providerSource: ProviderSnapshotSource,
+    ) {
+      const nextProvider = yield* providerSource.refresh;
+      return yield* correlateSnapshotWithSource(providerSource, nextProvider);
+    });
+
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
     ) {
-      return yield* providerSource.refresh.pipe(
-        Effect.flatMap((nextProvider) =>
-          correlateSnapshotWithSource(providerSource, nextProvider).pipe(
-            Effect.flatMap(syncProvider),
-          ),
-        ),
-      );
+      return yield* readRefreshedSource(providerSource).pipe(Effect.flatMap(syncProvider));
     });
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
@@ -982,23 +990,33 @@ export const ProviderRegistryLive = Layer.effect(
       "ProviderRegistry.refreshInstanceAfterAccountChange",
     )(function* (instanceId: ProviderInstanceId) {
       const previousFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
-      yield* Ref.update(authenticationFailuresRef, (previous) => {
-        const next = new Map(previous);
-        next.delete(instanceId);
-        return next;
-      });
+      const sources = yield* getLiveSources;
+      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
+      if (!providerSource) {
+        return yield* new ProviderRegistryRefreshError({
+          operation: "refresh",
+          instanceId,
+          message: `Provider refresh failed for ${instanceId}: no live source is available.`,
+        });
+      }
 
-      return yield* refreshInstanceStrict(instanceId).pipe(
-        Effect.tapError(() =>
-          previousFailure
-            ? Ref.update(authenticationFailuresRef, (previous) => {
-                const next = new Map(previous);
-                next.set(instanceId, previousFailure);
-                return next;
-              })
-            : Effect.void,
-        ),
+      // Keep the proven failure visible while the provider performs fresh
+      // account verification. Clearing it first creates a false-ready window
+      // and requires incomplete rollback on failure or interruption.
+      const canonicalProvider = yield* readRefreshedSource(providerSource).pipe(
+        failStrictRefresh("refresh", instanceId),
       );
+      if (previousFailure) {
+        yield* Ref.update(authenticationFailuresRef, (previous) => {
+          if (previous.get(instanceId) !== previousFailure) {
+            return previous;
+          }
+          const next = new Map(previous);
+          next.delete(instanceId);
+          return next;
+        });
+      }
+      return yield* syncProvider(canonicalProvider);
     });
 
     const reloadInstanceStrict = Effect.fn("ProviderRegistry.reloadInstanceStrict")(function* (

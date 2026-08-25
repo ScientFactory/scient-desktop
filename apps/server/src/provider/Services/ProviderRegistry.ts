@@ -76,9 +76,9 @@ export interface ProviderRegistryShape {
 
   /**
    * Refresh one instance after a provider-owned account action succeeds.
-   * Unlike routine refreshes, this clears any runtime-proven authentication
-   * failure only while the fresh account probe is in flight and restores it
-   * if that probe fails.
+   * Unlike routine refreshes, this keeps any runtime-proven authentication
+   * failure visible while the fresh account probe runs and clears only the
+   * failure that preceded a successful verification. Newer failures win.
    */
   readonly refreshInstanceAfterAccountChange: (
     instanceId: ProviderInstanceId,

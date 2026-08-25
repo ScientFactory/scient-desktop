@@ -242,8 +242,11 @@ A passive account probe is not always proof that a credential still works remote
 provider request returns a narrowly classified terminal authentication failure, its adapter emits an
 authoritative reauthentication signal and retires that failed session after settling the turn. The
 registry then keeps a process-local authentication-failure overlay that ordinary passive probes
-cannot erase. The overlay is excluded from the status cache and is cleared only by a successfully
-verified provider-owned account transition, instance removal, or process restart. This recovery path
+cannot erase. Canonical runtime failures take precedence while the executable is unavailable; the
+remembered authentication failure becomes visible again once the runtime is operational. The overlay
+is excluded from the status cache, remains visible throughout fresh account verification, and is
+cleared only after that verification succeeds for the same observed failure, instance removal, or
+process restart. This recovery path
 does not send a model prompt merely to test credentials, does not match generic HTTP errors, and does
 not delete provider-owned credentials.
 
