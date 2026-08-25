@@ -61,13 +61,28 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
-  it("routes disabled providers through management before install or sign-in", () => {
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+    ["opencode", "OpenCode"],
+  ] as const)("offers the shared Enable handoff for disabled %s", (driver, displayName) => {
     expect(
-      providerSettingsLifecyclePresentation(provider({ enabled: false }), "Codex"),
+      providerSettingsLifecyclePresentation(
+        provider({
+          driver: ProviderDriverKind.make(driver),
+          displayName,
+          enabled: false,
+        }),
+        displayName,
+      ),
     ).toMatchObject({
       kind: "disabled",
-      actionLabel: "Manage",
-      actionKind: "manage",
+      actionLabel: "Enable",
+      actionKind: "enable",
     });
   });
 

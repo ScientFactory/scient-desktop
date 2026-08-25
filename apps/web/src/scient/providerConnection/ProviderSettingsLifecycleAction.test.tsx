@@ -8,8 +8,23 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+const enableState = vi.hoisted(
+  (): {
+    access: "pending" | "granted" | "denied";
+    canEnable: boolean;
+    enable: ReturnType<typeof vi.fn>;
+  } => ({
+    access: "granted",
+    canEnable: true,
+    enable: vi.fn(),
+  }),
+);
+
 vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({}),
+}));
+vi.mock("./useProviderEnableAction", () => ({
+  useProviderEnableAction: () => enableState,
 }));
 
 import {
@@ -19,7 +34,14 @@ import {
 import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
 
 function provider(input: {
-  readonly driver?: "codex" | "claudeAgent";
+  readonly driver?:
+    | "codex"
+    | "claudeAgent"
+    | "antigravity"
+    | "cursor"
+    | "droid"
+    | "grok"
+    | "opencode";
   readonly source: "scient_managed" | "system" | "missing";
   readonly authenticated?: boolean;
   readonly enabled?: boolean;
@@ -30,7 +52,8 @@ function provider(input: {
   return {
     instanceId: ProviderInstanceId.make(driver),
     driver: ProviderDriverKind.make(driver),
-    displayName: driver === "codex" ? "Codex" : "Claude",
+    displayName:
+      driver === "claudeAgent" ? "Claude" : driver.charAt(0).toUpperCase() + driver.slice(1),
     enabled: input.enabled ?? true,
     installed: input.source !== "missing",
     version: input.source === "missing" ? null : "0.147.0",
@@ -92,10 +115,47 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(install).toContain(">Install<");
     expect(install).toContain("lucide-download");
     expect(install).toContain("text-primary");
-    expect(render(provider({ source: "system", enabled: false }))).toContain(">Manage<");
+    const disabled = render(provider({ source: "system", enabled: false }));
+    expect(disabled).toContain(">Enable<");
+    expect(disabled).toContain("lucide-power");
     expect(
       render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
     ).toContain(">Update<");
+  });
+
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+    ["opencode", "OpenCode"],
+  ] as const)("uses the shared direct Enable action for disabled %s", (driver, displayName) => {
+    const value = provider({ driver, source: "missing", enabled: false });
+    const presentation = providerSettingsLifecyclePresentation(value, displayName);
+
+    expect(
+      resolveProviderSettingsPrimaryAction({
+        provider: value,
+        presentation,
+        canRunExternalUpdate: false,
+      }),
+    ).toEqual({ kind: "enable" });
+    expect(render(value)).toContain(">Enable<");
+  });
+
+  it("falls back to Manage when the current session cannot enable the provider", () => {
+    enableState.access = "denied";
+    enableState.canEnable = false;
+    try {
+      const markup = render(provider({ driver: "grok", source: "missing", enabled: false }));
+      expect(markup).toContain(">Manage<");
+      expect(markup).not.toContain(">Enable<");
+    } finally {
+      enableState.access = "granted";
+      enableState.canEnable = true;
+    }
   });
 
   it("keeps Codex browser sign-in direct and routes provider choosers through the dialog", () => {

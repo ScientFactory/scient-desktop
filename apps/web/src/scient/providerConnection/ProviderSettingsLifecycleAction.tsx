@@ -7,6 +7,7 @@ import {
   DownloadIcon,
   LoaderIcon,
   LogInIcon,
+  PowerIcon,
   RefreshCwIcon,
   Settings2Icon,
   WrenchIcon,
@@ -23,12 +24,14 @@ import {
   type ProviderSettingsLifecyclePresentation,
 } from "./providerSettingsLifecyclePresentation";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
+import { useProviderEnableAction } from "./useProviderEnableAction";
 
 const SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS = `h-7 gap-1.5 px-2.5 text-xs ${PRIMARY_GHOST_ACTION_CLASS}`;
 const SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS =
   "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground [--control-icon-color:currentColor] hover:bg-accent hover:text-foreground";
 
 export type ProviderSettingsPrimaryAction =
+  | { readonly kind: "enable" }
   | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
   | { readonly kind: "managed-update" }
   | { readonly kind: "codex-browser-sign-in" }
@@ -42,6 +45,8 @@ export function resolveProviderSettingsPrimaryAction(input: {
   readonly canRunExternalUpdate: boolean;
 }): ProviderSettingsPrimaryAction {
   switch (input.presentation.actionKind) {
+    case "enable":
+      return { kind: "enable" };
     case "runtime":
       return input.presentation.runtimeAction === "update"
         ? { kind: "managed-update" }
@@ -89,6 +94,16 @@ export function ProviderSettingsLifecycleAction(props: {
       <CodexBrowserSignInButton
         displayName={props.displayName}
         environmentId={props.environmentId}
+        provider={props.provider}
+      />
+    );
+  }
+  if (primaryAction.kind === "enable") {
+    return (
+      <ProviderEnableButton
+        displayName={props.displayName}
+        environmentId={props.environmentId}
+        onManage={props.onManage}
         provider={props.provider}
       />
     );
@@ -145,6 +160,68 @@ export function ProviderSettingsLifecycleAction(props: {
         <Settings2Icon />
       )}
       {externallyUpdating ? "Updating" : presentation.actionLabel}
+    </Button>
+  );
+}
+
+function ProviderEnableButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider;
+  readonly displayName: string;
+  readonly onManage: () => void;
+}) {
+  const { access, canEnable, enable } = useProviderEnableAction({
+    environmentId: props.environmentId,
+    provider: props.provider,
+  });
+  const [pending, setPending] = useState(false);
+
+  if (access !== "pending" && !canEnable) {
+    return (
+      <Button
+        className={SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS}
+        onClick={props.onManage}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        <Settings2Icon />
+        Manage
+      </Button>
+    );
+  }
+
+  const runEnable = async () => {
+    setPending(true);
+    try {
+      await enable();
+      // Keep the button pending until the canonical provider snapshot reports
+      // enabled. The row then reveals the next lifecycle action without
+      // implicitly installing a runtime or starting account authentication.
+    } catch (error) {
+      setPending(false);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not enable ${props.displayName}`,
+          description: actionErrorMessage(error),
+        }),
+      );
+    }
+  };
+
+  const checking = access === "pending";
+  return (
+    <Button
+      className={SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS}
+      disabled={checking || pending}
+      onClick={() => void runEnable()}
+      size="sm"
+      type="button"
+      variant="ghost"
+    >
+      {checking || pending ? <LoaderIcon className="animate-spin" /> : <PowerIcon />}
+      {pending ? "Enabling" : "Enable"}
     </Button>
   );
 }
