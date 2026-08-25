@@ -75,6 +75,16 @@ export interface ProviderRegistryShape {
   ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
 
   /**
+   * Refresh one instance after a provider-owned account action succeeds.
+   * Unlike routine refreshes, this clears any runtime-proven authentication
+   * failure only while the fresh account probe is in flight and restores it
+   * if that probe fails.
+   */
+  readonly refreshInstanceAfterAccountChange: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
+
+  /**
    * Recreate one provider instance from unchanged settings, attach its fresh
    * snapshot source, and run a probe before returning. Used when an external
    * dependency such as a managed provider executable changed atomically.
@@ -145,6 +155,16 @@ export interface ProviderRegistryShape {
   readonly setProviderConnectionOperation: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly operation: ProviderConnectionOperation | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Overlay an authentication failure proven by a live provider request.
+   * The overlay is process-local and survives passive probes until a verified
+   * account transition, instance removal, or server restart.
+   */
+  readonly setProviderAuthenticationFailure: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly message: string;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /** Overlay the current derived app-private runtime summary without persisting operation state. */

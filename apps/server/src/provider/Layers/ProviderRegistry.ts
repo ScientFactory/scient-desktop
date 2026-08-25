@@ -332,6 +332,9 @@ export const ProviderRegistryLive = Layer.effect(
     const connectionOperationStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, ProviderConnectionOperation>
     >(new Map());
+    const authenticationFailuresRef = yield* Ref.make<
+      ReadonlyMap<ProviderInstanceId, { readonly message: string }>
+    >(new Map());
     const managedRuntimeStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, ProviderRuntimeSummary>
     >(new Map());
@@ -380,6 +383,9 @@ export const ProviderRegistryLive = Layer.effect(
       const connectionOperation = (yield* Ref.get(connectionOperationStatesRef)).get(
         provider.instanceId,
       );
+      const authenticationFailure = (yield* Ref.get(authenticationFailuresRef)).get(
+        provider.instanceId,
+      );
       const managedRuntime = (yield* Ref.get(managedRuntimeStatesRef)).get(provider.instanceId);
       const providerWithUpdateState = updateState
         ? { ...provider, updateState }
@@ -394,14 +400,35 @@ export const ProviderRegistryLive = Layer.effect(
           operation: connectionOperation ?? null,
         },
       };
-      if (!managedRuntime) return providerWithConnection;
-      return {
-        ...providerWithConnection,
-        connection: {
-          ...providerWithConnection.connection,
-          runtime: managedRuntime,
+      const providerWithRuntime: ServerProvider & {
+        readonly connection: NonNullable<ServerProvider["connection"]>;
+      } = !managedRuntime
+        ? providerWithConnection
+        : {
+            ...providerWithConnection,
+            connection: {
+              ...providerWithConnection.connection,
+              runtime: managedRuntime,
+            },
+          };
+      if (!authenticationFailure || providerWithRuntime.connection.methods.length === 0) {
+        return providerWithRuntime;
+      }
+
+      const providerWithAuthenticationFailure: ServerProvider = {
+        ...providerWithRuntime,
+        status: "warning",
+        auth: {
+          ...providerWithRuntime.auth,
+          status: "unauthenticated",
         },
+        connection: {
+          ...providerWithRuntime.connection,
+          canDisconnect: false,
+        },
+        message: authenticationFailure.message,
       };
+      return providerWithAuthenticationFailure;
     });
 
     const upsertProviders = Effect.fn("upsertProviders")(function* (
@@ -471,7 +498,16 @@ export const ProviderRegistryLive = Layer.effect(
         readonly publish?: boolean;
       },
     ) {
-      return yield* upsertProviders([provider], options);
+      const hasAuthenticationFailure = (yield* Ref.get(authenticationFailuresRef)).has(
+        provider.instanceId,
+      );
+      return yield* upsertProviders([provider], {
+        ...options,
+        // The failure overlay changes auth/status/message fields that cannot be
+        // stripped generically from a serialized snapshot. Keep the last
+        // canonical cache entry until a verified account transition clears it.
+        persist: !hasAuthenticationFailure,
+      });
     });
 
     const setProviderMaintenanceActionState = Effect.fn("setProviderMaintenanceActionState")(
@@ -540,6 +576,27 @@ export const ProviderRegistryLive = Layer.effect(
         return yield* upsertProviders([nextProvider], {
           persist: false,
         });
+      },
+    );
+
+    const setProviderAuthenticationFailure = Effect.fn("setProviderAuthenticationFailure")(
+      function* (input: { readonly instanceId: ProviderInstanceId; readonly message: string }) {
+        const existingProviders = yield* Ref.get(providersRef);
+        const matchingProvider = existingProviders.find(
+          (candidate) => candidate.instanceId === input.instanceId,
+        );
+        if (!matchingProvider || (matchingProvider.connection?.methods.length ?? 0) === 0) {
+          return existingProviders;
+        }
+
+        yield* Ref.update(authenticationFailuresRef, (previous) => {
+          const next = new Map(previous);
+          next.set(input.instanceId, { message: input.message });
+          return next;
+        });
+
+        const nextProvider = yield* applyProviderTransientState(matchingProvider);
+        return yield* upsertProviders([nextProvider], { persist: false });
       },
     );
 
@@ -788,6 +845,13 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
+        yield* Ref.update(authenticationFailuresRef, (previous) => {
+          const next = new Map(previous);
+          for (const instanceId of previous.keys()) {
+            if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
+          }
+          return next;
+        });
         yield* Ref.update(managedRuntimeStatesRef, (previous) => {
           const next = new Map(previous);
           for (const instanceId of previous.keys()) {
@@ -914,6 +978,29 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* refreshOneSource(providerSource).pipe(failStrictRefresh("refresh", instanceId));
     });
 
+    const refreshInstanceAfterAccountChange = Effect.fn(
+      "ProviderRegistry.refreshInstanceAfterAccountChange",
+    )(function* (instanceId: ProviderInstanceId) {
+      const previousFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
+      yield* Ref.update(authenticationFailuresRef, (previous) => {
+        const next = new Map(previous);
+        next.delete(instanceId);
+        return next;
+      });
+
+      return yield* refreshInstanceStrict(instanceId).pipe(
+        Effect.tapError(() =>
+          previousFailure
+            ? Ref.update(authenticationFailuresRef, (previous) => {
+                const next = new Map(previous);
+                next.set(instanceId, previousFailure);
+                return next;
+              })
+            : Effect.void,
+        ),
+      );
+    });
+
     const reloadInstanceStrict = Effect.fn("ProviderRegistry.reloadInstanceStrict")(function* (
       instanceId: ProviderInstanceId,
     ) {
@@ -940,6 +1027,7 @@ export const ProviderRegistryLive = Layer.effect(
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstanceStrict,
+      refreshInstanceAfterAccountChange,
       reloadInstance: (instanceId: ProviderInstanceId) =>
         reloadInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadInstanceStrict,
@@ -951,6 +1039,7 @@ export const ProviderRegistryLive = Layer.effect(
       stopProviderSessions,
       setProviderMaintenanceActionState,
       setProviderConnectionOperation,
+      setProviderAuthenticationFailure,
       setProviderManagedRuntimeSummary,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);

@@ -148,6 +148,7 @@ function makeHarness(
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
       refreshInstanceStrict: () => Ref.get(providersRef),
+      refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
       reloadInstance: () => reloadInstance.pipe(Effect.catch(() => Ref.get(providersRef))),
       reloadInstanceStrict: () => reloadInstance,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
@@ -166,6 +167,7 @@ function makeHarness(
         ),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation: () => Ref.get(providersRef),
+      setProviderAuthenticationFailure: () => Ref.get(providersRef),
       setProviderManagedRuntimeSummary: setRuntime,
       streamChanges: Stream.empty,
     };

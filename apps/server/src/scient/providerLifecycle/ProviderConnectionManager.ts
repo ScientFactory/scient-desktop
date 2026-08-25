@@ -463,7 +463,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   }),
                 });
                 const refreshResult = yield* providerRegistry
-                  .refreshInstanceStrict(input.instanceId)
+                  .refreshInstanceAfterAccountChange(input.instanceId)
                   .pipe(Effect.result);
                 const refreshedProvider =
                   refreshResult._tag === "Success"
@@ -753,17 +753,19 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         instanceId: input.instanceId,
         operation: null,
       });
-      const providers = yield* providerRegistry.refreshInstanceStrict(input.instanceId).pipe(
-        Effect.mapError(() =>
-          makeError({
-            provider: target.provider,
-            instanceId: input.instanceId,
-            reason: "disconnect_failed",
-            message:
-              "The provider completed sign out, but Scient could not verify the current account state.",
-          }),
-        ),
-      );
+      const providers = yield* providerRegistry
+        .refreshInstanceAfterAccountChange(input.instanceId)
+        .pipe(
+          Effect.mapError(() =>
+            makeError({
+              provider: target.provider,
+              instanceId: input.instanceId,
+              reason: "disconnect_failed",
+              message:
+                "The provider completed sign out, but Scient could not verify the current account state.",
+            }),
+          ),
+        );
       return { providers };
     }).pipe(Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)));
   });

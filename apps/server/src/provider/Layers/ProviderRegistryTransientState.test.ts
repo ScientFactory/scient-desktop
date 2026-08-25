@@ -92,6 +92,25 @@ function provider(checkedAt: string): ServerProvider {
   };
 }
 
+function authenticatedProvider(checkedAt: string): ServerProvider {
+  return {
+    ...provider(checkedAt),
+    status: "ready",
+    auth: {
+      status: "authenticated",
+      required: true,
+      email: "scientist@example.com",
+      label: "Claude Pro Subscription",
+    },
+    connection: {
+      methods: ["claude_subscription"],
+      canDisconnect: true,
+      operation: null,
+      runtime: systemRuntime,
+    },
+  };
+}
+
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
@@ -125,6 +144,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
   const snapshotRef = yield* Ref.make(provider("2026-08-24T00:00:00.000Z"));
   const sourceChanges = yield* PubSub.unbounded<ServerProvider>();
   const registryChanges = yield* PubSub.unbounded<void>();
+  const refreshFailsRef = yield* Ref.make(false);
 
   const makeInstance = (): ProviderInstance => ({
     instanceId: INSTANCE_ID,
@@ -141,7 +161,12 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
         packageName: null,
       }),
       getSnapshot: Ref.get(snapshotRef),
-      refresh: Ref.get(snapshotRef),
+      refresh: Effect.gen(function* () {
+        if (yield* Ref.get(refreshFailsRef)) {
+          return yield* Effect.die(new Error("simulated provider refresh failure"));
+        }
+        return yield* Ref.get(snapshotRef);
+      }),
       streamChanges: Stream.fromPubSub(sourceChanges),
     },
     adapter: {} as ProviderInstance["adapter"],
@@ -179,7 +204,15 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
     cacheDir: config.providerStatusCacheDir,
     instanceId: INSTANCE_ID,
   }).pipe(Effect.provide(services));
-  return { registry, snapshotRef, instancesRef, registryChanges, makeInstance, cachePath };
+  return {
+    registry,
+    snapshotRef,
+    refreshFailsRef,
+    instancesRef,
+    registryChanges,
+    makeInstance,
+    cachePath,
+  };
 });
 
 const nextRegistryEmission = Effect.fn("ProviderRegistryTransientState.nextEmission")(function* (
@@ -252,6 +285,10 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
           instanceId: INSTANCE_ID,
           runtime: managedRuntime,
         });
+        yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "Provider authentication expired. Sign in again.",
+        });
 
         const removedFiber = yield* nextRegistryEmission(registry);
         yield* Ref.set(instancesRef, []);
@@ -266,6 +303,88 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
         assert.strictEqual(rebuilt[0]?.connection?.operation, null);
         assert.strictEqual(rebuilt[0]?.connection?.runtime?.source, "system");
         assert.strictEqual(rebuilt[0]?.connection?.runtime?.operation, null);
+        assert.strictEqual(rebuilt[0]?.message, undefined);
+      }),
+    ),
+  );
+
+  it.effect("keeps runtime-proven authentication failure until a verified account transition", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef, refreshFailsRef, cachePath } = yield* makeHarness();
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:01.000Z"));
+        yield* registry.refreshInstance(INSTANCE_ID);
+
+        const failed = yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "OAuth access token has been revoked. Sign in again.",
+        });
+        assert.strictEqual(failed[0]?.status, "warning");
+        assert.strictEqual(failed[0]?.auth.status, "unauthenticated");
+        assert.strictEqual(failed[0]?.connection?.canDisconnect, false);
+
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:02.000Z"));
+        const passivelyRefreshed = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(passivelyRefreshed[0]?.auth.status, "unauthenticated");
+        assert.strictEqual(
+          passivelyRefreshed[0]?.message,
+          "OAuth access token has been revoked. Sign in again.",
+        );
+
+        const cached = yield* readProviderStatusCache(cachePath).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        assert.strictEqual(cached?.auth.status, "authenticated");
+
+        yield* Ref.set(refreshFailsRef, true);
+        const failedRefresh = yield* registry
+          .refreshInstanceAfterAccountChange(INSTANCE_ID)
+          .pipe(Effect.result);
+        assert.strictEqual(failedRefresh._tag, "Failure");
+        yield* Ref.set(refreshFailsRef, false);
+
+        const afterFailedVerification = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(afterFailedVerification[0]?.auth.status, "unauthenticated");
+
+        const recovered = yield* registry.refreshInstanceAfterAccountChange(INSTANCE_ID);
+        assert.strictEqual(recovered[0]?.status, "ready");
+        assert.strictEqual(recovered[0]?.auth.status, "authenticated");
+        assert.strictEqual(recovered[0]?.connection?.canDisconnect, true);
+      }),
+    ),
+  );
+
+  it.effect("does not invent assisted recovery for an externally managed account", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef } = yield* makeHarness();
+        const externalProvider: ServerProvider = {
+          ...authenticatedProvider("2026-08-24T00:00:01.000Z"),
+          auth: {
+            status: "authenticated",
+            required: false,
+            type: "apiKey",
+            label: "External API key",
+          },
+          connection: {
+            methods: [],
+            canDisconnect: false,
+            operation: null,
+            runtime: systemRuntime,
+          },
+        };
+        yield* Ref.set(snapshotRef, externalProvider);
+        yield* registry.refreshInstance(INSTANCE_ID);
+
+        const unchanged = yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "Provider authentication expired. Sign in again.",
+        });
+
+        assert.strictEqual(unchanged[0]?.status, "ready");
+        assert.strictEqual(unchanged[0]?.auth.status, "authenticated");
+        assert.strictEqual(unchanged[0]?.message, undefined);
+        assert.deepStrictEqual(unchanged[0]?.connection?.methods, []);
       }),
     ),
   );

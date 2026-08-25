@@ -35,6 +35,11 @@ step. The code is sent only to the live Claude process and is not saved as provi
 Scient never asks for or receives your Claude password. Claude Code continues to own its
 credentials, refresh, expiry, and revocation.
 
+Claude's local account status can occasionally outlive a remotely revoked token. If a live Claude
+request reports that exact condition, Scient stops reusing the failed session and returns the
+provider to **Sign in required**. Sign in again from the same guided surface. Scient does not send a
+test prompt or consume model quota merely to validate the account after login.
+
 ## Computers And Installations
 
 Scient never silently replaces a healthy custom or system installation. A Scient-managed copy is

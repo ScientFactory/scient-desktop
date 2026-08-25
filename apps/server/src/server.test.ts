@@ -662,6 +662,7 @@ const buildAppUnderTest = (options?: {
             getProviders: Effect.succeed([]),
             refresh: () => Effect.succeed([]),
             refreshInstance: () => Effect.succeed([]),
+            refreshInstanceAfterAccountChange: () => Effect.succeed([]),
             reloadInstance: () => Effect.succeed([]),
             getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
               Effect.succeed(
@@ -676,6 +677,7 @@ const buildAppUnderTest = (options?: {
             setProviderManagedRuntimeSummary: () => Effect.succeed([]),
             setProviderMaintenanceActionState: () => Effect.succeed([]),
             setProviderConnectionOperation: () => Effect.succeed([]),
+            setProviderAuthenticationFailure: () => Effect.succeed([]),
             streamChanges: Stream.empty,
             ...options?.layers?.providerRegistry,
           }),

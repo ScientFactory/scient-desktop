@@ -102,6 +102,7 @@ function makeHarness(options?: {
     ]);
     const transitionsRef = yield* Ref.make<ReadonlyArray<ProviderConnectionOperation | null>>([]);
     const refreshCountRef = yield* Ref.make(0);
+    const accountChangeRefreshCountRef = yield* Ref.make(0);
 
     const setProviderConnectionOperation: ProviderRegistryShape["setProviderConnectionOperation"] =
       (input) =>
@@ -146,6 +147,10 @@ function makeHarness(options?: {
       refreshInstance: (instanceId) =>
         refreshInstance(instanceId, false).pipe(Effect.catch(() => Ref.get(providersRef))),
       refreshInstanceStrict: (instanceId) => refreshInstance(instanceId, true),
+      refreshInstanceAfterAccountChange: (instanceId) =>
+        Ref.update(accountChangeRefreshCountRef, (count) => count + 1).pipe(
+          Effect.andThen(refreshInstance(instanceId, true)),
+        ),
       reloadInstance: () => Ref.get(providersRef),
       reloadInstanceStrict: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
@@ -162,6 +167,7 @@ function makeHarness(options?: {
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation,
+      setProviderAuthenticationFailure: () => Ref.get(providersRef),
       streamChanges: Stream.empty,
     };
 
@@ -202,6 +208,7 @@ function makeHarness(options?: {
       providersRef,
       transitionsRef,
       refreshCountRef,
+      accountChangeRefreshCountRef,
       lifecycleCoordinator: trackedLifecycleCoordinator,
       lifecycleReleaseCountRef,
       closeManager: Scope.close(managerScope, Exit.void),
@@ -227,11 +234,12 @@ describe("ProviderConnectionManager", () => {
             }),
           disconnect: Effect.void,
         };
-        const { manager, transitionsRef, refreshCountRef } = yield* makeHarness({
-          actions,
-          refreshProvider: (provider, refreshCount) =>
-            refreshCount >= 2 ? authenticatedProvider(provider) : provider,
-        });
+        const { manager, transitionsRef, refreshCountRef, accountChangeRefreshCountRef } =
+          yield* makeHarness({
+            actions,
+            refreshProvider: (provider, refreshCount) =>
+              refreshCount >= 2 ? authenticatedProvider(provider) : provider,
+          });
 
         const started = yield* manager.start({
           instanceId: CODEX_INSTANCE,
@@ -263,6 +271,7 @@ describe("ProviderConnectionManager", () => {
           ["starting", "waiting_for_browser", "verifying", "connected"],
         );
         assert.strictEqual(yield* Ref.get(refreshCountRef), 2);
+        assert.strictEqual(yield* Ref.get(accountChangeRefreshCountRef), 1);
       }),
   );
 
@@ -1341,7 +1350,7 @@ describe("ProviderConnectionManager", () => {
         start: () => Effect.die(new Error("must not start")),
         disconnect: Ref.update(disconnects, (count) => count + 1),
       };
-      const { manager, refreshCountRef } = yield* makeHarness({
+      const { manager, refreshCountRef, accountChangeRefreshCountRef } = yield* makeHarness({
         actions,
         provider: {
           ...disconnectedProvider,
@@ -1358,6 +1367,7 @@ describe("ProviderConnectionManager", () => {
       yield* manager.disconnect({ instanceId: CODEX_INSTANCE });
       assert.strictEqual(yield* Ref.get(disconnects), 1);
       assert.strictEqual(yield* Ref.get(refreshCountRef), 1);
+      assert.strictEqual(yield* Ref.get(accountChangeRefreshCountRef), 1);
     }),
   );
 
