@@ -238,6 +238,18 @@ be obtained. They publish a truthful verification failure rather than accepting 
 evidence. Ordinary background and client-requested refreshes remain cache-preserving so a transient
 probe failure does not empty an otherwise healthy Settings or composer view.
 
+A passive account probe is not always proof that a credential still works remotely. When a live
+provider request returns a narrowly classified terminal authentication failure, its adapter emits an
+authoritative reauthentication signal and retires that failed session after settling the turn. The
+registry then keeps a process-local authentication-failure overlay that ordinary passive probes
+cannot erase. Canonical runtime failures take precedence while the executable is unavailable; the
+remembered authentication failure becomes visible again once the runtime is operational. The overlay
+is excluded from the status cache, remains visible throughout fresh account verification, and is
+cleared only after that verification succeeds for the same observed failure, instance removal, or
+process restart. This recovery path
+does not send a model prompt merely to test credentials, does not match generic HTTP errors, and does
+not delete provider-owned credentials.
+
 Operation summaries are transient overlays on the canonical provider snapshot. They publish
 immediately, survive an overlapping authoritative refresh, are excluded from the persistent provider
 status cache, and are pruned when the instance disappears. A terminal operation result cannot be

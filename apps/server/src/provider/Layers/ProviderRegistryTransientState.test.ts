@@ -8,6 +8,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -92,6 +93,41 @@ function provider(checkedAt: string): ServerProvider {
   };
 }
 
+function authenticatedProvider(checkedAt: string): ServerProvider {
+  return {
+    ...provider(checkedAt),
+    status: "ready",
+    auth: {
+      status: "authenticated",
+      required: true,
+      email: "scientist@example.com",
+      label: "Claude Pro Subscription",
+    },
+    connection: {
+      methods: ["claude_subscription"],
+      canDisconnect: true,
+      operation: null,
+      runtime: systemRuntime,
+    },
+  };
+}
+
+function brokenManagedProvider(checkedAt: string): ServerProvider {
+  return {
+    ...authenticatedProvider(checkedAt),
+    status: "error",
+    auth: { status: "unknown", required: true },
+    message: "Claude is installed but failed to run.",
+    models: [],
+    connection: {
+      methods: ["claude_subscription"],
+      canDisconnect: false,
+      operation: null,
+      runtime: managedRuntime,
+    },
+  };
+}
+
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
@@ -125,6 +161,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
   const snapshotRef = yield* Ref.make(provider("2026-08-24T00:00:00.000Z"));
   const sourceChanges = yield* PubSub.unbounded<ServerProvider>();
   const registryChanges = yield* PubSub.unbounded<void>();
+  const beforeRefreshSnapshotRef = yield* Ref.make<Effect.Effect<void>>(Effect.void);
 
   const makeInstance = (): ProviderInstance => ({
     instanceId: INSTANCE_ID,
@@ -141,7 +178,11 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
         packageName: null,
       }),
       getSnapshot: Ref.get(snapshotRef),
-      refresh: Ref.get(snapshotRef),
+      refresh: Effect.gen(function* () {
+        const beforeRefreshSnapshot = yield* Ref.get(beforeRefreshSnapshotRef);
+        yield* beforeRefreshSnapshot;
+        return yield* Ref.get(snapshotRef);
+      }),
       streamChanges: Stream.fromPubSub(sourceChanges),
     },
     adapter: {} as ProviderInstance["adapter"],
@@ -179,7 +220,16 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
     cacheDir: config.providerStatusCacheDir,
     instanceId: INSTANCE_ID,
   }).pipe(Effect.provide(services));
-  return { registry, snapshotRef, instancesRef, registryChanges, makeInstance, cachePath };
+  return {
+    registry,
+    snapshotRef,
+    beforeRefreshSnapshotRef,
+    sourceChanges,
+    instancesRef,
+    registryChanges,
+    makeInstance,
+    cachePath,
+  };
 });
 
 const nextRegistryEmission = Effect.fn("ProviderRegistryTransientState.nextEmission")(function* (
@@ -252,6 +302,10 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
           instanceId: INSTANCE_ID,
           runtime: managedRuntime,
         });
+        yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "Provider authentication expired. Sign in again.",
+        });
 
         const removedFiber = yield* nextRegistryEmission(registry);
         yield* Ref.set(instancesRef, []);
@@ -266,6 +320,242 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
         assert.strictEqual(rebuilt[0]?.connection?.operation, null);
         assert.strictEqual(rebuilt[0]?.connection?.runtime?.source, "system");
         assert.strictEqual(rebuilt[0]?.connection?.runtime?.operation, null);
+        assert.strictEqual(rebuilt[0]?.message, undefined);
+      }),
+    ),
+  );
+
+  it.effect("keeps runtime-proven authentication failure until a verified account transition", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef, beforeRefreshSnapshotRef, cachePath } = yield* makeHarness();
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:01.000Z"));
+        yield* registry.refreshInstance(INSTANCE_ID);
+
+        const failed = yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "OAuth access token has been revoked. Sign in again.",
+        });
+        assert.strictEqual(failed[0]?.status, "warning");
+        assert.strictEqual(failed[0]?.auth.status, "unauthenticated");
+        assert.strictEqual(failed[0]?.connection?.canDisconnect, false);
+
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:02.000Z"));
+        const passivelyRefreshed = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(passivelyRefreshed[0]?.auth.status, "unauthenticated");
+        assert.strictEqual(
+          passivelyRefreshed[0]?.message,
+          "OAuth access token has been revoked. Sign in again.",
+        );
+
+        const cached = yield* readProviderStatusCache(cachePath).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        assert.strictEqual(cached?.auth.status, "authenticated");
+
+        yield* Ref.set(
+          beforeRefreshSnapshotRef,
+          Effect.die(new Error("simulated provider refresh failure")),
+        );
+        const failedRefresh = yield* registry
+          .refreshInstanceAfterAccountChange(INSTANCE_ID)
+          .pipe(Effect.result);
+        assert.strictEqual(failedRefresh._tag, "Failure");
+        yield* Ref.set(beforeRefreshSnapshotRef, Effect.void);
+
+        const afterFailedVerification = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(afterFailedVerification[0]?.auth.status, "unauthenticated");
+
+        const recovered = yield* registry.refreshInstanceAfterAccountChange(INSTANCE_ID);
+        assert.strictEqual(recovered[0]?.status, "ready");
+        assert.strictEqual(recovered[0]?.auth.status, "authenticated");
+        assert.strictEqual(recovered[0]?.connection?.canDisconnect, true);
+      }),
+    ),
+  );
+
+  it.effect("lets a canonical managed-runtime failure take precedence until repair", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef } = yield* makeHarness();
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:01.000Z"));
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "OAuth access token has been revoked. Sign in again.",
+        });
+
+        yield* Ref.set(snapshotRef, brokenManagedProvider("2026-08-24T00:00:02.000Z"));
+        const broken = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(broken[0]?.status, "error");
+        assert.strictEqual(broken[0]?.auth.status, "unknown");
+        assert.strictEqual(broken[0]?.message, "Claude is installed but failed to run.");
+        assert.strictEqual(broken[0]?.connection?.runtime?.source, "scient_managed");
+
+        const repairedProvider = authenticatedProvider("2026-08-24T00:00:03.000Z");
+        yield* Ref.set(snapshotRef, {
+          ...repairedProvider,
+          connection: {
+            ...repairedProvider.connection!,
+            runtime: managedRuntime,
+          },
+        });
+        const repaired = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(repaired[0]?.status, "warning");
+        assert.strictEqual(repaired[0]?.auth.status, "unauthenticated");
+        assert.strictEqual(
+          repaired[0]?.message,
+          "OAuth access token has been revoked. Sign in again.",
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "keeps the authentication failure over concurrent publication when verification fails",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { registry, snapshotRef, sourceChanges, beforeRefreshSnapshotRef } =
+            yield* makeHarness();
+          yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:01.000Z"));
+          yield* registry.refreshInstance(INSTANCE_ID);
+          yield* registry.setProviderAuthenticationFailure({
+            instanceId: INSTANCE_ID,
+            message: "OAuth access token has been revoked. Sign in again.",
+          });
+
+          const refreshStarted = yield* Deferred.make<void>();
+          const releaseRefresh = yield* Deferred.make<void>();
+          yield* Ref.set(
+            beforeRefreshSnapshotRef,
+            Effect.gen(function* () {
+              yield* Deferred.succeed(refreshStarted, undefined);
+              yield* Deferred.await(releaseRefresh);
+              return yield* Effect.die(new Error("simulated provider refresh failure"));
+            }),
+          );
+          const verificationFiber = yield* registry
+            .refreshInstanceAfterAccountChange(INSTANCE_ID)
+            .pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(refreshStarted);
+
+          const publicationFiber = yield* nextRegistryEmission(registry);
+          yield* PubSub.publish(sourceChanges, authenticatedProvider("2026-08-24T00:00:02.000Z"));
+          const publication = Option.getOrThrow(yield* Fiber.join(publicationFiber));
+          assert.strictEqual(publication[0]?.status, "warning");
+          assert.strictEqual(publication[0]?.auth.status, "unauthenticated");
+
+          yield* Deferred.succeed(releaseRefresh, undefined);
+          assert.strictEqual((yield* Fiber.join(verificationFiber))._tag, "Failure");
+          yield* Ref.set(beforeRefreshSnapshotRef, Effect.void);
+          const afterFailure = yield* registry.refreshInstance(INSTANCE_ID);
+          assert.strictEqual(afterFailure[0]?.auth.status, "unauthenticated");
+        }),
+      ),
+  );
+
+  it.effect("preserves the authentication failure when account verification is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef, beforeRefreshSnapshotRef } = yield* makeHarness();
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:01.000Z"));
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "OAuth access token has been revoked. Sign in again.",
+        });
+
+        const refreshStarted = yield* Deferred.make<void>();
+        const releaseRefresh = yield* Deferred.make<void>();
+        yield* Ref.set(
+          beforeRefreshSnapshotRef,
+          Deferred.succeed(refreshStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRefresh)),
+          ),
+        );
+        const verificationFiber = yield* registry
+          .refreshInstanceAfterAccountChange(INSTANCE_ID)
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(refreshStarted);
+        yield* Fiber.interrupt(verificationFiber);
+
+        yield* Ref.set(beforeRefreshSnapshotRef, Effect.void);
+        const afterInterruption = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.strictEqual(afterInterruption[0]?.status, "warning");
+        assert.strictEqual(afterInterruption[0]?.auth.status, "unauthenticated");
+      }),
+    ),
+  );
+
+  it.effect("does not clear a newer authentication failure after successful verification", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef, beforeRefreshSnapshotRef } = yield* makeHarness();
+        yield* Ref.set(snapshotRef, authenticatedProvider("2026-08-24T00:00:01.000Z"));
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "Original authentication failure.",
+        });
+
+        const refreshStarted = yield* Deferred.make<void>();
+        const releaseRefresh = yield* Deferred.make<void>();
+        yield* Ref.set(
+          beforeRefreshSnapshotRef,
+          Deferred.succeed(refreshStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRefresh)),
+          ),
+        );
+        const verificationFiber = yield* registry
+          .refreshInstanceAfterAccountChange(INSTANCE_ID)
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(refreshStarted);
+        yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "Newer authentication failure.",
+        });
+        yield* Deferred.succeed(releaseRefresh, undefined);
+
+        const verified = yield* Fiber.join(verificationFiber);
+        assert.strictEqual(verified[0]?.status, "warning");
+        assert.strictEqual(verified[0]?.auth.status, "unauthenticated");
+        assert.strictEqual(verified[0]?.message, "Newer authentication failure.");
+      }),
+    ),
+  );
+
+  it.effect("does not invent assisted recovery for an externally managed account", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef } = yield* makeHarness();
+        const externalProvider: ServerProvider = {
+          ...authenticatedProvider("2026-08-24T00:00:01.000Z"),
+          auth: {
+            status: "authenticated",
+            required: false,
+            type: "apiKey",
+            label: "External API key",
+          },
+          connection: {
+            methods: [],
+            canDisconnect: false,
+            operation: null,
+            runtime: systemRuntime,
+          },
+        };
+        yield* Ref.set(snapshotRef, externalProvider);
+        yield* registry.refreshInstance(INSTANCE_ID);
+
+        const unchanged = yield* registry.setProviderAuthenticationFailure({
+          instanceId: INSTANCE_ID,
+          message: "Provider authentication expired. Sign in again.",
+        });
+
+        assert.strictEqual(unchanged[0]?.status, "ready");
+        assert.strictEqual(unchanged[0]?.auth.status, "authenticated");
+        assert.strictEqual(unchanged[0]?.message, undefined);
+        assert.deepStrictEqual(unchanged[0]?.connection?.methods, []);
       }),
     ),
   );

@@ -317,7 +317,7 @@ describe("ProviderRuntimeSection", () => {
     expect(removeButton).not.toContain("text-white");
   });
 
-  it("uses a quiet cancel action for compact runtime progress", () => {
+  it("shows compact download progress beside the quiet cancel action", () => {
     const activeProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -330,11 +330,11 @@ describe("ProviderRuntimeSection", () => {
           operation: {
             operationId: "repair-active",
             action: "repair",
-            status: "testing",
+            status: "downloading",
             startedAt: "2026-08-22T12:00:00.000Z",
             finishedAt: null,
-            message: "Testing the installed Antigravity runtime.",
-            downloadedBytes: 0,
+            message: "Downloading Antigravity from the reviewed official release.",
+            downloadedBytes: 64,
             totalBytes: 100,
           },
         },
@@ -351,13 +351,14 @@ describe("ProviderRuntimeSection", () => {
       }),
     );
 
-    expect(markup).toContain("Testing the installed Antigravity runtime");
+    expect(markup).toContain("Downloading Antigravity from the reviewed official release");
     expect(markup).not.toContain("previous working runtime");
     expect(markup).not.toContain("Provider download progress");
-    expect(markup).not.toContain(">0%<");
+    expect(markup).toContain('aria-label="Download progress 64%"');
+    expect(markup).toContain(">64%<");
     expect(markup).toContain("space-y-4 py-1");
     expect(markup).not.toContain("min-h-44");
-    expect(markup).toContain('class="flex justify-end pt-1"><button');
+    expect(markup).toContain('class="flex items-center justify-end gap-3 pt-1"');
     const cancelButtonStart = markup.lastIndexOf("<button", markup.indexOf(">Cancel<"));
     const cancelButton = markup.slice(
       cancelButtonStart,
@@ -730,6 +731,53 @@ describe("ProviderRuntimeSection", () => {
 
     expect(markup).toContain("Verification failed after repair");
     expect(markup).toContain("Antigravity 1.1.17");
+  });
+
+  it("returns to the current runtime state after setup is cancelled", () => {
+    const cancelledProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "2.1.170",
+      status: "ready",
+      connection: {
+        methods: ["claude_subscription"],
+        canDisconnect: true,
+        operation: null,
+        runtime: {
+          source: "system",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["install"],
+          managedVersion: null,
+          previousManagedVersion: null,
+          operation: {
+            operationId: "install-cancelled",
+            action: "install",
+            status: "cancelled",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: "2026-08-22T12:00:05.000Z",
+            message:
+              "Provider runtime setup cancelled. The previous working runtime was preserved.",
+          },
+          message: "Using a compatible system Claude runtime.",
+        },
+      },
+    };
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: cancelledProvider,
+        displayName: "Claude",
+      }),
+    );
+
+    expect(markup).toContain("System installation");
+    expect(markup).toContain('aria-label="Use Scient-managed Claude"');
+    expect(markup).not.toContain("Provider runtime setup cancelled");
+    expect(markup).not.toContain("previous working runtime");
   });
 
   it("shows the current missing-runtime state after removal instead of a stale success row", () => {

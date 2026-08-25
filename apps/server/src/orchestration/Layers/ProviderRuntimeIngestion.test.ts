@@ -40,6 +40,8 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -233,6 +235,21 @@ describe("ProviderRuntimeIngestion", () => {
     const attachmentsDir = NodePath.join(serverBaseDir, "userdata", "attachments");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
+    const authenticationFailures: Array<{
+      readonly instanceId: ProviderInstanceId;
+      readonly message: string;
+    }> = [];
+    const providerRegistry = {
+      ...makeProviderRegistryMock(),
+      setProviderAuthenticationFailure: (input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly message: string;
+      }) =>
+        Effect.sync(() => {
+          authenticationFailures.push(input);
+          return [];
+        }),
+    };
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -254,6 +271,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(Layer.succeed(ProviderRegistry, providerRegistry)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -328,6 +346,7 @@ describe("ProviderRuntimeIngestion", () => {
       setProviderSession: provider.setSession,
       drain,
       attachmentsDir,
+      authenticationFailures,
     };
   }
 
@@ -2822,6 +2841,45 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+  });
+
+  it("forwards only authoritative reauthentication signals to the provider registry", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+
+    harness.emit({
+      type: "auth.status",
+      eventId: asEventId("evt-auth-status-telemetry"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: instanceId,
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        isAuthenticating: false,
+        output: ["Signed in"],
+      },
+    });
+    harness.emit({
+      type: "auth.status",
+      eventId: asEventId("evt-auth-status-reauthenticate"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: instanceId,
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        requiresReauthentication: true,
+        error: "OAuth access token has been revoked.",
+      },
+    });
+
+    await harness.drain();
+    expect(harness.authenticationFailures).toEqual([
+      {
+        instanceId,
+        message: "OAuth access token has been revoked.",
+      },
+    ]);
   });
 
   it("records runtime.error activities from the typed payload message", async () => {
