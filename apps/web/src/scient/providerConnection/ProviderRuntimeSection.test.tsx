@@ -1,9 +1,11 @@
 import {
   EnvironmentId,
+  ProviderConnectionError,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -261,7 +263,238 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("text-primary-foreground");
   });
 
+  it("drops an install-plan failure superseded by an active runtime operation", async () => {
+    let settlePlan:
+      | ((result: {
+          readonly _tag: "Failure";
+          readonly cause: Cause.Cause<ProviderConnectionError>;
+        }) => void)
+      | undefined;
+    commands.plan.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settlePlan = resolve;
+        }),
+    );
+    const droidProvider: ServerProvider = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("droid"),
+      driver: ProviderDriverKind.make("droid"),
+      displayName: "Droid",
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: droidProvider,
+      displayName: "Droid",
+      initialAction: "install",
+    });
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    const installingDroidProvider: ServerProvider = {
+      ...droidProvider,
+      connection: {
+        ...droidProvider.connection!,
+        runtime: {
+          ...droidProvider.connection!.runtime!,
+          // The actions list can briefly lag behind the canonical operation.
+          // Once installation is active, it still supersedes an older plan.
+          actions: ["install"],
+          operation: {
+            operationId: "droid-install-active",
+            action: "install",
+            status: "activating",
+            startedAt: "2026-08-25T12:00:00.000Z",
+            finishedAt: null,
+            message: "Activating the verified Droid runtime.",
+          },
+        },
+      },
+    };
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: installingDroidProvider,
+      displayName: "Droid",
+    });
+
+    settlePlan?.({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new ProviderConnectionError({
+          provider: ProviderDriverKind.make("droid"),
+          instanceId: ProviderInstanceId.make("droid"),
+          reason: "invalid_runtime_action",
+          message: "The install action is not available for this Droid runtime.",
+        }),
+      ),
+    });
+    await Promise.resolve();
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: installingDroidProvider,
+        displayName: "Droid",
+      }),
+    );
+
+    expect(markup).toContain("Activating the verified Droid runtime");
+    expect(markup).toContain(">Cancel<");
+    expect(markup).not.toContain("install action is not available");
+  });
+
+  it("does not request an initial plan while a runtime operation is active", async () => {
+    const installingProvider: ServerProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "install-active",
+            action: "install",
+            status: "activating",
+            startedAt: "2026-08-25T12:00:00.000Z",
+            finishedAt: null,
+            message: "Activating the verified Antigravity runtime.",
+          },
+        },
+      },
+    };
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: installingProvider,
+        displayName: "Antigravity",
+        initialAction: "install",
+      }),
+    );
+    await Promise.resolve();
+
+    expect(markup).toContain("Activating the verified Antigravity runtime");
+    expect(commands.plan).not.toHaveBeenCalled();
+  });
+
+  it("keeps a plan failure visible while its runtime action remains current", async () => {
+    commands.plan.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new ProviderConnectionError({
+          provider: ProviderDriverKind.make("antigravity"),
+          instanceId,
+          reason: "connection_failed",
+          message: "Scient could not load the installation details.",
+        }),
+      ),
+    });
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider,
+      displayName: "Antigravity",
+      initialAction: "install",
+    });
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider,
+        displayName: "Antigravity",
+        initialAction: "install",
+      }),
+    );
+
+    expect(markup).toContain("Scient could not load the installation details");
+  });
+
+  it("closes a prepared plan when a newer runtime no longer offers its action", async () => {
+    const onPlanOpenChange = vi.fn();
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider,
+      displayName: "Antigravity",
+      initialAction: "install",
+      onPlanOpenChange,
+    });
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    hooks.beginRender();
+    expect(
+      renderToStaticMarkup(
+        ProviderRuntimeSection({
+          compact: true,
+          environmentId,
+          provider,
+          displayName: "Antigravity",
+          initialAction: "install",
+          onPlanOpenChange,
+        }),
+      ),
+    ).toContain("Install Antigravity");
+
+    const managedProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      status: "ready",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+        },
+      },
+    };
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: managedProvider,
+        displayName: "Antigravity",
+        onPlanOpenChange,
+      }),
+    );
+
+    expect(markup).toContain("Managed by Scient");
+    expect(markup).not.toContain("Install Antigravity");
+    expect(onPlanOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("keeps removal confirmation focused on the decision", async () => {
+    const removableProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+        },
+      },
+    };
     commands.plan.mockResolvedValue({
       _tag: "Success",
       value: {
@@ -280,7 +513,7 @@ describe("ProviderRuntimeSection", () => {
     ProviderRuntimeSection({
       compact: true,
       environmentId,
-      provider,
+      provider: removableProvider,
       displayName: "Antigravity",
       initialAction: "remove",
     });
@@ -292,7 +525,7 @@ describe("ProviderRuntimeSection", () => {
       ProviderRuntimeSection({
         compact: true,
         environmentId,
-        provider,
+        provider: removableProvider,
         displayName: "Antigravity",
         initialAction: "remove",
       }),
@@ -439,6 +672,20 @@ describe("ProviderRuntimeSection", () => {
 
   it("reports repair success only after the matching streamed operation succeeds", async () => {
     const onActionSucceeded = vi.fn();
+    const repairableProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+        },
+      },
+    };
     commands.plan.mockResolvedValue({
       _tag: "Success",
       value: {
@@ -480,7 +727,7 @@ describe("ProviderRuntimeSection", () => {
     hooks.beginRender();
     ProviderRuntimeSection({
       environmentId,
-      provider,
+      provider: repairableProvider,
       displayName: "Antigravity",
       initialAction: "repair",
       onActionSucceeded,
