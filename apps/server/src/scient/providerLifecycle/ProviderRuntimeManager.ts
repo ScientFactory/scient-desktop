@@ -20,6 +20,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 
 import type {
@@ -65,6 +66,7 @@ interface ActiveRuntimeOperation {
   readonly startedAt: string;
   readonly baseSummary: ProviderRuntimeSummary;
   readonly actions: ProviderManagedRuntimeActions;
+  readonly committedRef: Ref.Ref<boolean>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
 }
@@ -280,7 +282,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const refreshRuntimeInstances = Effect.fn("ProviderRuntimeManager.refreshRuntimeInstances")(
     function* (provider: ProviderDriverKind) {
       const providers = yield* providerRegistry.getProviders;
-      yield* Effect.forEach(
+      const refreshCauses = yield* Effect.forEach(
         providers.filter((candidate) => candidate.driver === provider),
         (candidate) =>
           Effect.gen(function* () {
@@ -288,7 +290,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             // Runtime selection happens while constructing the provider. Reload
             // first so removing a private runtime can discover a healthy system
             // fallback before the durable summary is published.
-            yield* providerRegistry.reloadInstance(candidate.instanceId);
+            yield* providerRegistry.reloadInstanceStrict(candidate.instanceId);
             const actions = yield* providerRegistry.getProviderManagedRuntimeActionsForInstance(
               candidate.instanceId,
             );
@@ -309,9 +311,27 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                 },
               });
             }
-          }).pipe(Effect.ignore),
-        { concurrency: 1, discard: true },
+          }).pipe(
+            Effect.as<Cause.Cause<unknown> | undefined>(undefined),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(cause),
+            ),
+          ),
+        { concurrency: 1 },
       );
+      const failures = refreshCauses.filter(
+        (cause): cause is Cause.Cause<unknown> => cause !== undefined,
+      );
+      if (failures.length > 0) {
+        yield* Effect.logError("provider runtime reconciliation failed", {
+          provider,
+          causes: failures.map(Cause.pretty),
+        });
+        return yield* Effect.fail({
+          message:
+            "The runtime change finished, but Scient could not verify the resulting provider state.",
+        });
+      }
     },
   );
 
@@ -358,6 +378,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         ),
       );
       const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
+      const committedRef = yield* Ref.make(false);
       const transitionLock = yield* Semaphore.make(1);
       const active: ActiveRuntimeOperation = {
         operationId,
@@ -366,6 +387,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         startedAt,
         baseSummary,
         actions: target.actions,
+        committedRef,
         fiberRef,
         transitionLock,
       };
@@ -452,34 +474,46 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         yield* Effect.logError("Provider runtime supervisor failed");
       });
 
-      const supervise = providerRegistry.stopProviderSessions(target.provider).pipe(
-        Effect.mapError((cause) => ({
-          message: `Scient could not stop active ${target.provider} sessions before changing its runtime.`,
-          cause,
-        })),
-        Effect.andThen(target.actions.run(input.action, input.catalogRevision, publishProgress)),
+      const runRuntimeAction = Effect.uninterruptibleMask((restore) =>
+        restore(
+          providerRegistry.stopProviderSessions(target.provider).pipe(
+            Effect.mapError((cause) => ({
+              message: `Scient could not stop active ${target.provider} sessions before changing its runtime.`,
+              cause,
+            })),
+            Effect.andThen(
+              target.actions.run(input.action, input.catalogRevision, publishProgress),
+            ),
+          ),
+        ).pipe(Effect.tap(() => Ref.set(committedRef, true))),
+      );
+
+      const supervise = runRuntimeAction.pipe(
         Effect.result,
         Effect.flatMap((result) =>
           Effect.gen(function* () {
-            // Runtime reload reconciles an already-finished mutation, so keep it
-            // cancellable outside the transition lock. The lock then makes only
-            // terminal publication and ownership release indivisible from cancel,
-            // while layer shutdown can still claim and interrupt this supervisor.
+            let completion = result;
             if (result._tag === "Success") {
               const current = (yield* Ref.get(activeRef)).get(input.instanceId);
               if (current?.operationId !== operationId) return;
-              yield* refreshRuntimeInstances(target.provider);
+              // The provider action returning successfully is the durable commit
+              // boundary. Reconciliation remains interruptible during layer
+              // shutdown, but a user cancellation can no longer claim that the
+              // previous runtime was preserved after this point.
+              const reconciliation = yield* refreshRuntimeInstances(target.provider).pipe(
+                Effect.result,
+              );
+              if (reconciliation._tag === "Failure") {
+                completion = Result.fail(reconciliation.failure);
+              }
             }
             const finishedAt = yield* nowIso;
-            const latestActions =
+            const latestSummary =
               result._tag === "Success"
-                ? ((yield* providerRegistry.getProviderManagedRuntimeActionsForInstance(
-                    input.instanceId,
-                  )) ?? target.actions)
-                : target.actions;
-            const latestSummary = yield* latestActions.getSummary.pipe(
-              Effect.orElseSucceed(() => baseSummary),
-            );
+                ? ((yield* providerRegistry.getProviders).find(
+                    (provider) => provider.instanceId === input.instanceId,
+                  )?.connection?.runtime ?? baseSummary)
+                : yield* target.actions.getSummary.pipe(Effect.orElseSucceed(() => baseSummary));
             yield* transitionLock.withPermits(1)(
               Effect.gen(function* () {
                 const current = (yield* Ref.get(activeRef)).get(input.instanceId);
@@ -492,13 +526,13 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                       operation: operation({
                         operationId,
                         action: input.action,
-                        status: result._tag === "Success" ? "succeeded" : "failed",
+                        status: completion._tag === "Success" ? "succeeded" : "failed",
                         startedAt,
                         finishedAt,
                         message:
-                          result._tag === "Success"
+                          completion._tag === "Success"
                             ? runtimeSuccessMessage(input.action)
-                            : result.failure.message,
+                            : completion.failure.message,
                       }),
                     },
                   })
@@ -557,10 +591,23 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider runtime operation is no longer active.",
         });
       }
-      const active = yield* candidate.transitionLock.withPermits(1)(
-        takeIfCurrent(input.instanceId, input.operationId),
+      const claim = yield* candidate.transitionLock.withPermits(1)(
+        Effect.gen(function* () {
+          const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+          if (current?.operationId !== input.operationId) return undefined;
+          if (yield* Ref.get(current.committedRef)) return "committed" as const;
+          return yield* takeIfCurrent(input.instanceId, input.operationId);
+        }),
       );
-      if (!active) {
+      if (claim === "committed") {
+        return yield* makeError({
+          provider: target.provider,
+          instanceId: input.instanceId,
+          reason: "runtime_operation_not_found",
+          message: "The runtime change is already being finalized and can no longer be cancelled.",
+        });
+      }
+      if (!claim) {
         return yield* makeError({
           provider: target.provider,
           instanceId: input.instanceId,
@@ -569,9 +616,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         });
       }
       const providers = yield* settleActive(
-        active,
+        claim,
         "interrupt",
-        publishCancelled(input.instanceId, active),
+        publishCancelled(input.instanceId, claim),
       );
       return { providers };
     },

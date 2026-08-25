@@ -237,7 +237,19 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     // install/reload. Re-probe before reserving or launching an account flow
     // so an existing provider session is treated as ready, not as a reason to
     // start a duplicate sign-in process.
-    yield* providerRegistry.refreshInstance(input.instanceId);
+    const providerBeforeRefresh = (yield* providerRegistry.getProviders).find(
+      (provider) => provider.instanceId === input.instanceId,
+    )?.driver;
+    yield* providerRegistry.refreshInstanceStrict(input.instanceId).pipe(
+      Effect.mapError(() =>
+        makeError({
+          provider: providerBeforeRefresh ?? ProviderDriverKind.make("unknown"),
+          instanceId: input.instanceId,
+          reason: "connection_failed",
+          message: "Scient could not verify the provider before starting sign in. Try again.",
+        }),
+      ),
+    );
     const target = yield* readTarget(input.instanceId);
     if (!target.actions || !target.snapshot) {
       return yield* makeError({
@@ -450,13 +462,19 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     message: "Verifying the connected provider account.",
                   }),
                 });
-                const refreshed = yield* providerRegistry.refreshInstance(input.instanceId);
-                const refreshedProvider = refreshed.find(
-                  (provider) => provider.instanceId === input.instanceId,
-                );
+                const refreshResult = yield* providerRegistry
+                  .refreshInstanceStrict(input.instanceId)
+                  .pipe(Effect.result);
+                const refreshedProvider =
+                  refreshResult._tag === "Success"
+                    ? refreshResult.success.find(
+                        (provider) => provider.instanceId === input.instanceId,
+                      )
+                    : undefined;
                 if (
-                  refreshedProvider?.auth.required !== false &&
-                  refreshedProvider?.auth.status !== "authenticated"
+                  refreshResult._tag === "Failure" ||
+                  (refreshedProvider?.auth.required !== false &&
+                    refreshedProvider?.auth.status !== "authenticated")
                 ) {
                   completion = Result.fail({
                     message:
@@ -735,7 +753,18 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         instanceId: input.instanceId,
         operation: null,
       });
-      return { providers: yield* providerRegistry.refreshInstance(input.instanceId) };
+      const providers = yield* providerRegistry.refreshInstanceStrict(input.instanceId).pipe(
+        Effect.mapError(() =>
+          makeError({
+            provider: target.provider,
+            instanceId: input.instanceId,
+            reason: "disconnect_failed",
+            message:
+              "The provider completed sign out, but Scient could not verify the current account state.",
+          }),
+        ),
+      );
+      return { providers };
     }).pipe(Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)));
   });
 

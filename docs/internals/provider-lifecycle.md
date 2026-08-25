@@ -101,7 +101,8 @@ Shared process helpers may provide bounded terminal capture, ANSI and OSC 8 sani
 extraction, and mechanical environment filtering. The provider adapter still owns the complete
 environment allowlist, accepted URL hosts and paths, browser-opening behavior, and code protocol.
 Those values are security and compatibility policy, so they are never widened through a shared
-default set.
+default set. An unterminated OSC payload remains hidden through the end of retained output; the
+scanner never guesses that a newline ended terminal metadata and exposes a URL from inside it.
 
 ## User action semantics
 
@@ -115,7 +116,7 @@ default set.
 | Remove             | Deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.                               |
 | Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                              |
 | Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                              |
-| Cancel             | Cancels the exact live operation. It does not reverse an operation that already completed and verified successfully.                                                             |
+| Cancel             | Requests cancellation of the exact live operation. Final connection verification and committed runtime finalization finish authoritatively instead of being relabeled cancelled. |
 | Sign out           | Delegates credential revocation to the provider and verifies the resulting state. It preserves every runtime.                                                                    |
 
 Account creation and subscription purchase remain on the provider's official page. Scient can explain
@@ -219,14 +220,23 @@ mutation.
 
 Every operation has an identity and cleanup owner. Duplicate starts and stale reviewed plans are
 rejected. Explicit cancellation, request interruption during startup, normal completion, and server
-teardown converge on the same idempotent cleanup path. The server releases reservations and owned
-scopes even when a provider ignores cancellation.
+teardown converge on the same idempotent cleanup path. The exported production layers register that
+teardown path as a finalizer, so closing the service scope interrupts active work and releases each
+reservation exactly once even when a provider ignores cancellation.
 
 Connection completion keeps its transition claim through the bounded final account probe because
 that probe decides whether the operation really connected. A cancel arriving during that verification
-waits and cannot overwrite a truthful connected or failed result. Runtime reload remains cancellable
-until terminal publication because reload reconciles a mutation whose filesystem result is already
-known.
+waits and cannot overwrite a truthful connected or failed result. Runtime work remains
+user-cancellable until the provider-owned action returns successfully. That return is the durable
+commit boundary: strict reload and reconciliation still run to determine the terminal state, but a
+late user cancellation cannot claim that the previous runtime was preserved. Server teardown may
+still interrupt this finalization because it is process cleanup, not a user-facing rollback claim.
+
+Lifecycle decisions use strict provider refreshes: sign-in preflight, final account verification,
+post-disconnect verification, and post-mutation runtime reload fail when fresh provider state cannot
+be obtained. They publish a truthful verification failure rather than accepting cached state as new
+evidence. Ordinary background and client-requested refreshes remain cache-preserving so a transient
+probe failure does not empty an otherwise healthy Settings or composer view.
 
 Operation summaries are transient overlays on the canonical provider snapshot. They publish
 immediately, survive an overlapping authoritative refresh, are excluded from the persistent provider

@@ -215,7 +215,9 @@ These are common guarantees, not requirements for every provider to display the 
   explicit provider policy rather than a universal shared manifest.
 - Remove deletes only Scient's private copy and preserves provider credentials.
 - Sign-out revokes only provider-owned credentials and preserves the runtime.
-- Every advertised runtime or connection operation is cancellable and publishes authoritative state.
+- Every advertised runtime or connection operation accepts cancellation until its authoritative
+  verification or commit boundary. A late request cannot overwrite a truthful connected, failed, or
+  committed-runtime result with `cancelled`.
 - Runtime mutation and credential revocation stop affected sessions before changing executable or
   account state.
 - Starting sign-in first refreshes provider state so an existing account does not enter another login
