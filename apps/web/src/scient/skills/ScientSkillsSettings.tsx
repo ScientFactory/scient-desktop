@@ -138,12 +138,8 @@ export function ScientSkillsSettings() {
           />
         </Link>
         <div className="flex items-center gap-3 px-3 pt-4 pb-1 sm:px-4">
-          <span className="relative flex size-9 shrink-0 items-center justify-center">
-            <span
-              aria-hidden
-              className="absolute inset-1 bg-[#f3f1ed]/60 shadow-[0_0_3px_1px_rgba(243,241,237,0.2)] dark:bg-white/6 dark:shadow-[0_0_3px_1px_rgba(255,255,255,0.015)]"
-            />
-            <ScientSymbol className="relative size-7 drop-shadow-[0_0_0.3px_rgba(38,31,38,0.7)]" />
+          <span className="flex size-9 shrink-0 items-center justify-center">
+            <ScientSymbol className="size-8" weight="strong" />
           </span>
           <div className="min-w-0">
             <h2 className="text-lg font-semibold tracking-[-0.025em] text-foreground">
