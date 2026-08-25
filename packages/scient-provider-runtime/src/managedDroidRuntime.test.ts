@@ -25,7 +25,7 @@ describe("ManagedDroidRuntime", () => {
     const launchPath = new ManagedDroidRuntime("/scient-data").launchPath(artifact!);
 
     expect(launchPath.replaceAll("\\", "/")).toMatch(
-      /\/provider-runtimes\/droid\/versions\/0\.202\.0\/darwin-arm64\/droid$/u,
+      /\/provider-runtimes\/droid\/versions\/0\.203\.0\/darwin-arm64\/droid$/u,
     );
   });
 
@@ -80,7 +80,7 @@ describe("ManagedDroidRuntime", () => {
       artifact: artifact!,
       signal: new AbortController().signal,
     });
-    expect(installed).toMatchObject({ installed: true, activeVersion: "0.202.0" });
+    expect(installed).toMatchObject({ installed: true, activeVersion: "0.203.0" });
     expect(events).toEqual([
       `download:${artifact!.url}`,
       "verify:sha256",
