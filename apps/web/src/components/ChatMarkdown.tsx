@@ -1463,7 +1463,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
                 handleOpenInEditor();
                 return;
               }
-              if (onOpenInBrowser && shouldOpenMarkdownFileLinkInBrowserByDefault(iconPath)) {
+              if (
+                onOpenInBrowser &&
+                (shouldOpenMarkdownFileLinkInBrowserByDefault(iconPath) ||
+                  resolveWorkspaceFileLinkOpenTarget(iconPath) === "browser")
+              ) {
                 handleOpenInBrowser();
                 return;
               }
