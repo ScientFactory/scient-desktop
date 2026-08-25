@@ -21,11 +21,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-25-upstream-sync-99960383d0.md`](docs/internals/2026-08-25-upstream-sync-99960383d0.md)
+[`docs/internals/2026-08-25-upstream-sync-1a4a7596c2.md`](docs/internals/2026-08-25-upstream-sync-1a4a7596c2.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `99960383d094b850f0001d3067fa604aa3adf7d6` into the refresh
+checkpoint `1a4a7596c2c557fcc26a5dceefc04ac6268640b4` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`e6a109b9f74552eb735968986845e500b98c3c73`. Later observed T3
+`99960383d094b850f0001d3067fa604aa3adf7d6`. Later observed T3
 tips never move `integrationBase` by themselves; it advances only after the
 exact ancestry and verification gate are complete.
 
@@ -271,6 +271,17 @@ adaptation preserves the explicit workspace-HTML browser route while PDFs stay
 on Scient's range-aware file surface. Scient identity, release commands, rich
 Markdown, workspace images, scientific surfaces, provider lifecycle, cloud,
 updater, and publication boundaries remain intact.
+
+The follow-up 2026-08-25 sync through `1a4a7596c2` receives 11 official
+commits covering server projection efficiency, lockfile stability, settled
+thread shortcuts, batched macOS signing, linked pull requests, HEIC attachment
+conversion, mobile device metadata, bounded Grok tool output, delayed shortcut
+hints, disabled-Cursor probe avoidance, and migration-aware release acceptance.
+Fifteen textual conflicts preserve Scient's immutable migration sequence,
+workspace/fork projection contracts, rich Markdown and scientific surfaces,
+shared sidebar row, release safeguards, and desktop identity while composing
+the corresponding T3 behavior. The exact record documents two contract-level
+omissions caught and corrected by the changed-test gate.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
