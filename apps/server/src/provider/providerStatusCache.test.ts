@@ -163,6 +163,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       });
       const cachePath = `${tempDir}/cursor.json`;
       const cursorProvider = makeProvider(ProviderDriverKind.make("cursor"), {
+        probePending: true,
         updateState: {
           status: "running",
           startedAt: "2026-08-23T13:34:28.000Z",
@@ -206,12 +207,14 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
 
       const raw = yield* fs.readFileString(cachePath);
       const persisted = yield* decodeProviderSnapshotJson(raw);
+      assert.strictEqual(persisted.probePending, undefined);
       assert.strictEqual(persisted.updateState, undefined);
       assert.strictEqual(persisted.connection?.operation, null);
       assert.strictEqual(persisted.connection?.runtime?.operation, null);
       assert.strictEqual(persisted.connection?.runtime?.source, "scient_managed");
       assert.deepStrictEqual(persisted.connection?.runtime?.actions, ["repair", "remove"]);
       assert.ok(!raw.includes("secret-flow"));
+      assert.ok(!raw.includes("probePending"));
       assert.ok(!raw.includes("connection-current-process"));
       assert.ok(!raw.includes("runtime-current-process"));
 
@@ -220,6 +223,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       yield* fs.writeFileString(cachePath, yield* encodeProviderSnapshotJson(cursorProvider));
       const recovered = yield* readProviderStatusCache(cachePath);
       assert.exists(recovered);
+      assert.strictEqual(recovered.probePending, undefined);
       assert.strictEqual(recovered.updateState, undefined);
       assert.strictEqual(recovered.connection?.operation, null);
       assert.strictEqual(recovered.connection?.runtime?.operation, null);
@@ -248,6 +252,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       ],
     });
     const fallbackCodex = makeProvider(CODEX_DRIVER, {
+      probePending: true,
       models: [
         {
           slug: "gpt-5.4",
@@ -265,7 +270,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         fallbackProvider: fallbackCodex,
       }),
       {
-        ...fallbackCodex,
+        ...(({ probePending: _probePending, ...rest }) => rest)(fallbackCodex),
         models: [
           ...fallbackCodex.models,
           {

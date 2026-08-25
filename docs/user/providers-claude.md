@@ -3,6 +3,8 @@
 Scient keeps installing the Claude tool and connecting a Claude account as two separate, visible
 facts. A saved provider configuration is not treated as a working connection.
 
+For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
+
 ## The Easiest Setup Path
 
 When Claude is not ready, choose it from **Choose your AI** in the composer or open **Settings >
@@ -26,12 +28,17 @@ an Anthropic Console account. Existing API-key, Bedrock, Vertex, Foundry, and cu
 remain advanced provider configurations rather than being rewritten by the guided account flow.
 
 Most browser sign-ins return to Claude automatically. If the browser itself displays a one-time
-code, expand **Browser showed a code?** and paste it into the compact recovery field. This is an occasional fallback for
-environments where the local callback cannot complete, not a normal extra step. The code is sent
-only to the live Claude process and is not saved as provider state.
+code, expand **Browser showed a code?** and paste it into the compact recovery field. This is an
+occasional fallback for environments where the local callback cannot complete, not a normal extra
+step. The code is sent only to the live Claude process and is not saved as provider state.
 
 Scient never asks for or receives your Claude password. Claude Code continues to own its
 credentials, refresh, expiry, and revocation.
+
+Claude's local account status can occasionally outlive a remotely revoked token. If a live Claude
+request reports that exact condition, Scient stops reusing the failed session and returns the
+provider to **Sign in required**. Sign in again from the same guided surface. Scient does not send a
+test prompt or consume model quota merely to validate the account after login.
 
 ## Computers And Installations
 
@@ -43,27 +50,13 @@ For a Scient-managed copy, expand Claude in **Settings > Providers** to repair o
 private runtime. If the executable stops working, **Manage** opens directly on that recovery path
 instead of asking you to sign in again.
 
-The reviewed catalog currently contains Anthropic's official native Claude Code `2.1.170`
-executables for Apple-silicon and Intel macOS, Windows ARM64 and x64, and Linux ARM64 and x64 with
-glibc or musl. Managed installation is offered only by the local desktop host; remote and web
-servers continue using the runtime administered on that host.
+Managed installation is offered only when the local desktop server reports a reviewed artifact for
+its exact operating system and architecture. Remote clients continue using the runtime administered
+on their server. The app displays the reviewed version and download details before installation.
 
-This initial managed version is deliberately paired with the Claude Agent SDK already used by the
-app. It supports the reviewed default model set but does not advertise Claude Opus 5, which requires
-Claude Code `2.1.219` or newer. Scient will expose Opus 5 only after a compatible newer Claude
-runtime is present; a future managed update must review the SDK and runtime together.
-
-The catalog implements each listed target, but packaged clean-machine release qualification is
-tracked separately for every operating system and architecture. Scient should not publicly claim a
-target as release-proven until installation, authentication, update, cancellation, and recovery
-have passed on that exact target.
-
-For Windows, release qualification is separate for x64 and ARM64. On a clean machine for each
-architecture, verify the complete user flow: download the reviewed `claude.exe`, verify its size and
-SHA-256 digest, run the version smoke test, activate it, restart Scient, complete Claude's browser
-sign-in, discover a usable curated model, repair the managed copy, and remove it without affecting
-Claude-owned account data. Cross-platform automated tests protect this sequence, but they do not
-replace running the packaged application and executable on the real Windows architecture.
+Scient checks Claude Code and the Claude Agent SDK together before advertising models that require a
+newer provider capability. A model remains hidden until the active runtime combination actually
+supports it.
 
 ## Advanced And Multiple-Account Setups
 
@@ -105,7 +98,7 @@ the rest of your environment stay as they are.
 
 ## Where Claude Skills Are Loaded
 
-T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then
+Scient looks for Claude skills in the Claude config directory's `skills` folder, then
 `<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
 
 If the same skill name exists in more than one folder, the later folder wins.

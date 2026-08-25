@@ -36,6 +36,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
@@ -933,6 +934,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerRegistry = yield* ProviderRegistry;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const serverConfig = yield* ServerConfig;
@@ -1817,6 +1819,17 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      if (
+        event.type === "auth.status" &&
+        event.payload.requiresReauthentication === true &&
+        event.providerInstanceId !== undefined
+      ) {
+        yield* providerRegistry.setProviderAuthenticationFailure({
+          instanceId: event.providerInstanceId,
+          message: event.payload.error ?? "Provider authentication expired. Sign in again.",
+        });
+      }
+
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 

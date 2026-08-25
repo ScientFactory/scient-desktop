@@ -424,6 +424,26 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
   return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
 }
 
+const CLAUDE_REAUTHENTICATION_ERROR_MARKERS = [
+  "oauth access token has been revoked",
+  "oauth session expired and could not be refreshed",
+] as const;
+
+/**
+ * Classify only authoritative top-level SDK result errors. Generic 401s,
+ * assistant text, tool output, and unrelated authentication failures must not
+ * invalidate provider state.
+ */
+function requiresClaudeReauthentication(result: SDKResultMessage): boolean {
+  if (result.subtype === "success" || !Array.isArray(result.errors)) {
+    return false;
+  }
+  return result.errors.some((error) => {
+    const normalized = error.toLowerCase();
+    return CLAUDE_REAUTHENTICATION_ERROR_MARKERS.some((marker) => normalized.includes(marker));
+  });
+}
+
 function isInterruptedResult(result: SDKResultMessage): boolean {
   // The CLI stamps user aborts explicitly: interrupting mid-tool-call yields
   // "aborted_tools" (with an internal "[ede_diagnostic] ..." error and
@@ -3016,12 +3036,41 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const status = turnStatusFromResult(message);
     const errorMessage = resultUserFacingError(message);
+    const requiresReauthentication = requiresClaudeReauthentication(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
     }
 
+    if (requiresReauthentication) {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "auth.status",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          requiresReauthentication: true,
+          error: "Claude authentication expired. Sign in again.",
+        },
+        providerRefs: nativeProviderRefs(context),
+      });
+    }
+
     yield* completeTurn(context, status, errorMessage, message);
+
+    if (requiresReauthentication) {
+      // A revoked credential invalidates the long-lived SDK query. Retire it
+      // only after the failed turn has reached exactly one terminal state.
+      // This runs inside the stream fiber, so do not interrupt that same fiber;
+      // `context.stopped` makes the stream exit on its next pull.
+      yield* stopSessionInternal(context, {
+        emitExitEvent: true,
+        interruptStream: false,
+      });
+    }
   });
 
   /**
@@ -3680,7 +3729,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     context: ClaudeSessionContext,
-    options?: { readonly emitExitEvent?: boolean },
+    options?: { readonly emitExitEvent?: boolean; readonly interruptStream?: boolean },
   ) {
     if (context.stopped) return;
 
@@ -3754,7 +3803,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const streamFiber = context.streamFiber;
     context.streamFiber = undefined;
-    if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+    if (
+      options?.interruptStream !== false &&
+      streamFiber &&
+      streamFiber.pollUnsafe() === undefined
+    ) {
       yield* Fiber.interrupt(streamFiber);
     }
 

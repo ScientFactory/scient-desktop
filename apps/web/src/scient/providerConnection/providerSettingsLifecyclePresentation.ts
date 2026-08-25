@@ -1,4 +1,19 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
+
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
+  needsManagedRuntimeRecovery,
+} from "./providerConnectionPresentation";
+import { hasExternalProviderUpdate } from "./providerLifecycleActions";
+
+export type ProviderSettingsLifecycleActionKind =
+  | "runtime"
+  | "external-update"
+  | "sign-in"
+  | "continue"
+  | "manage";
 
 export type ProviderSettingsLifecycleKind =
   | "checking"
@@ -17,24 +32,28 @@ export interface ProviderSettingsLifecyclePresentation {
   readonly statusLabel: string | null;
   readonly detail: string | null;
   readonly actionLabel: string | null;
+  readonly actionKind: ProviderSettingsLifecycleActionKind | null;
+  readonly runtimeAction: ProviderManagedRuntimeAction | null;
   readonly busy: boolean;
 }
 
-const ACTIVE_RUNTIME_STATUSES = new Set([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-const ACTIVE_CONNECTION_STATUSES = new Set([
-  "starting",
-  "waiting_for_browser",
-  "waiting_for_device_code",
-  "verifying",
-]);
+function action(input: {
+  readonly kind: ProviderSettingsLifecycleActionKind;
+  readonly label: string;
+  readonly runtimeAction?: ProviderManagedRuntimeAction;
+}) {
+  return {
+    actionKind: input.kind,
+    actionLabel: input.label,
+    runtimeAction: input.runtimeAction ?? null,
+  } as const;
+}
+
+const NO_ACTION = {
+  actionKind: null,
+  actionLabel: null,
+  runtimeAction: null,
+} as const;
 
 export function providerSettingsLifecyclePresentation(
   provider: ServerProvider | undefined,
@@ -45,7 +64,7 @@ export function providerSettingsLifecyclePresentation(
       kind: "checking",
       statusLabel: null,
       detail: "Checking installation and sign-in status…",
-      actionLabel: null,
+      ...NO_ACTION,
       busy: true,
     };
   }
@@ -54,31 +73,49 @@ export function providerSettingsLifecyclePresentation(
       kind: "disabled",
       statusLabel: "Disabled",
       detail: "Hidden from new conversations.",
-      actionLabel: null,
+      ...action({ kind: "manage", label: "Manage" }),
       busy: false,
+    };
+  }
+  if (provider.probePending === true) {
+    return {
+      kind: "checking",
+      statusLabel: null,
+      detail: null,
+      ...NO_ACTION,
+      busy: true,
     };
   }
 
   const runtimeOperation = provider.connection?.runtime?.operation ?? null;
   if (runtimeOperation?.status === "failed") {
+    const retryableAction = provider.connection?.runtime?.actions.includes(runtimeOperation.action)
+      ? runtimeOperation.action
+      : null;
     return {
       kind: "failed",
       statusLabel: "Setup failed",
       detail: runtimeOperation.message,
-      actionLabel: "Retry",
+      ...(retryableAction
+        ? action({ kind: "runtime", label: "Retry", runtimeAction: retryableAction })
+        : action({ kind: "manage", label: "Manage" })),
       busy: false,
     };
   }
-  if (runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)) {
+  if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
     return {
       kind: "installing",
       statusLabel: runtimeOperation.status === "removing" ? "Removing" : "Installing",
       detail: runtimeOperation.message,
-      actionLabel: "Continue",
+      ...action({ kind: "continue", label: "Continue" }),
       busy: true,
     };
   }
-  if (!provider.installed || provider.connection?.runtime?.source === "missing") {
+  if (
+    !isProviderRuntimePresentedAsInstalled(provider) ||
+    provider.connection?.runtime?.source === "missing"
+  ) {
+    const canInstall = provider.connection?.runtime?.actions.includes("install") ?? false;
     return {
       kind: "not-installed",
       statusLabel: "Not installed",
@@ -86,7 +123,42 @@ export function providerSettingsLifecyclePresentation(
         provider.driver === "codex"
           ? "Install Codex to connect your ChatGPT account."
           : `Install ${displayName} to connect your account.`,
-      actionLabel: "Install",
+      ...(canInstall
+        ? action({ kind: "runtime", label: "Install", runtimeAction: "install" })
+        : action({ kind: "manage", label: "Manage" })),
+      busy: false,
+    };
+  }
+
+  if (provider.connection?.runtime?.actions.includes("update")) {
+    return {
+      kind: "attention",
+      statusLabel: "Update available",
+      detail: `A reviewed ${displayName} update is ready to install.`,
+      ...action({ kind: "runtime", label: "Update", runtimeAction: "update" }),
+      busy: false,
+    };
+  }
+  if (hasExternalProviderUpdate(provider)) {
+    return {
+      kind: "attention",
+      statusLabel: "Update available",
+      detail:
+        provider.versionAdvisory?.message ??
+        `A newer ${displayName} version is available on this computer.`,
+      ...action({ kind: "external-update", label: "Update" }),
+      busy: false,
+    };
+  }
+  if (needsManagedRuntimeRecovery(provider)) {
+    const canRepair = provider.connection?.runtime?.actions.includes("repair") ?? false;
+    return {
+      kind: "attention",
+      statusLabel: "Runtime needs repair",
+      detail: provider.message ?? `${displayName} could not start correctly.`,
+      ...(canRepair
+        ? action({ kind: "runtime", label: "Repair", runtimeAction: "repair" })
+        : action({ kind: "manage", label: "Manage" })),
       busy: false,
     };
   }
@@ -97,7 +169,7 @@ export function providerSettingsLifecyclePresentation(
         kind: "attention",
         statusLabel: "Needs attention",
         detail: provider.message ?? `${displayName} is connected but has no available model.`,
-        actionLabel: "Manage",
+        ...action({ kind: "manage", label: "Manage" }),
         busy: false,
       };
     }
@@ -108,26 +180,29 @@ export function providerSettingsLifecyclePresentation(
         provider.auth.required === false
           ? "Ready without account sign-in."
           : (provider.auth.label ?? provider.auth.email ?? "Account connected."),
-      actionLabel: "Manage",
+      ...action({ kind: "manage", label: "Manage" }),
       busy: false,
     };
   }
   const connectionOperation = provider.connection?.operation ?? null;
   if (connectionOperation?.status === "failed") {
+    const canRetrySignIn = (provider.connection?.methods.length ?? 0) > 0;
     return {
       kind: "failed",
       statusLabel: "Sign-in failed",
       detail: connectionOperation.message,
-      actionLabel: "Retry",
+      ...(canRetrySignIn
+        ? action({ kind: "sign-in", label: "Retry" })
+        : action({ kind: "manage", label: "Manage" })),
       busy: false,
     };
   }
-  if (connectionOperation && ACTIVE_CONNECTION_STATUSES.has(connectionOperation.status)) {
+  if (connectionOperation && isActiveProviderConnectionOperation(connectionOperation)) {
     return {
       kind: "signing-in",
       statusLabel: connectionOperation.status === "verifying" ? "Verifying" : "Signing in",
       detail: connectionOperation.message,
-      actionLabel: "Continue",
+      ...action({ kind: "continue", label: "Continue" }),
       busy: true,
     };
   }
@@ -141,7 +216,7 @@ export function providerSettingsLifecyclePresentation(
           : provider.driver === "droid"
             ? "Sign in with your existing Factory subscription."
             : "Connect your account.",
-      actionLabel: "Sign in",
+      ...action({ kind: "sign-in", label: "Sign in" }),
       busy: false,
     };
   }
@@ -149,7 +224,7 @@ export function providerSettingsLifecyclePresentation(
     kind: "manual",
     statusLabel: "Manual setup",
     detail: provider.message ?? "Use the provider's advanced configuration.",
-    actionLabel: null,
+    ...NO_ACTION,
     busy: false,
   };
 }

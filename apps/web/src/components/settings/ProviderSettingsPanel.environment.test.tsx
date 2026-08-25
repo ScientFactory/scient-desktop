@@ -234,6 +234,30 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(connectionDialog).not.toBeNull();
   });
 
+  it("forwards a requested runtime action into the lifecycle dialog", () => {
+    atoms.providers = [provider()];
+    const panel = renderPanel();
+    const providerCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId &&
+        typeof element.props.onManageConnection === "function",
+    );
+
+    (providerCard?.props.onManageConnection as ((action: "repair") => void) | undefined)?.(
+      "repair",
+    );
+
+    const updatedPanel = renderPanel();
+    const connectionDialog = visitElements(updatedPanel, (element) => {
+      const dialogProvider = element.props.provider as ServerProvider | undefined;
+      return (
+        dialogProvider?.instanceId === codexId && element.props.initialRuntimeAction === "repair"
+      );
+    });
+    expect(connectionDialog).not.toBeNull();
+  });
+
   it("renders the provider layout inert with a limited-permissions notice when read only", () => {
     atoms.providers = [provider()];
     const panel = renderPanel({ readOnly: true });

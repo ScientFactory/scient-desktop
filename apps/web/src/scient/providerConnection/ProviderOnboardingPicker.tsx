@@ -10,18 +10,16 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popov
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "~/lib/utils";
-import { CodexInlineSetup } from "./CodexInlineSetup";
-import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
-import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
-import { DroidInlineSetup } from "./DroidInlineSetup";
-import { CursorInlineSetup } from "./CursorInlineSetup";
-import { GrokInlineSetup } from "./GrokInlineSetup";
+import {
+  AssistedProviderSetupHost,
+  supportsAssistedProviderSetupSurface,
+} from "./AssistedProviderSetupHost";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 import {
   canManageProviderLifecycle,
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
-import { useProviderLifecycleController } from "./useProviderLifecycleController";
+import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
@@ -59,6 +57,7 @@ export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefin
 export function ProviderOnboardingPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly reconnectEntry?: ProviderInstanceEntry;
   readonly compact?: boolean;
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
@@ -66,6 +65,7 @@ export function ProviderOnboardingPicker(props: {
   readonly autoSelectReadyProvider?: boolean;
 }) {
   const navigate = useNavigate();
+  const reconnectEntry = props.reconnectEntry;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<ProviderDriverKind | null>(null);
   const [query, setQuery] = useState("");
@@ -73,10 +73,14 @@ export function ProviderOnboardingPicker(props: {
   const open = props.open ?? uncontrolledOpen;
   const setOpen = useCallback(
     (nextOpen: boolean) => {
+      if (nextOpen && reconnectEntry) {
+        setSelectedDriver(reconnectEntry.driverKind);
+        setQuery("");
+      }
       props.onOpenChange?.(nextOpen);
       if (props.open === undefined) setUncontrolledOpen(nextOpen);
     },
-    [props.onOpenChange, props.open],
+    [props.onOpenChange, props.open, reconnectEntry],
   );
 
   useEffect(() => {
@@ -102,6 +106,15 @@ export function ProviderOnboardingPicker(props: {
   );
   const selectedEntry = selectedDriver ? entriesByDriver.get(selectedDriver) : undefined;
   const showHome = selectedDefinition === undefined || normalizedQuery.length > 0;
+  const reconnectDefinition = reconnectEntry
+    ? PROVIDER_CLIENT_DEFINITIONS.find(
+        (definition) => definition.value === reconnectEntry.driverKind,
+      )
+    : undefined;
+  const TriggerIcon = reconnectDefinition?.icon ?? BlocksIcon;
+  const triggerLabel = reconnectEntry
+    ? `Reconnect ${reconnectEntry.displayName}`
+    : "Choose your AI";
 
   const readyModel = readyProviderDefaultModel(selectedEntry);
   useEffect(() => {
@@ -140,7 +153,7 @@ export function ProviderOnboardingPicker(props: {
         <PopoverTrigger
           render={
             <ComposerControl
-              aria-label="Choose and connect your AI"
+              aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
               className={cn(
                 "-ms-px min-w-0 justify-between whitespace-nowrap ps-0",
                 props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
@@ -150,9 +163,9 @@ export function ProviderOnboardingPicker(props: {
           }
         >
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            <BlocksIcon aria-hidden className="size-4 shrink-0" />
-            <span className="truncate">Choose your AI</span>
-            {!open ? (
+            <TriggerIcon aria-hidden className="size-4 shrink-0" />
+            <span className="truncate">{triggerLabel}</span>
+            {!open && !reconnectEntry ? (
               <span aria-hidden className="ms-0.5 flex shrink-0 items-center -space-x-0.5">
                 {previewDefinitions.map((definition) => {
                   const Icon = definition.icon;
@@ -312,78 +325,6 @@ export function ProviderOnboardingPicker(props: {
   );
 }
 
-function CodexSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <CodexInlineSetup {...props} controller={controller} />;
-}
-
-function ClaudeSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <ClaudeInlineSetup {...props} controller={controller} />;
-}
-
-function AntigravitySetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <AntigravityInlineSetup {...props} controller={controller} />;
-}
-
-function CursorSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <CursorInlineSetup {...props} controller={controller} />;
-}
-
-function GrokSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <GrokInlineSetup {...props} controller={controller} />;
-}
-
-function DroidSetupWithController(props: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ProviderInstanceEntry["snapshot"];
-  readonly displayName: string;
-}) {
-  const controller = useProviderLifecycleController({
-    environmentId: props.environmentId,
-    provider: props.provider,
-  });
-  return <DroidInlineSetup {...props} controller={controller} />;
-}
-
 /**
  * Inline setup surface used by the regular model picker after another provider
  * is already ready. Keeping this in Scient-owned code lets T3 continue to own
@@ -395,57 +336,14 @@ export function ProviderLifecycleSetupSurface(props: {
   readonly onManageFallback?: (() => void) | undefined;
 }) {
   const navigate = useNavigate();
-  if (props.entry.driverKind === "codex") {
+  if (supportsAssistedProviderSetupSurface(props.entry.driverKind, "composer")) {
     return (
-      <CodexSetupWithController
+      <AssistedProviderSetupHost
         displayName={props.entry.displayName}
         environmentId={props.environmentId}
+        key={props.entry.instanceId}
         provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "claudeAgent") {
-    return (
-      <ClaudeSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "antigravity") {
-    return (
-      <AntigravitySetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "cursor") {
-    return (
-      <CursorSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "grok") {
-    return (
-      <GrokSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
-      />
-    );
-  }
-  if (props.entry.driverKind === "droid") {
-    return (
-      <DroidSetupWithController
-        displayName={props.entry.displayName}
-        environmentId={props.environmentId}
-        provider={props.entry.snapshot}
+        surface="composer"
       />
     );
   }
@@ -498,8 +396,14 @@ function ProviderSetupDetail(props: {
       <p className="mt-1.5 max-w-58 text-balance text-muted-foreground text-sm leading-relaxed">
         {props.status}
       </p>
-      <Button className="mt-4" onClick={props.onManage} size="sm" type="button">
-        Open provider settings
+      <Button
+        className={`mt-4 ${PRIMARY_GHOST_ACTION_CLASS}`}
+        onClick={props.onManage}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        <SettingsIcon aria-hidden /> Open provider settings
       </Button>
     </div>
   );

@@ -1,18 +1,14 @@
-import type { ProviderManagedRuntimeAction, ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider } from "@t3tools/contracts";
 
+import {
+  hasManagedProviderUpdate,
+  startReviewedProviderRuntimeAction,
+} from "./providerLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-export function hasManagedAntigravityUpdate(provider: ServerProvider): boolean {
-  return provider.connection?.runtime?.actions.includes("update") ?? false;
-}
+export const hasManagedAntigravityUpdate = hasManagedProviderUpdate;
 
-export async function startReviewedAntigravityRuntimeAction(
-  controller: ProviderLifecycleController,
-  action: ProviderManagedRuntimeAction,
-): Promise<ServerProvider> {
-  const plan = await controller.planRuntime(action);
-  return controller.startRuntime(plan);
-}
+export const startReviewedAntigravityRuntimeAction = startReviewedProviderRuntimeAction;
 
 export async function startAntigravitySignIn(
   controller: ProviderLifecycleController,
@@ -36,12 +32,6 @@ export async function cancelAntigravitySignIn(
   operationId: string,
 ): Promise<ServerProvider> {
   return controller.cancelConnection(operationId);
-}
-
-export async function disconnectAntigravity(
-  controller: ProviderLifecycleController,
-): Promise<ServerProvider> {
-  return controller.disconnect();
 }
 
 export function updateAntigravityRuntime(

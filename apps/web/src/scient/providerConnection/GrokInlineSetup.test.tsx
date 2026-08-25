@@ -75,6 +75,9 @@ describe("GrokInlineSetup", () => {
 
     expect(markup).toContain("Install Grok");
     expect(markup).toContain("reviewed official Grok Build runtime");
+    expect(markup).toContain("lucide-shield-check");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
+    expect(markup).toContain("hidden size-8 in-[[data-model-picker-content=true]]:inline-flex");
     expect(markup).toContain("dark:fill-[#F5F5F5]");
   });
 
@@ -87,6 +90,12 @@ describe("GrokInlineSetup", () => {
     );
     expect(markup).toContain("Sign in with Grok");
     expect(markup).toContain("Use device code");
+    expect(markup).toContain("lucide-shield-check");
+    expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
+    expect(markup).toContain("hidden size-8 in-[[data-model-picker-content=true]]:inline-flex");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("Grok owns the secure flow");
     expect(markup).not.toContain("card");
   });
@@ -179,13 +188,5 @@ describe("GrokInlineSetup", () => {
     expect(apiKeyMarkup).toContain("Ready via API key");
     expect(apiKeyMarkup).toContain("Use a Grok subscription");
     expect(apiKeyMarkup).not.toContain("Sign out");
-  });
-
-  it("does not offer lifecycle actions while Grok is disabled", () => {
-    const markup = render(provider({ enabled: false, installed: false }));
-
-    expect(markup).toContain("Grok is disabled");
-    expect(markup).not.toContain(">Install<");
-    expect(markup).not.toContain("Sign in with Grok");
   });
 });

@@ -25,7 +25,7 @@ describe("ManagedAntigravityRuntime", () => {
     const launchPath = new ManagedAntigravityRuntime("/scient-data").launchPath(artifact!);
 
     expect(launchPath.replaceAll("\\", "/")).toMatch(
-      /\/provider-runtimes\/antigravity\/versions\/1\.1\.19\/darwin-arm64\/antigravity$/u,
+      /\/provider-runtimes\/antigravity\/versions\/1\.1\.20\/darwin-arm64\/antigravity$/u,
     );
   });
 
@@ -82,7 +82,7 @@ describe("ManagedAntigravityRuntime", () => {
       artifact: artifact!,
       signal: new AbortController().signal,
     });
-    expect(installed).toMatchObject({ installed: true, activeVersion: "1.1.19" });
+    expect(installed).toMatchObject({ installed: true, activeVersion: "1.1.20" });
     expect(events).toEqual([
       `download:${artifact!.url}`,
       "verify:sha512",

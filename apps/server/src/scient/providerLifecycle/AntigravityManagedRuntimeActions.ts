@@ -53,6 +53,7 @@ export const makeAntigravityManagedRuntimeResolution = Effect.fn(
     environment: input.environment,
     spawner: input.spawner,
     managedInstallationAllowed: input.managedInstallationAllowed,
+    systemToManagedSwitchAllowed: true,
     sourceLabel: "Official Google Antigravity CLI release",
     managedInstallationLimitation:
       "Scient can use a healthy Antigravity runtime here, but managed installation is only enabled in the local desktop app.",

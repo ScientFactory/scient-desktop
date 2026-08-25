@@ -267,6 +267,52 @@ async function readFirstPromptMessage(
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
+const runTerminalClaudeAuthenticationFailure = (input: {
+  readonly error: string;
+  readonly idSuffix: string;
+}) => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const adapter = yield* ClaudeAdapter;
+    const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+      Stream.takeUntil((event) => event.type === "session.exited"),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+
+    const session = yield* adapter.startSession({
+      threadId: THREAD_ID,
+      provider: ProviderDriverKind.make("claudeAgent"),
+      runtimeMode: "full-access",
+    });
+    yield* adapter.sendTurn({
+      threadId: session.threadId,
+      input: "hello",
+      attachments: [],
+    });
+
+    harness.query.emit({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      errors: [input.error],
+      session_id: `sdk-session-${input.idSuffix}`,
+      uuid: `result-${input.idSuffix}`,
+    } as unknown as SDKMessage);
+
+    const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+    return {
+      runtimeEvents,
+      closeCalls: harness.query.closeCalls,
+      hasSession: yield* adapter.hasSession(THREAD_ID),
+      sessionCount: (yield* adapter.listSessions()).length,
+    };
+  }).pipe(
+    Effect.provideService(Random.Random, makeDeterministicRandomService()),
+    Effect.provide(harness.layer),
+  );
+};
+
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
@@ -1569,6 +1615,119 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(turnCompleted.payload.state, "interrupted");
         assert.equal(turnCompleted.payload.errorMessage, undefined);
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("retires a Claude session after an authoritative revoked OAuth result", () => {
+    return Effect.gen(function* () {
+      const result = yield* runTerminalClaudeAuthenticationFailure({
+        error: "Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
+        idSuffix: "revoked-oauth",
+      });
+      assert.deepEqual(
+        result.runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "runtime.error",
+          "auth.status",
+          "turn.completed",
+          "session.exited",
+        ],
+      );
+
+      const runtimeError = result.runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(runtimeError.payload.class, "provider_error");
+      }
+      const authStatus = result.runtimeEvents.find((event) => event.type === "auth.status");
+      assert.equal(authStatus?.type, "auth.status");
+      if (authStatus?.type === "auth.status") {
+        assert.equal(authStatus.payload.requiresReauthentication, true);
+        assert.equal(authStatus.payload.error, "Claude authentication expired. Sign in again.");
+      }
+      const completions = result.runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(completions.length, 1);
+      assert.equal(result.closeCalls, 1);
+      assert.equal(result.hasSession, false);
+      assert.equal(result.sessionCount, 0);
+    });
+  });
+
+  it.effect("retires a Claude session after an unrefreshable expired OAuth result", () => {
+    return Effect.gen(function* () {
+      const result = yield* runTerminalClaudeAuthenticationFailure({
+        error: "OAuth session expired and could not be refreshed.",
+        idSuffix: "expired-oauth",
+      });
+      const authStatus = result.runtimeEvents.find((event) => event.type === "auth.status");
+      assert.equal(authStatus?.type, "auth.status");
+      if (authStatus?.type === "auth.status") {
+        assert.equal(authStatus.payload.requiresReauthentication, true);
+      }
+      assert.equal(result.closeCalls, 1);
+      assert.equal(result.hasSession, false);
+      assert.equal(result.sessionCount, 0);
+    });
+  });
+
+  it.effect("does not retire a reusable Claude session for an unrelated 401 result", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "first",
+        attachments: [],
+      });
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["API Error: 401 unauthorized request."],
+        session_id: "sdk-session-unrelated-401",
+        uuid: "result-unrelated-401",
+      } as unknown as SDKMessage);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "second",
+        attachments: [],
+      });
+      assert.deepEqual(
+        runtimeEvents
+          .filter(
+            (event) =>
+              event.type === "runtime.error" ||
+              event.type === "auth.status" ||
+              event.type === "turn.completed",
+          )
+          .map((event) => event.type),
+        ["runtime.error", "turn.completed"],
+      );
+      assert.equal(harness.query.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      yield* adapter.stopSession(THREAD_ID);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

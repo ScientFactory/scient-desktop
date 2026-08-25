@@ -57,6 +57,7 @@ function provider(input: {
   readonly updateCommand?: string | null;
   readonly updateState?: ServerProvider["updateState"];
   readonly advisoryStatus?: NonNullable<ServerProvider["versionAdvisory"]>["status"];
+  readonly runtimeSource?: "scient_managed" | "system";
 }): ServerProvider {
   const result: ServerProvider = {
     instanceId: input.instanceId ?? instanceId(String(input.driver)),
@@ -70,6 +71,25 @@ function provider(input: {
     models: [],
     slashCommands: [],
     skills: [],
+    ...(input.runtimeSource
+      ? {
+          connection: {
+            methods: [],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              source: input.runtimeSource,
+              supportTier: "fully_assisted",
+              target: "darwin-arm64",
+              actions: [],
+              managedVersion: input.runtimeSource === "scient_managed" ? "1.0.0" : null,
+              previousManagedVersion: null,
+              operation: null,
+              message: "Runtime ready.",
+            },
+          },
+        }
+      : {}),
     versionAdvisory: {
       status: input.advisoryStatus ?? "behind_latest",
       currentVersion: input.version ?? "1.0.0",
@@ -106,6 +126,14 @@ describe("provider update launch notification logic", () => {
     expect(
       isProviderUpdateCandidate(provider({ driver: driver("codex"), latestVersion: null })),
     ).toBe(false);
+    expect(
+      isProviderUpdateCandidate(
+        provider({ driver: driver("codex"), runtimeSource: "scient_managed" }),
+      ),
+    ).toBe(false);
+    expect(
+      isProviderUpdateCandidate(provider({ driver: driver("codex"), runtimeSource: "system" })),
+    ).toBe(true);
   });
 
   it("deduplicates multi-instance provider candidates by driver", () => {

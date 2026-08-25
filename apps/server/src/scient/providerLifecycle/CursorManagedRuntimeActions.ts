@@ -53,6 +53,7 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
       spawner: input.spawner,
       configuredRuntimeProbeAllowed: input.settings.enabled,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official Cursor Agent release",
       managedInstallationLimitation:
         "Scient can use a healthy Cursor runtime here, but managed installation is only enabled in the local desktop app.",

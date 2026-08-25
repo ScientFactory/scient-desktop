@@ -79,7 +79,9 @@ describe("Codex lifecycle actions", () => {
 
     await updateCodexRuntime(lifecycle, managed);
 
+    expect(lifecycle.planRuntime).toHaveBeenCalledTimes(1);
     expect(lifecycle.planRuntime).toHaveBeenCalledWith("update");
+    expect(lifecycle.startRuntime).toHaveBeenCalledTimes(1);
     expect(lifecycle.startRuntime).toHaveBeenCalledWith(updatePlan);
     expect(lifecycle.updateExternalRuntime).not.toHaveBeenCalled();
   });
@@ -102,6 +104,43 @@ describe("Codex lifecycle actions", () => {
     );
 
     expect(lifecycle.updateExternalRuntime).toHaveBeenCalledOnce();
+    expect(lifecycle.planRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not run T3's updater for an active Scient-managed runtime", async () => {
+    const lifecycle = controller();
+    const managedWithStaleExternalAdvisory = provider({
+      versionAdvisory: {
+        status: "behind_latest",
+        currentVersion: "0.147.0",
+        latestVersion: "0.148.0",
+        updateCommand: "npm install -g @openai/codex@latest",
+        canUpdate: true,
+        checkedAt: "2026-08-09T08:00:00.000Z",
+        message: "External update available.",
+      },
+      connection: {
+        methods: ["codex_browser"],
+        canDisconnect: false,
+        operation: null,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["repair", "remove"],
+          managedVersion: "0.147.0",
+          previousManagedVersion: null,
+          operation: null,
+          message: "Managed Codex is ready.",
+        },
+      },
+    });
+
+    await expect(updateCodexRuntime(lifecycle, managedWithStaleExternalAdvisory)).rejects.toThrow(
+      "No Codex update is currently available.",
+    );
+
+    expect(lifecycle.updateExternalRuntime).not.toHaveBeenCalled();
     expect(lifecycle.planRuntime).not.toHaveBeenCalled();
   });
 
@@ -128,6 +167,9 @@ describe("Codex lifecycle actions", () => {
 
     await startCodexBrowserSignIn(lifecycle);
 
+    expect(lifecycle.startConnection).toHaveBeenCalledTimes(1);
+    expect(lifecycle.startConnection).toHaveBeenCalledWith("codex_browser");
+    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledTimes(1);
     expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith("https://auth.openai.com/");
   });
 

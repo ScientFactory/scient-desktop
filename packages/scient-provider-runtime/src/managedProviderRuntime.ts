@@ -26,7 +26,7 @@ export interface ManagedProviderRuntimeProgress {
   readonly totalBytes?: number | undefined;
 }
 
-export interface ManagedProviderRuntimeState {
+export interface ManagedProviderRuntimeStateV1 {
   readonly schemaVersion: 1;
   readonly targetKey: string;
   readonly activeVersion: string;
@@ -34,11 +34,26 @@ export interface ManagedProviderRuntimeState {
   readonly executableRelativePath: string;
 }
 
+export interface ManagedProviderRuntimeStateV2 {
+  readonly schemaVersion: 2;
+  readonly selection: "managed";
+  readonly targetKey: string;
+  readonly activeVersion: string;
+  readonly previousVersion: string | null;
+  readonly executableRelativePath: string;
+}
+
+export type ManagedProviderRuntimeState =
+  | ManagedProviderRuntimeStateV1
+  | ManagedProviderRuntimeStateV2;
+
 export interface ManagedProviderRuntimeStatus {
   readonly launchPath: string;
   readonly activeVersion: string | null;
   readonly previousVersion: string | null;
   readonly installed: boolean;
+  /** True only after the user explicitly activates a managed runtime with state schema v2. */
+  readonly selected: boolean;
 }
 
 export class ManagedProviderRuntimeError extends Error {
@@ -197,7 +212,8 @@ function decodeState(value: unknown): ManagedProviderRuntimeState | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const state = value as Record<string, unknown>;
   if (
-    state.schemaVersion !== 1 ||
+    !(state.schemaVersion === 1 || state.schemaVersion === 2) ||
+    (state.schemaVersion === 2 && state.selection !== "managed") ||
     typeof state.targetKey !== "string" ||
     typeof state.activeVersion !== "string" ||
     !(state.previousVersion === null || typeof state.previousVersion === "string") ||
@@ -269,6 +285,7 @@ export class ManagedProviderRuntime {
       installed,
       activeVersion: activeState?.activeVersion ?? null,
       previousVersion: activeState?.previousVersion ?? null,
+      selected: activeState?.schemaVersion === 2,
     };
   }
 
@@ -382,7 +399,8 @@ export class ManagedProviderRuntime {
           : (previousState?.previousVersion ?? null);
       try {
         await this.#writeState({
-          schemaVersion: 1,
+          schemaVersion: 2,
+          selection: "managed",
           targetKey: managedRuntimeTargetKey(artifact.target),
           activeVersion: artifact.version,
           previousVersion,

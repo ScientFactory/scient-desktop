@@ -25,7 +25,10 @@ import {
   GROK_DEVICE_FLOW_ENV,
   makeGrokAcpRuntime,
 } from "../../provider/acp/GrokAcpSupport.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  ProviderConnectionActionError,
+  withProviderSessionShutdown,
+} from "./ProviderConnectionActions.ts";
 
 const GROK_ACCOUNT_METHOD = "grok_account";
 const GROK_DEVICE_METHOD = "grok_device_code";
@@ -345,13 +348,7 @@ export function withGrokSessionShutdown<E>(
   actions: ProviderConnectionActions,
   stopAll: Effect.Effect<void, E>,
 ): ProviderConnectionActions {
-  return {
-    ...actions,
-    disconnect: stopAll.pipe(
-      Effect.mapError((cause) =>
-        actionError("Scient could not stop active Grok sessions before signing out.", cause),
-      ),
-      Effect.andThen(actions.disconnect),
-    ),
-  };
+  return withProviderSessionShutdown(actions, stopAll, (cause) =>
+    actionError("Scient could not stop active Grok sessions before signing out.", cause),
+  );
 }

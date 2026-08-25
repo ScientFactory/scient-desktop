@@ -27,7 +27,13 @@ or release authority.
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
 - [Background service (Linux)](./user/background-service.md)
-- Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)
+- [Providers and assisted setup](./user/providers.md)
+  - [Codex](./user/providers-codex.md)
+  - [Claude](./user/providers-claude.md)
+  - [Antigravity](./user/providers-antigravity.md)
+  - [Grok](./user/providers-grok.md)
+  - [Droid](./user/providers-droid.md)
+  - [Cursor](./user/providers-cursor.md)
 
 Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 
@@ -44,6 +50,8 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scripts](./internals/scripts.md)
 - [Connection runtime](./internals/connection-runtime.md)
 - [Providers](./internals/providers.md)
+- [Provider lifecycle architecture](./internals/provider-lifecycle.md)
+- [Provider lifecycle capability audit](./internals/provider-lifecycle-capability-audit.md)
 - [Remote environments](./internals/remote.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)

@@ -4,9 +4,12 @@ Scient can use your existing Grok subscription through the official Grok Build C
 account session and credentials; Scient starts the provider's official sign-in flow and checks the
 result without receiving your password or tokens.
 
+For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
+
 ## Enable and install
 
-Grok is an Early Access provider and is off by default. Enable it in **Settings > Providers**.
+Grok is an Early Access provider and is off by default. Enable it from the provider lifecycle
+surface or in **Settings > Providers**.
 
 In the local desktop app, choose **Install** to add Scient's reviewed Grok Build runtime. This copy
 lives in Scient's private app data. Repair, update, and remove actions affect only that private copy;
@@ -20,8 +23,8 @@ binary path in the provider settings when it is not available as `grok` on the s
 Choose **Sign in with Grok** and finish the secure flow in the page Grok opens in your browser. If
 that page does not open, Scient keeps an **Open sign-in page** fallback while the flow is active. If
 browser callbacks are not convenient, choose **Use device code**, copy the displayed code, and enter
-it on Grok's secure page. Some browser flows return a one-time authorization code; when Grok
-requests one, paste it into Scient to finish the same provider-owned flow.
+it on Grok's secure page. Scient shows a paste field only when the exact live Grok operation asks you
+to return a one-time authorization code.
 
 After completion, Scient shows the email address and subscription tier that Grok reports when that
 optional metadata is available. If Grok confirms the account but does not return metadata, the
@@ -36,7 +39,8 @@ cached account session; it does not remove an environment-provided API key.
 
 ## Troubleshooting
 
-- **Grok is disabled:** enable it in **Settings > Providers** before installing or signing in.
+- **Grok is disabled:** use the Enable action in the lifecycle surface, or enable it in
+  **Settings > Providers**.
 - **Browser did not open:** use the sign-in-page action shown while the flow is active, or use the
   device-code option.
 - **Sign-in is stuck:** cancel the current flow and start it again. Scient sends cancellation to the

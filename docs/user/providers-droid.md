@@ -4,8 +4,10 @@
 agent protocol used for other providers, so Droid sessions stream like any other provider's: tool
 calls, file edits, and nested Tasks all appear in the thread.
 
-Droid is marked **Early Access** in Scient. It is fully functional but newer than the other
-providers, and a few Droid-specific behaviors are documented below.
+Droid is marked **Early Access** in Scient because its integration is newer than the other providers.
+Its provider-specific behaviors and current limitations are documented below.
+
+For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 
 ## Setup and account connection
 
@@ -39,7 +41,7 @@ it can offer the reviewed app-private runtime.
 Repair downloads and verifies a fresh reviewed copy before atomically replacing Scient's managed
 runtime. Remove deletes only that app-private copy; neither action changes Factory credentials,
 custom paths, or system installations. **Sign out** appears only if the exact running Droid version
-advertises ACP logout. Droid `0.202.0` does not advertise it, so Scient does not offer an unreliable
+advertises ACP logout. When it does not, Scient hides the action instead of offering an unreliable
 terminal-automation fallback.
 
 ## Models and reasoning effort

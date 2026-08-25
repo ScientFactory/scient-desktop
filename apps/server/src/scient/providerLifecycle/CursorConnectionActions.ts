@@ -19,26 +19,24 @@ import type {
   ProviderConnectionActionFailure,
 } from "../../provider/ProviderDriver.ts";
 import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  findTerminalAuthorizationUrl,
+  normalizeTerminalOutput,
+  pickProcessEnvironment,
+  ProviderConnectionActionError,
+  withProviderSessionShutdown,
+} from "./ProviderConnectionActions.ts";
 
 const MAX_AUTH_OUTPUT_BYTES = 128 * 1024;
+const MAX_LOGIN_ERROR_LENGTH = 240;
 const AUTH_URL_TIMEOUT = "30 seconds";
 const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_STATUS_TIMEOUT = "20 seconds";
-const ANSI_ESCAPE_CHARACTER = String.fromCharCode(27);
-const ANSI_BELL_CHARACTER = String.fromCharCode(7);
-const ANSI_OSC_HYPERLINK = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\]8;[^;]*;(https:\\/\\/[^${ANSI_BELL_CHARACTER}${ANSI_ESCAPE_CHARACTER}]*)` +
-    `(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_OSC_SEQUENCE = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\][^${ANSI_BELL_CHARACTER}]*(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_ESCAPE = new RegExp(`${ANSI_ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, "gu");
-const URL_CANDIDATE = /https:\/\/[^\s<>"']+/gu;
-
+const AUTH_OUTPUT_DRAIN_TIMEOUT = "2 seconds";
+const URL_IN_OUTPUT = /https?:\/\/[^\s<>"']+/giu;
+const SENSITIVE_OUTPUT_VALUE =
+  /["']?\b((?:(?:access|refresh|id|auth(?:entication|orization)?|oauth|user|client|api|session|private)[ _-]?(?:token|code|key|secret|id))|token|challenge|secret|password|credential|cookie|jwt)["']?\s*[:=]\s*["']?[^\s,;}"']+["']?/giu;
+const BEARER_OUTPUT_VALUE = /\bbearer\s+[^\s,;]+/giu;
 const connectionError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
     message,
@@ -56,25 +54,56 @@ function isCursorAuthorizationUrl(url: URL): boolean {
 }
 
 export function findCursorAuthorizationUrl(output: string): string | undefined {
-  const normalized = output
-    .replace(ANSI_OSC_HYPERLINK, "$1 ")
-    .replace(ANSI_OSC_SEQUENCE, "")
-    .replace(ANSI_ESCAPE, "");
-  for (const match of normalized.matchAll(URL_CANDIDATE)) {
-    const candidate = match[0]?.replace(/[),.;]+$/u, "");
-    if (!candidate) continue;
-    try {
-      const url = new URL(candidate);
-      if (isCursorAuthorizationUrl(url)) return url.toString();
-    } catch {
-      // Continue scanning provider-controlled output.
-    }
+  return findTerminalAuthorizationUrl(output, isCursorAuthorizationUrl);
+}
+
+function stripUnsafeOutputControls(value: string): string {
+  let result = "";
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    const unsafe =
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f) ||
+      code === 0x061c ||
+      code === 0x200e ||
+      code === 0x200f ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069) ||
+      code === 0xfeff;
+    if (!unsafe) result += character;
   }
-  return undefined;
+  return result;
+}
+
+function cursorLoginExitFailure(
+  output: string,
+  exitCode: ChildProcessSpawner.ExitCode,
+): ProviderConnectionActionError {
+  const summary = normalizeTerminalOutput(output)
+    .replace(URL_IN_OUTPUT, "[secure sign-in URL]")
+    .split(/\r?\n/u)
+    .map((line) => stripUnsafeOutputControls(line).trim())
+    .findLast(
+      (line) =>
+        line.length > 0 &&
+        !/^waiting for browser authentication\b/iu.test(line) &&
+        !/^open (?:a browser|this link|\[secure sign-in url\])/iu.test(line),
+    )
+    ?.replace(SENSITIVE_OUTPUT_VALUE, "$1=[redacted]")
+    .replace(BEARER_OUTPUT_VALUE, "Bearer [redacted]")
+    .replace(/^error:\s*/iu, "")
+    .slice(0, MAX_LOGIN_ERROR_LENGTH);
+  const code = Number(exitCode);
+  return connectionError(
+    summary
+      ? `Cursor sign in failed: ${summary}`
+      : `Cursor sign in stopped with exit code ${code}.`,
+    { exitCode: code, ...(summary ? { providerMessage: summary } : {}) },
+  );
 }
 
 export interface CursorLoginProcess {
-  readonly authorizationUrl: string;
+  readonly authorizationUrl?: string | undefined;
   readonly waitForExit: Effect.Effect<void, ProviderConnectionActionFailure>;
   readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
 }
@@ -101,9 +130,15 @@ export function makeCursorConnectionActionsFromRuntime(
         }
         const process = yield* runtime.startLogin;
         return {
-          initialStatus: "waiting_for_browser" as const,
-          authorizationUrl: process.authorizationUrl,
-          authorizationUrlKind: "primary" as const,
+          initialStatus: process.authorizationUrl
+            ? ("waiting_for_browser" as const)
+            : ("verifying" as const),
+          ...(process.authorizationUrl
+            ? {
+                authorizationUrl: process.authorizationUrl,
+                authorizationUrlKind: "primary" as const,
+              }
+            : {}),
           waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
           cancel: process.cancel,
         };
@@ -116,15 +151,9 @@ export function withCursorSessionShutdown<E>(
   actions: ProviderConnectionActions,
   stopAll: Effect.Effect<void, E>,
 ): ProviderConnectionActions {
-  return {
-    ...actions,
-    disconnect: stopAll.pipe(
-      Effect.mapError((cause) =>
-        connectionError("Scient could not stop active Cursor sessions before sign out.", cause),
-      ),
-      Effect.andThen(actions.disconnect),
-    ),
-  };
+  return withProviderSessionShutdown(actions, stopAll, (cause) =>
+    connectionError("Scient could not stop active Cursor sessions before sign out.", cause),
+  );
 }
 
 export function officialCursorAccountEnvironment(
@@ -172,12 +201,7 @@ export function officialCursorAccountEnvironment(
     "NODE_EXTRA_CA_CERTS",
     "SCIENT_MANAGED_CURSOR_RUNTIME",
   ] as const;
-  const allowedNames = new Set(allowedKeys.map((key) => key.toLowerCase()));
-  return Object.fromEntries(
-    Object.entries(environment).filter(
-      ([key, value]) => value !== undefined && allowedNames.has(key.toLowerCase()),
-    ),
-  );
+  return pickProcessEnvironment(environment, allowedKeys);
 }
 
 const runCursorLifecycleCommand = Effect.fn("CursorConnectionActions.runCommand")(function* (
@@ -265,6 +289,7 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
         ),
       );
     const authorizationUrl = yield* Deferred.make<string, ProviderConnectionActionError>();
+    const outputFinished = yield* Deferred.make<void>();
     const output = yield* Ref.make("");
     yield* child.all.pipe(
       Stream.decodeText(),
@@ -284,12 +309,24 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
           connectionError("Cursor sign in stopped before opening its secure page."),
         ).pipe(Effect.asVoid),
       ),
+      Effect.ensuring(Deferred.succeed(outputFinished, undefined).pipe(Effect.asVoid)),
       Effect.forkScoped,
     );
 
-    const exitedBeforeUrl = child.exitCode.pipe(
-      Effect.flatMap(() =>
-        Effect.fail(connectionError("Cursor did not provide a secure sign-in page.")),
+    const exitCode = child.exitCode.pipe(
+      Effect.mapError((cause) => connectionError("Cursor sign in stopped unexpectedly.", cause)),
+    );
+    const finalOutput = Deferred.await(outputFinished).pipe(
+      Effect.timeoutOption(AUTH_OUTPUT_DRAIN_TIMEOUT),
+      Effect.andThen(Ref.get(output)),
+    );
+    const exitedBeforeUrl = exitCode.pipe(
+      Effect.flatMap((code) =>
+        finalOutput.pipe(
+          Effect.flatMap((current) =>
+            Number(code) === 0 ? Effect.void : Effect.fail(cursorLoginExitFailure(current, code)),
+          ),
+        ),
       ),
     );
     const url = yield* Effect.raceFirst(Deferred.await(authorizationUrl), exitedBeforeUrl).pipe(
@@ -304,12 +341,13 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
       Effect.onError(() => cancel.pipe(Effect.ignore)),
     );
 
-    const waitForExit = child.exitCode.pipe(
-      Effect.mapError((cause) => connectionError("Cursor sign in stopped unexpectedly.", cause)),
+    const waitForExit = exitCode.pipe(
       Effect.flatMap((code) =>
         Number(code) === 0
           ? Effect.void
-          : Effect.fail(connectionError("Cursor sign in was not completed.")),
+          : finalOutput.pipe(
+              Effect.flatMap((current) => Effect.fail(cursorLoginExitFailure(current, code))),
+            ),
       ),
       Effect.timeoutOption(AUTH_LOGIN_TIMEOUT),
       Effect.flatMap(
@@ -326,7 +364,7 @@ export const makeCursorConnectionActions = Effect.fn("CursorConnectionActions.ma
       ),
     );
 
-    return { authorizationUrl: url, waitForExit, cancel };
+    return { ...(url ? { authorizationUrl: url } : {}), waitForExit, cancel };
   });
 
   const logout = runCursorLifecycleCommand(settings, accountEnvironment, spawner, ["logout"]).pipe(

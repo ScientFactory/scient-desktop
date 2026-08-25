@@ -696,6 +696,12 @@ const AuthStatusPayload = Schema.Struct({
   isAuthenticating: Schema.optional(Schema.Boolean),
   output: Schema.optional(Schema.Array(Schema.String)),
   error: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Set only when a live provider request authoritatively proves that the
+   * configured account can no longer authenticate. Ordinary provider auth
+   * telemetry omits this field.
+   */
+  requiresReauthentication: Schema.optional(Schema.Boolean),
 });
 export type AuthStatusPayload = typeof AuthStatusPayload.Type;
 

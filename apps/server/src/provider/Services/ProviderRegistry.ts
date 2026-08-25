@@ -15,6 +15,7 @@ import type {
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -27,6 +28,13 @@ import type {
 import type { ProviderAdapterError } from "../Errors.ts";
 
 export type ProviderMaintenanceActionKind = "update";
+
+export class ProviderRegistryRefreshError extends Data.TaggedError("ProviderRegistryRefreshError")<{
+  readonly operation: "refresh" | "reload";
+  readonly instanceId: ProviderInstanceId;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 export interface ProviderRegistryShape {
   /**
@@ -58,6 +66,25 @@ export interface ProviderRegistryShape {
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Refresh one instance without substituting cached state when its live probe
+   * fails. Lifecycle operations use this when fresh state decides whether an
+   * operation may start or can truthfully be reported as complete.
+   */
+  readonly refreshInstanceStrict: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
+
+  /**
+   * Refresh one instance after a provider-owned account action succeeds.
+   * Unlike routine refreshes, this keeps any runtime-proven authentication
+   * failure visible while the fresh account probe runs and clears only the
+   * failure that preceded a successful verification. Newer failures win.
+   */
+  readonly refreshInstanceAfterAccountChange: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
+
+  /**
    * Recreate one provider instance from unchanged settings, attach its fresh
    * snapshot source, and run a probe before returning. Used when an external
    * dependency such as a managed provider executable changed atomically.
@@ -65,6 +92,14 @@ export interface ProviderRegistryShape {
   readonly reloadInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Rebuild and refresh one instance without recovering to cached state.
+   * Managed-runtime reconciliation uses this after a durable runtime change.
+   */
+  readonly reloadInstanceStrict: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderRegistryRefreshError>;
 
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.
@@ -120,6 +155,16 @@ export interface ProviderRegistryShape {
   readonly setProviderConnectionOperation: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly operation: ProviderConnectionOperation | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Overlay an authentication failure proven by a live provider request.
+   * The overlay is process-local and survives passive probes until a verified
+   * account transition, instance removal, or server restart.
+   */
+  readonly setProviderAuthenticationFailure: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly message: string;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /** Overlay the current derived app-private runtime summary without persisting operation state. */

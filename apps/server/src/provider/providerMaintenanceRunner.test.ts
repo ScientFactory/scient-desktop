@@ -191,7 +191,10 @@ function makeRegistry(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
+      refreshInstanceStrict: () => Ref.get(providersRef),
+      refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
       reloadInstance: () => Ref.get(providersRef),
+      reloadInstanceStrict: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
@@ -204,6 +207,7 @@ function makeRegistry(
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState,
       setProviderConnectionOperation: () => Ref.get(providersRef),
+      setProviderAuthenticationFailure: () => Ref.get(providersRef),
       streamChanges: Stream.empty,
     };
 

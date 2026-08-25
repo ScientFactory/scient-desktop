@@ -14,6 +14,7 @@ import {
   CheckCircle2Icon,
   DownloadIcon,
   LoaderIcon,
+  RefreshCwIcon,
   ShieldCheckIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -25,49 +26,75 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import {
   currentOptimisticProviderValue,
   isManagedRuntimeActionDurablySettled,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
+import {
+  isActiveProviderRuntimeOperation,
+  needsManagedRuntimeRecovery,
+  providerLifecycleFailureMessage,
+} from "./providerConnectionPresentation";
 
 type PendingAction = "plan" | "start" | "cancel" | null;
 type StartedRuntimeOperation = {
   readonly action: ProviderManagedRuntimeAction;
   readonly operationId: ProviderRuntimeOperation["operationId"];
 };
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    "message" in value &&
-    typeof value.message === "string" &&
-    value.message.trim().length > 0
-  ) {
-    return value.message;
-  }
-  return fallback;
-}
+type LocalRuntimeFailure =
+  | {
+      readonly kind: "plan";
+      readonly action: ProviderManagedRuntimeAction;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "start";
+      readonly action: ProviderManagedRuntimeAction;
+      readonly operationId: ProviderRuntimeOperation["operationId"] | null;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "operation";
+      readonly operationId: ProviderRuntimeOperation["operationId"];
+      readonly message: string;
+    };
 
 function runtimeFromResult(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ServerProvider["instanceId"],
 ): ProviderRuntimeSummary | undefined {
   return providers.find((provider) => provider.instanceId === instanceId)?.connection?.runtime;
+}
+
+function localRuntimeFailureMessage(
+  failure: LocalRuntimeFailure | null,
+  runtime: ProviderRuntimeSummary,
+): string | null {
+  if (!failure) return null;
+  if (failure.kind === "plan") {
+    return !isActiveProviderRuntimeOperation(runtime.operation) &&
+      runtime.actions.includes(failure.action)
+      ? failure.message
+      : null;
+  }
+  if (failure.kind === "start") {
+    return runtime.actions.includes(failure.action) &&
+      (runtime.operation?.operationId ?? null) === failure.operationId
+      ? failure.message
+      : null;
+  }
+  const operation = runtime.operation;
+  return operation?.operationId === failure.operationId &&
+    isActiveProviderRuntimeOperation(operation)
+    ? failure.message
+    : null;
 }
 
 export function resolveProviderRuntimeForPresentation(
@@ -80,7 +107,7 @@ export function resolveProviderRuntimeForPresentation(
     return serverRuntime;
   }
   const localOperation = localRuntime.operation;
-  if (!localOperation || !ACTIVE_RUNTIME_STATUSES.has(localOperation.status)) {
+  if (!localOperation || !isActiveProviderRuntimeOperation(localOperation)) {
     return serverRuntime;
   }
   if (isManagedRuntimeActionDurablySettled(localOperation.action, serverRuntime)) {
@@ -117,8 +144,8 @@ function actionLabel(action: ProviderManagedRuntimeAction, displayName: string):
 
 function runtimeSourceLabel(runtime: ProviderRuntimeSummary): string {
   if (runtime.source === "scient_managed") return "Managed by Scient";
-  if (runtime.source === "system") return "Using the installation on this computer";
-  if (runtime.source === "custom") return "Using your custom installation";
+  if (runtime.source === "system") return "System installation";
+  if (runtime.source === "custom") return "Custom installation";
   if (runtime.source === "missing") return "Provider tool required";
   return "Provider tool status unavailable";
 }
@@ -145,10 +172,10 @@ export function ProviderRuntimeSection(props: {
   const [pendingAction, setPendingAction] = useState<PendingAction>(() =>
     props.initialAction ? "plan" : null,
   );
-  const [plan, setPlan] = useState<ProviderRuntimePlan | null>(null);
+  const [preparedPlan, setPreparedPlan] = useState<ProviderRuntimePlan | null>(null);
   const [localRuntimeSnapshot, setLocalRuntimeSnapshot] =
     useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const [localFailure, setLocalFailure] = useState<LocalRuntimeFailure | null>(null);
   const [startedOperation, setStartedOperation] = useState<StartedRuntimeOperation | null>(null);
   const providerInstanceIdRef = useRef(props.provider.instanceId);
   const initialPlanRequestRef = useRef<string | null>(null);
@@ -158,9 +185,9 @@ export function ProviderRuntimeSection(props: {
     if (providerInstanceIdRef.current === props.provider.instanceId) return;
     providerInstanceIdRef.current = props.provider.instanceId;
     setPendingAction(null);
-    setPlan(null);
+    setPreparedPlan(null);
     setLocalRuntimeSnapshot(null);
-    setLocalError(null);
+    setLocalFailure(null);
     setStartedOperation(null);
     initialPlanRequestRef.current = null;
     reportedOperationIdRef.current = null;
@@ -177,7 +204,7 @@ export function ProviderRuntimeSection(props: {
 
   useEffect(() => {
     if (!startedOperationId || serverOperation?.operationId !== startedOperationId) return;
-    if (ACTIVE_RUNTIME_STATUSES.has(serverOperation.status)) return;
+    if (isActiveProviderRuntimeOperation(serverOperation)) return;
 
     setStartedOperation(null);
     if (
@@ -202,12 +229,14 @@ export function ProviderRuntimeSection(props: {
   if (!runtime) return null;
 
   const operation = runtime.operation;
-  const activeOperation =
-    operation && ACTIVE_RUNTIME_STATUSES.has(operation.status) ? operation : null;
+  const activeOperation = isActiveProviderRuntimeOperation(operation) ? operation : null;
+  const plan =
+    !activeOperation && preparedPlan && runtime.actions.includes(preparedPlan.action)
+      ? preparedPlan
+      : null;
+  const localError = localRuntimeFailureMessage(localFailure, runtime);
   const progress =
-    !props.compact &&
-    activeOperation?.downloadedBytes !== undefined &&
-    activeOperation.totalBytes !== undefined
+    activeOperation?.downloadedBytes !== undefined && activeOperation.totalBytes !== undefined
       ? Math.min(
           100,
           Math.round((activeOperation.downloadedBytes / activeOperation.totalBytes) * 100),
@@ -217,7 +246,8 @@ export function ProviderRuntimeSection(props: {
 
   const startPlan = useCallback(
     async (nextPlan: ProviderRuntimePlan) => {
-      setLocalError(null);
+      const operationId = runtime.operation?.operationId ?? null;
+      setLocalFailure(null);
       setPendingAction("start");
       const result = await startRuntime({
         environmentId: props.environmentId,
@@ -230,19 +260,22 @@ export function ProviderRuntimeSection(props: {
       if (result._tag === "Failure") {
         setPendingAction(null);
         if (!isAtomCommandInterrupted(result)) {
-          setLocalError(
-            failureMessage(
+          setLocalFailure({
+            kind: "start",
+            action: nextPlan.action,
+            operationId,
+            message: providerLifecycleFailureMessage(
               squashAtomCommandFailure(result),
               `Scient could not start the ${props.displayName} runtime operation.`,
             ),
-          );
+          });
         }
         return;
       }
       const nextRuntime = runtimeFromResult(result.value.providers, props.provider.instanceId);
       const nextOperation = nextRuntime?.operation;
       if (nextOperation?.action === nextPlan.action) {
-        if (ACTIVE_RUNTIME_STATUSES.has(nextOperation.status)) {
+        if (isActiveProviderRuntimeOperation(nextOperation)) {
           setStartedOperation({
             action: nextPlan.action,
             operationId: nextOperation.operationId,
@@ -258,7 +291,7 @@ export function ProviderRuntimeSection(props: {
       setLocalRuntimeSnapshot(
         nextRuntime ? { baseProvider: props.provider, value: nextRuntime } : null,
       );
-      setPlan(null);
+      setPreparedPlan(null);
       props.onPlanOpenChange?.(false);
       setPendingAction(null);
     },
@@ -270,12 +303,23 @@ export function ProviderRuntimeSection(props: {
       props.onPlanOpenChange,
       props.provider,
       props.provider.instanceId,
+      runtime.operation?.operationId,
     ],
   );
 
   const requestPlan = useCallback(
     async (action: ProviderManagedRuntimeAction) => {
-      setLocalError(null);
+      if (
+        isActiveProviderRuntimeOperation(runtime.operation) ||
+        !runtime.actions.includes(action)
+      ) {
+        setPendingAction(null);
+        setPreparedPlan(null);
+        setLocalFailure(null);
+        props.onPlanOpenChange?.(false);
+        return;
+      }
+      setLocalFailure(null);
       setPendingAction("plan");
       if (action !== "repair") props.onPlanOpenChange?.(true);
       const result = await planRuntime({
@@ -286,12 +330,14 @@ export function ProviderRuntimeSection(props: {
         setPendingAction(null);
         props.onPlanOpenChange?.(false);
         if (!isAtomCommandInterrupted(result)) {
-          setLocalError(
-            failureMessage(
+          setLocalFailure({
+            kind: "plan",
+            action,
+            message: providerLifecycleFailureMessage(
               squashAtomCommandFailure(result),
               `Scient could not prepare the ${props.displayName} setup plan.`,
             ),
-          );
+          });
         }
         return;
       }
@@ -300,7 +346,7 @@ export function ProviderRuntimeSection(props: {
         return;
       }
       setPendingAction(null);
-      setPlan(result.value);
+      setPreparedPlan(result.value);
     },
     [
       planRuntime,
@@ -308,6 +354,8 @@ export function ProviderRuntimeSection(props: {
       props.environmentId,
       props.onPlanOpenChange,
       props.provider.instanceId,
+      runtime.actions,
+      runtime.operation,
       startPlan,
     ],
   );
@@ -320,6 +368,17 @@ export function ProviderRuntimeSection(props: {
     void requestPlan(props.initialAction);
   }, [props.initialAction, props.provider.instanceId, requestPlan]);
 
+  useEffect(() => {
+    if (!preparedPlan || plan) return;
+    setPreparedPlan(null);
+    props.onPlanOpenChange?.(false);
+  }, [plan, preparedPlan, props.onPlanOpenChange]);
+
+  useEffect(() => {
+    if (!localFailure || localError) return;
+    setLocalFailure(null);
+  }, [localError, localFailure]);
+
   const start = async () => {
     if (!plan) return;
     await startPlan(plan);
@@ -327,7 +386,7 @@ export function ProviderRuntimeSection(props: {
 
   const cancel = async () => {
     if (!activeOperation) return;
-    setLocalError(null);
+    setLocalFailure(null);
     setPendingAction("cancel");
     const result = await cancelRuntime({
       environmentId: props.environmentId,
@@ -339,12 +398,14 @@ export function ProviderRuntimeSection(props: {
     setPendingAction(null);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setLocalError(
-          failureMessage(
+        setLocalFailure({
+          kind: "operation",
+          operationId: activeOperation.operationId,
+          message: providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
             `Scient could not cancel the ${props.displayName} runtime operation.`,
           ),
-        );
+        });
       }
       return;
     }
@@ -371,7 +432,7 @@ export function ProviderRuntimeSection(props: {
             ) : null}
           </div>
         </div>
-        {progress !== null ? (
+        {!props.compact && progress !== null ? (
           <div
             className="space-y-1"
             role="progressbar"
@@ -394,7 +455,15 @@ export function ProviderRuntimeSection(props: {
             {localError}
           </p>
         ) : null}
-        <div className={props.compact ? "flex justify-end pt-1" : "flex"}>
+        <div className={props.compact ? "flex items-center justify-end gap-3 pt-1" : "flex"}>
+          {props.compact && progress !== null ? (
+            <span
+              className="text-xs tabular-nums text-muted-foreground"
+              aria-label={`Download progress ${progress}%`}
+            >
+              {progress}%
+            </span>
+          ) : null}
           <Button
             className={DESTRUCTIVE_GHOST_ACTION_CLASS}
             type="button"
@@ -435,6 +504,7 @@ export function ProviderRuntimeSection(props: {
     const downloadSize = formatDownloadSize(plan.downloadBytes);
     const isRemovePlan = plan.action === "remove";
     const isCompactInstallPlan = props.compact && plan.action === "install";
+    const isSystemManagedInstallPlan = isCompactInstallPlan && runtime.source === "system";
     return (
       <div
         className={
@@ -449,16 +519,20 @@ export function ProviderRuntimeSection(props: {
             <p className="text-sm font-medium text-foreground">
               {isRemovePlan
                 ? `Remove ${props.displayName}?`
-                : isCompactInstallPlan
-                  ? `Install ${props.displayName}`
-                  : `Review ${props.displayName} setup`}
+                : isSystemManagedInstallPlan
+                  ? `Use Scient-managed ${props.displayName}?`
+                  : isCompactInstallPlan
+                    ? `Install ${props.displayName}`
+                    : `Review ${props.displayName} setup`}
             </p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
               {isRemovePlan
                 ? `Only Scient’s managed copy will be removed. Your account and other ${props.displayName} installations stay unchanged.`
-                : isCompactInstallPlan
-                  ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
-                  : plan.message}
+                : isSystemManagedInstallPlan
+                  ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}. Accounts using the default installation will use Scient’s private copy; system and custom installations stay unchanged.`
+                  : isCompactInstallPlan
+                    ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
+                    : plan.message}
             </p>
           </div>
         </div>
@@ -500,7 +574,7 @@ export function ProviderRuntimeSection(props: {
             variant="ghost-muted"
             disabled={isWorking}
             onClick={() => {
-              setPlan(null);
+              setPreparedPlan(null);
               props.onPlanOpenChange?.(false);
             }}
           >
@@ -509,16 +583,26 @@ export function ProviderRuntimeSection(props: {
           <Button
             type="button"
             size="sm"
-            variant={isRemovePlan ? "ghost-muted" : "default"}
+            variant={isRemovePlan ? "ghost-muted" : "ghost"}
             className={
               isRemovePlan
                 ? "text-destructive hover:bg-destructive/8 hover:text-destructive"
-                : undefined
+                : PRIMARY_GHOST_ACTION_CLASS
             }
             disabled={isWorking}
             onClick={() => void start()}
           >
-            {pendingAction === "start" ? <LoaderIcon className="animate-spin" /> : null}
+            {pendingAction === "start" ? (
+              <LoaderIcon className="animate-spin" />
+            ) : plan.action === "install" ? (
+              <DownloadIcon />
+            ) : plan.action === "update" ? (
+              <RefreshCwIcon />
+            ) : plan.action === "remove" ? (
+              <Trash2Icon />
+            ) : (
+              <WrenchIcon />
+            )}
             {isRemovePlan
               ? "Remove"
               : isCompactInstallPlan
@@ -531,16 +615,12 @@ export function ProviderRuntimeSection(props: {
   }
 
   const terminalOperation =
-    operation && !ACTIVE_RUNTIME_STATUSES.has(operation.status) ? operation : null;
-  const wasRemoved =
-    terminalOperation?.action === "remove" && terminalOperation.status === "succeeded";
-  const wasRepaired =
-    terminalOperation?.action === "repair" && terminalOperation.status === "succeeded";
+    operation && !isActiveProviderRuntimeOperation(operation) ? operation : null;
   const providerRuntimeError = needsManagedRuntimeRecovery(props.provider)
     ? props.provider.message
     : null;
   const statusMessage =
-    (wasRepaired || wasRemoved ? null : terminalOperation?.message) ??
+    (terminalOperation?.status === "failed" ? terminalOperation.message : null) ??
     providerRuntimeError ??
     (runtime.source === "missing" ? runtime.message : null);
   const statusIcon =
@@ -554,8 +634,14 @@ export function ProviderRuntimeSection(props: {
 
   return (
     <div className={props.compact ? "space-y-2 border-b pb-3" : "space-y-3 rounded-lg border p-3"}>
-      <div className={props.compact ? "flex flex-wrap items-center gap-x-3 gap-y-2" : "space-y-3"}>
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+      <div
+        className={
+          props.compact
+            ? "grid grid-cols-[minmax(9rem,1fr)_auto] items-center gap-x-3 gap-y-2"
+            : "space-y-3"
+        }
+      >
+        <div className="flex min-w-0 items-start gap-3">
           {statusIcon}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
@@ -576,43 +662,73 @@ export function ProviderRuntimeSection(props: {
           </div>
         </div>
         {runtime.actions.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {runtime.actions.map((action) => (
-              <Button
-                key={action}
-                type="button"
-                size="sm"
-                variant={
-                  action === "install" ? "default" : props.compact ? "ghost-muted" : "outline"
-                }
-                className={
-                  props.compact && action === "remove"
-                    ? "hover:bg-destructive/8 hover:text-destructive"
-                    : undefined
-                }
-                disabled={isWorking}
-                onClick={() => void requestPlan(action)}
-              >
-                {pendingAction === "plan" ? (
-                  <LoaderIcon className="animate-spin" />
-                ) : action === "install" ? (
-                  <DownloadIcon />
-                ) : action === "remove" ? (
-                  <Trash2Icon />
-                ) : (
-                  <WrenchIcon />
-                )}
-                {action === "install"
-                  ? props.provider.driver === "codex" && runtime.source === "system"
-                    ? "Use Scient-managed Codex"
-                    : "Review setup"
-                  : action === "update"
-                    ? "Update"
-                    : action === "repair"
-                      ? "Repair"
-                      : "Remove"}
-              </Button>
-            ))}
+          <div className="flex flex-wrap justify-end gap-1">
+            {runtime.actions.map((action) => {
+              const isSystemManagedSwitch = action === "install" && runtime.source === "system";
+              const actionButton = (
+                <Button
+                  aria-label={
+                    isSystemManagedSwitch ? `Use Scient-managed ${props.displayName}` : undefined
+                  }
+                  key={action}
+                  type="button"
+                  size={props.compact ? "compact" : "sm"}
+                  variant={
+                    action === "install" && !isSystemManagedSwitch
+                      ? "ghost"
+                      : props.compact
+                        ? "ghost-muted"
+                        : "outline"
+                  }
+                  className={
+                    action === "install" && !isSystemManagedSwitch
+                      ? PRIMARY_GHOST_ACTION_CLASS
+                      : props.compact && action === "remove"
+                        ? "hover:bg-destructive/8 hover:text-destructive"
+                        : undefined
+                  }
+                  disabled={isWorking}
+                  onClick={() => void requestPlan(action)}
+                >
+                  {pendingAction === "plan" ? (
+                    <LoaderIcon className="animate-spin" />
+                  ) : action === "install" ? (
+                    <DownloadIcon />
+                  ) : action === "remove" ? (
+                    <Trash2Icon />
+                  ) : (
+                    <WrenchIcon />
+                  )}
+                  {action === "install"
+                    ? isSystemManagedSwitch
+                      ? "Use Scient-managed"
+                      : "Review setup"
+                    : action === "update"
+                      ? "Update"
+                      : action === "repair"
+                        ? "Repair"
+                        : "Remove"}
+                </Button>
+              );
+              return isSystemManagedSwitch ? (
+                <Tooltip key={action}>
+                  <TooltipTrigger render={actionButton} />
+                  <TooltipPopup className="max-w-64" side="top">
+                    <div className="space-y-0.5 py-0.5">
+                      <p className="font-medium text-foreground">
+                        Scient-managed {props.displayName}
+                      </p>
+                      <p className="leading-relaxed text-muted-foreground">
+                        Scient installs and maintains a private copy, including updates and repairs.
+                        Your system installation stays unchanged and remains available.
+                      </p>
+                    </div>
+                  </TooltipPopup>
+                </Tooltip>
+              ) : (
+                actionButton
+              );
+            })}
           </div>
         ) : null}
       </div>

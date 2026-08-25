@@ -18,7 +18,7 @@ describe("reviewed Claude runtime manifest", () => {
     for (const target of targets) {
       const artifact = resolveReviewedClaudeArtifact(target);
       expect(artifact?.provider).toBe("claudeAgent");
-      expect(artifact?.version).toBe("2.1.170");
+      expect(artifact?.version).toBe("2.1.245");
       expect(artifact?.archiveFormat).toBe("raw");
       expect(artifact?.supportTier).toBe("fully_assisted");
       expect(artifact?.checksum).toEqual({
@@ -49,47 +49,47 @@ describe("reviewed Claude runtime manifest", () => {
     expect(windowsArm64?.url).toMatch(/\/win32-arm64\/claude\.exe$/u);
   });
 
-  it("matches Anthropic's immutable 2.1.170 manifest", () => {
+  it("matches Anthropic's immutable 2.1.245 manifest", () => {
     const expected = [
       [
         { platform: "darwin", arch: "arm64" },
-        "e903646d8b7a31882a80ecd27569a27d8ac57b3708745f349709632c84117fdf",
-        222_102_816,
+        "9f7c2260251765a18d0b35198669dacc1912f6e8129a3b01f6b58d93365ff1f1",
+        376_109_392,
       ],
       [
         { platform: "darwin", arch: "x64" },
-        "914f23a70bbed5d9ae567e3e04b86206ed9971b371bc9baca3f79c8885bfddb4",
-        224_616_976,
+        "de044bb543e826352f31587a74356e1b2dae94dc1b9c960a362d9f07df96c2a7",
+        385_137_136,
       ],
       [
         { platform: "linux", arch: "arm64", libc: "glibc" },
-        "1bb9d032440a75532f7dd4cafbc687f220aaf16c63eba17e192dfbec2f04bd25",
-        247_379_592,
+        "d0da299303d710a7cc5cdece9629958f5128ce1a727e15463c651ed5cf385c7f",
+        389_077_224,
       ],
       [
         { platform: "linux", arch: "x64", libc: "glibc" },
-        "849e007277a0442ab27570d3e3d6d43787507946590e8dd1947e5a39b7081f9e",
-        247_469_776,
+        "16ad2b94deaf7b29abed966d981c9991a47af0420f5be8ed4a3f83bea9f678bc",
+        391_948_592,
       ],
       [
         { platform: "linux", arch: "arm64", libc: "musl" },
-        "73154fd674aaf233254edea8fbfb6a53d82d5297ae7546b998e36983def4dddc",
-        240_234_328,
+        "8707fbe629fdd9876d9c356baa833a697dac76cd9a7157088f667199b8492851",
+        382_222_104,
       ],
       [
         { platform: "linux", arch: "x64", libc: "musl" },
-        "5d19b7c91a03182ccb69da249f721684aebecfa4c52fe46b9205a81d8fc64a47",
-        241_863_728,
+        "d25564bc5d84ec988a762cfe25fe51cb706b96eaec614f704ddbf653ab08ba00",
+        386_060_256,
       ],
       [
         { platform: "win32", arch: "arm64" },
-        "9abd330bcc191aecc877a8ee9da2b448852cfe3bda15e5e4608385ea1d9d1709",
-        238_894_240,
+        "9cff8169be24a8b3e59e89e58d9e3d37f3c17ca1b3a149e60666fe53c789d80a",
+        372_111_520,
       ],
       [
         { platform: "win32", arch: "x64" },
-        "193061508fe619abf534b2c9d48151f26971d1d5b8460ad75c0af4be3d3525fb",
-        242_929_824,
+        "d1649bf5261792fee7e1a1b63fdd2197082adec36ce9701aa0c1723bdcd2348a",
+        384_213_664,
       ],
     ] as const;
 

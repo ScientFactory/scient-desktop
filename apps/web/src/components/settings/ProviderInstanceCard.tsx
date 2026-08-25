@@ -6,7 +6,6 @@ import {
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
-  LogInIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -17,6 +16,7 @@ import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type EnvironmentId,
+  type ProviderManagedRuntimeAction,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -46,10 +46,10 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { canManageProviderLifecycle } from "../../scient/providerConnection/providerConnectionPresentation";
 import { providerSettingsLifecyclePresentation } from "../../scient/providerConnection/providerSettingsLifecyclePresentation";
-import { CodexProviderLifecycleAction } from "../../scient/providerConnection/CodexProviderLifecycleAction";
+import { ProviderSettingsLifecycleAction } from "../../scient/providerConnection/ProviderSettingsLifecycleAction";
 import { ProviderRuntimeSection } from "../../scient/providerConnection/ProviderRuntimeSection";
+import { withProviderInstanceEnabled } from "../../scient/providerConnection/providerEnablement";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -357,7 +357,9 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
-  readonly onManageConnection?: (() => void) | undefined;
+  readonly onManageConnection?:
+    | ((initialRuntimeAction?: ProviderManagedRuntimeAction) => void)
+    | undefined;
 }
 
 /**
@@ -422,7 +424,9 @@ export function ProviderInstanceCard({
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const connectionPresentation = providerSettingsLifecyclePresentation(liveProvider, displayName);
   const showConnectionStatus =
-    liveProvider !== undefined && connectionPresentation.kind !== "manual";
+    liveProvider !== undefined &&
+    connectionPresentation.kind !== "manual" &&
+    connectionPresentation.statusLabel !== null;
   const connectionBadgeVariant =
     connectionPresentation.kind === "ready"
       ? "success"
@@ -491,7 +495,7 @@ export function ProviderInstanceCard({
   };
 
   const updateEnabled = (value: boolean) => {
-    onUpdate({ ...instance, enabled: value });
+    onUpdate(withProviderInstanceEnabled(instance, value));
   };
 
   const updateAccentColor = (value: string) => {
@@ -740,43 +744,15 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {onManageConnection && liveProvider?.driver === "codex" ? (
-              <CodexProviderLifecycleAction
+            {onManageConnection && liveProvider ? (
+              <ProviderSettingsLifecycleAction
                 displayName={displayName}
                 environmentId={environmentId}
+                externalUpdateRunning={isUpdating}
                 onManage={onManageConnection}
+                onRunExternalUpdate={onRunUpdate}
                 provider={liveProvider}
               />
-            ) : onManageConnection && canManageProviderLifecycle(liveProvider) ? (
-              <Button
-                type="button"
-                size="sm"
-                variant={
-                  connectionPresentation.kind === "sign-in-required" ||
-                  connectionPresentation.kind === "not-installed"
-                    ? "default"
-                    : "outline"
-                }
-                className="h-7 gap-1.5 px-2.5 text-xs"
-                onClick={onManageConnection}
-              >
-                {connectionPresentation.kind === "signing-in" ||
-                connectionPresentation.kind === "installing" ? (
-                  <LoaderIcon className="animate-spin" />
-                ) : connectionPresentation.kind === "not-installed" ? (
-                  <DownloadIcon />
-                ) : connectionPresentation.kind === "sign-in-required" ? (
-                  <LogInIcon />
-                ) : null}
-                {connectionPresentation.kind === "not-installed"
-                  ? "Install"
-                  : connectionPresentation.kind === "sign-in-required"
-                    ? "Sign in"
-                    : connectionPresentation.kind === "signing-in" ||
-                        connectionPresentation.kind === "installing"
-                      ? "Continue"
-                      : "Manage"}
-              </Button>
             ) : null}
             <Button
               size="compact"

@@ -72,8 +72,10 @@ export function resolveManagedRuntimeSource(input: {
   readonly hasCustomRuntime: boolean;
   readonly configuredRuntimeHealthy: boolean;
   readonly managedInstalled: boolean;
+  readonly managedSelected: boolean;
 }): ProviderRuntimeSummary["source"] {
   if (input.hasCustomRuntime) return input.configuredRuntimeHealthy ? "custom" : "unknown";
+  if (input.managedSelected) return "scient_managed";
   if (input.configuredRuntimeHealthy) return "system";
   return input.managedInstalled ? "scient_managed" : "missing";
 }
@@ -84,6 +86,7 @@ export function resolveManagedRuntimePolicy(input: {
   readonly installed: boolean;
   readonly installedVersion: string | null;
   readonly managedInstallationAllowed: boolean;
+  readonly systemToManagedSwitchAllowed: boolean;
 }): {
   readonly supportTier: ProviderRuntimeSummary["supportTier"];
   readonly actions: ReadonlyArray<ProviderManagedRuntimeAction>;
@@ -95,11 +98,13 @@ export function resolveManagedRuntimePolicy(input: {
     ? []
     : input.source === "missing"
       ? ["install"]
-      : input.source === "scient_managed" && input.installed
-        ? input.artifact && input.installedVersion !== input.artifact.version
-          ? ["update", "repair", "remove"]
-          : ["repair", "remove"]
-        : [];
+      : input.source === "system" && input.systemToManagedSwitchAllowed
+        ? ["install"]
+        : input.source === "scient_managed"
+          ? input.installed && input.artifact && input.installedVersion !== input.artifact.version
+            ? ["update", "repair", "remove"]
+            : ["repair", "remove"]
+          : [];
   return {
     supportTier:
       input.artifact?.supportTier === "fully_assisted" && !input.managedInstallationAllowed
@@ -153,6 +158,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly configuredRuntimeProbeAllowed?: boolean | undefined;
   readonly managedInstallationAllowed: boolean;
+  readonly systemToManagedSwitchAllowed: boolean;
   readonly sourceLabel: string;
   readonly managedInstallationLimitation: string;
   readonly diagnosticsHomePath: string | null;
@@ -199,10 +205,12 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       }).pipe(Effect.option)
     : Option.none();
   const managedInstalled = Option.isSome(managedStatus) && managedStatus.value.installed;
+  const managedSelected = Option.isSome(managedStatus) && managedStatus.value.selected;
   const source = resolveManagedRuntimeSource({
     hasCustomRuntime,
     configuredRuntimeHealthy,
     managedInstalled,
+    managedSelected,
   });
   const initialPolicy = resolveManagedRuntimePolicy({
     source,
@@ -210,6 +218,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     installed: managedInstalled,
     installedVersion: Option.isSome(managedStatus) ? managedStatus.value.activeVersion : null,
     managedInstallationAllowed,
+    systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
   });
   const effectiveBinaryPath = initialPolicy.useManagedPath
     ? managedInstalled && Option.isSome(managedStatus)
@@ -226,10 +235,12 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         })
       : undefined;
     const latestManagedInstalled = latest?.installed ?? false;
+    const latestManagedSelected = latest?.selected ?? false;
     const latestSource = resolveManagedRuntimeSource({
       hasCustomRuntime,
       configuredRuntimeHealthy,
       managedInstalled: latestManagedInstalled,
+      managedSelected: latestManagedSelected,
     });
     const policy = resolveManagedRuntimePolicy({
       source: latestSource,
@@ -237,7 +248,10 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       installed: latestManagedInstalled,
       installedVersion: latest?.activeVersion ?? null,
       managedInstallationAllowed,
+      systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
     });
+    const latestManagedVersion =
+      latest?.activeVersion ?? (latestManagedInstalled ? (artifact?.version ?? null) : null);
     const message =
       latestSource === "custom"
         ? `Scient is preserving the custom ${providerName} runtime configured for this account.`
@@ -264,18 +278,14 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       supportTier: policy.supportTier,
       target: targetLabel,
       actions: [...policy.actions],
-      managedVersion: latestManagedInstalled
-        ? (latest?.activeVersion ?? artifact?.version ?? null)
-        : null,
+      managedVersion: latestManagedVersion,
       previousManagedVersion: latest?.previousVersion ?? null,
       operation: null,
       message,
       diagnostics: makeManagedProviderRuntimeDiagnostics({
         executable,
         source: latestSource,
-        managedVersion: latestManagedInstalled
-          ? (latest?.activeVersion ?? artifact?.version ?? null)
-          : null,
+        managedVersion: latestManagedVersion,
         homePath: input.diagnosticsHomePath,
         backend: input.diagnosticsBackend,
       }),
@@ -310,7 +320,9 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
               ? `Scient will remove only its app-private ${providerName} copy. Custom and system installations are untouched.`
               : action === "update"
                 ? `Scient will download, verify, test, and activate ${providerName} ${artifact?.version ?? ""}. The current version remains active until then.`
-                : `Scient will download, verify, stage, test, and activate ${providerName} ${artifact?.version ?? ""}.`,
+                : action === "install" && summary.source === "system"
+                  ? `Scient will install private ${providerName} ${artifact?.version ?? ""} beside the system installation. Default-runtime ${providerName} accounts in this environment will use the verified private copy; custom paths remain unchanged.`
+                  : `Scient will download, verify, stage, test, and activate ${providerName} ${artifact?.version ?? ""}.`,
         });
       }),
     );

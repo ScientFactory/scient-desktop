@@ -1,16 +1,54 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the local process and managed-runtime filesystem boundaries.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it } from "@effect/vitest";
+import { afterEach, describe, expect } from "vite-plus/test";
 
 import {
   ManagedProviderRuntimeError,
+  ManagedProviderRuntime,
   ManagedRuntimeFileError,
+  type ManagedRuntimeArtifact,
 } from "@scientfactory/provider-runtime";
+import * as Effect from "effect/Effect";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
   makeManagedProviderRuntimeDiagnostics,
+  makeManagedProviderRuntimeResolution,
   managedRuntimeInstallationFailureMessage,
   nativeProviderRuntimeBackendLabel,
+  resolveManagedRuntimePolicy,
   resolveManagedRuntimeSource,
 } from "./ManagedProviderRuntimeActions.ts";
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
+});
+
+const reviewedArtifact: ManagedRuntimeArtifact = {
+  provider: "claudeAgent",
+  version: "1.0.0",
+  target: { platform: "darwin", arch: "arm64" },
+  artifactName: "claude",
+  url: "https://example.com/claude",
+  allowedHosts: ["example.com"],
+  checksum: { algorithm: "sha256", digest: "0".repeat(64) },
+  size: 100,
+  archiveFormat: "raw",
+  executablePath: "claude",
+  smokeArgs: ["--version"],
+  catalogRevision: "test:claude:1.0.0",
+  supportTier: "fully_assisted",
+  supportMessage: "Managed Claude is supported.",
+};
 
 describe("managed provider runtime source", () => {
   it("reports an unhealthy custom runtime honestly without replacing it", () => {
@@ -19,6 +57,7 @@ describe("managed provider runtime source", () => {
         hasCustomRuntime: true,
         configuredRuntimeHealthy: false,
         managedInstalled: true,
+        managedSelected: true,
       }),
     ).toBe("unknown");
   });
@@ -29,6 +68,7 @@ describe("managed provider runtime source", () => {
         hasCustomRuntime: true,
         configuredRuntimeHealthy: true,
         managedInstalled: false,
+        managedSelected: true,
       }),
     ).toBe("custom");
     expect(
@@ -36,6 +76,7 @@ describe("managed provider runtime source", () => {
         hasCustomRuntime: false,
         configuredRuntimeHealthy: false,
         managedInstalled: true,
+        managedSelected: false,
       }),
     ).toBe("scient_managed");
     expect(
@@ -43,8 +84,167 @@ describe("managed provider runtime source", () => {
         hasCustomRuntime: false,
         configuredRuntimeHealthy: false,
         managedInstalled: false,
+        managedSelected: false,
       }),
     ).toBe("missing");
+  });
+
+  it("uses an explicit managed selection without silently promoting legacy state", () => {
+    expect(
+      resolveManagedRuntimeSource({
+        hasCustomRuntime: false,
+        configuredRuntimeHealthy: true,
+        managedInstalled: true,
+        managedSelected: false,
+      }),
+    ).toBe("system");
+    expect(
+      resolveManagedRuntimeSource({
+        hasCustomRuntime: false,
+        configuredRuntimeHealthy: true,
+        managedInstalled: true,
+        managedSelected: true,
+      }),
+    ).toBe("scient_managed");
+    expect(
+      resolveManagedRuntimeSource({
+        hasCustomRuntime: false,
+        configuredRuntimeHealthy: true,
+        managedInstalled: false,
+        managedSelected: true,
+      }),
+    ).toBe("scient_managed");
+  });
+});
+
+describe("managed provider runtime policy", () => {
+  it("advertises system-to-managed installation only after explicit provider qualification", () => {
+    const base = {
+      source: "system" as const,
+      artifact: reviewedArtifact,
+      installed: false,
+      installedVersion: null,
+      managedInstallationAllowed: true,
+    };
+
+    expect(
+      resolveManagedRuntimePolicy({ ...base, systemToManagedSwitchAllowed: false }).actions,
+    ).toEqual([]);
+    expect(
+      resolveManagedRuntimePolicy({ ...base, systemToManagedSwitchAllowed: true }).actions,
+    ).toEqual(["install"]);
+  });
+
+  it.effect("exposes the qualified handoff through the real generic resolution boundary", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-resolution-")),
+      );
+      temporaryRoots.push(baseDir);
+      const runtime = new ManagedProviderRuntime(
+        baseDir,
+        {
+          providerDirectory: "claude",
+          displayName: "Claude",
+        },
+        {
+          download: async ({ destination }) => {
+            await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+            await NodeFSP.writeFile(destination, "downloaded", { flag: "wx" });
+          },
+          verify: async () => undefined,
+          materialize: async ({ destination, executablePath }) => {
+            await NodeFSP.mkdir(destination, { recursive: true });
+            const executable = NodePath.join(destination, executablePath);
+            await NodeFSP.writeFile(executable, "managed", { mode: 0o755 });
+            return executable;
+          },
+          smoke: async () => undefined,
+        },
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const resolve = () =>
+        makeManagedProviderRuntimeResolution({
+          configuredBinaryPath: process.execPath,
+          defaultBinary: process.execPath,
+          providerName: "Claude",
+          providerSlug: "claude",
+          runtime,
+          artifact: reviewedArtifact,
+          targetLabel: "darwin-arm64",
+          environment: process.env,
+          spawner,
+          managedInstallationAllowed: true,
+          systemToManagedSwitchAllowed: true,
+          sourceLabel: "Official Anthropic Claude Code release",
+          managedInstallationLimitation: "Managed installation is unavailable here.",
+          diagnosticsHomePath: null,
+          diagnosticsBackend: "macOS native",
+        });
+      const resolution = yield* resolve();
+
+      expect(resolution.summary).toMatchObject({ source: "system", actions: ["install"] });
+      const plan = yield* resolution.actions.plan("install");
+      expect(plan).toMatchObject({
+        action: "install",
+        message: expect.stringContaining("system installation"),
+      });
+      expect(resolution.effectiveBinaryPath).toBe(process.execPath);
+      expect(resolution.usesManagedPath).toBe(false);
+
+      yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
+
+      expect(yield* resolution.actions.getSummary).toMatchObject({
+        source: "scient_managed",
+        actions: ["repair", "remove"],
+        managedVersion: "1.0.0",
+      });
+      expect(yield* Effect.promise(() => runtime.status(reviewedArtifact))).toMatchObject({
+        installed: true,
+        selected: true,
+      });
+      const managedResolution = yield* resolve();
+      expect(managedResolution.effectiveBinaryPath).toBe(runtime.launchPath(reviewedArtifact));
+      expect(managedResolution.usesManagedPath).toBe(true);
+
+      const removePlan = yield* managedResolution.actions.plan("remove");
+      yield* managedResolution.actions.run("remove", removePlan.catalogRevision, () => Effect.void);
+      const restoredResolution = yield* resolve();
+      expect(restoredResolution.summary).toMatchObject({
+        source: "system",
+        actions: ["install"],
+        managedVersion: null,
+      });
+      expect(restoredResolution.effectiveBinaryPath).toBe(process.execPath);
+      expect(restoredResolution.usesManagedPath).toBe(false);
+      yield* Effect.promise(() => NodeFSP.access(process.execPath));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("keeps a selected but damaged managed runtime repairable and removable", () => {
+    expect(
+      resolveManagedRuntimePolicy({
+        source: "scient_managed",
+        artifact: reviewedArtifact,
+        installed: false,
+        installedVersion: "1.0.0",
+        managedInstallationAllowed: true,
+        systemToManagedSwitchAllowed: true,
+      }).actions,
+    ).toEqual(["repair", "remove"]);
+  });
+
+  it("fails closed outside the local managed-install boundary", () => {
+    expect(
+      resolveManagedRuntimePolicy({
+        source: "system",
+        artifact: reviewedArtifact,
+        installed: false,
+        installedVersion: null,
+        managedInstallationAllowed: false,
+        systemToManagedSwitchAllowed: true,
+      }),
+    ).toMatchObject({ actions: [], supportTier: "external_runtime_supported" });
   });
 });
 

@@ -196,6 +196,27 @@ describe("Codex managed runtime policy", () => {
     });
   });
 
+  it("does not claim managed-update ownership for system or custom runtimes", () => {
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "system",
+        artifact,
+        installed: false,
+        installedVersion: null,
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual(["install"]);
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "custom",
+        artifact,
+        installed: false,
+        installedVersion: null,
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual([]);
+  });
+
   it("keeps a broken private copy repairable while using healthy PATH Codex", () => {
     expect(
       resolveCodexManagedRuntimePolicy({

@@ -52,6 +52,7 @@ export const makeDroidManagedRuntimeResolution = Effect.fn("DroidManagedRuntime.
       environment: input.environment,
       spawner: input.spawner,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official Factory Droid release",
       managedInstallationLimitation:
         "Scient can use a healthy Droid runtime here, but managed installation is only enabled in the local desktop app.",

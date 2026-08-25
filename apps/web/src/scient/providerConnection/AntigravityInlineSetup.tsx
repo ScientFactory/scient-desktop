@@ -3,9 +3,11 @@ import {
   CheckCircle2Icon,
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
+  ShieldCheckIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -14,15 +16,29 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
 import {
+  AssistedSetupActions,
+  AssistedSetupFrame,
+  AssistedSetupStatus,
+} from "./AssistedProviderSetup";
+import {
   cancelAntigravitySignIn,
-  disconnectAntigravity,
   hasManagedAntigravityUpdate,
   startAntigravitySignInAndOpenAuthorizationPage,
   startReviewedAntigravityRuntimeAction,
   updateAntigravityRuntime,
 } from "./antigravityLifecycleActions";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
+  needsManagedRuntimeRecovery,
+  providerLifecycleFailureMessage,
+  providerRuntimeComputerLabel,
+} from "./providerConnectionPresentation";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
@@ -35,21 +51,7 @@ type PendingAction =
   | "sign-in"
   | "submit-code"
   | "cancel-sign-in"
-  | "disconnect"
   | null;
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -79,9 +81,12 @@ function manualInstallCommand(provider: ServerProvider): string {
 }
 
 export function AntigravityInlineSetup(props: {
+  readonly accountAction?: ReactNode;
   readonly controller: ProviderLifecycleController;
   readonly provider: ServerProvider;
   readonly displayName: string;
+  readonly managedRuntimePresentedExternally?: boolean;
+  readonly onRepairSucceeded?: () => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -97,21 +102,25 @@ export function AntigravityInlineSetup(props: {
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
+
+  useEffect(() => {
+    setAuthorizationCode("");
+  }, [activeConnectionOperation?.operationId]);
+
   const isAuthenticated = props.provider.auth.status === "authenticated";
   const hasModels = props.provider.models.length > 0;
   const isReady = props.provider.status === "ready" && hasModels && isAuthenticated;
-  const managedUpdateAvailable = hasManagedAntigravityUpdate(props.provider);
-  const needsRuntimeRepair = needsManagedRuntimeRecovery(props.provider);
+  const managedUpdateAvailable =
+    !props.managedRuntimePresentedExternally && hasManagedAntigravityUpdate(props.provider);
+  const needsRuntimeRepair =
+    !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
   const updateState = props.provider.updateState;
   const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
   const defaultModel =
@@ -125,9 +134,22 @@ export function AntigravityInlineSetup(props: {
     try {
       await operation();
     } catch (error) {
-      setLocalError(failureMessage(error, `Scient could not ${action} Antigravity.`));
+      setLocalError(
+        providerLifecycleFailureMessage(error, `Scient could not ${action} Antigravity.`),
+      );
     } finally {
       setPendingAction(null);
+    }
+  };
+
+  const runtimeAction = async (action: "install" | "repair") => {
+    const provider = await startReviewedAntigravityRuntimeAction(props.controller, action);
+    if (
+      action === "repair" &&
+      provider.connection?.runtime?.operation?.action === "repair" &&
+      provider.connection.runtime.operation.status === "succeeded"
+    ) {
+      props.onRepairSucceeded?.();
     }
   };
 
@@ -156,7 +178,10 @@ export function AntigravityInlineSetup(props: {
       setAuthorizationCode("");
     } catch (error) {
       setLocalError(
-        failureMessage(error, "Scient could not return the authorization code to Antigravity."),
+        providerLifecycleFailureMessage(
+          error,
+          "Scient could not return the authorization code to Antigravity.",
+        ),
       );
     } finally {
       setPendingAction(null);
@@ -169,31 +194,47 @@ export function AntigravityInlineSetup(props: {
     pendingAction === "repair" ||
     pendingAction === "update"
   ) {
-    const stage = runtimeStage(activeRuntimeOperation);
     const action = activeRuntimeOperation?.action ?? pendingAction;
     return (
       <SetupFrame>
-        <LoaderIcon className="size-6 animate-spin text-primary" />
-        <h2 className="text-sm font-semibold">
-          {action === "update"
-            ? "Updating Antigravity"
-            : action === "repair"
-              ? "Repairing Antigravity"
-              : action === "remove"
-                ? "Removing Antigravity"
-                : "Installing Antigravity"}
-        </h2>
-        <p className="text-muted-foreground text-xs">{stage}</p>
+        <AssistedSetupStatus
+          body={runtimeStage(activeRuntimeOperation)}
+          icon={
+            <AntigravityLoadingIcon
+              displayName={props.displayName}
+              driver={props.provider.driver}
+            />
+          }
+          title={
+            <AntigravityLoadingTitle>
+              {action === "update"
+                ? "Updating Antigravity"
+                : action === "repair"
+                  ? "Repairing Antigravity"
+                  : action === "remove"
+                    ? "Removing Antigravity"
+                    : "Installing Antigravity"}
+            </AntigravityLoadingTitle>
+          }
+        />
         {activeRuntimeOperation ? (
-          <Button
-            className={DESTRUCTIVE_GHOST_ACTION_CLASS}
-            onClick={() => void cancelRuntime()}
-            size="sm"
-            type="button"
-            variant="ghost-muted"
-          >
-            <XIcon aria-hidden /> Cancel
-          </Button>
+          <AssistedSetupActions>
+            <Button
+              className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+              disabled={pendingAction === "cancel-runtime"}
+              onClick={() => void cancelRuntime()}
+              size="sm"
+              type="button"
+              variant="ghost-muted"
+            >
+              {pendingAction === "cancel-runtime" ? (
+                <LoaderIcon aria-hidden className="animate-spin" />
+              ) : (
+                <XIcon aria-hidden />
+              )}
+              Cancel
+            </Button>
+          </AssistedSetupActions>
         ) : null}
       </SetupFrame>
     );
@@ -202,75 +243,120 @@ export function AntigravityInlineSetup(props: {
   if (needsRuntimeRepair) {
     return (
       <SetupFrame>
-        <TriangleAlertIcon className="size-7 text-warning" />
-        <h2 className="text-sm font-semibold">Antigravity needs repair</h2>
-        <p className="text-muted-foreground text-xs">
-          {localError ?? runtimeOperation?.message ?? props.provider.message}
-        </p>
-        <Button
-          onClick={() =>
-            void run("repair", () =>
-              startReviewedAntigravityRuntimeAction(props.controller, "repair"),
-            )
+        <AssistedSetupStatus
+          body={
+            localError ??
+            runtimeOperation?.message ??
+            props.provider.message ??
+            "Antigravity’s private runtime could not start."
           }
-          size="sm"
-        >
-          <RefreshCwIcon aria-hidden /> Repair Antigravity
-        </Button>
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role="alert"
+          title="Antigravity needs repair"
+        />
+        <AssistedSetupActions>
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void run("repair", () => runtimeAction("repair"))}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCwIcon aria-hidden /> Repair Antigravity
+          </Button>
+        </AssistedSetupActions>
       </SetupFrame>
     );
   }
 
-  if (removedSuccessfully) {
+  if (
+    removedSuccessfully &&
+    !props.managedRuntimePresentedExternally &&
+    !isProviderRuntimePresentedAsInstalled(props.provider)
+  ) {
     return (
       <SetupFrame>
-        <CheckCircle2Icon className="size-7 text-success" />
-        <h2 className="text-sm font-semibold">Antigravity removed</h2>
-        <p className="text-muted-foreground text-xs">{runtimeOperation.message}</p>
+        <AssistedSetupStatus
+          body={runtimeOperation.message}
+          icon={<CheckCircle2Icon className="size-5 text-success" />}
+          title="Antigravity removed"
+        />
         {runtime?.actions.includes("install") ? (
-          <Button
-            onClick={() =>
-              void run("install", () =>
-                startReviewedAntigravityRuntimeAction(props.controller, "install"),
-              )
-            }
-            size="sm"
-            variant="outline"
-          >
-            Install again
-          </Button>
+          <AssistedSetupActions>
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void run("install", () => runtimeAction("install"))}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <DownloadIcon aria-hidden /> Install again
+            </Button>
+          </AssistedSetupActions>
         ) : null}
       </SetupFrame>
     );
   }
 
-  if (!props.provider.installed) {
+  if (
+    props.managedRuntimePresentedExternally &&
+    !isProviderRuntimePresentedAsInstalled(props.provider)
+  ) {
+    return isAuthenticated ? (
+      <StatusFrame
+        accountAction={props.accountAction}
+        body={
+          <>
+            Your{" "}
+            <ProviderAccountManagementLink provider="antigravity">
+              Google account
+            </ProviderAccountManagementLink>{" "}
+            remains connected.
+          </>
+        }
+        title="Google account connected"
+      />
+    ) : null;
+  }
+
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     const command = manualInstallCommand(props.provider);
     return (
       <SetupFrame>
-        <ProviderInstanceIcon
-          className="size-8"
-          displayName={props.displayName}
-          driverKind={props.provider.driver}
+        <AssistedSetupStatus
+          body={
+            localError ??
+            (canInstall
+              ? "Scient can install a reviewed official Antigravity runtime privately."
+              : `Assisted installation is not available on ${providerRuntimeComputerLabel(props.provider)}. Use Google’s official installer.`)
+          }
+          icon={
+            localError ? (
+              <TriangleAlertIcon className="size-5 text-destructive" />
+            ) : (
+              <AntigravitySetupIcon
+                displayName={props.displayName}
+                driver={props.provider.driver}
+              />
+            )
+          }
+          role={localError ? "alert" : undefined}
+          title={localError ? "Antigravity installation couldn’t finish" : "Install Antigravity"}
         />
-        <h2 className="text-sm font-semibold">Install Antigravity</h2>
-        <p className="text-muted-foreground text-xs">
-          {canInstall
-            ? "Scient can install a reviewed official Google CLI privately for this app."
-            : "Assisted installation is not available on this computer. Use Google’s official installer."}
-        </p>
         {canInstall ? (
-          <Button
-            onClick={() =>
-              void run("install", () =>
-                startReviewedAntigravityRuntimeAction(props.controller, "install"),
-              )
-            }
-            size="sm"
-          >
-            Install Antigravity
-          </Button>
+          <AssistedSetupActions>
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void run("install", () => runtimeAction("install"))}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
+              {localError ? "Retry installation" : "Install Antigravity"}
+            </Button>
+          </AssistedSetupActions>
         ) : (
           <button
             className="flex max-w-full items-center gap-1.5 rounded bg-muted px-2 py-1.5 font-mono text-[10px]"
@@ -288,7 +374,6 @@ export function AntigravityInlineSetup(props: {
             <span className="truncate">{command}</span>
           </button>
         )}
-        {localError ? <p className="text-destructive text-xs">{localError}</p> : null}
       </SetupFrame>
     );
   }
@@ -303,31 +388,24 @@ export function AntigravityInlineSetup(props: {
       !verifying;
     return (
       <SetupFrame>
-        <LoaderIcon className="size-6 animate-spin text-primary" />
-        <h2 className="text-sm font-semibold">
-          {verifying ? "Checking your Google account" : "Finish signing in"}
-        </h2>
-        <p className="text-muted-foreground text-xs">
-          {verifying
-            ? "Finding the models available to your account…"
-            : "Complete the official Antigravity sign-in in your browser."}
-        </p>
-        {activeConnectionOperation?.authorizationUrl ? (
-          <Button
-            onClick={() =>
-              void props.controller.openAuthorizationPage(
-                activeConnectionOperation.authorizationUrl as string,
-              )
-            }
-            size="sm"
-            variant="ghost"
-          >
-            <ExternalLinkIcon aria-hidden />
-            {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
-              ? "Open sign-in help"
-              : "Reopen Google sign-in"}
-          </Button>
-        ) : null}
+        <AssistedSetupStatus
+          body={
+            verifying
+              ? "Finding the models available to your account…"
+              : "Complete the official Antigravity sign-in in your browser."
+          }
+          icon={
+            <AntigravityLoadingIcon
+              displayName={props.displayName}
+              driver={props.provider.driver}
+            />
+          }
+          title={
+            <AntigravityLoadingTitle>
+              {verifying ? "Checking your Google account" : "Finish signing in"}
+            </AntigravityLoadingTitle>
+          }
+        />
         {waitingForAuthorizationCode ? (
           <div className="w-full space-y-2">
             <p className="text-muted-foreground text-xs">
@@ -343,16 +421,38 @@ export function AntigravityInlineSetup(props: {
             />
           </div>
         ) : null}
-        {activeConnectionOperation ? (
-          <Button
-            className={DESTRUCTIVE_GHOST_ACTION_CLASS}
-            disabled={pendingAction === "submit-code"}
-            onClick={() => void cancelSignIn()}
-            size="sm"
-            variant="ghost"
-          >
-            Cancel
-          </Button>
+        {!verifying ? (
+          <AssistedSetupActions>
+            {activeConnectionOperation?.authorizationUrl ? (
+              <Button
+                onClick={() =>
+                  void props.controller.openAuthorizationPage(
+                    activeConnectionOperation.authorizationUrl as string,
+                  )
+                }
+                size="sm"
+                type="button"
+                variant="ghost-muted"
+              >
+                <ExternalLinkIcon aria-hidden />
+                {activeConnectionOperation.authorizationUrlKind === "manual_fallback"
+                  ? "Open sign-in help"
+                  : "Reopen Google sign-in"}
+              </Button>
+            ) : null}
+            {activeConnectionOperation ? (
+              <Button
+                className={DESTRUCTIVE_GHOST_ACTION_CLASS}
+                disabled={pendingAction === "submit-code" || pendingAction === "cancel-sign-in"}
+                onClick={() => void cancelSignIn()}
+                size="sm"
+                type="button"
+                variant="ghost-muted"
+              >
+                Cancel
+              </Button>
+            ) : null}
+          </AssistedSetupActions>
         ) : null}
       </SetupFrame>
     );
@@ -380,37 +480,39 @@ export function AntigravityInlineSetup(props: {
     const signInGuidance =
       signInError ??
       configurationWarning ??
-      "Sign in with the Google account for your existing subscription. Scient never sees your password.";
+      "Sign in with your existing Gemini subscription. Scient never sees your password.";
     return (
       <SetupFrame>
-        {signInError ? (
-          <TriangleAlertIcon className="size-7 text-destructive" />
-        ) : (
-          <ProviderInstanceIcon
-            className="size-8"
-            displayName={props.displayName}
-            driverKind={props.provider.driver}
-          />
-        )}
-        <h2 className="text-sm font-semibold">
-          {signInError ? "Google sign-in didn’t finish" : "Antigravity is installed"}
-        </h2>
-        <p
-          className={signInError ? "text-destructive text-xs" : "text-muted-foreground text-xs"}
-          role={signInError ? "alert" : undefined}
-        >
-          {signInGuidance}
-        </p>
-        <Button
-          onClick={() =>
-            void run("sign-in", () =>
-              startAntigravitySignInAndOpenAuthorizationPage(props.controller),
+        <AssistedSetupStatus
+          body={signInGuidance}
+          icon={
+            signInError ? (
+              <TriangleAlertIcon className="size-5 text-destructive" />
+            ) : (
+              <AntigravitySetupIcon
+                displayName={props.displayName}
+                driver={props.provider.driver}
+              />
             )
           }
-          size="sm"
-        >
-          <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Google"}
-        </Button>
+          role={signInError ? "alert" : undefined}
+          title={signInError ? "Google sign-in didn’t finish" : "Sign in required"}
+        />
+        <AssistedSetupActions>
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() =>
+              void run("sign-in", () =>
+                startAntigravitySignInAndOpenAuthorizationPage(props.controller),
+              )
+            }
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Google"}
+          </Button>
+        </AssistedSetupActions>
       </SetupFrame>
     );
   }
@@ -418,6 +520,7 @@ export function AntigravityInlineSetup(props: {
   if (!isReady) {
     return (
       <StatusFrame
+        accountAction={props.accountAction}
         body={
           props.provider.message ??
           "Your Google account is connected, but Antigravity did not report an available model."
@@ -431,6 +534,7 @@ export function AntigravityInlineSetup(props: {
   if (updateRunning) {
     return (
       <StatusFrame
+        accountAction={props.accountAction}
         body={updateState?.message ?? "Updating and verifying Antigravity…"}
         loading
         title="Updating Antigravity"
@@ -441,81 +545,118 @@ export function AntigravityInlineSetup(props: {
   if (managedUpdateAvailable) {
     return (
       <SetupFrame>
-        <RefreshCwIcon className="size-7 text-primary" />
-        <h2 className="text-sm font-semibold">Antigravity update available</h2>
-        <p className="text-muted-foreground text-xs">
-          Install the reviewed update when you’re ready. The current version remains active until
-          verification succeeds.
-        </p>
-        <Button
-          onClick={() =>
-            void run("update", () => updateAntigravityRuntime(props.controller, props.provider))
-          }
-          size="sm"
-        >
-          Update Antigravity
-        </Button>
+        <AssistedSetupStatus
+          body="Install the reviewed update when you’re ready. The current version remains active until verification succeeds."
+          icon={<RefreshCwIcon className="size-5 text-primary" />}
+          title="Antigravity update available"
+        />
+        <AssistedSetupActions>
+          {props.accountAction}
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() =>
+              void run("update", () => updateAntigravityRuntime(props.controller, props.provider))
+            }
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCwIcon aria-hidden /> Update Antigravity
+          </Button>
+        </AssistedSetupActions>
       </SetupFrame>
     );
   }
 
   return (
-    <SetupFrame>
-      <CheckCircle2Icon className="size-7 text-success" />
-      <h2 className="text-sm font-semibold">Antigravity is ready</h2>
-      <p className="text-muted-foreground text-xs">
-        Your{" "}
-        <ProviderAccountManagementLink provider="antigravity">
-          Google account
-        </ProviderAccountManagementLink>{" "}
-        is connected
-        {props.provider.version ? ` with CLI ${props.provider.version}` : ""}.
-        {defaultModel ? ` Default model: ${defaultModel.name}.` : ""}
-      </p>
-      {props.provider.connection?.canDisconnect ? (
-        <Button
-          disabled={pendingAction === "disconnect"}
-          onClick={() => void run("disconnect", () => disconnectAntigravity(props.controller))}
-          size="sm"
-          variant="ghost"
-        >
-          Sign out
-        </Button>
-      ) : null}
-      {localError ? <p className="text-destructive text-xs">{localError}</p> : null}
-    </SetupFrame>
+    <StatusFrame
+      accountAction={props.accountAction}
+      body={
+        <>
+          Your{" "}
+          <ProviderAccountManagementLink provider="antigravity">
+            Google account
+          </ProviderAccountManagementLink>{" "}
+          is connected
+          {props.provider.version ? ` with CLI ${props.provider.version}` : ""}.
+          {defaultModel ? ` Default model: ${defaultModel.name}.` : ""}
+        </>
+      }
+      title="Antigravity is ready"
+    />
   );
 }
 
 function StatusFrame(props: {
+  readonly accountAction?: ReactNode;
   readonly title: string;
-  readonly body: string;
+  readonly body: ReactNode;
   readonly loading?: boolean;
   readonly warning?: boolean;
 }) {
   return (
     <SetupFrame>
-      {props.loading ? (
-        <LoaderIcon className="size-6 animate-spin text-primary" />
-      ) : props.warning ? (
-        <TriangleAlertIcon className="size-7 text-warning" />
-      ) : (
-        <CheckCircle2Icon className="size-7 text-success" />
-      )}
-      <h2 className="text-sm font-semibold">{props.title}</h2>
-      <p className="text-muted-foreground text-xs">{props.body}</p>
+      <AssistedSetupStatus
+        body={props.body}
+        icon={
+          props.loading ? (
+            <LoaderIcon className="size-5 animate-spin text-primary" />
+          ) : props.warning ? (
+            <TriangleAlertIcon className="size-5 text-warning" />
+          ) : (
+            <CheckCircle2Icon className="size-5 text-success" />
+          )
+        }
+        title={props.title}
+        trailing={props.accountAction}
+      />
     </SetupFrame>
   );
 }
 
 function SetupFrame(props: { readonly children: ReactNode }) {
+  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
+}
+
+function AntigravitySetupIcon(props: {
+  readonly displayName: string;
+  readonly driver: ServerProvider["driver"];
+}) {
   return (
-    <div
-      aria-live="polite"
-      className="flex min-h-full w-full flex-1 flex-col items-center justify-center gap-3 px-5 py-4 text-center"
-      data-antigravity-setup-surface="true"
-    >
+    <>
+      <ShieldCheckIcon className="size-5 text-primary in-[[data-model-picker-content=true]]:hidden" />
+      <ProviderInstanceIcon
+        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
+        displayName={props.displayName}
+        driverKind={props.driver}
+        iconClassName="size-8"
+      />
+    </>
+  );
+}
+
+function AntigravityLoadingIcon(props: {
+  readonly displayName: string;
+  readonly driver: ServerProvider["driver"];
+}) {
+  return (
+    <>
+      <LoaderIcon className="size-5 animate-spin text-primary in-[[data-model-picker-content=true]]:hidden" />
+      <ProviderInstanceIcon
+        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
+        displayName={props.displayName}
+        driverKind={props.driver}
+        iconClassName="size-8"
+      />
+    </>
+  );
+}
+
+function AntigravityLoadingTitle(props: { readonly children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center justify-center gap-1.5">
+      <LoaderIcon className="hidden size-3.5 animate-spin text-primary in-[[data-model-picker-content=true]]:block" />
       {props.children}
-    </div>
+    </span>
   );
 }
