@@ -326,6 +326,7 @@ export function ProviderLifecycleSetupSurface(props: {
       <AssistedProviderSetupHost
         displayName={props.entry.displayName}
         environmentId={props.environmentId}
+        key={props.entry.instanceId}
         provider={props.entry.snapshot}
         surface="composer"
       />
