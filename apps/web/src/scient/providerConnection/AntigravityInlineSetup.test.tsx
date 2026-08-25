@@ -606,6 +606,40 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).not.toContain("Install Antigravity");
   });
 
+  it("offers sign-in when removal falls back to an installed system runtime", () => {
+    const markup = render(
+      provider({
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: false,
+          operation: null,
+          runtime: {
+            source: "system",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["install"],
+            managedVersion: null,
+            previousManagedVersion: "1.1.17",
+            operation: {
+              operationId: "remove-succeeded-system-fallback",
+              action: "remove",
+              status: "succeeded",
+              startedAt: "2026-08-22T08:00:00.000Z",
+              finishedAt: "2026-08-22T08:00:05.000Z",
+              message: "Scient’s private Antigravity copy was removed.",
+            },
+            message: "Using the system Antigravity installation.",
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("Sign in required");
+    expect(markup).toContain("Sign in with Google");
+    expect(markup).not.toContain("Antigravity removed");
+    expect(markup).not.toContain("Install again");
+  });
+
   it("leaves post-removal runtime recovery to the shared management section", () => {
     const markup = render(
       provider({

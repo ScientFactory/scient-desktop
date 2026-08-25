@@ -269,7 +269,11 @@ export function AntigravityInlineSetup(props: {
     );
   }
 
-  if (removedSuccessfully && !props.managedRuntimePresentedExternally) {
+  if (
+    removedSuccessfully &&
+    !props.managedRuntimePresentedExternally &&
+    !isProviderRuntimePresentedAsInstalled(props.provider)
+  ) {
     return (
       <SetupFrame>
         <AssistedSetupStatus
