@@ -29,7 +29,8 @@ export interface CursorManagedRuntimeResolution extends ManagedProviderRuntimeRe
 
 export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntime.makeResolution")(
   function* (input: {
-    readonly settings: CursorSettings;
+    readonly settings: Pick<CursorSettings, "binaryPath">;
+    readonly enabled: boolean;
     readonly baseDir: string;
     readonly environment: NodeJS.ProcessEnv;
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -51,7 +52,7 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,
-      configuredRuntimeProbeAllowed: input.settings.enabled,
+      configuredRuntimeProbeAllowed: input.enabled,
       managedInstallationAllowed: input.managedInstallationAllowed,
       systemToManagedSwitchAllowed: true,
       sourceLabel: "Official Cursor Agent release",

@@ -149,6 +149,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       });
       const managedRuntime = yield* makeCursorManagedRuntimeResolution({
         settings: config,
+        enabled,
         baseDir: serverConfig.baseDir,
         environment: processEnv,
         spawner,
