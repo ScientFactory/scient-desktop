@@ -317,7 +317,7 @@ describe("ProviderRuntimeSection", () => {
     expect(removeButton).not.toContain("text-white");
   });
 
-  it("uses a quiet cancel action for compact runtime progress", () => {
+  it("shows compact download progress beside the quiet cancel action", () => {
     const activeProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -330,11 +330,11 @@ describe("ProviderRuntimeSection", () => {
           operation: {
             operationId: "repair-active",
             action: "repair",
-            status: "testing",
+            status: "downloading",
             startedAt: "2026-08-22T12:00:00.000Z",
             finishedAt: null,
-            message: "Testing the installed Antigravity runtime.",
-            downloadedBytes: 0,
+            message: "Downloading Antigravity from the reviewed official release.",
+            downloadedBytes: 64,
             totalBytes: 100,
           },
         },
@@ -351,13 +351,14 @@ describe("ProviderRuntimeSection", () => {
       }),
     );
 
-    expect(markup).toContain("Testing the installed Antigravity runtime");
+    expect(markup).toContain("Downloading Antigravity from the reviewed official release");
     expect(markup).not.toContain("previous working runtime");
     expect(markup).not.toContain("Provider download progress");
-    expect(markup).not.toContain(">0%<");
+    expect(markup).toContain('aria-label="Download progress 64%"');
+    expect(markup).toContain(">64%<");
     expect(markup).toContain("space-y-4 py-1");
     expect(markup).not.toContain("min-h-44");
-    expect(markup).toContain('class="flex justify-end pt-1"><button');
+    expect(markup).toContain('class="flex items-center justify-end gap-3 pt-1"');
     const cancelButtonStart = markup.lastIndexOf("<button", markup.indexOf(">Cancel<"));
     const cancelButton = markup.slice(
       cancelButtonStart,

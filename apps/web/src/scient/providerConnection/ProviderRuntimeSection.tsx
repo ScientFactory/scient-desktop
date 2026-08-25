@@ -190,9 +190,7 @@ export function ProviderRuntimeSection(props: {
   const operation = runtime.operation;
   const activeOperation = isActiveProviderRuntimeOperation(operation) ? operation : null;
   const progress =
-    !props.compact &&
-    activeOperation?.downloadedBytes !== undefined &&
-    activeOperation.totalBytes !== undefined
+    activeOperation?.downloadedBytes !== undefined && activeOperation.totalBytes !== undefined
       ? Math.min(
           100,
           Math.round((activeOperation.downloadedBytes / activeOperation.totalBytes) * 100),
@@ -356,7 +354,7 @@ export function ProviderRuntimeSection(props: {
             ) : null}
           </div>
         </div>
-        {progress !== null ? (
+        {!props.compact && progress !== null ? (
           <div
             className="space-y-1"
             role="progressbar"
@@ -379,7 +377,15 @@ export function ProviderRuntimeSection(props: {
             {localError}
           </p>
         ) : null}
-        <div className={props.compact ? "flex justify-end pt-1" : "flex"}>
+        <div className={props.compact ? "flex items-center justify-end gap-3 pt-1" : "flex"}>
+          {props.compact && progress !== null ? (
+            <span
+              className="text-xs tabular-nums text-muted-foreground"
+              aria-label={`Download progress ${progress}%`}
+            >
+              {progress}%
+            </span>
+          ) : null}
           <Button
             className={DESTRUCTIVE_GHOST_ACTION_CLASS}
             type="button"
