@@ -173,6 +173,12 @@ the [v0.6.0 migration rehearsal](./v060-migration-rehearsal.md). Current
 releases require current-to-new update and clean-install evidence; they do not
 authorize copying or deleting an old SQLite database.
 
+When a release adds database migrations, acceptance must prove that a remote
+update applies them and reconnects successfully. A failed trial must restore
+its isolated pre-update database snapshot and restart the previous server. If
+the installed launcher cannot support the target update protocol, verify that
+it stops before restarting and that the documented manual update path succeeds.
+
 - macOS Apple Silicon and Intel install, launch, sign, notarize, and update;
 - Windows x64 install, SmartScreen/signature, launch, and update;
 - Linux AppImage launch and update behavior;
