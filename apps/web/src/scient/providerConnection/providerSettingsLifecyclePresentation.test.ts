@@ -69,7 +69,7 @@ describe("provider settings lifecycle presentation", () => {
     ["droid", "Droid"],
     ["grok", "Grok"],
     ["opencode", "OpenCode"],
-  ] as const)("offers the shared Enable handoff for disabled %s", (driver, displayName) => {
+  ] as const)("routes disabled %s through its management card", (driver, displayName) => {
     expect(
       providerSettingsLifecyclePresentation(
         provider({
@@ -81,8 +81,8 @@ describe("provider settings lifecycle presentation", () => {
       ),
     ).toMatchObject({
       kind: "disabled",
-      actionLabel: "Enable",
-      actionKind: "enable",
+      actionLabel: "Manage",
+      actionKind: "manage",
     });
   });
 

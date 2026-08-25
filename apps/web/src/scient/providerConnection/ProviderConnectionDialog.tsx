@@ -159,6 +159,13 @@ function ProviderConnectionDialogTitle(props: {
 }
 
 function DisabledProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  const runtime = props.provider.connection?.runtime;
+  const showManagedRuntime =
+    runtime?.source === "scient_managed" &&
+    (runtime.actions.some((action) => action !== "install") ||
+      runtime.operation !== null ||
+      runtime.diagnostics !== undefined);
+
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-[26rem]" showCloseButton>
@@ -174,7 +181,15 @@ function DisabledProviderConnectionDialog(props: ProviderConnectionDialogProps) 
             Enable {props.displayName} before installing or connecting it.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel>
+        <DialogPanel className="space-y-3">
+          {showManagedRuntime ? (
+            <ProviderRuntimeSection
+              compact
+              displayName={props.displayName}
+              environmentId={props.environmentId}
+              provider={props.provider}
+            />
+          ) : null}
           <DisabledProviderSetup
             displayName={props.displayName}
             environmentId={props.environmentId}

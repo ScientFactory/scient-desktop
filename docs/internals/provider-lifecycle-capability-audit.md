@@ -126,6 +126,8 @@ The shared setup host now owns the provider-disabled state for every assisted pr
 Enable action performs one canonical settings update, keeps the surface open, waits for the refreshed
 provider snapshot, and never starts installation, authentication, or a browser as a side effect.
 Remote or read-only clients without operate permission receive a concise non-actionable explanation.
+Settings provider rows remain a single neutral Manage entry point; the explicit Enable action lives
+inside the lifecycle surface so it does not duplicate the existing provider toggle.
 
 The shared presentation also treats a verified managed runtime as installed during the short handoff
 before the top-level provider probe catches up, so completion cannot collapse into a blank or

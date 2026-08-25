@@ -8,23 +8,8 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const enableState = vi.hoisted(
-  (): {
-    access: "pending" | "granted" | "denied";
-    canEnable: boolean;
-    enable: ReturnType<typeof vi.fn>;
-  } => ({
-    access: "granted",
-    canEnable: true,
-    enable: vi.fn(),
-  }),
-);
-
 vi.mock("./useProviderLifecycleController", () => ({
   useProviderLifecycleController: () => ({}),
-}));
-vi.mock("./useProviderEnableAction", () => ({
-  useProviderEnableAction: () => enableState,
 }));
 
 import {
@@ -116,8 +101,8 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(install).toContain("lucide-download");
     expect(install).toContain("text-primary");
     const disabled = render(provider({ source: "system", enabled: false }));
-    expect(disabled).toContain(">Enable<");
-    expect(disabled).toContain("lucide-power");
+    expect(disabled).toContain(">Manage<");
+    expect(disabled).toContain("lucide-settings-2");
     expect(
       render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
     ).toContain(">Update<");
@@ -131,7 +116,7 @@ describe("ProviderSettingsLifecycleAction", () => {
     ["droid", "Droid"],
     ["grok", "Grok"],
     ["opencode", "OpenCode"],
-  ] as const)("uses the shared direct Enable action for disabled %s", (driver, displayName) => {
+  ] as const)("routes disabled %s through its management card", (driver, displayName) => {
     const value = provider({ driver, source: "missing", enabled: false });
     const presentation = providerSettingsLifecyclePresentation(value, displayName);
 
@@ -141,8 +126,9 @@ describe("ProviderSettingsLifecycleAction", () => {
         presentation,
         canRunExternalUpdate: false,
       }),
-    ).toEqual({ kind: "enable" });
-    expect(render(value)).toContain(">Enable<");
+    ).toEqual({ kind: "open", runtimeAction: null });
+    expect(render(value)).toContain(">Manage<");
+    expect(render(value)).not.toContain(">Enable<");
   });
 
   it("renders only an accessible spinner while the enabled provider probe settles", () => {
@@ -158,19 +144,6 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).not.toContain(">Sign in<");
     expect(markup).not.toContain(">Manage<");
     expect(markup).not.toContain(">Checking<");
-  });
-
-  it("falls back to Manage when the current session cannot enable the provider", () => {
-    enableState.access = "denied";
-    enableState.canEnable = false;
-    try {
-      const markup = render(provider({ driver: "grok", source: "missing", enabled: false }));
-      expect(markup).toContain(">Manage<");
-      expect(markup).not.toContain(">Enable<");
-    } finally {
-      enableState.access = "granted";
-      enableState.canEnable = true;
-    }
   });
 
   it("keeps Codex browser sign-in direct and routes provider choosers through the dialog", () => {
