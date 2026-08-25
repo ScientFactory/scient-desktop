@@ -1007,13 +1007,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     : undefined;
   const discoveredSkills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const skills = mergeClaudeReportedSkills(discoveredSkills, capabilities?.skills ?? []);
-  const slashCommands = [
-    {
-      name: "compact",
-      description: "Summarize the conversation and reduce context usage",
-    },
-    ...(capabilities?.slashCommands ?? []),
-  ];
+  const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
