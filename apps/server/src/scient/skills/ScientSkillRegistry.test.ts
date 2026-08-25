@@ -8,29 +8,29 @@ import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 const builtIn = BUILT_IN_SKILL_RELEASES[0]!;
 
 const readDefault = (release: SkillRelease, configuredDefault: boolean) =>
-  Effect.runSync(
-    Effect.gen(function* () {
-      const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
-      return registry.defaultActive(release);
-    }).pipe(
-      Effect.provide(
-        ScientSkillRegistry.layerFromCatalog(
-          { releases: [release], diagnostics: [] } satisfies SkillCatalog,
-          new Map([[release.id, configuredDefault]]),
-        ),
+  Effect.gen(function* () {
+    const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
+    return registry.defaultActive(release);
+  }).pipe(
+    Effect.provide(
+      ScientSkillRegistry.layerFromCatalog(
+        { releases: [release], diagnostics: [] } satisfies SkillCatalog,
+        new Map([[release.id, configuredDefault]]),
       ),
     ),
   );
 
 describe("Scient skill registry shipping defaults", () => {
-  it("accepts defaults only for Scient-owned releases", () => {
-    expect(readDefault(builtIn, true)).toBe(true);
-    expect(readDefault(builtIn, false)).toBe(false);
+  it.effect("accepts defaults only for Scient-owned releases", () =>
+    Effect.gen(function* () {
+      expect(yield* readDefault(builtIn, true)).toBe(true);
+      expect(yield* readDefault(builtIn, false)).toBe(false);
 
-    const addonRelease: SkillRelease = {
-      ...builtIn,
-      origin: "addon:example@1.0.0",
-    };
-    expect(readDefault(addonRelease, true)).toBe(false);
-  });
+      const addonRelease: SkillRelease = {
+        ...builtIn,
+        origin: "addon:example@1.0.0",
+      };
+      expect(yield* readDefault(addonRelease, true)).toBe(false);
+    }),
+  );
 });

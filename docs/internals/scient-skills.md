@@ -128,20 +128,25 @@ project activation management has no product UI in this phase.
 
 ### Provider-owned external skills
 
-**Settings → Skills → External skills** presents the native skill inventory
-already reported by each connected provider instance. Providers remain the
-source of truth: Scient does not scan, copy, import, or rewrite their skill
-files. Personal, provider-bundled, system, and otherwise unclassified global
-skills are shown; project and repository skills stay out of this global page
-and out of the global `$` and `/` menus.
+**Settings → Skills → External skills** presents the global skill inventory
+reported by each connected provider instance. Providers remain the source of
+truth. Codex supplies its inventory through app-server; Claude uses the Agent
+SDK's skill-only reload response plus narrow filesystem discovery for scope
+metadata; and Antigravity uses metadata-only discovery for its documented skill
+roots.
+Scient does not copy, import, rewrite, or execute those files. Personal,
+provider-bundled, system, and otherwise unclassified global skills are shown;
+project and repository skills stay out of this global page and out of the
+global `$` and `/` menus.
 
-Each provider instance is collapsed independently. Native skill controls are
-capability-gated: Codex currently exposes its reviewed `skills/config/write`
-API, so its skills can be activated or deactivated in Scient. Claude and
-OpenCode remain read-only because they do not expose an equivalent reviewed
-mutation API. The server validates the exact provider instance, skill name,
-and provider-owned path against the latest snapshot before dispatching a
-change, then refreshes the provider inventory. The UI never predicts success.
+Provider instances share one compact selector and only the selected provider's
+inventory is expanded. Native skill controls are capability-gated: Codex
+currently exposes its reviewed `skills/config/write` API, so its skills can be
+activated or deactivated in Scient. Claude, Antigravity, and OpenCode remain
+read-only because they do not expose an equivalent reviewed mutation API. The
+server validates the exact provider instance, skill name, and provider-owned
+path against the latest snapshot before dispatching a change, then refreshes
+the provider inventory. The UI never predicts success.
 
 ## Deliberate phase-one exclusions
 

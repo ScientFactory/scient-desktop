@@ -22,6 +22,31 @@ export interface ExternalSkillProviderGroup {
   readonly skills: ReadonlyArray<ExternalSkillItem>;
 }
 
+const EXTERNAL_SKILL_DESCRIPTION_LIMIT = 160;
+
+/**
+ * Keep provider-authored discovery instructions available in the provider
+ * snapshot while presenting a compact summary in Settings. Some providers use
+ * `description` for both a human summary and detailed invocation guidance.
+ */
+export function compactExternalSkillDescription(
+  description: string | undefined,
+): string | undefined {
+  const normalized = description?.replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+
+  const firstSentence = normalized.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? normalized;
+  if (firstSentence.length <= EXTERNAL_SKILL_DESCRIPTION_LIMIT) return firstSentence;
+
+  const clipped = firstSentence.slice(0, EXTERNAL_SKILL_DESCRIPTION_LIMIT + 1);
+  const wordBoundary = clipped.lastIndexOf(" ");
+  const end =
+    wordBoundary > EXTERNAL_SKILL_DESCRIPTION_LIMIT / 2
+      ? wordBoundary
+      : EXTERNAL_SKILL_DESCRIPTION_LIMIT;
+  return `${firstSentence.slice(0, end).trimEnd()}…`;
+}
+
 export const externalSkillSourceLabel = (source: ProviderSkillSourceKind): string => {
   switch (source) {
     case "app":
@@ -49,7 +74,7 @@ export function collectExternalSkillProviders(
         (skill): ExternalSkillItem => ({
           skill,
           displayName: formatProviderSkillDisplayName(skill),
-          description: skill.shortDescription ?? skill.description,
+          description: compactExternalSkillDescription(skill.shortDescription ?? skill.description),
           source: resolveProviderSkillSourceKind(skill),
         }),
       )

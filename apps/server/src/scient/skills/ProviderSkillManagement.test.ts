@@ -86,6 +86,20 @@ describe("provider skill management", () => {
     }),
   );
 
+  it.effect("rejects provider instances that disappeared", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        makeProviderSkillManagement(makeProviderRegistryMock()).setEnabled({
+          instanceId,
+          name: "review",
+          path: "/Users/test/.codex/skills/review/SKILL.md",
+          enabled: false,
+        }),
+      );
+      expect(error.reason).toBe("provider_not_found");
+    }),
+  );
+
   it.effect("rejects stale skill identities before calling a provider", () =>
     Effect.gen(function* () {
       const management = makeProviderSkillManagement(makeProviderRegistryMock([provider()]));

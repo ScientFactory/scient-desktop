@@ -37,7 +37,7 @@ describe("effective provider skill inventory", () => {
   });
 
   it("lets provider-native skills win collisions and excludes unsupported providers", () => {
-    const native = [{ name: "review", path: "/native", enabled: true }];
+    const native = [{ name: "review", path: "/native", enabled: false }];
     expect(
       mergeEffectiveProviderSkills({
         provider: ProviderDriverKind.make("codex"),

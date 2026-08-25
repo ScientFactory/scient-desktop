@@ -53,6 +53,22 @@ describe("getProviderSkillsForSlashMenu", () => {
       ),
     ).toEqual([]);
   });
+
+  it("omits provider-deactivated skills", () => {
+    expect(
+      getProviderSkillsForSlashMenu(
+        [
+          {
+            name: "review",
+            path: "/Users/test/.codex/skills/review/SKILL.md",
+            scope: "user",
+            enabled: false,
+          },
+        ],
+        true,
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("getProviderSlashCommandsForSlashMenu", () => {
@@ -101,7 +117,22 @@ describe("resolveProviderSkillSourceKind", () => {
     ).toBe("app");
   });
 
+  it("keeps explicit project scope authoritative over path heuristics", () => {
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/workspace/.agents/plugins/review/skills/review/SKILL.md",
+        scope: "project",
+      }),
+    ).toBe("project");
+  });
+
   it("maps standard scopes to source kinds", () => {
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/provider/builtin/skills/guide/SKILL.md",
+        scope: "app",
+      }),
+    ).toBe("app");
     expect(
       resolveProviderSkillSourceKind({
         path: "/workspace/.codex/skills/review-follow-up/SKILL.md",

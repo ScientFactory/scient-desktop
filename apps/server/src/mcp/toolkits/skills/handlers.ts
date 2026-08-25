@@ -26,7 +26,7 @@ const requireSkillScope = Effect.fn("ScientSkillsToolkit.requireSkillScope")(fun
       "This provider cannot receive Scient skills.",
     );
   }
-  return { invocation, skillScope: invocation.skillScope };
+  return invocation.skillScope;
 });
 
 function summary(release: SkillRelease, invocationPolicy: "automatic" | "explicit") {
@@ -40,7 +40,7 @@ function summary(release: SkillRelease, invocationPolicy: "automatic" | "explici
 const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelease")(function* (
   requestedReleaseKey: string,
 ) {
-  const { invocation, skillScope } = yield* requireSkillScope();
+  const skillScope = yield* requireSkillScope();
   if (!skillScope.releaseKeys.has(requestedReleaseKey)) {
     return yield* toolError(
       "not-found",
@@ -63,7 +63,7 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
 });
 
 export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list")(function* () {
-  const { skillScope } = yield* requireSkillScope();
+  const skillScope = yield* requireSkillScope();
   const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policyByReleaseKey = new Map(
     skillScope.skills.map((skill) => [skill.releaseKey, skill.invocationPolicy] as const),

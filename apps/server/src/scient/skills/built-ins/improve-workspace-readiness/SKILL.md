@@ -1,6 +1,6 @@
 ---
 name: improve-workspace-readiness
-description: Apply safe, targeted changes that materially improve a workspace's clarity, organization, reproducibility, or agent guidance. Use when the user explicitly asks to improve workspace readiness or apply findings from a readiness review.
+description: Apply safe changes that materially improve a workspace's clarity, organization, or agent guidance. Use when the user explicitly asks to improve readiness or apply findings from a readiness review.
 ---
 
 # Improve Workspace Readiness

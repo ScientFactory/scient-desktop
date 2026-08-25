@@ -13,7 +13,11 @@
  */
 import * as NodeOS from "node:os";
 
-import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
+import type {
+  ClaudeSettings,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,6 +28,7 @@ import { expandHomePath } from "../../pathExpansion.ts";
 type ClaudeSkillScope = "user" | "project";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+const CLAUDE_REPORTED_SKILL_PREFIX = "claude://skills/";
 
 type SkillFrontmatter =
   | { readonly kind: "missing" }
@@ -153,3 +158,41 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+/**
+ * Combine Claude's authoritative SDK skill list with filesystem metadata.
+ *
+ * The SDK reports bundled skills that have no stable public filesystem path,
+ * while direct discovery identifies the scope of personal and project skills.
+ * Filesystem entries therefore override matching SDK entries; unmatched SDK
+ * entries are provider-bundled and receive a stable virtual identity.
+ */
+export function mergeClaudeReportedSkills(
+  discoveredSkills: ReadonlyArray<ServerProviderSkill>,
+  reportedSkills: ReadonlyArray<ServerProviderSlashCommand>,
+): ReadonlyArray<ServerProviderSkill> {
+  const skillsByName = new Map<string, ServerProviderSkill>();
+
+  for (const skill of reportedSkills) {
+    const name = skill.name.trim();
+    if (!name) continue;
+    skillsByName.set(name.toLowerCase(), {
+      name,
+      path: `${CLAUDE_REPORTED_SKILL_PREFIX}${encodeURIComponent(name)}`,
+      scope: "app",
+      enabled: true,
+      ...(skill.description ? { description: skill.description } : {}),
+    });
+  }
+
+  for (const skill of discoveredSkills) {
+    const key = skill.name.trim().toLowerCase();
+    if (!key) continue;
+    skillsByName.set(key, {
+      ...skillsByName.get(key),
+      ...skill,
+    });
+  }
+
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
