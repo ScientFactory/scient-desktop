@@ -733,6 +733,53 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).toContain("Antigravity 1.1.17");
   });
 
+  it("returns to the current runtime state after setup is cancelled", () => {
+    const cancelledProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "2.1.170",
+      status: "ready",
+      connection: {
+        methods: ["claude_subscription"],
+        canDisconnect: true,
+        operation: null,
+        runtime: {
+          source: "system",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["install"],
+          managedVersion: null,
+          previousManagedVersion: null,
+          operation: {
+            operationId: "install-cancelled",
+            action: "install",
+            status: "cancelled",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: "2026-08-22T12:00:05.000Z",
+            message:
+              "Provider runtime setup cancelled. The previous working runtime was preserved.",
+          },
+          message: "Using a compatible system Claude runtime.",
+        },
+      },
+    };
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: cancelledProvider,
+        displayName: "Claude",
+      }),
+    );
+
+    expect(markup).toContain("System installation");
+    expect(markup).toContain('aria-label="Use Scient-managed Claude"');
+    expect(markup).not.toContain("Provider runtime setup cancelled");
+    expect(markup).not.toContain("previous working runtime");
+  });
+
   it("shows the current missing-runtime state after removal instead of a stale success row", () => {
     const removedProvider: ServerProvider = {
       ...provider,

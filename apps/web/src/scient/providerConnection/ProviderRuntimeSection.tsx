@@ -538,15 +538,11 @@ export function ProviderRuntimeSection(props: {
 
   const terminalOperation =
     operation && !isActiveProviderRuntimeOperation(operation) ? operation : null;
-  const wasRemoved =
-    terminalOperation?.action === "remove" && terminalOperation.status === "succeeded";
-  const wasRepaired =
-    terminalOperation?.action === "repair" && terminalOperation.status === "succeeded";
   const providerRuntimeError = needsManagedRuntimeRecovery(props.provider)
     ? props.provider.message
     : null;
   const statusMessage =
-    (wasRepaired || wasRemoved ? null : terminalOperation?.message) ??
+    (terminalOperation?.status === "failed" ? terminalOperation.message : null) ??
     providerRuntimeError ??
     (runtime.source === "missing" ? runtime.message : null);
   const statusIcon =
