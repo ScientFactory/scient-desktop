@@ -48,12 +48,53 @@ type StartedRuntimeOperation = {
   readonly action: ProviderManagedRuntimeAction;
   readonly operationId: ProviderRuntimeOperation["operationId"];
 };
+type LocalRuntimeFailure =
+  | {
+      readonly kind: "plan";
+      readonly action: ProviderManagedRuntimeAction;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "start";
+      readonly action: ProviderManagedRuntimeAction;
+      readonly operationId: ProviderRuntimeOperation["operationId"] | null;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "operation";
+      readonly operationId: ProviderRuntimeOperation["operationId"];
+      readonly message: string;
+    };
 
 function runtimeFromResult(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ServerProvider["instanceId"],
 ): ProviderRuntimeSummary | undefined {
   return providers.find((provider) => provider.instanceId === instanceId)?.connection?.runtime;
+}
+
+function localRuntimeFailureMessage(
+  failure: LocalRuntimeFailure | null,
+  runtime: ProviderRuntimeSummary,
+): string | null {
+  if (!failure) return null;
+  if (failure.kind === "plan") {
+    return !isActiveProviderRuntimeOperation(runtime.operation) &&
+      runtime.actions.includes(failure.action)
+      ? failure.message
+      : null;
+  }
+  if (failure.kind === "start") {
+    return runtime.actions.includes(failure.action) &&
+      (runtime.operation?.operationId ?? null) === failure.operationId
+      ? failure.message
+      : null;
+  }
+  const operation = runtime.operation;
+  return operation?.operationId === failure.operationId &&
+    isActiveProviderRuntimeOperation(operation)
+    ? failure.message
+    : null;
 }
 
 export function resolveProviderRuntimeForPresentation(
@@ -131,10 +172,10 @@ export function ProviderRuntimeSection(props: {
   const [pendingAction, setPendingAction] = useState<PendingAction>(() =>
     props.initialAction ? "plan" : null,
   );
-  const [plan, setPlan] = useState<ProviderRuntimePlan | null>(null);
+  const [preparedPlan, setPreparedPlan] = useState<ProviderRuntimePlan | null>(null);
   const [localRuntimeSnapshot, setLocalRuntimeSnapshot] =
     useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const [localFailure, setLocalFailure] = useState<LocalRuntimeFailure | null>(null);
   const [startedOperation, setStartedOperation] = useState<StartedRuntimeOperation | null>(null);
   const providerInstanceIdRef = useRef(props.provider.instanceId);
   const initialPlanRequestRef = useRef<string | null>(null);
@@ -144,9 +185,9 @@ export function ProviderRuntimeSection(props: {
     if (providerInstanceIdRef.current === props.provider.instanceId) return;
     providerInstanceIdRef.current = props.provider.instanceId;
     setPendingAction(null);
-    setPlan(null);
+    setPreparedPlan(null);
     setLocalRuntimeSnapshot(null);
-    setLocalError(null);
+    setLocalFailure(null);
     setStartedOperation(null);
     initialPlanRequestRef.current = null;
     reportedOperationIdRef.current = null;
@@ -189,6 +230,11 @@ export function ProviderRuntimeSection(props: {
 
   const operation = runtime.operation;
   const activeOperation = isActiveProviderRuntimeOperation(operation) ? operation : null;
+  const plan =
+    !activeOperation && preparedPlan && runtime.actions.includes(preparedPlan.action)
+      ? preparedPlan
+      : null;
+  const localError = localRuntimeFailureMessage(localFailure, runtime);
   const progress =
     activeOperation?.downloadedBytes !== undefined && activeOperation.totalBytes !== undefined
       ? Math.min(
@@ -200,7 +246,8 @@ export function ProviderRuntimeSection(props: {
 
   const startPlan = useCallback(
     async (nextPlan: ProviderRuntimePlan) => {
-      setLocalError(null);
+      const operationId = runtime.operation?.operationId ?? null;
+      setLocalFailure(null);
       setPendingAction("start");
       const result = await startRuntime({
         environmentId: props.environmentId,
@@ -213,12 +260,15 @@ export function ProviderRuntimeSection(props: {
       if (result._tag === "Failure") {
         setPendingAction(null);
         if (!isAtomCommandInterrupted(result)) {
-          setLocalError(
-            providerLifecycleFailureMessage(
+          setLocalFailure({
+            kind: "start",
+            action: nextPlan.action,
+            operationId,
+            message: providerLifecycleFailureMessage(
               squashAtomCommandFailure(result),
               `Scient could not start the ${props.displayName} runtime operation.`,
             ),
-          );
+          });
         }
         return;
       }
@@ -241,7 +291,7 @@ export function ProviderRuntimeSection(props: {
       setLocalRuntimeSnapshot(
         nextRuntime ? { baseProvider: props.provider, value: nextRuntime } : null,
       );
-      setPlan(null);
+      setPreparedPlan(null);
       props.onPlanOpenChange?.(false);
       setPendingAction(null);
     },
@@ -253,12 +303,23 @@ export function ProviderRuntimeSection(props: {
       props.onPlanOpenChange,
       props.provider,
       props.provider.instanceId,
+      runtime.operation?.operationId,
     ],
   );
 
   const requestPlan = useCallback(
     async (action: ProviderManagedRuntimeAction) => {
-      setLocalError(null);
+      if (
+        isActiveProviderRuntimeOperation(runtime.operation) ||
+        !runtime.actions.includes(action)
+      ) {
+        setPendingAction(null);
+        setPreparedPlan(null);
+        setLocalFailure(null);
+        props.onPlanOpenChange?.(false);
+        return;
+      }
+      setLocalFailure(null);
       setPendingAction("plan");
       if (action !== "repair") props.onPlanOpenChange?.(true);
       const result = await planRuntime({
@@ -269,12 +330,14 @@ export function ProviderRuntimeSection(props: {
         setPendingAction(null);
         props.onPlanOpenChange?.(false);
         if (!isAtomCommandInterrupted(result)) {
-          setLocalError(
-            providerLifecycleFailureMessage(
+          setLocalFailure({
+            kind: "plan",
+            action,
+            message: providerLifecycleFailureMessage(
               squashAtomCommandFailure(result),
               `Scient could not prepare the ${props.displayName} setup plan.`,
             ),
-          );
+          });
         }
         return;
       }
@@ -283,7 +346,7 @@ export function ProviderRuntimeSection(props: {
         return;
       }
       setPendingAction(null);
-      setPlan(result.value);
+      setPreparedPlan(result.value);
     },
     [
       planRuntime,
@@ -291,6 +354,8 @@ export function ProviderRuntimeSection(props: {
       props.environmentId,
       props.onPlanOpenChange,
       props.provider.instanceId,
+      runtime.actions,
+      runtime.operation,
       startPlan,
     ],
   );
@@ -303,6 +368,17 @@ export function ProviderRuntimeSection(props: {
     void requestPlan(props.initialAction);
   }, [props.initialAction, props.provider.instanceId, requestPlan]);
 
+  useEffect(() => {
+    if (!preparedPlan || plan) return;
+    setPreparedPlan(null);
+    props.onPlanOpenChange?.(false);
+  }, [plan, preparedPlan, props.onPlanOpenChange]);
+
+  useEffect(() => {
+    if (!localFailure || localError) return;
+    setLocalFailure(null);
+  }, [localError, localFailure]);
+
   const start = async () => {
     if (!plan) return;
     await startPlan(plan);
@@ -310,7 +386,7 @@ export function ProviderRuntimeSection(props: {
 
   const cancel = async () => {
     if (!activeOperation) return;
-    setLocalError(null);
+    setLocalFailure(null);
     setPendingAction("cancel");
     const result = await cancelRuntime({
       environmentId: props.environmentId,
@@ -322,12 +398,14 @@ export function ProviderRuntimeSection(props: {
     setPendingAction(null);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setLocalError(
-          providerLifecycleFailureMessage(
+        setLocalFailure({
+          kind: "operation",
+          operationId: activeOperation.operationId,
+          message: providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
             `Scient could not cancel the ${props.displayName} runtime operation.`,
           ),
-        );
+        });
       }
       return;
     }
@@ -496,7 +574,7 @@ export function ProviderRuntimeSection(props: {
             variant="ghost-muted"
             disabled={isWorking}
             onClick={() => {
-              setPlan(null);
+              setPreparedPlan(null);
               props.onPlanOpenChange?.(false);
             }}
           >
