@@ -1,9 +1,9 @@
 # Provider Lifecycle Capability Audit
 
-> Status: implementation evidence ledger, last refreshed 2026-08-24.
+> Status: implementation evidence ledger, last refreshed 2026-08-25.
 >
 > This document is evidence for the
-> [provider lifecycle unification proposal](./provider-lifecycle-unification-proposal.md), not an
+> [provider lifecycle architecture](./provider-lifecycle.md), not an
 > implementation contract and not proof that every listed path has passed packaged-app qualification.
 > It records what the current code and provider documentation appear to support, why some differences
 > should remain, and which gaps need more investigation. Revalidate the affected rows against the
@@ -16,8 +16,9 @@ This audit exists to keep two different questions separate:
 
 1. **What does each provider actually support, and why does it differ?** This document owns that
    evidence, classification, and uncertainty.
-2. **What has Scient decided to implement, in what sequence?** The unification proposal owns accepted
-   architecture and delivery decisions.
+2. **What architecture and semantics has Scient accepted?** The canonical
+   [provider lifecycle architecture](./provider-lifecycle.md) owns those decisions. The unification
+   proposal preserves the historical delivery sequence.
 
 An observation here does not become planned work merely because it looks inconsistent. During each
 provider migration:
@@ -27,25 +28,26 @@ provider migration:
   missing capability, or behavior that should be removed;
 - record live or packaged-app evidence when mocks and source inspection cannot prove the behavior;
 - update this audit when the evidence changes; and
-- update the proposal and canonical implementation documentation only after accepting a design or
-  behavior change.
+- update the canonical implementation documentation only after accepting a design or behavior
+  change.
 
 This prevents accidental parity work from erasing real protocol differences, while keeping genuine
-omissions visible. After implementation, this file should either become the canonical provider
-capability matrix or be merged into the canonical lifecycle documentation without losing the
-provider-specific rationale.
+omissions visible. This file remains the evidence ledger; the canonical architecture links here
+instead of duplicating evidence status and open qualification questions.
 
 ## Evidence and confidence
 
 Initial investigation began against Scient `main` at `dc07474af931877d4b94747d241df6c2af7d35c4`.
-The published audit was performed against the planning branch based on:
+The code-confirmed architecture rows were last revalidated against the provider-lifecycle integration
+branch at:
 
 ```text
-118420c908594f0d9ca3124d341a5ce47cc3505a
+f79289b4c1
 ```
 
-That baseline includes PR #151 and the Codex managed-package completeness fix in
-`5f52a1420823c0f311d5755f6a715294fba48fe1`.
+That checkpoint includes the shared lifecycle work through Phase 5 and updated `main` through the
+session-activity benchmark stabilization. Exact historical implementation commits remain available
+in the integration PR and proposal.
 
 Use the following evidence labels when this document is updated:
 
@@ -60,6 +62,12 @@ Use the following evidence labels when this document is updated:
 Source inspection can establish structure and declared capability. It cannot by itself prove browser
 handoff, credential propagation, entitlement, cancellation, update behavior, packaging, or a
 provider's current hosted service.
+
+The manually observed Grok scenarios recorded below are bounded macOS isolated-app evidence from an
+earlier implementation checkpoint. They are not a complete final cross-provider audit. No unrecorded
+provider, state, operating system, or architecture is implied to be live-qualified. In particular,
+every system-to-managed row remains **code-confirmed** until its corresponding live scenario and
+platform are recorded.
 
 ## Lifecycle dimensions
 
@@ -98,15 +106,17 @@ reviewed artifact, local desktop mode, and a supported target.
 
 ## Phase 1-3 presentation evidence and accepted corrections
 
-This section records current evidence so later migrations can distinguish an intentional provider
-difference from a shared presentation defect. The accepted implementation requirements themselves
-remain in the proposal.
+This section preserves the evidence that motivated the shared presentation correction. It describes
+the earlier UI, not the current Phase 4 result. Current architecture lives in
+[provider-lifecycle.md](./provider-lifecycle.md).
 
-- **Code-confirmed:** Grok and Droid currently implement their disabled cards inside provider-specific
-  inline views; the other assisted providers do not share the same presentation.
-- **Code-confirmed:** the management dialog can focus exclusively on managed-runtime content when the
-  top-level disabled snapshot reports `installed: false`, even when runtime metadata proves a managed
-  copy exists. This can hide the Enable/account handoff after a successful install.
+- **Code-confirmed at the recorded checkpoint:** Grok and Droid implemented their disabled cards
+  inside provider-specific inline views; the other assisted providers did not share the same
+  presentation.
+- **Code-confirmed at the recorded checkpoint:** the management dialog could focus exclusively on
+  managed-runtime content when the top-level disabled snapshot reported `installed: false`, even
+  when runtime metadata proved a managed copy existed. This could hide the Enable/account handoff
+  after a successful install.
 - **Manually observed:** Grok install, repair, removal, cancellation, and account actions work when the
   provider is enabled. When it remains disabled after install, login becomes reachable only after the
   separate provider toggle is changed. Droid's disabled card explains the state more clearly, but it
@@ -355,10 +365,11 @@ Before declaring a provider aligned with the shared lifecycle:
     provider-specific authentication semantics into shared UI.
 12. Classify every discovered difference before changing it. Do not turn an open finding into shared
     infrastructure without evidence that its truth and failure model are actually shared.
-13. Update this audit, the proposal if a decision changes, and the canonical lifecycle documentation
-    in the same implementation PR.
+13. Update this audit and the canonical lifecycle documentation in the same implementation PR when
+    evidence changes an accepted decision. Keep the historical proposal unchanged unless correcting
+    its own provenance or completion status.
 
-## Initial recommendation
+## Current audit conclusion
 
 The current architecture direction remains sound: share runtime mechanics, coordination, canonical
 state, and presentation structure while keeping provider authentication and exceptional behavior

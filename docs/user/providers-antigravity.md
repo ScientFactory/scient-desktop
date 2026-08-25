@@ -8,6 +8,8 @@ Scient does not ask for your Google password, read token contents, or store Goog
 official Antigravity CLI opens and completes sign-in, keeps the resulting session in its own local
 credential store, and refreshes it when necessary.
 
+For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
+
 ## Assisted setup
 
 Select **Antigravity** in the first-provider setup or model picker.
@@ -24,8 +26,8 @@ Select **Antigravity** in the first-provider setup or model picker.
    waiting Antigravity process, then asks `agy models` to verify the account and discover the models
    actually available to it.
 
-If managed installation is unavailable, Scient shows Google's official platform installer command.
-You can also set an explicit `agy` binary path in **Settings > Providers > Antigravity**.
+If managed installation is unavailable, Scient directs you to Google's official installer. You can
+also set an explicit `agy` binary path in **Settings > Providers > Antigravity**.
 
 ## Subscription boundary
 
@@ -37,12 +39,11 @@ If your standalone Antigravity installation is explicitly configured for API-key
 provider override as described in Google's Antigravity authentication documentation before using it
 with Scient. The app will otherwise report that it could not verify a connected Google account.
 
-Signing out first sends Antigravity's own `/logout` command. Some CLI releases incorrectly block
-that command behind first-run screens even when a consumer session already exists. When that
-happens, Scient removes Antigravity's private `antigravity-oauth-token` file and, on macOS, the exact
-`gemini` Keychain item used by this CLI build. It then confirms with `agy models` that the account is
-disconnected. This may also sign out other local applications using the same Antigravity credential
-store.
+Signing out first sends Antigravity's own `/logout` command. If the CLI blocks that command behind a
+first-run screen, Scient can remove only the provider-owned local consumer credentials needed to
+complete logout, without reading token contents. It then verifies that Antigravity reports the
+account as disconnected. This may also sign out other local applications using the same Antigravity
+credential store.
 
 ## Models and reasoning
 
@@ -50,9 +51,8 @@ The model list is account-owned and dynamic. Scient does not hard-code a claim t
 has the same models. It reads the current `agy models` result, groups effort variants into one model,
 and presents available **Low**, **Medium**, and **High** reasoning choices where supported.
 
-Scient prefers `gemini-3.7-flash` when the account reports it, then falls back to the next available
-model. Changing the model or reasoning effort starts a new Scient thread because those values are
-fixed when the native Antigravity process starts.
+Scient selects a default from the models the account reports. Changing the model or reasoning effort
+starts a new Scient thread because those values are fixed when the native Antigravity process starts.
 
 ## Runtime behavior
 
@@ -79,7 +79,7 @@ of simulating success.
 
 ## Troubleshooting
 
-- **Antigravity is missing:** use the reviewed install action, Google's displayed installer, or set
+- **Antigravity is missing:** use the reviewed install action, Google's official installer, or set
   the absolute binary path in provider settings.
 - **Sign-in did not open:** use **Reopen sign-in page** when Scient captured Antigravity's secure
   authorization URL, or **Open sign-in help** for Google's authentication instructions.

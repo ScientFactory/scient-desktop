@@ -3,6 +3,8 @@
 Scient keeps installing the Codex tool and connecting a Codex account as two separate, visible
 facts. A saved provider configuration is not treated as a working connection.
 
+For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
+
 ## The Easiest Setup Path
 
 When no provider is ready, the composer shows **Choose your AI** in place of a disabled model
@@ -23,30 +25,18 @@ The flow:
 Scient never asks for or receives the provider password. Codex continues to own its credentials,
 refresh, expiry, and revocation.
 
-`Sign out on this computer` logs out the configured Codex credential home. It can therefore affect
-the Codex CLI or another app using those same account files; Scient explains that scope beside the
-action.
+**Sign out** logs out the configured Codex credential home. It can therefore affect the Codex CLI or
+another app using those same account files; Scient explains that scope beside the action.
 
 ## Computers And Installations
 
 Scient never silently replaces a healthy custom or system installation. A Scient-managed copy is
 kept in the app's private data, and removing it does not remove a system or custom Codex install.
 
-The current support boundary is intentionally explicit:
-
-| Computer or host                            | What Scient currently promises                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Local Scient desktop on Apple-silicon macOS | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in             |
-| Intel Mac                                   | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in             |
-| Windows on ARM64 or x64                     | Fully assisted installation of the reviewed Codex executable, plus guided sign-in           |
-| Linux on ARM64 or x64                       | Fully assisted installation of the reviewed static Codex artifact, plus guided sign-in      |
-| Remote or web-hosted Scient server          | Use the runtime already administered on that server; the client cannot take ownership of it |
-| Other operating systems or architectures    | No managed Codex promise; Scient explains that the target is unsupported                    |
-
-The application selects a target-specific official Codex artifact for each supported operating
-system and architecture. Every managed download is bounded by the catalogued byte size and verified
-against its exact SHA-256 digest before Scient runs or activates it. Unknown operating systems and
-architectures remain unsupported instead of receiving an invented fallback.
+The local desktop offers managed installation only when the server reports a reviewed artifact for
+the exact operating system and architecture. Remote clients use the runtime administered on their
+server, and unsupported targets receive no invented fallback. The app displays the reviewed version
+and download details before installation.
 
 If a managed install, repair, or download fails, that operation cleans its incomplete staging
 directory and the previous working copy remains active. Routine status refreshes never delete an
@@ -85,12 +75,12 @@ custom or externally managed Codex runtime, the advanced terminal flow remains a
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
-issue. T3 Code uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
+issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
 and share with OpenAI employees.
 
 ## Approve access to other apps
 
-When a Codex tool needs access to an app such as Safari, T3 Code shows the app name and asks for
+When a Codex tool needs access to an app such as Safari, Scient shows the app name and asks for
 approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
 app. Some tools also offer approval for the current session or permanent approval.
 
