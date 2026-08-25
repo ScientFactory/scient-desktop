@@ -279,9 +279,10 @@ Antigravity is a native integration, not an ACP compatibility bridge:
   custom-endpoint variables, preserving the Google-account subscription boundary.
 - **Structured text generation (`AntigravityTextGeneration.ts`)**: Uses the same native transport
   with `--json-schema` and validates `structured_output`; it does not scrape JSON from prose.
-- **Assisted onboarding (`AntigravityInlineSetup.tsx`)**: Surfaces reviewed managed install,
-  cancellation/recovery, Google sign-in, model readiness, updates, and sign-out in the
-  composer and Settings surfaces.
+- **Assisted onboarding (`AntigravityInlineSetup.tsx`)**: Keeps Antigravity's Google sign-in,
+  returned-code compatibility, model-readiness, and recovery states provider-specific. The shared
+  assisted host owns disabled-provider handoff, Settings runtime management, and the capability-gated
+  sign-out action; the composer retains the fast install/sign-in path without maintenance controls.
 
 ### Managed runtime trust boundary
 

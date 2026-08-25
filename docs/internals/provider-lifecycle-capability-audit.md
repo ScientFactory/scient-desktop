@@ -167,6 +167,21 @@ writes schema v2 with an explicit managed selection in the same atomic state com
 cancellation cannot write that selection. When no healthy system runtime exists, a legacy private
 copy remains usable; users are never forced to reinstall merely because the schema changed.
 
+## Phase 5 Antigravity migration outcome
+
+Antigravity management now routes through the same explicit assisted host as the other supported
+providers. The host owns the shared disabled-provider state, runtime maintenance section, transient
+repair feedback, and capability-gated sign-out placement. The generic connection dialog contains no
+Antigravity-specific state or rendering branches and remains the fallback for manual, unknown, and
+future provider drivers.
+
+This is a presentation migration, not a new shared authentication policy. Antigravity still owns its
+Google subscription method, primary-versus-fallback browser behavior, returned authorization-code
+delivery to the live PTY, fresh model verification, and bounded local credential cleanup when the
+official logout cannot finish. An authenticated account without models remains an attention state,
+not another sign-in prompt. The renderer infers no runtime action; the optional system-to-managed
+handoff remains the explicit server capability qualified in Phase 4B.
+
 ## Shared invariants all assisted providers should satisfy
 
 These are common guarantees, not requirements for every provider to display the same controls:
@@ -303,14 +318,15 @@ can vary with authentication, active source, and the setup surface.
 in Manage and recovery states without adding diagnostics to the fast composer path or fabricating data
 for OpenCode?
 
-### 5. Removing authorization-code inference
+### 5. Retiring the Antigravity rolling-compatibility fallback
 
-**Code-confirmed:** the connection operation now publishes whether it accepts an authorization code,
-but Antigravity renderer compatibility paths can still infer code entry from method and URL kind when
-that field is absent.
+**Code-confirmed:** the generic dialog now relies only on the explicit
+`acceptsAuthorizationCode` capability. Antigravity's provider-specific renderer still accepts the
+older server shape where that optional field is absent only for an active `antigravity_google`
+operation with a primary authorization URL. An explicit `false` always suppresses code entry.
 
-**Question:** after checking client/server rolling compatibility, can the renderer fail closed when the
-capability is absent and remove every provider-name fallback?
+**Question:** after the supported client/server rolling window no longer includes that older shape,
+can the Antigravity-local fallback be removed so absence also fails closed?
 
 ## Provider migration checklist
 
@@ -348,11 +364,12 @@ local. The highest-value questions to resolve during implementation are inactive
 removal, Codex/Claude session-safe disconnect, Grok/Droid external update qualification, and
 diagnostics reachability.
 
-The accepted presentation work is narrower and already evidence-backed: Phase 4 should establish one
-shared disabled-provider/Enable handoff, normalize Settings entry and runtime-source actions, and
-qualify system-to-managed switching provider by provider. Phase 5 should migrate Antigravity onto that
-foundation. The final pass should audit Settings and composer together for residual routing, spacing,
-copy, action hierarchy, and capability inconsistencies rather than create another abstraction layer.
+The accepted presentation work remains narrow and evidence-backed: Phase 4 established one shared
+disabled-provider/Enable handoff, normalized Settings entry and runtime-source actions, and qualified
+system-to-managed switching provider by provider. Phase 5 moved Antigravity onto that foundation
+without changing its authentication policy. The final pass should audit Settings and composer
+together for residual routing, spacing, copy, action hierarchy, and capability inconsistencies rather
+than create another abstraction layer.
 
 Do not otherwise pursue button-for-button parity. Codex and Claude alternative account methods,
 Antigravity's subscription-only scope, Grok's conditional code path, Droid's ACP-negotiated actions,

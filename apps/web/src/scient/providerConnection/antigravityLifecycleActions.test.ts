@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   cancelAntigravitySignIn,
-  disconnectAntigravity,
   hasManagedAntigravityUpdate,
   startAntigravitySignIn,
   startAntigravitySignInAndOpenAuthorizationPage,
@@ -118,12 +117,6 @@ describe("Antigravity lifecycle actions", () => {
     const lifecycle = controller();
     await cancelAntigravitySignIn(lifecycle, "op-123");
     expect(lifecycle.cancelConnection).toHaveBeenCalledWith("op-123");
-  });
-
-  it("disconnects Antigravity connection", async () => {
-    const lifecycle = controller();
-    await disconnectAntigravity(lifecycle);
-    expect(lifecycle.disconnect).toHaveBeenCalled();
   });
 
   it("plans and starts a reviewed managed installation", async () => {

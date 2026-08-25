@@ -191,6 +191,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const [accountActionPending, setAccountActionPending] = useState(false);
   const isRuntimeWorking = hasActiveProviderRuntimeOperation(props.provider);
   const isConnected = isProviderAccountPresentedAsConnected(props.provider);
+  const isAntigravity = props.provider.driver === "antigravity";
   const isClaude = props.provider.driver === "claudeAgent";
   const isGrok = props.provider.driver === "grok";
   const isDroid = props.provider.driver === "droid";
@@ -242,15 +243,17 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             />
           </DialogTitle>
           <DialogDescription className="sr-only">
-            {isClaude
-              ? "Connect and manage your Claude account."
-              : isGrok
-                ? "Install Grok and connect your existing subscription."
-                : isDroid
-                  ? "Install Droid and connect your Factory account."
-                  : isCursor
-                    ? "Connect and manage your Cursor account."
-                    : "Connect and manage your existing ChatGPT subscription."}
+            {isAntigravity
+              ? "Install Antigravity and connect your Google subscription."
+              : isClaude
+                ? "Connect and manage your Claude account."
+                : isGrok
+                  ? "Install Grok and connect your existing subscription."
+                  : isDroid
+                    ? "Install Droid and connect your Factory account."
+                    : isCursor
+                      ? "Connect and manage your Cursor account."
+                      : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">
@@ -313,8 +316,6 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
     : (props.provider.connection?.operation ?? localOperation);
   const availableMethods = props.provider.connection?.methods ?? [];
   const preferredMethod = preferredProviderConnectionMethod(props.provider);
-  const isAntigravityGoogle = preferredMethod === "antigravity_google";
-  const isAntigravity = props.provider.driver === "antigravity";
   const isWorking = pendingAction !== null || isRuntimeWorking;
   const canCancel = isActiveProviderConnectionOperation(operation);
   const { copyToClipboard } = useCopyToClipboard();
@@ -337,11 +338,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
   ]);
 
   const accountLabel = providerAccountIdentity(props.provider) ?? props.provider.auth.type ?? null;
-  const acceptsAuthorizationCode =
-    operation?.acceptsAuthorizationCode === true ||
-    (operation?.acceptsAuthorizationCode === undefined &&
-      operation?.method === "antigravity_google" &&
-      operation.authorizationUrlKind === "primary");
+  const acceptsAuthorizationCode = operation?.acceptsAuthorizationCode === true;
 
   const openAuthorizationPage = async (url: string) => {
     if (!isSafeProviderAuthorizationUrl(url)) {
@@ -435,7 +432,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
         setLocalError(
           providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
-            "Scient could not return the authorization code to Antigravity.",
+            `Scient could not return the authorization code to ${props.displayName}.`,
           ),
         );
       }
@@ -485,7 +482,6 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
         </DialogHeader>
         <DialogPanel className="space-y-3">
           <ProviderRuntimeSection
-            compact={props.provider.driver === "antigravity"}
             disabled={pendingAction !== null}
             environmentId={props.environmentId}
             provider={props.provider}
@@ -497,13 +493,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
           {!isRuntimePlanOpen && !isRuntimeWorking ? (
             <div className="contents">
               {isConnected ? (
-                <div
-                  className={
-                    isAntigravity
-                      ? "flex items-center justify-between gap-4 py-1"
-                      : "flex items-center justify-between gap-4 rounded-lg border p-3"
-                  }
-                >
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <CheckCircle2Icon className="size-5 shrink-0 text-success" aria-hidden />
                     <div className="min-w-0">
@@ -535,13 +525,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                 operation.status !== "failed" &&
                 operation.status !== "cancelled" ? (
                 <div className="space-y-3">
-                  <div
-                    className={
-                      isAntigravity
-                        ? "flex items-start gap-3 py-1"
-                        : "flex items-start gap-3 rounded-lg border bg-muted/30 p-3"
-                    }
-                  >
+                  <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
                     <LoaderIcon
                       className="mt-0.5 size-5 shrink-0 animate-spin text-primary"
                       aria-hidden
@@ -553,9 +537,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                           : "Finish sign in"}
                       </p>
                       <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                        {isAntigravityGoogle && acceptsAuthorizationCode
-                          ? "Sign in with Google, then paste the authorization code below."
-                          : operation.message}
+                        {operation.message}
                       </p>
                     </div>
                   </div>
@@ -583,28 +565,22 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   {operation.authorizationUrl ? (
                     <Button
                       type="button"
-                      className={isAntigravity ? "w-fit" : PRIMARY_GHOST_ACTION_CLASS}
+                      className={PRIMARY_GHOST_ACTION_CLASS}
                       onClick={() => void openAuthorizationPage(operation.authorizationUrl!)}
                       size="sm"
-                      variant={isAntigravity ? "ghost-muted" : "ghost"}
+                      variant="ghost"
                     >
                       <ExternalLinkIcon />
                       {operation.authorizationUrlKind === "manual_fallback"
-                        ? isAntigravityGoogle
-                          ? "Open sign-in help"
-                          : "Browser didn’t open?"
-                        : isAntigravityGoogle
-                          ? "Reopen Google sign-in"
-                          : "Open secure sign-in page"}
+                        ? "Browser didn’t open?"
+                        : "Open secure sign-in page"}
                     </Button>
                   ) : null}
                   {acceptsAuthorizationCode && operation.status !== "verifying" ? (
                     <div className="space-y-2 pt-1">
-                      {!isAntigravityGoogle ? (
-                        <p className="text-xs leading-relaxed text-muted-foreground">
-                          Paste the one-time authorization code shown by the provider.
-                        </p>
-                      ) : null}
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        Paste the one-time authorization code shown by the provider.
+                      </p>
                       <ProviderAuthorizationCodeForm
                         authorizationCode={authorizationCode}
                         disabled={isWorking}
@@ -618,26 +594,16 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div
-                    className={
-                      isAntigravity
-                        ? "flex items-start gap-3 py-1"
-                        : "flex items-start gap-3 rounded-lg border bg-muted/20 p-3"
-                    }
-                  >
+                  <div className="flex items-start gap-3 rounded-lg border bg-muted/20 p-3">
                     <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
                     <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {isAntigravityGoogle ? "Sign in required" : presentation.label}
-                      </p>
+                      <p className="text-sm font-medium text-foreground">{presentation.label}</p>
                       <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                         {presentation.kind === "not-required"
                           ? "This provider is ready without account sign in."
-                          : isAntigravityGoogle
-                            ? "Sign in with your Google account to use your existing subscription."
-                            : preferredMethod
-                              ? "Your browser is the fastest option. Device-code sign in is available when browser callbacks are inconvenient."
-                              : "This provider currently uses its own manual setup flow."}
+                          : preferredMethod
+                            ? "Your browser is the fastest option. Device-code sign in is available when browser callbacks are inconvenient."
+                            : "This provider currently uses its own manual setup flow."}
                       </p>
                     </div>
                   </div>
@@ -710,7 +676,7 @@ function GenericProviderConnectionDialog(props: ProviderConnectionDialogContentP
                   ) : (
                     <ExternalLinkIcon />
                   )}
-                  {isAntigravityGoogle ? "Sign in with Google" : "Continue in browser"}
+                  Continue in browser
                 </Button>
               </div>
             ) : null}

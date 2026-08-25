@@ -1,5 +1,6 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { AntigravityInlineSetup } from "./AntigravityInlineSetup";
@@ -43,9 +44,20 @@ function controller(): ProviderLifecycleController {
   } as unknown as ProviderLifecycleController;
 }
 
-function render(value: ServerProvider): string {
+function render(
+  value: ServerProvider,
+  options: {
+    readonly accountAction?: ReactNode;
+    readonly managedRuntimePresentedExternally?: boolean;
+  } = {},
+): string {
   return renderToStaticMarkup(
-    <AntigravityInlineSetup controller={controller()} displayName="Antigravity" provider={value} />,
+    <AntigravityInlineSetup
+      {...options}
+      controller={controller()}
+      displayName="Antigravity"
+      provider={value}
+    />,
   );
 }
 
@@ -70,13 +82,13 @@ describe("AntigravityInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Antigravity is installed");
+    expect(markup).toContain("Sign in required");
     expect(markup).toContain("Sign in with Google");
     expect(markup).toContain("border-transparent");
     expect(markup).toContain("text-primary");
     expect(markup).not.toContain("text-primary-foreground");
     expect(markup).toContain(
-      "Sign in with the Google account for your existing subscription. Scient never sees your password.",
+      "Sign in with your existing Gemini subscription. Scient never sees your password.",
     );
     expect(markup).not.toContain("Antigravity owns the sign-in");
     expect(markup).not.toContain("Start the Antigravity sign-in flow");
@@ -162,7 +174,7 @@ describe("AntigravityInlineSetup", () => {
     );
 
     expect(markup).toContain("Downloading Antigravity from Google");
-    expect(markup).toContain(" Cancel</button>");
+    expect(markup).toContain("Cancel</button>");
     expect(markup).not.toContain("progressbar");
     expect(markup).not.toContain('style="width:');
   });
@@ -253,7 +265,94 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).toContain('href="https://one.google.com/settings"');
     expect(markup).toContain('aria-label="Google account settings (opens in browser)"');
     expect(markup).toContain("Default model: Gemini 3.7 Flash");
+    expect(markup).not.toContain(">Sign out<");
+  });
+
+  it("keeps sign-out on the management surface instead of the composer", () => {
+    const value = provider({
+      status: "ready",
+      auth: { status: "authenticated", required: true },
+      connection: {
+        methods: ["antigravity_google"],
+        canDisconnect: true,
+        operation: null,
+      },
+      models: [
+        {
+          slug: "gemini-3.7-flash",
+          name: "Gemini 3.7 Flash",
+          isCustom: false,
+          isDefault: true,
+          capabilities: null,
+        },
+      ],
+    });
+
+    const composerMarkup = render(value);
+    const managementMarkup = render(value, {
+      accountAction: <button type="button">Sign out</button>,
+      managedRuntimePresentedExternally: true,
+    });
+
+    expect(composerMarkup).not.toContain(">Sign out<");
+    expect(managementMarkup).toContain(">Sign out<");
+  });
+
+  it("does not offer another sign-in when authentication succeeded without models", () => {
+    const markup = render(
+      provider({
+        auth: { status: "authenticated", required: true },
+        message: "Antigravity is connected but did not report an available model.",
+      }),
+      { accountAction: <button type="button">Sign out</button> },
+    );
+
+    expect(markup).toContain("Antigravity needs attention");
+    expect(markup).toContain("did not report an available model");
     expect(markup).toContain(">Sign out<");
+    expect(markup).not.toContain("Sign in with Google");
+  });
+
+  it("does not duplicate managed runtime maintenance inside management", () => {
+    const markup = render(
+      provider({
+        status: "ready",
+        auth: { status: "authenticated", required: true },
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: true,
+          operation: null,
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["update", "repair", "remove"],
+            managedVersion: "1.1.17",
+            previousManagedVersion: null,
+            operation: null,
+            message: "Reviewed update available.",
+          },
+        },
+        models: [
+          {
+            slug: "gemini-3.7-flash",
+            name: "Gemini 3.7 Flash",
+            isCustom: false,
+            isDefault: true,
+            capabilities: null,
+          },
+        ],
+      }),
+      {
+        accountAction: <button type="button">Sign out</button>,
+        managedRuntimePresentedExternally: true,
+      },
+    );
+
+    expect(markup).toContain("Antigravity is ready");
+    expect(markup).toContain(">Sign out<");
+    expect(markup).not.toContain("Update Antigravity");
+    expect(markup).not.toContain("Repair Antigravity");
   });
 
   it("trusts confirmed authentication over a stale in-flight sign-in operation", () => {
@@ -422,7 +521,9 @@ describe("AntigravityInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Scient can install a reviewed official Google CLI privately");
+    expect(markup).toContain(
+      "Scient can install a reviewed official Antigravity runtime privately",
+    );
     expect(markup).toContain("Install Antigravity");
   });
 
@@ -503,5 +604,46 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).toContain("private Antigravity copy was removed");
     expect(markup).toContain("Install again");
     expect(markup).not.toContain("Install Antigravity");
+  });
+
+  it("leaves post-removal runtime recovery to the shared management section", () => {
+    const markup = render(
+      provider({
+        installed: false,
+        version: null,
+        auth: { status: "authenticated", required: true },
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: true,
+          operation: null,
+          runtime: {
+            source: "missing",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["install"],
+            managedVersion: null,
+            previousManagedVersion: "1.1.17",
+            operation: {
+              operationId: "remove-succeeded",
+              action: "remove",
+              status: "succeeded",
+              startedAt: "2026-08-22T08:00:00.000Z",
+              finishedAt: "2026-08-22T08:00:05.000Z",
+              message: "Scient’s private Antigravity copy was removed.",
+            },
+            message: "Antigravity can be installed again.",
+          },
+        },
+      }),
+      {
+        accountAction: <button type="button">Sign out</button>,
+        managedRuntimePresentedExternally: true,
+      },
+    );
+
+    expect(markup).toContain("Google account connected");
+    expect(markup).toContain(">Sign out<");
+    expect(markup).not.toContain("Install again");
+    expect(markup).not.toContain("Sign in with Google");
   });
 });

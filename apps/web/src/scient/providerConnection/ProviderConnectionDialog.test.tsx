@@ -28,7 +28,16 @@ vi.mock("../../components/ui/dialog", () => ({
 }));
 
 vi.mock("./AntigravityInlineSetup", () => ({
-  AntigravityInlineSetup: () => <div>Antigravity lifecycle surface</div>,
+  AntigravityInlineSetup: (props: {
+    accountAction?: ReactNode;
+    managedRuntimePresentedExternally?: boolean;
+  }) => (
+    <div>
+      Antigravity lifecycle surface
+      {props.managedRuntimePresentedExternally ? " · Shared runtime management" : null}
+      {props.accountAction}
+    </div>
+  ),
 }));
 vi.mock("./ClaudeInlineSetup", () => ({
   ClaudeInlineSetup: (props: {
@@ -173,7 +182,7 @@ describe("ProviderConnectionDialog", () => {
     repairNotice.visible = false;
   });
 
-  it("keeps the established Antigravity management surface", () => {
+  it("routes Antigravity management through the assisted host", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
         displayName="Antigravity"
@@ -184,17 +193,16 @@ describe("ProviderConnectionDialog", () => {
       />,
     );
 
-    expect(markup).not.toContain("Antigravity lifecycle surface");
+    expect(markup).toContain("Antigravity lifecycle surface");
+    expect(markup).toContain("Shared runtime management");
     expect(markup).not.toContain("Codex lifecycle surface");
     expect(markup).not.toContain("Claude lifecycle surface");
     expect(markup).not.toContain("Installation");
     expect(markup).toContain("Compact managed runtime actions");
-    expect(markup).toContain("Connected");
     expect(markup).toContain("Antigravity icon");
     expect(markup).toContain(">Sign out<");
     expect(markup).not.toContain("Sign out on this computer");
-    expect(markup).toContain("items-center justify-between");
-    expect(markup).toContain("me-2 shrink-0 self-end text-destructive/80");
+    expect(markup).toContain("text-destructive/80");
     expect(markup).not.toContain("<footer>");
     expect(markup).not.toContain(">Close<");
   });
@@ -202,6 +210,7 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
     ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
@@ -296,6 +305,44 @@ describe("ProviderConnectionDialog", () => {
   );
 
   it.each([
+    ["droid", "Droid", "droid_device_pairing"],
+    ["antigravity", "Antigravity", "antigravity_google"],
+  ] as const)(
+    "keeps maintenance and enable available for disabled managed %s",
+    (driver, name, method) => {
+      const markup = renderToStaticMarkup(
+        <ProviderConnectionDialog
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          onOpenChange={vi.fn()}
+          open
+          provider={{
+            ...provider,
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+            displayName: name,
+            enabled: false,
+            installed: false,
+            status: "disabled",
+            auth: { status: "unauthenticated", required: true },
+            connection: {
+              methods: [method],
+              canDisconnect: false,
+              operation: null,
+              runtime: provider.connection!.runtime!,
+            },
+          }}
+        />,
+      );
+
+      expect(markup).toContain("Compact managed runtime actions");
+      expect(markup).toContain(`${name} is disabled`);
+      expect(markup).toContain(">Enable<");
+      expect(markup).not.toContain(`${name} lifecycle surface`);
+    },
+  );
+
+  it.each([
     ["codex", "Codex"],
     ["claudeAgent", "Claude"],
     ["antigravity", "Antigravity"],
@@ -370,6 +417,34 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).not.toContain("Managed runtime actions");
   });
 
+  it("keeps disabled Antigravity simple when no runtime maintenance exists", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderConnectionDialog
+        displayName="Antigravity"
+        environmentId={EnvironmentId.make("local")}
+        onOpenChange={vi.fn()}
+        open
+        provider={{
+          ...provider,
+          enabled: false,
+          installed: false,
+          status: "disabled",
+          auth: { status: "unauthenticated", required: true },
+          connection: {
+            methods: ["antigravity_google"],
+            canDisconnect: false,
+            operation: null,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Antigravity is disabled");
+    expect(markup).toContain(">Enable<");
+    expect(markup).not.toContain("Managed runtime actions");
+    expect(markup).not.toContain("Antigravity lifecycle surface");
+  });
+
   it("reveals sign-in after a managed install settles instead of leaving runtime focus blank", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
@@ -402,6 +477,7 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
     ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
@@ -675,6 +751,7 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
     ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
+    ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
     ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
@@ -716,36 +793,40 @@ describe("ProviderConnectionDialog", () => {
   );
 
   it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-  ] as const)("routes assisted %s removal through the shared confirmation flow", (driver, name) => {
-    const markup = renderToStaticMarkup(
-      <ProviderConnectionDialog
-        displayName={name}
-        environmentId={EnvironmentId.make("local")}
-        initialRuntimeAction="remove"
-        onOpenChange={vi.fn()}
-        open
-        provider={{
-          ...provider,
-          instanceId: ProviderInstanceId.make(driver),
-          driver: ProviderDriverKind.make(driver),
-          displayName: name,
-          auth: { status: "authenticated", required: true, label: `${name} account` },
-          connection: {
-            methods: driver === "codex" ? ["codex_browser"] : ["claude_subscription"],
-            canDisconnect: true,
-            operation: null,
-            runtime: provider.connection!.runtime!,
-          },
-        }}
-      />,
-    );
+    ["codex", "Codex", "codex_browser"],
+    ["claudeAgent", "Claude", "claude_subscription"],
+    ["antigravity", "Antigravity", "antigravity_google"],
+  ] as const)(
+    "routes assisted %s removal through the shared confirmation flow",
+    (driver, name, method) => {
+      const markup = renderToStaticMarkup(
+        <ProviderConnectionDialog
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          initialRuntimeAction="remove"
+          onOpenChange={vi.fn()}
+          open
+          provider={{
+            ...provider,
+            instanceId: ProviderInstanceId.make(driver),
+            driver: ProviderDriverKind.make(driver),
+            displayName: name,
+            auth: { status: "authenticated", required: true, label: `${name} account` },
+            connection: {
+              methods: [method],
+              canDisconnect: true,
+              operation: null,
+              runtime: provider.connection!.runtime!,
+            },
+          }}
+        />,
+      );
 
-    expect(markup).toContain("remove confirmation requested");
-    expect(markup).not.toContain(`${name} lifecycle surface`);
-    expect(markup).not.toContain(">Sign out<");
-  });
+      expect(markup).toContain("remove confirmation requested");
+      expect(markup).not.toContain(`${name} lifecycle surface`);
+      expect(markup).not.toContain(">Sign out<");
+    },
+  );
 
   it("shows repair success beside the provider name only while the transient notice is active", () => {
     repairNotice.visible = true;
@@ -787,35 +868,6 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).not.toContain("<footer>");
   });
 
-  it("uses explicit Google sign-in wording for Antigravity", () => {
-    const markup = renderToStaticMarkup(
-      <ProviderConnectionDialog
-        displayName="Antigravity"
-        environmentId={EnvironmentId.make("local")}
-        onOpenChange={vi.fn()}
-        open
-        provider={{
-          ...provider,
-          status: "error",
-          auth: { status: "unauthenticated", required: true },
-          models: [],
-          connection: {
-            ...provider.connection!,
-            canDisconnect: false,
-          },
-        }}
-      />,
-    );
-
-    expect(markup).toContain("Sign in required");
-    expect(markup).toContain("existing subscription");
-    expect(markup).toContain("Sign in with Google");
-    expect(markup).toContain("border-transparent");
-    expect(markup).toContain("text-primary");
-    expect(markup).not.toContain("text-primary-foreground");
-    expect(markup).not.toContain("Continue in browser");
-  });
-
   it("keeps active runtime work focused on its own bottom action", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
@@ -847,50 +899,5 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).not.toContain(">Connected<");
     expect(markup).not.toContain(">Sign out<");
     expect(markup).not.toContain("<footer>");
-  });
-
-  it("preserves the authorization-code paste step for an existing operation without the optional capability flag", () => {
-    const markup = renderToStaticMarkup(
-      <ProviderConnectionDialog
-        displayName="Antigravity"
-        environmentId={EnvironmentId.make("local")}
-        onOpenChange={vi.fn()}
-        open
-        provider={{
-          ...provider,
-          status: "error",
-          auth: { status: "unauthenticated", required: true },
-          models: [],
-          connection: {
-            ...provider.connection!,
-            canDisconnect: false,
-            operation: {
-              operationId: "google-sign-in",
-              method: "antigravity_google",
-              status: "waiting_for_browser",
-              startedAt: "2026-08-22T08:00:00.000Z",
-              finishedAt: null,
-              message: "Finish signing in with Google.",
-              authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-              authorizationUrlKind: "primary",
-            },
-          },
-        }}
-      />,
-    );
-
-    expect(markup).toContain("Sign in with Google, then paste the authorization code below.");
-    expect(markup).toContain("Paste authorization code");
-    expect(markup).toContain("Reopen Google sign-in");
-    const reopenButtonStart = markup.lastIndexOf(
-      "<button",
-      markup.indexOf("Reopen Google sign-in"),
-    );
-    const reopenButton = markup.slice(
-      reopenButtonStart,
-      markup.indexOf("</button>", reopenButtonStart),
-    );
-    expect(reopenButton).not.toContain("w-full");
-    expect(reopenButton).not.toContain("border-input");
   });
 });
