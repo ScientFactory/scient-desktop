@@ -47,6 +47,30 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings voice transcript correction", () => {
+  it("defaults off and accepts an explicit opt-in", () => {
+    expect(decodeClientSettings({}).voiceTranscriptCorrectionEnabled).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptCorrectionEnabled: true })
+        .voiceTranscriptCorrectionEnabled,
+    ).toBe(true);
+  });
+});
+
+describe("ClientSettings voice language", () => {
+  it("defaults to automatic detection and accepts supported preferences", () => {
+    expect(decodeClientSettings({}).voiceLanguagePreference).toBe("auto");
+    expect(
+      decodeClientSettingsPatch({ voiceLanguagePreference: "he" }).voiceLanguagePreference,
+    ).toBe("he");
+  });
+
+  it("rejects unsupported language values", () => {
+    expect(() => decodeClientSettings({ voiceLanguagePreference: "xx" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ voiceLanguagePreference: "xx" })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

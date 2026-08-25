@@ -20,7 +20,10 @@ import {
   type ProviderRegistryShape,
 } from "../../provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
-import { type ProviderConnectionActions } from "../../provider/ProviderDriver.ts";
+import type {
+  ProviderConnectionActions,
+  ProviderVoiceTranscriptCorrection,
+} from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import { make } from "./ProviderConnectionManager.ts";
 import {
@@ -130,6 +133,9 @@ function makeHarness(options?: {
         ),
       getProviderConnectionActionsForInstance: () => Effect.succeed(options?.actions),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      getVoiceTranscriptCorrectionForInstance: () =>
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
+        Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       stopProviderSessions: () => Effect.void,
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),

@@ -3,6 +3,7 @@ import type { ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import type { ProviderVoiceTranscriptCorrection } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
 export const makeProviderRegistryMock = (
@@ -16,6 +17,9 @@ export const makeProviderRegistryMock = (
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
   getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+  getVoiceTranscriptCorrectionForInstance: () =>
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
+    Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
   stopProviderSessions: () => Effect.void,
   setProviderManagedRuntimeSummary: () => Effect.succeed([]),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),

@@ -21,6 +21,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
+import type { ProviderVoiceTranscriptCorrection } from "./ProviderDriver.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
@@ -195,6 +196,9 @@ function makeRegistry(
         Effect.succeed(lifecycleFor(provider)),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
       getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+      getVoiceTranscriptCorrectionForInstance: () =>
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
+        Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
       stopProviderSessions: () => Effect.void,
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState,

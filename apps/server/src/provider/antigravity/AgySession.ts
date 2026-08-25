@@ -132,6 +132,7 @@ export interface AgySessionLaunchInput {
   readonly printTimeout?: string;
   readonly addDirs?: ReadonlyArray<string>;
   readonly jsonSchema?: string;
+  readonly sandbox?: boolean;
   readonly onRawEvent?: (event: unknown) => Effect.Effect<void>;
   readonly onUnexpectedExit?: (error: AgySessionError) => Effect.Effect<void>;
 }
@@ -159,6 +160,7 @@ export function buildAgySessionArgs(input: AgySessionLaunchInput): ReadonlyArray
     args.push("--conversation", input.conversationId.trim());
   }
   if (input.jsonSchema?.trim()) args.push("--json-schema", input.jsonSchema.trim());
+  if (input.sandbox === true) args.push("--sandbox");
 
   switch (input.runtimeMode) {
     case "full-access":

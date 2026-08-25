@@ -8,9 +8,114 @@
 
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderDriverKind } from "./providerInstance.ts";
 
 /** The decoded request is limited to 10 MiB by the voice core. */
 export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3);
+
+/**
+ * A three-minute recording is normally far smaller than this. The bound is
+ * deliberately generous while still preventing an untrusted client from
+ * turning transcript correction into an unbounded provider request.
+ */
+export const VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS = 20_000;
+
+/** Languages Scient can explicitly pin for local Whisper transcription. */
+export const VOICE_TRANSCRIPTION_LANGUAGE_CODES = [
+  "ar",
+  "de",
+  "el",
+  "en",
+  "es",
+  "fa",
+  "fr",
+  "he",
+  "hi",
+  "id",
+  "it",
+  "ja",
+  "ko",
+  "nl",
+  "pl",
+  "pt",
+  "ro",
+  "ru",
+  "tr",
+  "uk",
+  "vi",
+  "zh",
+] as const;
+export const VoiceTranscriptionLanguage = Schema.Literals(VOICE_TRANSCRIPTION_LANGUAGE_CODES);
+export type VoiceTranscriptionLanguage = typeof VoiceTranscriptionLanguage.Type;
+
+/** Saved preference. `auto` leaves language detection to Whisper. */
+export const VoiceLanguagePreference = Schema.Literals([
+  "auto",
+  ...VOICE_TRANSCRIPTION_LANGUAGE_CODES,
+]);
+export type VoiceLanguagePreference = typeof VoiceLanguagePreference.Type;
+
+export const VOICE_LANGUAGE_NAMES = {
+  auto: "Automatic",
+  ar: "Arabic",
+  de: "German",
+  el: "Greek",
+  en: "English",
+  es: "Spanish",
+  fa: "Persian",
+  fr: "French",
+  he: "Hebrew",
+  hi: "Hindi",
+  id: "Indonesian",
+  it: "Italian",
+  ja: "Japanese",
+  ko: "Korean",
+  nl: "Dutch",
+  pl: "Polish",
+  pt: "Portuguese",
+  ro: "Romanian",
+  ru: "Russian",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  vi: "Vietnamese",
+  zh: "Chinese",
+} as const satisfies Record<VoiceLanguagePreference, string>;
+
+export const VoiceTranscriptCorrectionText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS),
+);
+export type VoiceTranscriptCorrectionText = typeof VoiceTranscriptCorrectionText.Type;
+
+export const VoiceTranscriptCorrectionRequest = Schema.Struct({
+  transcript: VoiceTranscriptCorrectionText,
+  language: Schema.optionalKey(VoiceTranscriptionLanguage),
+});
+export type VoiceTranscriptCorrectionRequest = typeof VoiceTranscriptCorrectionRequest.Type;
+
+export const VoiceTranscriptCorrectionResult = Schema.Struct({
+  text: VoiceTranscriptCorrectionText,
+  provider: ProviderDriverKind,
+});
+export type VoiceTranscriptCorrectionResult = typeof VoiceTranscriptCorrectionResult.Type;
+
+export const VoiceTranscriptCorrectionFailureKind = Schema.Literals([
+  "unsupported",
+  "provider-unavailable",
+  "authentication",
+  "timeout",
+  "provider-error",
+  "malformed-response",
+]);
+export type VoiceTranscriptCorrectionFailureKind = typeof VoiceTranscriptCorrectionFailureKind.Type;
+
+/** Safe, content-free failure returned to the client before it falls back. */
+export class VoiceTranscriptCorrectionError extends Schema.TaggedErrorClass<VoiceTranscriptCorrectionError>()(
+  "VoiceTranscriptCorrectionError",
+  {
+    kind: VoiceTranscriptCorrectionFailureKind,
+    message: TrimmedNonEmptyString,
+  },
+) {}
 
 /** Transcription engine identifier. Engine-neutral; only `local` ships now. */
 export const VoiceEngineId = Schema.Literals(["local"]);
@@ -60,7 +165,7 @@ export const VoiceTranscribeRequest = Schema.Struct({
   mimeType: VoiceAudioMimeType,
   sampleRateHz: NonNegativeInt,
   durationMs: NonNegativeInt,
-  language: Schema.optionalKey(TrimmedNonEmptyString),
+  language: Schema.optionalKey(VoiceTranscriptionLanguage),
 });
 export type VoiceTranscribeRequest = typeof VoiceTranscribeRequest.Type;
 

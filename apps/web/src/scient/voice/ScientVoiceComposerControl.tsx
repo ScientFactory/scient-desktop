@@ -14,7 +14,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import type { VoiceModelId, VoiceModelsSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, VoiceModelId, VoiceModelsSnapshot } from "@t3tools/contracts";
 
 import {
   ComposerControl,
@@ -31,15 +31,22 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip.tsx";
 import { cn } from "../../lib/utils.ts";
+import { useClientSettings } from "../../hooks/useSettings.ts";
+import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { VOICE_WAVEFORM_LEVEL_COUNT } from "./useVoiceRecorder.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
+import {
+  makeVoiceTranscriptCorrectionClient,
+  voiceTranscriptCorrectionCommand,
+} from "./voiceTranscriptCorrectionClient.ts";
 
 export { describeVoiceError } from "./voiceErrorPresentation.ts";
 export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
 
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;
+  readonly environmentId?: EnvironmentId;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
   readonly className?: string;
@@ -163,13 +170,29 @@ export function VoiceModelSetupPicker({
 
 export function ScientVoiceComposerControl({
   disabled = false,
+  environmentId,
   onTranscript,
   onRequestSubmit,
   className,
 }: ScientVoiceComposerControlProps): ReactNode {
   const client = useMemo(() => getVoiceBridge(), []);
+  const correctionEnabled = useClientSettings(
+    (settings) => settings.voiceTranscriptCorrectionEnabled,
+  );
+  const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const runVoiceTranscriptCorrection = useAtomCommand(voiceTranscriptCorrectionCommand, {
+    reportFailure: false,
+  });
+  const correctionClient = useMemo(
+    () => makeVoiceTranscriptCorrectionClient(runVoiceTranscriptCorrection),
+    [runVoiceTranscriptCorrection],
+  );
   const controller = useScientVoiceController({
     client,
+    correctionClient,
+    correctionEnabled,
+    languagePreference,
+    ...(environmentId === undefined ? {} : { environmentId }),
     onTranscript,
     ...(onRequestSubmit ? { onRequestSubmit } : {}),
   });
@@ -179,7 +202,8 @@ export function ScientVoiceComposerControl({
   const recordingSurface =
     controller.phase === "requesting-permission" ||
     controller.phase === "recording" ||
-    controller.phase === "transcribing" ? (
+    controller.phase === "transcribing" ||
+    controller.phase === "correcting" ? (
       <div className="absolute inset-0 z-10 flex items-center gap-2 bg-background px-3 pb-3 sm:px-4 sm:pb-4">
         {controller.phase === "recording" ? (
           <>
@@ -251,20 +275,28 @@ export function ScientVoiceComposerControl({
             <span className="min-w-0 flex-1 text-muted-foreground text-xs" role="status">
               {controller.phase === "requesting-permission"
                 ? "Waiting for microphone access…"
-                : "Transcribing…"}
+                : controller.phase === "transcribing"
+                  ? "Transcribing…"
+                  : "Correcting transcript…"}
             </span>
-            <Button
-              aria-label={
-                controller.phase === "requesting-permission"
-                  ? "Cancel microphone request"
-                  : "Cancel transcription"
-              }
-              onClick={() => void controller.cancel()}
-              size="icon-sm"
-              variant="ghost"
-            >
-              <XIcon />
-            </Button>
+            {controller.phase === "correcting" ? (
+              <Button onClick={controller.useOriginal} size="xs" variant="ghost-muted">
+                Use original
+              </Button>
+            ) : (
+              <Button
+                aria-label={
+                  controller.phase === "requesting-permission"
+                    ? "Cancel microphone request"
+                    : "Cancel transcription"
+                }
+                onClick={() => void controller.cancel()}
+                size="icon-sm"
+                variant="ghost"
+              >
+                <XIcon />
+              </Button>
+            )}
           </>
         )}
       </div>

@@ -9,15 +9,20 @@ import {
   clearStaleRunner,
   installDevelopmentAppBundle,
   LOCAL_DEV_APP_NAME,
+  LOCAL_DEV_APP_SERVICE_LABEL_PREFIX,
   LOCAL_DEV_APP_STABLE_NAME,
   LOCAL_DEV_APP_SCHEMA,
   MACOS_LSREGISTER_PATH,
+  makeLocalDevAppLaunchAgentPlist,
   readLocalDevAppMarker,
   registerDevelopmentAppBundle,
   resolveLocalDevAppPaths,
+  resolveLocalDevAppServiceLabel,
   resolveStableDevHome,
+  startAppInBackground,
   statusApp,
   stopApp,
+  unloadLocalDevAppService,
   uninstallDevelopmentAppBundle,
 } from "./local-dev-app.mjs";
 
@@ -80,6 +85,7 @@ describe("local dev app installation", () => {
     assert.equal(stable.role, "stable");
     assert.equal(stable.stateRoot, resolveStableDevHome(homeDir));
     assert.notEqual(candidate.stateRoot, stable.stateRoot);
+    assert.notEqual(candidate.serviceLabel, stable.serviceLabel);
   });
 
   it("reports LaunchServices registration failures", () => {
@@ -227,6 +233,93 @@ describe("local dev app installation", () => {
   });
 });
 
+describe("local dev app background service", () => {
+  it("gives every checkout and role a deterministic distinct service label", () => {
+    const first = resolveLocalDevAppServiceLabel("/tmp/one", "candidate");
+    const repeated = resolveLocalDevAppServiceLabel("/tmp/one", "candidate");
+    const second = resolveLocalDevAppServiceLabel("/tmp/two", "candidate");
+    const stable = resolveLocalDevAppServiceLabel("/tmp/one", "stable");
+
+    assert.equal(first, repeated);
+    assert.notEqual(first, second);
+    assert.notEqual(first, stable);
+    assert.isTrue(first.startsWith(`${LOCAL_DEV_APP_SERVICE_LABEL_PREFIX}.candidate.`));
+  });
+
+  it("launches the exact Node runner with only required non-secret environment", () => {
+    const { paths } = fixture();
+    const plist = makeLocalDevAppLaunchAgentPlist({
+      paths,
+      nodePath: "/opt/scient/node",
+      environment: {
+        HOME: "/Users/tester",
+        PATH: "/opt/scient/bin:/usr/bin",
+        npm_execpath: "/opt/scient/pnpm.cjs",
+        SECRET_TOKEN: "must-not-be-persisted",
+      },
+    });
+
+    assert.include(plist, `<string>${paths.serviceLabel}</string>`);
+    assert.include(plist, "<string>/opt/scient/node</string>");
+    assert.include(plist, `<string>${paths.root}/scripts/local-dev-app.mjs</string>`);
+    assert.include(plist, "<string>run</string>");
+    assert.include(plist, "<key>npm_execpath</key>");
+    assert.notInclude(plist, "SECRET_TOKEN");
+    assert.notInclude(plist, "must-not-be-persisted");
+    assert.include(plist, "<string>Interactive</string>");
+  });
+
+  it("bootstraps one exact per-worktree service and returns immediately", async () => {
+    const { paths } = fixture();
+    const calls = [];
+    const lines = [];
+
+    const result = await startAppInBackground({
+      paths,
+      platform: "darwin",
+      spawnSync: (command, args, options) => {
+        const call = [command, args, options];
+        calls.push(call);
+        if (args[0] === "print") return { status: 1, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      writeLine: (line) => lines.push(line),
+    });
+
+    assert.deepEqual(result, { status: "started" });
+    assert.isTrue(NodeFS.existsSync(paths.servicePlistPath));
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1][1], [
+      "bootstrap",
+      `gui/${String(process.getuid())}`,
+      paths.servicePlistPath,
+    ]);
+    assert.match(lines[0], /^Launching Scient \(Dev\)/u);
+  });
+
+  it("unloads only its exact registered service", () => {
+    const { paths } = fixture();
+    NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
+    NodeFS.writeFileSync(paths.servicePlistPath, "fixture");
+    const calls = [];
+
+    assert.isTrue(
+      unloadLocalDevAppService(paths, {
+        spawnSync: (...args) => {
+          calls.push(args);
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      }),
+    );
+
+    assert.deepEqual(calls[1][1], [
+      "bootout",
+      `gui/${String(process.getuid())}/${paths.serviceLabel}`,
+    ]);
+    assert.isFalse(NodeFS.existsSync(paths.servicePlistPath));
+  });
+});
+
 describe("local dev app runner lifecycle", () => {
   it("does not acquire a second runner while the recorded runner matches", () => {
     const { paths } = fixture();
@@ -287,34 +380,85 @@ describe("local dev app runner lifecycle", () => {
     writeRunnerState(paths);
     const lines = [];
 
-    statusApp({ paths, matchesRunner: () => true, writeLine: (line) => lines.push(line) });
+    statusApp({
+      paths,
+      matchesRunner: () => true,
+      serviceIsLoaded: () => false,
+      resolveOwnedApp: () => ({ pid: 2222 }),
+      resolveOwnedBackend: () => ({ pid: 3333 }),
+      writeLine: (line) => lines.push(line),
+    });
 
     assert.deepEqual(lines, [
-      `${LOCAL_DEV_APP_NAME} is running for ${paths.root} (runner PID 1234).`,
+      `${LOCAL_DEV_APP_NAME} is running for ${paths.root} (runner PID 1234, app PID 2222, backend PID 3333).`,
     ]);
   });
 
-  it("signals only the validated runner PID", () => {
+  it("reports a runner without both owned processes as still starting", () => {
+    const { paths } = fixture();
+    writeRunnerState(paths);
+    const lines = [];
+
+    statusApp({
+      paths,
+      matchesRunner: () => true,
+      serviceIsLoaded: () => true,
+      resolveOwnedApp: () => ({ pid: 2222 }),
+      resolveOwnedBackend: () => null,
+      writeLine: (line) => lines.push(line),
+    });
+
+    assert.deepEqual(lines, [
+      `${LOCAL_DEV_APP_NAME} is starting for ${paths.root} (runner PID 1234, app PID 2222).`,
+    ]);
+  });
+
+  it("signals only the validated runner PID", async () => {
     const { paths } = fixture();
     writeRunnerState(paths);
     const signals = [];
 
-    stopApp({
+    await stopApp({
       paths,
       matchesRunner: () => true,
       killProcess: (...args) => signals.push(args),
+      waitUntilStopped: async () => true,
+      unloadService: () => false,
       writeLine: () => {},
     });
 
     assert.deepEqual(signals, [[1234, "SIGTERM"]]);
   });
 
-  it("treats a runner that exits before signaling as already stopped", () => {
+  it("stops the exact recorded app and backend with the runner", async () => {
+    const { paths } = fixture();
+    writeRunnerState(paths);
+    const signals = [];
+
+    await stopApp({
+      paths,
+      matchesRunner: () => true,
+      killProcess: (...args) => signals.push(args),
+      resolveOwnedApp: () => ({ pid: 2222, command: "/owned/Electron" }),
+      resolveOwnedBackend: () => ({ pid: 3333, command: "/owned/Electron server/bin.mjs" }),
+      waitUntilStopped: async () => true,
+      unloadService: () => false,
+      writeLine: () => {},
+    });
+
+    assert.deepEqual(signals, [
+      [2222, "SIGTERM"],
+      [3333, "SIGTERM"],
+      [1234, "SIGTERM"],
+    ]);
+  });
+
+  it("treats a runner that exits before signaling as already stopped", async () => {
     const { paths } = fixture();
     writeRunnerState(paths);
     const lines = [];
 
-    stopApp({
+    await stopApp({
       paths,
       matchesRunner: () => true,
       killProcess: () => {
@@ -322,6 +466,7 @@ describe("local dev app runner lifecycle", () => {
         error.code = "ESRCH";
         throw error;
       },
+      unloadService: () => false,
       writeLine: (line) => lines.push(line),
     });
 
