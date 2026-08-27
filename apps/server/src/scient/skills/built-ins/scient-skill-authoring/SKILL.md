@@ -1,6 +1,6 @@
 ---
 name: scient-skill-authoring
-description: Create or improve skills for Scient. Use when the user asks to design, write, review, simplify, or test a skill, or decide whether recurring work should become one. Do not use merely to activate an existing skill or build a tool or integration.
+description: Create or improve skills for Scient. Use when the user asks to design, write, review, simplify, or test a skill, or decide whether recurring work should become one.
 ---
 
 # Scient Skill Authoring
