@@ -5,6 +5,11 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isMinLength(1));
+const SkillName = Schema.Trimmed.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+);
 const Digest = Schema.String.pipe(Schema.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/u)));
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -14,7 +19,12 @@ const dependencies = [
 export class ScientSkillToolError extends Schema.TaggedErrorClass<ScientSkillToolError>()(
   "ScientSkillToolError",
   {
-    code: Schema.Literals(["capability-unavailable", "not-found", "resource-unavailable"]),
+    code: Schema.Literals([
+      "ambiguous-name",
+      "capability-unavailable",
+      "not-found",
+      "resource-unavailable",
+    ]),
     message: NonEmptyString,
   },
 ) {}
@@ -55,8 +65,8 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
 
 export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
-    "Load one selected Scient skill by the exact releaseKey returned by scient_skills_list. Loading returns verified instructions and resource metadata; it does not execute anything or widen authority.",
-  parameters: Schema.Struct({ releaseKey: NonEmptyString }),
+    "Load one selected Scient skill by the exact Agent Skills name shown in the private turn index or returned by scient_skills_list. Scient resolves that name only within this turn's exact release scope. Loading returns verified instructions and resource metadata; it does not execute anything or widen authority.",
+  parameters: Schema.Struct({ name: SkillName }),
   success: Schema.Struct({
     skill: ScientSkillSummary,
     instructions: Schema.String.pipe(Schema.check(Schema.isMaxLength(256 * 1024))),
@@ -73,8 +83,8 @@ export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
 
 export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource", {
   description:
-    "Read one verified resource from a selected Scient skill. Relative traversal and files outside the immutable release are unavailable.",
-  parameters: Schema.Struct({ releaseKey: NonEmptyString, path: NonEmptyString }),
+    "Read one verified resource from a selected Scient skill by its exact Agent Skills name. Relative traversal and files outside the turn-scoped immutable release are unavailable.",
+  parameters: Schema.Struct({ name: SkillName, path: NonEmptyString }),
   success: Schema.Struct({
     path: NonEmptyString,
     encoding: Schema.Literals(["base64", "utf8"]),

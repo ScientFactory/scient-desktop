@@ -37,8 +37,9 @@ async function fixture(prefix: string): Promise<string> {
 async function writeRelease(
   parent: string,
   activationScope: SkillActivationScope,
+  options: { readonly id?: string; readonly name?: string } = {},
 ): Promise<string> {
-  const name = `${activationScope}-review`;
+  const name = options.name ?? `${activationScope}-review`;
   const root = NodePath.join(parent, name);
   await NodeFSP.mkdir(NodePath.join(root, "references"), { recursive: true });
   await NodeFSP.writeFile(
@@ -50,7 +51,7 @@ async function writeRelease(
     NodePath.join(root, "scient.skill.json"),
     `${JSON.stringify({
       apiVersion: "scient.skills/v1alpha1",
-      id: `scient.${name}`,
+      id: options.id ?? `scient.${name}`,
       version: "0.1.0",
       category: "Testing",
       categoryDescription: "Skills used by focused tests.",
@@ -211,6 +212,7 @@ describe("Scient skill session planning", () => {
       );
       expect(initial.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
         ["improve-workspace-readiness", "explicit"],
+        ["scient-skill-authoring", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -232,7 +234,48 @@ describe("Scient skill session planning", () => {
         { provider: ProviderDriverKind.make("codex") },
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
-      expect(disabled.skills.map((skill) => skill.name)).toEqual(["improve-workspace-readiness"]);
+      expect(disabled.skills.map((skill) => skill.name)).toEqual([
+        "improve-workspace-readiness",
+        "scient-skill-authoring",
+      ]);
+    }),
+  );
+
+  it.effect("withholds active releases whose Agent Skills names conflict", () =>
+    Effect.gen(function* () {
+      const firstParent = yield* Effect.promise(() => fixture("scient-skill-name-first-"));
+      const secondParent = yield* Effect.promise(() => fixture("scient-skill-name-second-"));
+      const firstRoot = yield* Effect.promise(() =>
+        writeRelease(firstParent, "user", {
+          id: "scient.shared-review-one",
+          name: "shared-review",
+        }),
+      );
+      const secondRoot = yield* Effect.promise(() =>
+        writeRelease(secondParent, "user", {
+          id: "scient.shared-review-two",
+          name: "shared-review",
+        }),
+      );
+      const catalog = yield* Effect.promise(() => loadSkillCatalog([firstRoot, secondRoot]));
+      const snapshot = {
+        userSkills: catalog.releases.map((release) => ({
+          release: toSkillReleaseRef(release),
+          active: true,
+          invocationPolicy: "automatic" as const,
+        })),
+        trustedProjects: [],
+      } satisfies ScientSkillPolicy.ScientSkillPolicySnapshot;
+
+      const plan = yield* resolvePlan(catalog, snapshot, {
+        provider: ProviderDriverKind.make("codex"),
+      });
+      expect(plan.delivery).toBe("none");
+      expect(plan.skills).toEqual([]);
+      expect(plan.releaseKeys).toEqual(new Set());
+      expect(plan.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "invocation-name-conflict" }),
+      );
     }),
   );
 

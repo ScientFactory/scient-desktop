@@ -930,15 +930,25 @@ function scientSkillUsageLabel(itemValue: unknown): string | null {
   if (asTrimmedString(item?.tool) !== "scient_skill_load") return null;
   const args = asRecord(item?.arguments);
   const releaseKey = asTrimmedString(args?.releaseKey);
-  if (!releaseKey) return null;
-  const id = releaseKey.split("@")[0]?.split(".").at(-1);
-  if (!id) return null;
-  const displayName = id
+  const name = asTrimmedString(args?.name) ?? releaseKey?.split("@")[0]?.split(".").at(-1);
+  if (!name) return null;
+  const displayName = name
     .split("-")
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
-  return displayName ? `Used ${displayName}` : null;
+  if (!displayName) return null;
+  switch (asTrimmedString(item?.status)) {
+    case "completed":
+      return `Used ${displayName}`;
+    case "failed":
+      return `Couldn't load ${displayName}`;
+    case "declined":
+    case "stopped":
+      return `Didn't load ${displayName}`;
+    default:
+      return `Loading ${displayName}`;
+  }
 }
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {

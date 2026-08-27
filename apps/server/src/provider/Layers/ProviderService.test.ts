@@ -2323,9 +2323,11 @@ describe("agent browser access", () => {
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
-      assert.include(sent[0] ?? "", automatic.releaseKey);
-      assert.notInclude(sent[0] ?? "", explicit.releaseKey);
-      assert.include(sent[1] ?? "", explicit.releaseKey);
+      assert.include(sent[0] ?? "", `{"name":"${automatic.name}"}`);
+      assert.notInclude(sent[0] ?? "", `{"name":"${explicit.name}"}`);
+      assert.include(sent[1] ?? "", `{"name":"${explicit.name}"}`);
+      assert.notInclude(sent[0] ?? "", automatic.releaseKey);
+      assert.notInclude(sent[1] ?? "", explicit.releaseKey);
       assert.equal(sent[2], "What changed?");
     }).pipe(Effect.provide(NodeServices.layer)),
   );

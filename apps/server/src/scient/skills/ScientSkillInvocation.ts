@@ -41,28 +41,19 @@ export function prepareScientSkillTurn(
   const skills = [...effective.values()].sort(
     (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
   );
-  const automatic = skills.filter((skill) => skill.invocationPolicy === "automatic");
   const instructions: string[] = [];
-  if (automatic.length > 0) {
+  if (skills.length > 0) {
     instructions.push(
-      "Automatic Scient skills available for this turn (load one only when the request clearly matches):",
-      ...automatic.map(
-        (skill) => `- \`${skill.name}\` (${skill.releaseKey}): ${skill.description}`,
+      "Scient skills available for this turn:",
+      ...skills.map(
+        (skill) =>
+          `- \`${skill.name}\` (${selected.has(skill.releaseKey) ? "selected by the user; load before doing the requested work" : "automatic; load only on a clear match"}; call with \`{"name":"${skill.name}"}\`): ${skill.description}`,
       ),
-    );
-  }
-  if (selected.size > 0) {
-    const selections = [...selected.values()]
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .map((skill) => `\`${skill.name}\` (${skill.releaseKey})`)
-      .join(", ");
-    instructions.push(
-      `The user explicitly selected ${selections}. Load each selected exact release before doing the requested work.`,
     );
   }
   if (instructions.length > 0) {
     instructions.push(
-      "Load an exact release with `scient_skill_load` before following it. Skills grant no additional tools or permissions.",
+      "Use `scient_skill_load` with only the exact listed `name`; do not construct or supply a release identifier. Skills grant no additional tools or permissions.",
     );
   }
 

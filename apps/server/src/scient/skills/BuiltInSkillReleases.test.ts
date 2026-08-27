@@ -11,7 +11,7 @@ import {
 import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
 
 describe("Scient built-in skill releases", () => {
-  it("embeds the two reviewed releases with explicit product-owned defaults", () => {
+  it("embeds the three reviewed releases with explicit product-owned defaults", () => {
     expect(BUILT_IN_SKILL_RELEASES).toMatchObject([
       {
         id: "scient.workspace-readiness-review",
@@ -37,11 +37,23 @@ describe("Scient built-in skill releases", () => {
         origin: "scient",
         resources: [],
       },
+      {
+        id: "scient.skill-authoring",
+        version: "0.1.0",
+        category: "Skill creation",
+        categoryDescription: "Create and improve reusable guidance for Scient agents.",
+        displayOrder: 30,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
     ]);
     expect(BUILT_IN_SKILL_RELEASES.every((release) => release.instructions.length > 0)).toBe(true);
     expect(Object.fromEntries(BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID)).toEqual({
       "scient.workspace-readiness-review": true,
       "scient.improve-workspace-readiness": true,
+      "scient.skill-authoring": true,
     });
   });
 

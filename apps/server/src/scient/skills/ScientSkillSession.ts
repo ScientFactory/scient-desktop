@@ -34,6 +34,7 @@ export const scientSkillDeliveryForProvider = (
 export interface ScientSkillSessionDiagnostic {
   readonly code:
     | "activation-scope-mismatch"
+    | "invocation-name-conflict"
     | "project-lock-invalid"
     | "project-lock-untrusted"
     | "provider-unsupported"
@@ -180,7 +181,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         diagnostics,
       };
     }
-    const skills = [...releases.entries()]
+    const candidates = [...releases.entries()]
       .map(([releaseKey, activation]) => ({
         releaseKey,
         id: activation.release.id,
@@ -191,10 +192,34 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       .sort(
         (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
       );
+    const nameCounts = new Map<string, number>();
+    for (const skill of candidates) {
+      nameCounts.set(skill.name, (nameCounts.get(skill.name) ?? 0) + 1);
+    }
+    const conflictingNames = [...nameCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name)
+      .sort();
+    for (const name of conflictingNames) {
+      diagnostics.push({
+        code: "invocation-name-conflict",
+        message: `Skill name '${name}' identifies more than one active release and was withheld.`,
+      });
+    }
+    const skills = candidates.filter((skill) => nameCounts.get(skill.name) === 1);
+    if (skills.length === 0) {
+      return {
+        delivery: "none" as const,
+        ...(projectRoot ? { projectRoot } : {}),
+        releaseKeys: new Set<string>(),
+        skills: [],
+        diagnostics,
+      };
+    }
     return {
       delivery: "mcp" as const,
       ...(projectRoot ? { projectRoot } : {}),
-      releaseKeys: new Set(releases.keys()),
+      releaseKeys: new Set(skills.map((skill) => skill.releaseKey)),
       skills,
       diagnostics,
     };

@@ -38,26 +38,33 @@ function summary(release: SkillRelease, invocationPolicy: "automatic" | "explici
 }
 
 const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelease")(function* (
-  requestedReleaseKey: string,
+  requestedName: string,
 ) {
   const skillScope = yield* requireSkillScope();
-  if (!skillScope.releaseKeys.has(requestedReleaseKey)) {
+  const matches = skillScope.skills.filter((skill) => skill.name === requestedName);
+  if (matches.length === 0) {
     return yield* toolError(
       "not-found",
-      "That exact skill release is not available in this Scient turn.",
+      "No Scient skill with that name is available in this turn. Call scient_skills_list once and retry with an exact returned name.",
     );
   }
+  if (matches.length > 1) {
+    return yield* toolError(
+      "ambiguous-name",
+      "That skill name is ambiguous in this Scient turn and cannot be loaded safely.",
+    );
+  }
+  const descriptor = matches[0]!;
+  if (!skillScope.releaseKeys.has(descriptor.releaseKey)) {
+    return yield* toolError("not-found", "That skill is not indexed in this Scient turn.");
+  }
   const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
-  const release = registry.resolveReleaseKey(requestedReleaseKey);
+  const release = registry.resolveReleaseKey(descriptor.releaseKey);
   if (!release) {
     return yield* toolError(
       "not-found",
       "That exact skill release is no longer available in this Scient build.",
     );
-  }
-  const descriptor = skillScope.skills.find((skill) => skill.releaseKey === requestedReleaseKey);
-  if (!descriptor) {
-    return yield* toolError("not-found", "That skill is not indexed in this Scient turn.");
   }
   return { release, invocationPolicy: descriptor.invocationPolicy };
 });
@@ -92,8 +99,8 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
 });
 
 export const loadScientSkillForInvocation = Effect.fn("ScientSkillsToolkit.load")(
-  function* (input: { readonly releaseKey: string }) {
-    const { release, invocationPolicy } = yield* resolveAllowedRelease(input.releaseKey);
+  function* (input: { readonly name: string }) {
+    const { release, invocationPolicy } = yield* resolveAllowedRelease(input.name);
     return {
       skill: summary(release, invocationPolicy),
       instructions: release.instructions,
@@ -114,8 +121,8 @@ function encodeResource(bytes: Uint8Array): {
 }
 
 export const readScientSkillResourceForInvocation = Effect.fn("ScientSkillsToolkit.readResource")(
-  function* (input: { readonly releaseKey: string; readonly path: string }) {
-    const { release } = yield* resolveAllowedRelease(input.releaseKey);
+  function* (input: { readonly name: string; readonly path: string }) {
+    const { release } = yield* resolveAllowedRelease(input.name);
     const bytes = readSkillResource(release, input.path);
     if (!bytes) {
       return yield* toolError(
