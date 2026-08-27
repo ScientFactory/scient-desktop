@@ -24,7 +24,13 @@ the `/skill:Skill Name` label.
 Scient-managed skills are available from **Settings → Skills** on supported providers. **Agent may
 use** lets the agent select a skill when the request clearly matches it. **Only with $name** keeps the
 skill available only when you add its exact `$name` token. Skills provide instructions; they do not
-add tools or permissions. Changes apply to new or restarted agent sessions.
+add tools or permissions. Changes apply to the next message.
+
+Project skills live at `.scient/skills/<name>/SKILL.md` inside an initialized Scient project. A
+new valid project skill is available automatically on the next message and only in that project.
+Use **Settings → Skills → Project skills** or the project's **Skills** settings to choose **Agent
+access**, **$name only**, or **Deactivated**. Agents can create these ordinary project files when
+asked; Scient never asks them to edit the private preference store.
 
 On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the

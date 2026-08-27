@@ -9,6 +9,7 @@ export type SkillInvocationPolicy = "automatic" | "explicit";
 
 export type SkillOrigin =
   | { readonly kind: "scient" }
+  | { readonly kind: "project"; readonly projectId: string }
   | {
       readonly kind: "addon";
       readonly addonId: string;
@@ -66,10 +67,19 @@ export interface SkillRelease extends SkillReleaseSummary {
   readonly metadata: AgentSkillMetadata;
   readonly instructions: string;
   readonly resources: ReadonlyArray<SkillResourceSummary>;
+  /** Total bytes captured in this immutable in-memory snapshot. */
+  readonly snapshotBytes: number;
 }
 
 export function skillOriginKey(origin: SkillOrigin): string {
-  return origin.kind === "scient" ? "scient" : `addon:${origin.addonId}@${origin.addonVersion}`;
+  switch (origin.kind) {
+    case "scient":
+      return "scient";
+    case "project":
+      return `project:${origin.projectId}`;
+    case "addon":
+      return `addon:${origin.addonId}@${origin.addonVersion}`;
+  }
 }
 
 export function skillReleaseKey(release: SkillReleaseRef): string {

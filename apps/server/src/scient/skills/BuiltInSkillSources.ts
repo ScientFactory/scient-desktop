@@ -50,7 +50,11 @@ Do not impose a universal structure, restate generic model behavior, or encode s
 
 ## Choose Its Home and Invocation
 
-A personal skill follows the user across projects. A project skill captures guidance or resources that belong to one workspace. Infer the intended home when the context is clear; otherwise discuss it with the user when the choice would materially affect the skill.
+A personal skill follows the user across projects. A project skill captures guidance or resources that belong to one initialized Scient workspace. Infer the intended home when the context is clear; otherwise discuss it with the user when the choice would materially affect the skill.
+
+Create a project skill at \`.scient/skills/<name>/SKILL.md\`, with the frontmatter name matching the directory. Do not add \`scient.skill.json\`; that filename is reserved for reviewed packaged releases. A newly valid project skill is available automatically from the next message. The user can later choose Agent access, \`$name\` only, or Deactivated in Settings. Do not edit Scient's app-private preference store.
+
+Scient does not yet expose agent-driven personal-skill installation, so present a personal candidate without claiming it was installed.
 
 After checking relevant existing skills when available, give the skill a short, distinct name; this is also its explicit \`$name\` invocation. Choose invocation separately from its home. Allow automatic selection when the description can reliably identify work that normally benefits from the skill. Use explicit invocation when applying it depends on intent the request may not reveal or the user should deliberately choose that mode.
 

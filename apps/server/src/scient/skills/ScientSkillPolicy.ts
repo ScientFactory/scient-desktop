@@ -35,6 +35,15 @@ const UserSkillActivationSchema = Schema.Struct({
   active: Schema.Boolean,
   invocationPolicy: Schema.Literals(["automatic", "explicit"]),
 });
+const ProjectSkillPreferenceSchema = Schema.Struct({
+  projectId: Schema.Trimmed.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  name: Schema.Trimmed.check(
+    Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+    Schema.isMaxLength(64),
+  ),
+  active: Schema.Boolean,
+  invocationPolicy: Schema.Literals(["automatic", "explicit"]),
+});
 const LegacyUserSkillActivationSchema = Schema.Struct({
   release: SkillReleaseRefSchema,
   invocationPolicy: Schema.Literals(["automatic", "explicit"]),
@@ -62,15 +71,26 @@ const PersistedPolicyV3Schema = Schema.Struct({
     Schema.check(Schema.isMaxLength(500)),
   ),
 });
+const PersistedPolicyV4Schema = Schema.Struct({
+  formatVersion: Schema.Literal(4),
+  userSkills: Schema.Array(UserSkillActivationSchema).pipe(Schema.check(Schema.isMaxLength(500))),
+  projectSkills: Schema.Array(ProjectSkillPreferenceSchema).pipe(
+    Schema.check(Schema.isMaxLength(5_000)),
+  ),
+  trustedProjects: Schema.Array(ProjectTrustReceiptSchema).pipe(
+    Schema.check(Schema.isMaxLength(500)),
+  ),
+});
 const PersistedPolicySchema = Schema.Union([
   PersistedPolicyV1Schema,
   PersistedPolicyV2Schema,
   PersistedPolicyV3Schema,
+  PersistedPolicyV4Schema,
 ]);
 const PersistedPolicyJson = Schema.fromJsonString(PersistedPolicySchema);
 const decodePersistedPolicy = Schema.decodeUnknownExit(PersistedPolicyJson);
-const PersistedPolicyV3Json = Schema.fromJsonString(PersistedPolicyV3Schema);
-const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyV3Json);
+const PersistedPolicyV4Json = Schema.fromJsonString(PersistedPolicyV4Schema);
+const encodePersistedPolicy = Schema.encodeEffect(PersistedPolicyV4Json);
 
 export interface ProjectSkillTrustReceipt {
   readonly projectId: string;
@@ -85,8 +105,17 @@ export interface UserSkillActivation {
   readonly invocationPolicy: SkillInvocationPolicy;
 }
 
+export interface ProjectSkillPreference {
+  readonly projectId: string;
+  readonly name: string;
+  /** Project skills default active; every explicit choice remains persisted. */
+  readonly active: boolean;
+  readonly invocationPolicy: SkillInvocationPolicy;
+}
+
 export interface ScientSkillPolicySnapshot {
   readonly userSkills: ReadonlyArray<UserSkillActivation>;
+  readonly projectSkills: ReadonlyArray<ProjectSkillPreference>;
   readonly trustedProjects: ReadonlyArray<ProjectSkillTrustReceipt>;
 }
 
@@ -106,6 +135,12 @@ export interface ScientSkillPolicyShape {
     active: boolean,
     invocationPolicy: SkillInvocationPolicy,
   ) => Effect.Effect<void, ScientSkillPolicyError>;
+  readonly setProjectSkillPreference: (
+    projectId: string,
+    name: string,
+    active: boolean,
+    invocationPolicy: SkillInvocationPolicy,
+  ) => Effect.Effect<void, ScientSkillPolicyError>;
   readonly trustProjectLock: (
     projectRoot: string,
   ) => Effect.Effect<ProjectSkillTrustReceipt, ScientSkillPolicyError>;
@@ -114,6 +149,7 @@ export interface ScientSkillPolicyShape {
 
 const EMPTY_POLICY: ScientSkillPolicySnapshot = Object.freeze({
   userSkills: Object.freeze([]),
+  projectSkills: Object.freeze([]),
   trustedProjects: Object.freeze([]),
 });
 
@@ -142,6 +178,10 @@ function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPoli
   }
   const trustedProjects = new Map<string, ProjectSkillTrustReceipt>();
   for (const trust of snapshot.trustedProjects) trustedProjects.set(trust.rootPath, trust);
+  const projectSkills = new Map<string, ProjectSkillPreference>();
+  for (const preference of snapshot.projectSkills) {
+    projectSkills.set(`${preference.projectId}:${preference.name}`, preference);
+  }
   return Object.freeze({
     userSkills: Object.freeze(
       [...userSkills.values()]
@@ -152,6 +192,11 @@ function normalizeSnapshot(snapshot: ScientSkillPolicySnapshot): ScientSkillPoli
             release: Object.freeze({ ...activation.release }),
           }),
         ),
+    ),
+    projectSkills: Object.freeze(
+      [...projectSkills.values()]
+        .sort((a, b) => a.projectId.localeCompare(b.projectId) || a.name.localeCompare(b.name))
+        .map((preference) => Object.freeze({ ...preference })),
     ),
     trustedProjects: Object.freeze(
       [...trustedProjects.values()]
@@ -165,6 +210,7 @@ function makeSnapshotService(snapshot: ScientSkillPolicySnapshot): ScientSkillPo
   return {
     snapshot: Effect.succeed(normalizeSnapshot(snapshot)),
     setUserSkillActivation: () => Effect.void,
+    setProjectSkillPreference: () => Effect.void,
     trustProjectLock: (projectRoot) =>
       Effect.fail(
         new ScientSkillPolicyError({
@@ -211,6 +257,7 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
             : value.formatVersion === 2
               ? value.userSkills.map((activation) => ({ ...activation, active: true }))
               : value.userSkills,
+        projectSkills: value.formatVersion === 4 ? value.projectSkills : [],
         trustedProjects: value.trustedProjects,
       });
     },
@@ -234,8 +281,9 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
   ) {
     const normalized = normalizeSnapshot(next);
     const encoded = yield* encodePersistedPolicy({
-      formatVersion: 3,
+      formatVersion: 4,
       userSkills: [...normalized.userSkills],
+      projectSkills: [...normalized.projectSkills],
       trustedProjects: [...normalized.trustedProjects],
     }).pipe(
       Effect.mapError(
@@ -296,6 +344,16 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
             (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
           ),
           { release, active, invocationPolicy },
+        ],
+      })),
+    setProjectSkillPreference: (projectId, name, active, invocationPolicy) =>
+      update((current) => ({
+        ...current,
+        projectSkills: [
+          ...current.projectSkills.filter(
+            (entry) => entry.projectId !== projectId || entry.name !== name,
+          ),
+          { projectId, name, active, invocationPolicy },
         ],
       })),
     trustProjectLock: Effect.fn("ScientSkillPolicy.trustProjectLock")(function* (projectRoot) {

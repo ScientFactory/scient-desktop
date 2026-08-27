@@ -5,6 +5,7 @@ import { mergeEffectiveProviderSkills } from "./effectiveSkills";
 
 const inventory: ScientSkillInventory = {
   supportedProviders: [ProviderDriverKind.make("codex")],
+  diagnostics: [],
   skills: [
     {
       releaseKey: `scient.review@0.1.0#sha256:${"a".repeat(64)}`,
@@ -15,6 +16,7 @@ const inventory: ScientSkillInventory = {
       category: "Workspace readiness",
       categoryDescription: "Review and improve workspace readiness.",
       origin: "scient",
+      scope: "user",
       supportedScopes: ["user", "project"],
       defaultInvocationPolicy: "automatic",
       defaultActive: true,

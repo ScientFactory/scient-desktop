@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   PreviewAnnotationPayload,
+  ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -572,6 +573,7 @@ export interface ChatComposerProps {
 
   // Thread context
   activeThreadId: ThreadId | null;
+  activeProjectId: ProjectId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
   isServerThread: boolean;
@@ -698,6 +700,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
     draftId,
     activeThreadId,
+    activeProjectId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     isServerThread: _isServerThread,
@@ -983,7 +986,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({ environmentId, input: {} }),
+    scientSkillsInventory({
+      environmentId,
+      input: activeThreadId
+        ? { threadId: activeThreadId, ...(activeProjectId ? { projectId: activeProjectId } : {}) }
+        : activeProjectId
+          ? { projectId: activeProjectId }
+          : {},
+    }),
   ).data;
   const effectiveSelectedProviderSkills = useMemo(
     () =>

@@ -297,7 +297,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(supportsScientSkills
           ? {
               skillScope: {
-                releaseKeys: new Set<string>(),
+                releases: new Map(),
                 skills: [],
               },
             }
@@ -836,6 +836,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const skillTurn = prepareScientSkillTurn(
         input.input,
         skillPlan.delivery === "mcp" ? skillPlan.skills : [],
+        skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
       );
       if (ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp") {
         // The bearer token remains stable for the provider process, but its

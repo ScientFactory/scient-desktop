@@ -1,4 +1,5 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -80,6 +81,8 @@ import {
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { useEnvironmentQuery } from "../../state/query";
+import { scientSkillsInventory } from "../../state/scientSkills";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -447,11 +450,32 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
+  const selectedProviderStatus = useMemo(
+    () =>
+      props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === selectedInstanceId,
+      ) ?? null,
+    [props.serverConfig, selectedInstanceId],
+  );
+  const scientSkills = useEnvironmentQuery(
+    scientSkillsInventory({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.selectedThread.id,
+        ...(props.selectedThread.projectId ? { projectId: props.selectedThread.projectId } : {}),
+      },
+    }),
+  ).data;
   const selectedProviderSkills = useMemo(
     () =>
-      props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
-    [props.serverConfig, selectedInstanceId],
+      selectedProviderStatus
+        ? mergeEffectiveProviderSkills({
+            provider: selectedProviderStatus.driver,
+            providerSkills: selectedProviderStatus.skills,
+            inventory: scientSkills,
+          })
+        : [],
+    [scientSkills, selectedProviderStatus],
   );
 
   useLayoutEffect(() => {

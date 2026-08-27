@@ -81,7 +81,9 @@ function parseOrigin(value: unknown): SkillOrigin {
   const kind = requiredString(record, "kind", 32);
   if (kind === "scient") return { kind: "scient" };
   if (kind !== "addon") {
-    throw new SkillReleaseValidationError("Skill origin must be 'scient' or 'addon'.");
+    throw new SkillReleaseValidationError(
+      "Published skill origin must be 'scient' or 'addon'. Project origin is derived by Scient.",
+    );
   }
   const addonId = requiredString(record, "addonId");
   const addonVersion = requiredString(record, "addonVersion", 64);
@@ -271,6 +273,7 @@ async function collectReleaseFiles(rootPath: string): Promise<ReadonlyArray<Rele
 function releaseFromFiles(
   directoryName: string,
   releaseFiles: ReadonlyArray<ReleaseFile>,
+  derivedManifest?: SkillReleaseManifest,
 ): SkillRelease {
   const files = [...releaseFiles].sort((left, right) =>
     compareStrings(left.relativePath, right.relativePath),
@@ -279,12 +282,19 @@ function releaseFromFiles(
   const byPath = new Map(files.map((file) => [file.relativePath, file.bytes] as const));
   const skillDocumentBytes = byPath.get(SKILL_DOCUMENT_FILE);
   const manifestBytes = byPath.get(SCIENT_SKILL_MANIFEST_FILE);
-  if (!skillDocumentBytes || !manifestBytes) {
+  if (!skillDocumentBytes || (!manifestBytes && !derivedManifest)) {
     throw new SkillReleaseValidationError(
       `Skill release requires ${SKILL_DOCUMENT_FILE} and ${SCIENT_SKILL_MANIFEST_FILE}.`,
     );
   }
-  const manifest = parseSkillReleaseManifest(Buffer.from(manifestBytes).toString("utf8"));
+  if (derivedManifest && manifestBytes) {
+    throw new SkillReleaseValidationError(
+      `Project skills must not contain reserved file ${SCIENT_SKILL_MANIFEST_FILE}.`,
+    );
+  }
+  const manifest =
+    derivedManifest ??
+    parseSkillReleaseManifest(Buffer.from(manifestBytes as Uint8Array).toString("utf8"));
   const parsed = parseSkillDocument(
     Buffer.from(skillDocumentBytes).toString("utf8"),
     directoryName,
@@ -320,6 +330,7 @@ function releaseFromFiles(
     metadata: frozenMetadata,
     instructions: parsed.instructions,
     resources,
+    snapshotBytes: files.reduce((total, file) => total + file.bytes.byteLength, 0),
     id: manifest.id,
     version: manifest.version,
     digest: digestReleaseFiles(files),
@@ -350,6 +361,35 @@ export async function loadSkillRelease(root: string): Promise<SkillRelease> {
   }
   const files = await collectReleaseFiles(rootPath);
   return releaseFromFiles(NodePath.basename(rootPath), files);
+}
+
+/**
+ * Snapshot one mutable project-owned skill without accepting product release metadata from it.
+ * Identity and policy are derived from the initialized Scient project and directory name.
+ */
+export async function loadProjectSkillRelease(
+  root: string,
+  projectId: string,
+): Promise<SkillRelease> {
+  const requestedRoot = NodePath.resolve(root);
+  const requestedRootStat = await NodeFSP.lstat(requestedRoot);
+  if (!requestedRootStat.isDirectory() || requestedRootStat.isSymbolicLink()) {
+    throw new SkillReleaseValidationError("Project skill root must be a real directory.");
+  }
+  const rootPath = await NodeFSP.realpath(requestedRoot);
+  const directoryName = NodePath.basename(rootPath);
+  const files = await collectReleaseFiles(rootPath);
+  return releaseFromFiles(directoryName, files, {
+    apiVersion: "scient.skills/v1alpha1",
+    id: `project.${projectId}.${directoryName}`,
+    version: "0.0.0",
+    category: "Project skills",
+    categoryDescription: "Skills owned by this Scient project.",
+    displayOrder: 0,
+    supportedScopes: ["project"],
+    defaultInvocationPolicy: "automatic",
+    origin: { kind: "project", projectId },
+  });
 }
 
 /** Build a verified immutable release from files embedded in a server bundle. */

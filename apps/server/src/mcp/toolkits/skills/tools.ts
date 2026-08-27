@@ -2,7 +2,6 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isMinLength(1));
 const SkillName = Schema.Trimmed.check(
@@ -11,10 +10,7 @@ const SkillName = Schema.Trimmed.check(
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
 );
 const Digest = Schema.String.pipe(Schema.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/u)));
-const dependencies = [
-  McpInvocationContext.McpInvocationContext,
-  ScientSkillRegistry.ScientSkillRegistry,
-];
+const dependencies = [McpInvocationContext.McpInvocationContext];
 
 export class ScientSkillToolError extends Schema.TaggedErrorClass<ScientSkillToolError>()(
   "ScientSkillToolError",
@@ -37,6 +33,7 @@ export const ScientSkillSummary = Schema.Struct({
   origin: NonEmptyString,
   name: NonEmptyString,
   description: NonEmptyString,
+  activationScope: Schema.Literals(["project", "user"]),
   supportedScopes: Schema.Array(Schema.Literals(["project", "user"])),
   invocationPolicy: Schema.Literals(["automatic", "explicit"]),
 });

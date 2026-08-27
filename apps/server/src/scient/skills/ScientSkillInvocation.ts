@@ -1,4 +1,5 @@
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import type { SkillRelease } from "@scientfactory/scient-skills";
 
 import type {
   McpScientSkillDescriptor,
@@ -19,8 +20,9 @@ export interface PreparedScientSkillTurn {
 export function prepareScientSkillTurn(
   input: string | undefined,
   activeSkills: ReadonlyArray<McpScientSkillDescriptor> | undefined,
+  activeReleases: ReadonlyMap<string, SkillRelease> | undefined,
 ): PreparedScientSkillTurn {
-  const available = activeSkills ?? [];
+  const available = (activeSkills ?? []).filter((skill) => activeReleases?.has(skill.releaseKey));
   const byName = new Map(available.map((skill) => [skill.name, skill] as const));
   const selected = new Map<string, McpScientSkillDescriptor>();
   if (input) {
@@ -64,7 +66,9 @@ export function prepareScientSkillTurn(
   return {
     input: runtimeInstruction ? [input, runtimeInstruction].filter(Boolean).join("\n\n") : input,
     skillScope: {
-      releaseKeys: new Set(skills.map((skill) => skill.releaseKey)),
+      releases: new Map(
+        skills.map((skill) => [skill.releaseKey, activeReleases!.get(skill.releaseKey)!] as const),
+      ),
       skills,
     },
   };

@@ -43,6 +43,10 @@ exists without a pending transaction. The transaction includes hashes of files
 that setup intended to create. Recovery continues only when those files are
 absent or still exactly match the recorded contents.
 
+Initialization and interrupted recovery never create, rewrite, activate, or
+remove `.scient/skills`. Existing project-owned skill files are outside the
+initializer's known-file transaction and are preserved byte for byte.
+
 The durable identity retains the compatible format already written by the
 previous Scient app. Project initialization never writes or trusts a skills
 lock. The separate skills core recognizes only its exact current lock format,

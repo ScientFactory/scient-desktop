@@ -1,4 +1,17 @@
-# Customize a project icon
+# Project settings
+
+## Manage project skills
+
+Open **Settings → Projects**, select the project, then open **Skills**. Valid skills from the
+selected checkout's `.scient/skills` directory appear there. Choose **Agent access** to let the
+agent select a matching skill, **$name only** to require explicit selection in the composer, or
+**Deactivated** to hide it from future turns. These choices apply to the same Scient project across
+its worktrees; each worktree still uses the skill files in its own checkout.
+
+Project skills are project-owned instructions, not installed add-ons. Scient validates and
+snapshots them but does not rewrite them or grant them extra tools or permissions.
+
+## Customize a project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
 paths, and icon links in project HTML files.

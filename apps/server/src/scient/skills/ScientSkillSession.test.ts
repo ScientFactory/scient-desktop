@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { initializeScientProject } from "@scientfactory/project-init";
+import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import {
   loadSkillCatalog,
   skillReleaseKey,
@@ -70,6 +70,16 @@ async function writeRelease(
   return root;
 }
 
+async function writeOwnedProjectSkill(projectRoot: string, name: string): Promise<void> {
+  const root = NodePath.join(projectRoot, ".scient", "skills", name);
+  await NodeFSP.mkdir(root, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(root, "SKILL.md"),
+    `---\nname: ${name}\ndescription: Applies this project's reviewed method.\n---\n\n# Project method\n\nFollow the project evidence.\n`,
+    "utf8",
+  );
+}
+
 const resolvePlan = (
   catalog: SkillCatalog,
   snapshot: ScientSkillPolicy.ScientSkillPolicySnapshot,
@@ -122,7 +132,7 @@ describe("Scient skill session planning", () => {
 
       const untrusted = yield* resolvePlan(
         catalog,
-        { userSkills: [], trustedProjects: [] },
+        { userSkills: [], projectSkills: [], trustedProjects: [] },
         {
           provider: ProviderDriverKind.make("codex"),
           projectRoot,
@@ -133,6 +143,7 @@ describe("Scient skill session planning", () => {
 
       const trustedSnapshot: ScientSkillPolicy.ScientSkillPolicySnapshot = {
         userSkills: [],
+        projectSkills: [],
         trustedProjects: [
           {
             projectId: lock.projectId,
@@ -146,7 +157,7 @@ describe("Scient skill session planning", () => {
         projectRoot,
       });
       expect(trusted.delivery).toBe("mcp");
-      expect(trusted.releaseKeys).toEqual(new Set([skillReleaseKey(release)]));
+      expect(trusted.releases).toEqual(new Map([[skillReleaseKey(release), release]]));
 
       yield* Effect.promise(() => writeProjectSkillLock(projectRoot, []));
       const changed = yield* resolvePlan(catalog, trustedSnapshot, {
@@ -174,6 +185,7 @@ describe("Scient skill session planning", () => {
               invocationPolicy: "automatic",
             },
           ],
+          projectSkills: [],
           trustedProjects: [],
         } satisfies ScientSkillPolicy.ScientSkillPolicySnapshot;
 
@@ -182,7 +194,7 @@ describe("Scient skill session planning", () => {
         });
         expect(codex.delivery).toBe("mcp");
         expect(codex.projectRoot).toBeUndefined();
-        expect(codex.releaseKeys).toEqual(new Set([skillReleaseKey(release)]));
+        expect(codex.releases).toEqual(new Map([[skillReleaseKey(release), release]]));
         expect(codex.skills).toEqual([
           expect.objectContaining({
             releaseKey: skillReleaseKey(release),
@@ -194,7 +206,7 @@ describe("Scient skill session planning", () => {
           provider: ProviderDriverKind.make("antigravity"),
         });
         expect(antigravity.delivery).toBe("unsupported");
-        expect(antigravity.releaseKeys).toEqual(new Set());
+        expect(antigravity.releases).toEqual(new Map());
         expect(antigravity.diagnostics.map((entry) => entry.code)).toContain(
           "provider-unsupported",
         );
@@ -206,7 +218,7 @@ describe("Scient skill session planning", () => {
       const catalog: SkillCatalog = { releases: BUILT_IN_SKILL_RELEASES, diagnostics: [] };
       const initial = yield* resolvePlan(
         catalog,
-        { userSkills: [], trustedProjects: [] },
+        { userSkills: [], projectSkills: [], trustedProjects: [] },
         { provider: ProviderDriverKind.make("codex") },
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
@@ -229,6 +241,7 @@ describe("Scient skill session planning", () => {
               invocationPolicy: "automatic",
             },
           ],
+          projectSkills: [],
           trustedProjects: [],
         },
         { provider: ProviderDriverKind.make("codex") },
@@ -264,6 +277,7 @@ describe("Scient skill session planning", () => {
           active: true,
           invocationPolicy: "automatic" as const,
         })),
+        projectSkills: [],
         trustedProjects: [],
       } satisfies ScientSkillPolicy.ScientSkillPolicySnapshot;
 
@@ -272,7 +286,7 @@ describe("Scient skill session planning", () => {
       });
       expect(plan.delivery).toBe("none");
       expect(plan.skills).toEqual([]);
-      expect(plan.releaseKeys).toEqual(new Set());
+      expect(plan.releases).toEqual(new Map());
       expect(plan.diagnostics).toContainEqual(
         expect.objectContaining({ code: "invocation-name-conflict" }),
       );
@@ -294,11 +308,119 @@ describe("Scient skill session planning", () => {
 
       const plan = yield* resolvePlan(
         { releases: [], diagnostics: [] },
-        { userSkills: [], trustedProjects: [] },
+        { userSkills: [], projectSkills: [], trustedProjects: [] },
         { provider: ProviderDriverKind.make("codex"), projectRoot },
       );
       expect(plan.delivery).toBe("none");
-      expect(plan.releaseKeys).toEqual(new Set());
+      expect(plan.releases).toEqual(new Map());
+      expect(plan.diagnostics).toEqual([]);
+    }),
+  );
+
+  it.effect("discovers project-owned skills as active and automatic on the next turn", () =>
+    Effect.gen(function* () {
+      const projectRoot = yield* Effect.promise(() => fixture("scient-owned-project-skill-"));
+      yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
+      yield* Effect.promise(() => writeOwnedProjectSkill(projectRoot, "project-method"));
+      const identity = yield* Effect.promise(() => readScientProjectIdentity(projectRoot));
+
+      const plan = yield* resolvePlan(
+        { releases: [], diagnostics: [] },
+        { userSkills: [], projectSkills: [], trustedProjects: [] },
+        { provider: ProviderDriverKind.make("codex"), projectRoot },
+      );
+
+      expect(plan.delivery).toBe("mcp");
+      expect(plan.releases.size).toBe(1);
+      expect(plan.skills).toEqual([
+        expect.objectContaining({
+          name: "project-method",
+          origin: `project:${identity.projectId}`,
+          activationScope: "project",
+          invocationPolicy: "automatic",
+        }),
+      ]);
+    }),
+  );
+
+  it.effect("applies app-private project preferences by durable identity", () =>
+    Effect.gen(function* () {
+      const projectRoot = yield* Effect.promise(() => fixture("scient-project-preference-"));
+      yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
+      yield* Effect.promise(() => writeOwnedProjectSkill(projectRoot, "project-method"));
+      const identity = yield* Effect.promise(() => readScientProjectIdentity(projectRoot));
+      const baseSnapshot = {
+        userSkills: [],
+        trustedProjects: [],
+        projectSkills: [
+          {
+            projectId: identity.projectId,
+            name: "project-method",
+            active: true,
+            invocationPolicy: "explicit" as const,
+          },
+        ],
+      } satisfies ScientSkillPolicy.ScientSkillPolicySnapshot;
+
+      const explicit = yield* resolvePlan({ releases: [], diagnostics: [] }, baseSnapshot, {
+        provider: ProviderDriverKind.make("codex"),
+        projectRoot,
+      });
+      expect(explicit.skills).toEqual([
+        expect.objectContaining({ name: "project-method", invocationPolicy: "explicit" }),
+      ]);
+
+      const disabled = yield* resolvePlan(
+        { releases: [], diagnostics: [] },
+        {
+          ...baseSnapshot,
+          projectSkills: [{ ...baseSnapshot.projectSkills[0]!, active: false }],
+        },
+        { provider: ProviderDriverKind.make("codex"), projectRoot },
+      );
+      expect(disabled.delivery).toBe("none");
+      expect(disabled.skills).toEqual([]);
+
+      const worktreeRoot = yield* Effect.promise(() => fixture("scient-project-worktree-"));
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(worktreeRoot, ".scient"), { recursive: true });
+        await NodeFSP.copyFile(
+          NodePath.join(projectRoot, ".scient", "project.json"),
+          NodePath.join(worktreeRoot, ".scient", "project.json"),
+        );
+        await writeOwnedProjectSkill(worktreeRoot, "project-method");
+      });
+      const disabledWorktree = yield* resolvePlan(
+        { releases: [], diagnostics: [] },
+        {
+          ...baseSnapshot,
+          projectSkills: [{ ...baseSnapshot.projectSkills[0]!, active: false }],
+        },
+        { provider: ProviderDriverKind.make("codex"), projectRoot: worktreeRoot },
+      );
+      expect(disabledWorktree.delivery).toBe("none");
+    }),
+  );
+
+  it.effect("withholds a project skill that shadows any Scient-managed name", () =>
+    Effect.gen(function* () {
+      const projectRoot = yield* Effect.promise(() => fixture("scient-project-collision-"));
+      yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
+      yield* Effect.promise(() =>
+        writeOwnedProjectSkill(projectRoot, "workspace-readiness-review"),
+      );
+
+      const plan = yield* resolvePlan(
+        { releases: BUILT_IN_SKILL_RELEASES, diagnostics: [] },
+        { userSkills: [], projectSkills: [], trustedProjects: [] },
+        { provider: ProviderDriverKind.make("codex"), projectRoot },
+        new Map(BUILT_IN_SKILL_RELEASES.map((release) => [release.id, false])),
+      );
+
+      expect(plan.delivery).toBe("none");
+      expect(plan.diagnostics).toEqual([
+        expect.objectContaining({ code: "project-skill-collision" }),
+      ]);
     }),
   );
 });

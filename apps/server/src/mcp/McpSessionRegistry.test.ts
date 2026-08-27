@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -85,19 +86,23 @@ it.effect("binds exactly the requested capabilities without ambient defaults", (
 it.effect("snapshots and returns an isolated exact skill scope", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
-    const requestedReleaseKeys = new Set(["scient.review@0.1.0#sha256:one"]);
+    const release = BUILT_IN_SKILL_RELEASES[0]!;
+    const releaseKey = `${release.id}@${release.version}#${release.digest}`;
+    const requestedReleases = new Map([[releaseKey, release]]);
     const issued = yield* registry.issue({
       threadId: ThreadId.make("thread-skill-scope"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["skills:read"]),
       skillScope: {
-        releaseKeys: requestedReleaseKeys,
+        releases: requestedReleases,
         skills: [
           {
-            releaseKey: "scient.review@0.1.0#sha256:one",
-            id: "scient.review",
-            name: "review",
-            description: "Review this workspace.",
+            releaseKey,
+            id: release.id,
+            name: release.name,
+            description: release.description,
+            origin: release.origin,
+            activationScope: "user",
             invocationPolicy: "automatic",
           },
         ],
@@ -105,25 +110,27 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
-    requestedReleaseKeys.clear();
+    requestedReleases.clear();
     const first = yield* registry.resolve(token);
     expect(first?.skillScope).toEqual({
-      releaseKeys: new Set(["scient.review@0.1.0#sha256:one"]),
+      releases: new Map([[releaseKey, release]]),
       skills: [
         {
-          releaseKey: "scient.review@0.1.0#sha256:one",
-          id: "scient.review",
-          name: "review",
-          description: "Review this workspace.",
+          releaseKey,
+          id: release.id,
+          name: release.name,
+          description: release.description,
+          origin: release.origin,
+          activationScope: "user",
           invocationPolicy: "automatic",
         },
       ],
     });
     if (!first?.skillScope) throw new Error("Expected the issued skill scope to resolve.");
 
-    (first.skillScope.releaseKeys as Set<string>).clear();
-    expect((yield* registry.resolve(token))?.skillScope?.releaseKeys).toEqual(
-      new Set(["scient.review@0.1.0#sha256:one"]),
+    (first.skillScope.releases as Map<string, typeof release>).clear();
+    expect((yield* registry.resolve(token))?.skillScope?.releases).toEqual(
+      new Map([[releaseKey, release]]),
     );
   }),
 );
@@ -131,39 +138,45 @@ it.effect("snapshots and returns an isolated exact skill scope", () =>
 it.effect("atomically replaces only the target thread's exact skill scope", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
+    const release = BUILT_IN_SKILL_RELEASES[1]!;
+    const releaseKey = `${release.id}@${release.version}#${release.digest}`;
     const threadId = ThreadId.make("thread-dynamic-skill-scope");
     const issued = yield* registry.issue({
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["skills:read"]),
-      skillScope: { releaseKeys: new Set(), skills: [] },
+      skillScope: { releases: new Map(), skills: [] },
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const replacement = {
-      releaseKeys: new Set(["scient.review@0.1.0#sha256:next"]),
+      releases: new Map([[releaseKey, release]]),
       skills: [
         {
-          releaseKey: "scient.review@0.1.0#sha256:next",
-          id: "scient.review",
-          name: "review",
-          description: "Review the workspace.",
+          releaseKey,
+          id: release.id,
+          name: release.name,
+          description: release.description,
+          origin: release.origin,
+          activationScope: "user" as const,
           invocationPolicy: "automatic" as const,
         },
       ],
     };
 
     yield* registry.replaceSkillScope(threadId, replacement);
-    replacement.releaseKeys.clear();
+    replacement.releases.clear();
     replacement.skills[0]!.name = "mutated";
 
     expect((yield* registry.resolve(token))?.skillScope).toEqual({
-      releaseKeys: new Set(["scient.review@0.1.0#sha256:next"]),
+      releases: new Map([[releaseKey, release]]),
       skills: [
         {
-          releaseKey: "scient.review@0.1.0#sha256:next",
-          id: "scient.review",
-          name: "review",
-          description: "Review the workspace.",
+          releaseKey,
+          id: release.id,
+          name: release.name,
+          description: release.description,
+          origin: release.origin,
+          activationScope: "user",
           invocationPolicy: "automatic",
         },
       ],

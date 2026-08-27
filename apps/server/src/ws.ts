@@ -51,6 +51,7 @@ import {
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type ServerProvider,
+  ScientSkillManagementError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -570,6 +571,60 @@ const makeWsRpcLayer = (
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const analysis = yield* AnalysisService.AnalysisService;
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
+      const skillContextError = (operation: string, message: string) =>
+        new ScientSkillManagementError({ operation, message });
+      const resolveScientSkillProjectRoot = Effect.fn("ws.resolveScientSkillProjectRoot")(
+        function* (input: {
+          readonly projectId?: ProjectId | undefined;
+          readonly threadId?: ThreadId | undefined;
+        }) {
+          if (input.threadId) {
+            const thread = yield* projectionSnapshotQuery
+              .getThreadShellById(input.threadId)
+              .pipe(
+                Effect.mapError(() =>
+                  skillContextError("list", "The thread workspace could not be resolved."),
+                ),
+              );
+            if (Option.isNone(thread)) {
+              return yield* skillContextError("list", "That thread is not available.");
+            }
+            if (input.projectId && thread.value.projectId !== input.projectId) {
+              return yield* skillContextError(
+                "list",
+                "The requested thread does not belong to that project.",
+              );
+            }
+            if (thread.value.worktreePath) return thread.value.worktreePath;
+            if (thread.value.projectId) {
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.value.projectId)
+                .pipe(
+                  Effect.mapError(() =>
+                    skillContextError("list", "The project workspace could not be resolved."),
+                  ),
+                );
+              if (Option.isSome(project)) return project.value.workspaceRoot;
+            }
+            if (thread.value.workspaceRoot) return thread.value.workspaceRoot;
+            return yield* skillContextError("list", "That thread has no project workspace.");
+          }
+          if (input.projectId) {
+            const project = yield* projectionSnapshotQuery
+              .getProjectShellById(input.projectId)
+              .pipe(
+                Effect.mapError(() =>
+                  skillContextError("list", "The project workspace could not be resolved."),
+                ),
+              );
+            if (Option.isNone(project)) {
+              return yield* skillContextError("list", "That project is not available.");
+            }
+            return project.value.workspaceRoot;
+          }
+          return undefined;
+        },
+      );
       const providerSkillManagement =
         ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -1844,10 +1899,37 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.skillsList]: (_input) =>
-          observeRpcEffect(WS_METHODS.skillsList, scientSkillManagement.list, {
-            "rpc.aggregate": "skills",
-          }),
+        [WS_METHODS.skillsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsList,
+            Effect.gen(function* () {
+              const projectRoot = yield* resolveScientSkillProjectRoot(input);
+              return yield* scientSkillManagement.list(projectRoot);
+            }),
+            { "rpc.aggregate": "skills" },
+          ),
+        [WS_METHODS.skillsSetProjectPreference]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsSetProjectPreference,
+            Effect.gen(function* () {
+              const projectRoot = yield* resolveScientSkillProjectRoot({
+                projectId: input.projectId,
+              });
+              if (!projectRoot) {
+                return yield* skillContextError(
+                  "setProjectPreference",
+                  "That project has no workspace.",
+                );
+              }
+              return yield* scientSkillManagement.setProjectPreference({
+                projectRoot,
+                name: input.name,
+                active: input.active,
+                invocationPolicy: input.invocationPolicy,
+              });
+            }),
+            { "rpc.aggregate": "skills" },
+          ),
         [WS_METHODS.skillsSetUserActivation]: (input) =>
           observeRpcEffect(
             WS_METHODS.skillsSetUserActivation,

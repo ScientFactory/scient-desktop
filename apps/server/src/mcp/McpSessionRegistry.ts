@@ -96,6 +96,15 @@ const getHttpMcpEndpointHost = (hostname: string): string => {
     : endpointHostname;
 };
 
+const copySkillScope = (
+  skillScope: McpInvocationContext.McpScientSkillScope,
+): McpInvocationContext.McpScientSkillScope => ({
+  // Values are immutable SkillRelease snapshots. Preserve their object
+  // identity because verified resource bytes are bound to the exact snapshot.
+  releases: new Map(skillScope.releases),
+  skills: skillScope.skills.map((skill) => ({ ...skill })),
+});
+
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
@@ -143,8 +152,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ...(request.skillScope
           ? {
               skillScope: {
-                releaseKeys: new Set(request.skillScope.releaseKeys),
-                skills: request.skillScope.skills.map((skill) => ({ ...skill })),
+                ...copySkillScope(request.skillScope),
               },
             }
           : {}),
@@ -190,8 +198,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
             ...(record.scope.skillScope
               ? {
                   skillScope: {
-                    releaseKeys: new Set(record.scope.skillScope.releaseKeys),
-                    skills: record.scope.skillScope.skills.map((skill) => ({ ...skill })),
+                    ...copySkillScope(record.scope.skillScope),
                   },
                 }
               : {}),
@@ -232,8 +239,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           scope: {
             ...record.scope,
             skillScope: {
-              releaseKeys: new Set(skillScope.releaseKeys),
-              skills: skillScope.skills.map((skill) => ({ ...skill })),
+              ...copySkillScope(skillScope),
             },
           },
         });
