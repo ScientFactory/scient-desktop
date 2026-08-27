@@ -8,7 +8,6 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "~/lib/storage";
 
 import {
-  sameTrackedHtmlSource,
   trackedHtmlLogicalDocumentKey,
   TrackedHtmlSourceSchema,
   type TrackedHtmlSource,
@@ -19,7 +18,7 @@ export type HtmlPdfUpdatePhase = "idle" | "updating" | "update-available" | "fai
 export interface HtmlPdfSourceRelation {
   readonly id: string;
   readonly threadRef: ScopedThreadRef;
-  readonly tabId: string;
+  readonly tabId: string | null;
   readonly source: TrackedHtmlSource;
   readonly logicalDocumentKey: string;
   readonly artifactId: string | null;
@@ -60,7 +59,7 @@ const HtmlPdfUpdatePhaseSchema = Schema.Literals([
 const PersistedHtmlPdfSourceRelation = Schema.Struct({
   id: Schema.String,
   threadRef: ScopedThreadRef,
-  tabId: Schema.String,
+  tabId: Schema.NullOr(Schema.String),
   source: TrackedHtmlSourceSchema,
   logicalDocumentKey: Schema.String,
   artifactId: Schema.NullOr(Schema.String),
@@ -71,8 +70,39 @@ const PersistedHtmlPdfSourceRelation = Schema.Struct({
 });
 const isPersistedHtmlPdfSourceRelation = Schema.is(PersistedHtmlPdfSourceRelation);
 
-export function htmlPdfRelationId(threadRef: ScopedThreadRef, tabId: string): string {
-  return JSON.stringify([scopedThreadKey(threadRef), tabId]);
+export function htmlPdfRelationId(threadRef: ScopedThreadRef, logicalDocumentKey: string): string {
+  return JSON.stringify([scopedThreadKey(threadRef), logicalDocumentKey]);
+}
+
+function sanitizePersistedRelation(candidate: HtmlPdfSourceRelation): HtmlPdfSourceRelation | null {
+  if (candidate.source.environmentId !== candidate.threadRef.environmentId) return null;
+  const logicalDocumentKey = trackedHtmlLogicalDocumentKey(candidate.source);
+  return {
+    ...candidate,
+    id: htmlPdfRelationId(candidate.threadRef, logicalDocumentKey),
+    logicalDocumentKey,
+    authorizedUrl: null,
+    updatePhase: candidate.updatePhase === "updating" ? "update-available" : candidate.updatePhase,
+    updateMessage:
+      candidate.updatePhase === "updating"
+        ? "The source may have changed while Scient was closed."
+        : candidate.updateMessage,
+    manualRequestId: 0,
+  };
+}
+
+function mergePersistedRelation(
+  previous: HtmlPdfSourceRelation | undefined,
+  current: HtmlPdfSourceRelation,
+): HtmlPdfSourceRelation {
+  if (!previous || current.artifactId !== null) return current;
+  if (previous.artifactId === null) return current;
+  return {
+    ...current,
+    artifactId: previous.artifactId,
+    updatePhase: previous.updatePhase,
+    updateMessage: previous.updateMessage,
+  };
 }
 
 function persistedRelations(
@@ -102,30 +132,14 @@ export function normalizePersistedHtmlPdfRelations(
   value: unknown,
 ): Readonly<Record<string, HtmlPdfSourceRelation>> {
   if (!value || typeof value !== "object") return {};
-  return Object.fromEntries(
-    Object.entries(value)
-      .slice(-MAX_PERSISTED_RELATIONS)
-      .flatMap(([id, candidate]) => {
-        if (!isPersistedHtmlPdfSourceRelation(candidate)) return [];
-        if (candidate.id !== id || htmlPdfRelationId(candidate.threadRef, candidate.tabId) !== id) {
-          return [];
-        }
-        if (candidate.source.environmentId !== candidate.threadRef.environmentId) return [];
-        const relation: HtmlPdfSourceRelation = {
-          ...candidate,
-          logicalDocumentKey: trackedHtmlLogicalDocumentKey(candidate.source),
-          authorizedUrl: null,
-          updatePhase:
-            candidate.updatePhase === "updating" ? "update-available" : candidate.updatePhase,
-          updateMessage:
-            candidate.updatePhase === "updating"
-              ? "The source may have changed while Scient was closed."
-              : candidate.updateMessage,
-          manualRequestId: 0,
-        };
-        return [[id, relation] as const];
-      }),
-  );
+  const relations: Record<string, HtmlPdfSourceRelation> = {};
+  for (const candidate of Object.values(value).slice(-MAX_PERSISTED_RELATIONS)) {
+    if (!isPersistedHtmlPdfSourceRelation(candidate)) continue;
+    const relation = sanitizePersistedRelation(candidate);
+    if (!relation) continue;
+    relations[relation.id] = mergePersistedRelation(relations[relation.id], relation);
+  }
+  return relations;
 }
 
 const STORAGE_KEY = "scient:html-pdf-sources:v1";
@@ -136,22 +150,35 @@ export const useHtmlPdfSourceStore = create<HtmlPdfSourceState>()(
       relations: {},
       bind: (input) =>
         set((state) => {
-          const id = htmlPdfRelationId(input.threadRef, input.tabId);
+          const logicalDocumentKey = trackedHtmlLogicalDocumentKey(input.source);
+          const id = htmlPdfRelationId(input.threadRef, logicalDocumentKey);
           const current = state.relations[id];
-          const sameSource = current && sameTrackedHtmlSource(current.source, input.source);
+          const resumePendingUpdate = Boolean(
+            current && current.artifactId !== null && current.updatePhase !== "idle",
+          );
           const relation: HtmlPdfSourceRelation = {
             id,
             threadRef: input.threadRef,
             tabId: input.tabId,
             source: input.source,
-            logicalDocumentKey: trackedHtmlLogicalDocumentKey(input.source),
-            artifactId: sameSource ? current.artifactId : null,
+            logicalDocumentKey,
+            artifactId: current?.artifactId ?? null,
             authorizedUrl: input.authorizedUrl,
-            updatePhase: sameSource ? current.updatePhase : "idle",
-            updateMessage: sameSource ? current.updateMessage : null,
-            manualRequestId: sameSource ? current.manualRequestId : 0,
+            updatePhase: current?.updatePhase ?? "idle",
+            updateMessage: current?.updateMessage ?? null,
+            manualRequestId: (current?.manualRequestId ?? 0) + (resumePendingUpdate ? 1 : 0),
           };
-          const { [id]: _current, ...otherRelations } = state.relations;
+          const otherRelations = Object.fromEntries(
+            Object.entries(state.relations)
+              .filter(([candidateId]) => candidateId !== id)
+              .map(([candidateId, candidate]) => [
+                candidateId,
+                scopedThreadKey(candidate.threadRef) === scopedThreadKey(input.threadRef) &&
+                candidate.tabId === input.tabId
+                  ? { ...candidate, tabId: null, authorizedUrl: null }
+                  : candidate,
+              ]),
+          );
           return {
             relations: Object.fromEntries(
               [...Object.entries(otherRelations), [id, relation]].slice(-MAX_PERSISTED_RELATIONS),
@@ -240,5 +267,10 @@ export function readHtmlPdfRelation(
   threadRef: ScopedThreadRef,
   tabId: string,
 ): HtmlPdfSourceRelation | null {
-  return useHtmlPdfSourceStore.getState().relations[htmlPdfRelationId(threadRef, tabId)] ?? null;
+  const threadKey = scopedThreadKey(threadRef);
+  return (
+    Object.values(useHtmlPdfSourceStore.getState().relations).find(
+      (relation) => scopedThreadKey(relation.threadRef) === threadKey && relation.tabId === tabId,
+    ) ?? null
+  );
 }
