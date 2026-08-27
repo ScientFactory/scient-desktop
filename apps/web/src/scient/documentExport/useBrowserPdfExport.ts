@@ -81,6 +81,9 @@ export function useBrowserPdfExport() {
       if (result.source._tag !== "generated-pdf") {
         throw new Error("The PDF export server returned a non-generated source.");
       }
+      if (target.isCurrent && !target.isCurrent()) {
+        throw new Error("The HTML source changed before the PDF could be presented.");
+      }
 
       const surface = scientGeneratedPdfSurface(result.source);
       if (target.activate) {

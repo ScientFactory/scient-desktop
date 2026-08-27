@@ -137,4 +137,20 @@ describe("useBrowserPdfExport", () => {
     expect(mocks.publish).not.toHaveBeenCalled();
     expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
   });
+
+  it("does not present a revision whose source lease expires after publication", async () => {
+    const isCurrent = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+
+    await expect(exportPdf?.({ ...target, isCurrent })).rejects.toThrow(
+      "HTML source changed before the PDF could be presented",
+    );
+
+    expect(mocks.publish).toHaveBeenCalledOnce();
+    expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
+    expect(mocks.recordExport).not.toHaveBeenCalled();
+  });
 });

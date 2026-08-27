@@ -16,7 +16,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
-import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { isCurrentPreviewRuntimeTab, previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { waitForNavigationReadiness } from "~/components/preview/previewNavigationReadiness";
 import { randomUUID } from "~/lib/utils";
@@ -31,6 +31,8 @@ import { environmentFileChanges } from "../fileOpening/environmentFileChanges";
 import { isTrackedDocumentUrl } from "./htmlPdfNavigationGuard";
 import { trackedHtmlAssetResource } from "./htmlPdfSource";
 import { useHtmlPdfSourceStore } from "./htmlPdfSourceStore";
+import { createHtmlPdfUpdateQueue, type HtmlPdfUpdateQueue } from "./htmlPdfUpdateQueue";
+import { runHtmlPdfUpdateTransaction } from "./htmlPdfUpdateTransaction";
 import { useBrowserPdfExport } from "./useBrowserPdfExport";
 
 type FileChange = EnvironmentFileChangeEvent | ProjectFileWatchEvent;
@@ -66,6 +68,13 @@ function resultValue<E>(result: AtomCommandResult<AssetCreateUrlResult, E>): Ass
   return result.value;
 }
 
+export function htmlPdfSourceEventRequiresUpdate(
+  event: FileChange,
+  artifactId: string | null,
+): boolean {
+  return artifactId !== null && (event._tag === "watch-ready" || event._tag === "file-changed");
+}
+
 function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
   const relation = useHtmlPdfSourceStore((state) => state.relations[props.relationId]);
   const threadKey = relation ? scopedThreadKey(relation.threadRef) : "";
@@ -81,7 +90,9 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
       ),
     );
   });
-  const browserSessionOpen = relation ? Boolean(previewState.sessions[relation.tabId]) : false;
+  const browserSessionOpen = relation?.tabId
+    ? Boolean(previewState.sessions[relation.tabId])
+    : false;
   const shouldWatch = Boolean(relation && (browserSessionOpen || generatedSurfaceOpen));
   const fileChangeAtom: Atom.Atom<AsyncResult.AsyncResult<FileChange, unknown>> =
     !relation || !shouldWatch
@@ -110,21 +121,19 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
   const lastFileChangeRef = useRef<object | null>(null);
   const lastManualRequestRef = useRef(relation?.manualRequestId ?? 0);
   const changeGenerationRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
-  const runningRef = useRef(false);
-  const rerunRef = useRef(false);
-  const rerunManualRef = useRef(false);
+  const updateQueueRef = useRef<HtmlPdfUpdateQueue | null>(null);
 
   const performUpdate = useEffectEvent(async (manual: boolean) => {
     const latest = useHtmlPdfSourceStore.getState().relations[props.relationId];
     if (!latest) return;
-    if (!previewBridge || httpBaseUrl === null) {
+    const bridge = previewBridge;
+    if (!bridge || httpBaseUrl === null) {
       useHtmlPdfSourceStore
         .getState()
         .setUpdateState(
           latest.id,
           "failed",
-          previewBridge
+          bridge
             ? "The environment connection is unavailable."
             : "The desktop Browser is unavailable.",
         );
@@ -132,9 +141,10 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
     }
     const generation = changeGenerationRef.current;
     const currentPreview = readThreadPreviewState(latest.threadRef);
-    const session = currentPreview.sessions[latest.tabId];
-    const overlay = currentPreview.desktopByTabId[latest.tabId];
-    if (!session || !overlay?.hasWebContents) {
+    const tabId = latest.tabId;
+    const session = tabId ? currentPreview.sessions[tabId] : null;
+    const overlay = tabId ? currentPreview.desktopByTabId[tabId] : null;
+    if (!tabId || !session || !overlay?.hasWebContents) {
       useHtmlPdfSourceStore
         .getState()
         .setUpdateState(
@@ -156,52 +166,73 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
       return;
     }
 
-    runningRef.current = true;
+    const runtimeTabId = previewRuntimeTabId(latest.threadRef, currentPreview.serverEpoch, tabId);
+    const requestId = latest.manualRequestId;
+    const isNavigationTargetCurrent = () => {
+      const current = useHtmlPdfSourceStore.getState().relations[latest.id];
+      const preview = readThreadPreviewState(latest.threadRef);
+      return Boolean(
+        current?.tabId === tabId &&
+        preview.sessions[tabId] &&
+        preview.desktopByTabId[tabId]?.hasWebContents &&
+        isCurrentPreviewRuntimeTab(latest.threadRef, preview.serverEpoch, tabId, runtimeTabId),
+      );
+    };
+    const isCurrent = () => {
+      const current = useHtmlPdfSourceStore.getState().relations[latest.id];
+      return (
+        current?.manualRequestId === requestId &&
+        generation === changeGenerationRef.current &&
+        isNavigationTargetCurrent()
+      );
+    };
     useHtmlPdfSourceStore.getState().setUpdateState(latest.id, "updating");
     try {
-      const issued = resultValue(
-        await createAssetUrl({
-          environmentId: latest.threadRef.environmentId,
-          input: { resource: trackedHtmlAssetResource(latest.source, latest.threadRef) },
-        }),
-      );
-      const renewedUrl = resolveAssetUrl(httpBaseUrl, issued.relativeUrl);
-      if (renewedUrl === null) throw new Error("The environment returned an invalid HTML URL.");
-      useHtmlPdfSourceStore.getState().setAuthorizedUrl(latest.id, renewedUrl);
-      const runtimeTabId = previewRuntimeTabId(
-        latest.threadRef,
-        currentPreview.serverEpoch,
-        latest.tabId,
-      );
-      await previewBridge.navigate(runtimeTabId, renewedUrl);
-      await waitForNavigationReadiness(
-        latest.threadRef,
-        `html-pdf-update-${randomUUID()}`,
-        latest.tabId,
-        runtimeTabId,
-        "navigate",
-        "load",
-        10_000,
-      );
-      if (generation !== changeGenerationRef.current) {
-        throw new Error("The HTML source changed again while it was reloading.");
-      }
-      const refreshed = useHtmlPdfSourceStore.getState().relations[latest.id];
-      if (!refreshed?.artifactId) {
-        useHtmlPdfSourceStore.getState().setUpdateState(latest.id, "idle");
-        return;
-      }
-      await exportBrowserPdf({
-        threadRef: latest.threadRef,
-        tabId: latest.tabId,
-        runtimeTabId,
-        pageUrl: renewedUrl,
-        activate: false,
-        isCurrent: () => generation === changeGenerationRef.current,
+      await runHtmlPdfUpdateTransaction({
+        renewAuthorizedUrl: async () => {
+          const issued = resultValue(
+            await createAssetUrl({
+              environmentId: latest.threadRef.environmentId,
+              input: { resource: trackedHtmlAssetResource(latest.source, latest.threadRef) },
+            }),
+          );
+          const renewedUrl = resolveAssetUrl(httpBaseUrl, issued.relativeUrl);
+          if (renewedUrl === null) {
+            throw new Error("The environment returned an invalid HTML URL.");
+          }
+          return renewedUrl;
+        },
+        navigate: (authorizedUrl) => bridge.navigate(runtimeTabId, authorizedUrl),
+        commitAuthorizedUrl: (authorizedUrl) =>
+          useHtmlPdfSourceStore.getState().setAuthorizedUrl(latest.id, authorizedUrl),
+        waitForReadiness: () =>
+          waitForNavigationReadiness(
+            latest.threadRef,
+            `html-pdf-update-${randomUUID()}`,
+            tabId,
+            runtimeTabId,
+            "navigate",
+            "load",
+            10_000,
+          ),
+        isNavigationTargetCurrent,
+        isCurrent,
+        hasArtifact: () =>
+          Boolean(useHtmlPdfSourceStore.getState().relations[latest.id]?.artifactId),
+        exportPdf: async (authorizedUrl) => {
+          await exportBrowserPdf({
+            threadRef: latest.threadRef,
+            tabId,
+            runtimeTabId,
+            pageUrl: authorizedUrl,
+            activate: false,
+            isCurrent,
+          });
+        },
       });
-      useHtmlPdfSourceStore.getState().setUpdateState(latest.id, "idle");
+      if (isCurrent()) useHtmlPdfSourceStore.getState().setUpdateState(latest.id, "idle");
     } catch (error) {
-      if (generation === changeGenerationRef.current) {
+      if (isCurrent()) {
         useHtmlPdfSourceStore
           .getState()
           .setUpdateState(
@@ -210,43 +241,32 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
             error instanceof Error ? error.message : "The HTML PDF update failed.",
           );
       }
-    } finally {
-      runningRef.current = false;
-      if (rerunRef.current) {
-        const nextManual = rerunManualRef.current;
-        rerunRef.current = false;
-        rerunManualRef.current = false;
-        globalThis.setTimeout(() => void performUpdate(nextManual), 0);
-      }
     }
   });
 
-  const scheduleUpdate = useEffectEvent((manual: boolean, delayMs = 300) => {
-    if (runningRef.current) {
-      rerunRef.current = true;
-      rerunManualRef.current ||= manual;
-      return;
-    }
-    if (timerRef.current !== null) globalThis.clearTimeout(timerRef.current);
-    timerRef.current = globalThis.setTimeout(() => {
-      timerRef.current = null;
-      void performUpdate(manual);
-    }, delayMs);
-  });
+  useEffect(() => {
+    const queue = createHtmlPdfUpdateQueue(performUpdate);
+    updateQueueRef.current = queue;
+    return () => {
+      queue.dispose();
+      lastFileChangeRef.current = null;
+      if (updateQueueRef.current === queue) updateQueueRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!fileChange || lastFileChangeRef.current === fileChange) return;
     lastFileChangeRef.current = fileChange;
-    if (fileChange._tag !== "file-changed") return;
+    if (!htmlPdfSourceEventRequiresUpdate(fileChange, relation?.artifactId ?? null)) return;
     changeGenerationRef.current += 1;
-    scheduleUpdate(false);
-  }, [fileChange]);
+    updateQueueRef.current?.schedule(false);
+  }, [fileChange, relation?.artifactId]);
 
   useEffect(() => {
     const requestId = relation?.manualRequestId ?? 0;
     if (requestId === lastManualRequestRef.current) return;
     lastManualRequestRef.current = requestId;
-    scheduleUpdate(true, 0);
+    updateQueueRef.current?.schedule(true, 0);
   }, [relation?.manualRequestId]);
 
   useEffect(() => {
@@ -259,13 +279,6 @@ function HtmlPdfRelationObserver(props: { readonly relationId: string }) {
         "Automatic source watching is unavailable. Update the PDF manually.",
       );
   }, [fileChangeResult._tag, relation?.artifactId, relation?.id]);
-
-  useEffect(
-    () => () => {
-      if (timerRef.current !== null) globalThis.clearTimeout(timerRef.current);
-    },
-    [],
-  );
 
   return null;
 }
