@@ -7,7 +7,6 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
 import { ScientSkillToolError, ScientSkillsToolkit } from "./tools.ts";
 
 const compareStrings = (left: string, right: string): number =>
@@ -29,10 +28,15 @@ const requireSkillScope = Effect.fn("ScientSkillsToolkit.requireSkillScope")(fun
   return invocation.skillScope;
 });
 
-function summary(release: SkillRelease, invocationPolicy: "automatic" | "explicit") {
+function summary(
+  release: SkillRelease,
+  invocationPolicy: "automatic" | "explicit",
+  activationScope: "project" | "user",
+) {
   return {
     releaseKey: skillReleaseKey(release),
     ...toSkillReleaseSummary(release),
+    activationScope,
     invocationPolicy,
   };
 }
@@ -55,38 +59,36 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
     );
   }
   const descriptor = matches[0]!;
-  if (!skillScope.releaseKeys.has(descriptor.releaseKey)) {
-    return yield* toolError("not-found", "That skill is not indexed in this Scient turn.");
-  }
-  const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
-  const release = registry.resolveReleaseKey(descriptor.releaseKey);
+  const release = skillScope.releases.get(descriptor.releaseKey);
   if (!release) {
     return yield* toolError(
       "not-found",
-      "That exact skill release is no longer available in this Scient build.",
+      "That exact skill release is not available in this Scient turn.",
     );
   }
-  return { release, invocationPolicy: descriptor.invocationPolicy };
+  return {
+    release,
+    activationScope: descriptor.activationScope,
+    invocationPolicy: descriptor.invocationPolicy,
+  };
 });
 
 export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list")(function* () {
   const skillScope = yield* requireSkillScope();
-  const registry = yield* ScientSkillRegistry.ScientSkillRegistry;
-  const policyByReleaseKey = new Map(
-    skillScope.skills.map((skill) => [skill.releaseKey, skill.invocationPolicy] as const),
+  const descriptorByReleaseKey = new Map(
+    skillScope.skills.map((skill) => [skill.releaseKey, skill] as const),
   );
-  const skills = [...skillScope.releaseKeys]
-    .map((releaseKey) => {
-      const release = registry.resolveReleaseKey(releaseKey);
-      const invocationPolicy = policyByReleaseKey.get(releaseKey);
-      return release && invocationPolicy ? { release, invocationPolicy } : undefined;
+  const skills = [...skillScope.releases.entries()]
+    .map(([releaseKey, release]) => {
+      const descriptor = descriptorByReleaseKey.get(releaseKey);
+      return descriptor ? { release, descriptor } : undefined;
     })
     .filter(
       (
         entry,
       ): entry is {
         readonly release: SkillRelease;
-        readonly invocationPolicy: "automatic" | "explicit";
+        readonly descriptor: McpInvocationContext.McpScientSkillDescriptor;
       } => entry !== undefined,
     )
     .sort(
@@ -94,15 +96,17 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
         compareStrings(left.release.name, right.release.name) ||
         compareStrings(left.release.id, right.release.id),
     )
-    .map(({ release, invocationPolicy }) => summary(release, invocationPolicy));
+    .map(({ release, descriptor }) =>
+      summary(release, descriptor.invocationPolicy, descriptor.activationScope),
+    );
   return { skills };
 });
 
 export const loadScientSkillForInvocation = Effect.fn("ScientSkillsToolkit.load")(
   function* (input: { readonly name: string }) {
-    const { release, invocationPolicy } = yield* resolveAllowedRelease(input.name);
+    const { release, activationScope, invocationPolicy } = yield* resolveAllowedRelease(input.name);
     return {
-      skill: summary(release, invocationPolicy),
+      skill: summary(release, invocationPolicy, activationScope),
       instructions: release.instructions,
       resources: release.resources,
     };

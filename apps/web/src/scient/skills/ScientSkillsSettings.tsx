@@ -15,21 +15,10 @@ import {
   SettingsSection,
 } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
-import { Switch } from "../../components/ui/switch";
 import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSkillsState";
 import { collectExternalSkillProviders, summarizeExternalSkills } from "./externalSkills";
-
-function invocationPolicyLabel(policy: ScientSkillInvocationPolicy): string {
-  return policy === "automatic" ? "Agent access" : "$name only";
-}
+import { SkillSettingsRow } from "./SkillSettingsRow";
 
 function groupSkillsByCategory(skills: ReadonlyArray<ScientSkillCatalogItem>) {
   const groups = new Map<
@@ -56,7 +45,7 @@ function SkillCategoryDisclosure(props: {
   readonly skillCount: number;
   readonly children: ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 pt-4 pb-2 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
@@ -120,23 +109,44 @@ export function ScientSkillsSettings() {
           Make reusable guidance available to supported agents. Skills add instructions, never tools
           or permissions.
         </p>
-        <Link
-          className="group block cursor-pointer rounded-xl outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          to="/settings/skills/external"
-        >
-          <SettingsRow
-            description={summarizeExternalSkills(externalSkillGroups)}
-            title={
-              <span className="inline-flex items-center gap-2.5 transition-colors group-hover:text-foreground/75">
-                External skills
-                <ArrowRightIcon
-                  aria-hidden
-                  className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1"
-                />
-              </span>
-            }
-          />
-        </Link>
+        <div className="grid grid-cols-1 sm:grid-cols-2 sm:divide-x sm:divide-border/50">
+          <Link
+            className="group block cursor-pointer rounded-xl outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            to="/settings/skills/external"
+          >
+            <SettingsRow
+              className="h-full [&>div]:!block"
+              description={summarizeExternalSkills(externalSkillGroups)}
+              title={
+                <span className="inline-flex items-center gap-2.5 transition-colors group-hover:text-foreground/75">
+                  External skills
+                  <ArrowRightIcon
+                    aria-hidden
+                    className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1"
+                  />
+                </span>
+              }
+            />
+          </Link>
+          <Link
+            className="group block cursor-pointer rounded-xl outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            to="/settings/skills/project"
+          >
+            <SettingsRow
+              className="h-full [&>div]:!block"
+              description="Manage skills that belong to a specific project."
+              title={
+                <span className="inline-flex items-center gap-2.5 transition-colors group-hover:text-foreground/75">
+                  Project skills
+                  <ArrowRightIcon
+                    aria-hidden
+                    className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1"
+                  />
+                </span>
+              }
+            />
+          </Link>
+        </div>
         <div className="flex items-center gap-3 px-3 pt-4 pb-1 sm:px-4">
           <span className="flex size-9 shrink-0 items-center justify-center">
             <ScientSymbol className="size-8" weight="strong" />
@@ -158,13 +168,15 @@ export function ScientSkillsSettings() {
                 : "Reading the skills available in this Scient build."
             }
           />
-        ) : inventory.data.skills.length === 0 ? (
+        ) : inventory.data.skills.filter((skill) => skill.scope === "user").length === 0 ? (
           <SettingsRow
             title="No built-in skills"
             description="This Scient build does not publish any managed skills."
           />
         ) : (
-          groupSkillsByCategory(inventory.data.skills).map((group) => (
+          groupSkillsByCategory(
+            inventory.data.skills.filter((skill) => skill.scope === "user"),
+          ).map((group) => (
             <SkillCategoryDisclosure
               key={group.category}
               title={group.category}
@@ -174,60 +186,13 @@ export function ScientSkillsSettings() {
               {group.skills.map((skill) => {
                 const pending = pendingReleaseKey === skill.releaseKey;
                 return (
-                  <SettingsRow
+                  <SkillSettingsRow
                     key={skill.releaseKey}
-                    className="sm:[&>div]:grid-cols-[minmax(0,1fr)_5rem] [&>div>div>p]:max-w-none"
-                    title={
-                      <span className="inline-flex items-center gap-2">
-                        <span>
-                          {skill.name
-                            .split("-")
-                            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                            .join(" ")}
-                        </span>
-                        <Select
-                          value={skill.invocationPolicy}
-                          disabled={!skill.active || pendingReleaseKey !== null}
-                          onValueChange={(value) =>
-                            void updateSkill(skill, {
-                              invocationPolicy: value as ScientSkillInvocationPolicy,
-                            })
-                          }
-                        >
-                          <SelectTrigger
-                            size="sm"
-                            variant="ghost"
-                            className="w-fit min-w-0 gap-1.5"
-                            icon={
-                              <ChevronDownIcon className="size-3 opacity-70" strokeWidth={2.25} />
-                            }
-                            aria-label={`${skill.name} use`}
-                          >
-                            <SelectValue>
-                              {skill.active
-                                ? invocationPolicyLabel(skill.invocationPolicy)
-                                : "Deactivated"}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectPopup>
-                            <SelectItem value="automatic">Agent access</SelectItem>
-                            <SelectItem value="explicit">$name only</SelectItem>
-                          </SelectPopup>
-                        </Select>
-                      </span>
-                    }
-                    description={skill.description}
+                    skill={skill}
+                    pending={pending}
+                    disabled={pendingReleaseKey !== null}
                     status="Built into Scient · Personal"
-                    control={
-                      <Switch
-                        checked={skill.active}
-                        disabled={pending || pendingReleaseKey !== null}
-                        aria-label={`Make ${skill.name} available`}
-                        onCheckedChange={(checked) =>
-                          void updateSkill(skill, { active: Boolean(checked) })
-                        }
-                      />
-                    }
+                    onUpdate={(patch) => void updateSkill(skill, patch)}
                   />
                 );
               })}

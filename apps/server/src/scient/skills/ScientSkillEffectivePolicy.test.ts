@@ -19,6 +19,7 @@ function resolve(
   };
   return resolveEffectiveUserSkillPolicies(registry, {
     userSkills: preference ? [preference] : [],
+    projectSkills: [],
     trustedProjects: [],
   })[0]!;
 }

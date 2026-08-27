@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviders } from "./server.ts";
 
@@ -8,6 +8,7 @@ export const ScientSkillInvocationPolicy = Schema.Literals(["automatic", "explic
 export type ScientSkillInvocationPolicy = typeof ScientSkillInvocationPolicy.Type;
 
 export const ScientSkillActivationScope = Schema.Literals(["project", "user"]);
+export const ScientSkillInventoryScope = Schema.Literals(["project", "user"]);
 
 export const ScientSkillCatalogItem = Schema.Struct({
   releaseKey: TrimmedNonEmptyString,
@@ -18,6 +19,8 @@ export const ScientSkillCatalogItem = Schema.Struct({
   category: TrimmedNonEmptyString,
   categoryDescription: TrimmedNonEmptyString,
   origin: TrimmedNonEmptyString,
+  scope: ScientSkillInventoryScope,
+  path: Schema.optional(TrimmedNonEmptyString),
   supportedScopes: Schema.Array(ScientSkillActivationScope),
   defaultInvocationPolicy: ScientSkillInvocationPolicy,
   defaultActive: Schema.Boolean,
@@ -26,14 +29,34 @@ export const ScientSkillCatalogItem = Schema.Struct({
 });
 export type ScientSkillCatalogItem = typeof ScientSkillCatalogItem.Type;
 
+export const ScientSkillInventoryDiagnostic = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+  path: Schema.optional(TrimmedNonEmptyString),
+});
+export type ScientSkillInventoryDiagnostic = typeof ScientSkillInventoryDiagnostic.Type;
+
 export const ScientSkillInventory = Schema.Struct({
   skills: Schema.Array(ScientSkillCatalogItem),
+  diagnostics: Schema.Array(ScientSkillInventoryDiagnostic),
   supportedProviders: Schema.Array(ProviderDriverKind),
 });
 export type ScientSkillInventory = typeof ScientSkillInventory.Type;
 
+export const ScientSkillListInput = Schema.Struct({
+  projectId: Schema.optional(ProjectId),
+  threadId: Schema.optional(ThreadId),
+});
+
 export const ScientSkillSetUserActivationInput = Schema.Struct({
   releaseKey: TrimmedNonEmptyString,
+  active: Schema.Boolean,
+  invocationPolicy: ScientSkillInvocationPolicy,
+});
+
+export const ScientSkillSetProjectPreferenceInput = Schema.Struct({
+  projectId: ProjectId,
+  name: TrimmedNonEmptyString,
   active: Schema.Boolean,
   invocationPolicy: ScientSkillInvocationPolicy,
 });

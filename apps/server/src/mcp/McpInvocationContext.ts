@@ -4,6 +4,7 @@ import {
   type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { SkillRelease } from "@scientfactory/scient-skills";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -14,11 +15,14 @@ export interface McpScientSkillDescriptor {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly origin: string;
+  readonly activationScope: "project" | "user";
   readonly invocationPolicy: "automatic" | "explicit";
 }
 
 export interface McpScientSkillScope {
-  readonly releaseKeys: ReadonlySet<string>;
+  /** Exact immutable snapshots authorized for this turn. */
+  readonly releases: ReadonlyMap<string, SkillRelease>;
   readonly skills: ReadonlyArray<McpScientSkillDescriptor>;
 }
 

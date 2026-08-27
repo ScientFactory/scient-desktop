@@ -54,6 +54,22 @@ describe("getProviderSkillsForSlashMenu", () => {
     ).toEqual([]);
   });
 
+  it("keeps contextual Scient project skills available for explicit selection", () => {
+    expect(
+      getProviderSkillsForSlashMenu(
+        [
+          {
+            name: "project-review",
+            path: "scient://skills/project.release%23exact",
+            scope: "project",
+            enabled: true,
+          },
+        ],
+        true,
+      ).map((skill) => skill.name),
+    ).toEqual(["project-review"]);
+  });
+
   it("omits provider-deactivated skills", () => {
     expect(
       getProviderSkillsForSlashMenu(

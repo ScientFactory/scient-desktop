@@ -266,7 +266,9 @@ import {
   ProviderSkillSetEnabledInput,
   ProviderSkillSetEnabledResult,
   ScientSkillInventory,
+  ScientSkillListInput,
   ScientSkillManagementError,
+  ScientSkillSetProjectPreferenceInput,
   ScientSkillSetUserActivationInput,
 } from "./scientSkills.ts";
 
@@ -296,6 +298,7 @@ export const WS_METHODS = {
 
   // Scient-owned reusable skills
   skillsList: "skills.list",
+  skillsSetProjectPreference: "skills.setProjectPreference",
   skillsSetUserActivation: "skills.setUserActivation",
   providerSkillsSetEnabled: "providerSkills.setEnabled",
 
@@ -561,7 +564,13 @@ export const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTrans
 });
 
 export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
-  payload: Schema.Struct({}),
+  payload: ScientSkillListInput,
+  success: ScientSkillInventory,
+  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsSkillsSetProjectPreferenceRpc = Rpc.make(WS_METHODS.skillsSetProjectPreference, {
+  payload: ScientSkillSetProjectPreferenceInput,
   success: ScientSkillInventory,
   error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
 });
@@ -1325,6 +1334,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsVoiceCorrectTranscriptRpc,
   WsSkillsListRpc,
+  WsSkillsSetProjectPreferenceRpc,
   WsSkillsSetUserActivationRpc,
   WsProviderSkillsSetEnabledRpc,
   WsServerDiscoverSourceControlRpc,

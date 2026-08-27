@@ -1,7 +1,9 @@
 import {
+  loadProjectSkillCatalog,
   readProjectSkillLock,
   resolveExactSkillRelease,
   skillReleaseKey,
+  type ProjectSkillCatalog,
   type SkillInvocationPolicy,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
@@ -37,6 +39,8 @@ export interface ScientSkillSessionDiagnostic {
     | "invocation-name-conflict"
     | "project-lock-invalid"
     | "project-lock-untrusted"
+    | "project-skill-collision"
+    | "project-skill-invalid"
     | "provider-unsupported"
     | "release-unavailable";
   readonly message: string;
@@ -45,7 +49,7 @@ export interface ScientSkillSessionDiagnostic {
 export interface ScientSkillSessionPlan {
   readonly delivery: "mcp" | "none" | "unsupported";
   readonly projectRoot?: string;
-  readonly releaseKeys: ReadonlySet<string>;
+  readonly releases: ReadonlyMap<string, SkillRelease>;
   readonly skills: ReadonlyArray<ScientSkillSessionSkill>;
   readonly diagnostics: ReadonlyArray<ScientSkillSessionDiagnostic>;
 }
@@ -55,6 +59,8 @@ export interface ScientSkillSessionSkill {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly origin: string;
+  readonly activationScope: "project" | "user";
   readonly invocationPolicy: SkillInvocationPolicy;
 }
 
@@ -71,7 +77,7 @@ export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSess
   {
     defaultValue: () => ({
       resolve: () =>
-        Effect.succeed({ delivery: "none", releaseKeys: new Set(), skills: [], diagnostics: [] }),
+        Effect.succeed({ delivery: "none", releases: new Map(), skills: [], diagnostics: [] }),
     }),
   },
 ) {}
@@ -110,12 +116,17 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
     const releases = new Map<
       string,
-      { readonly release: SkillRelease; readonly invocationPolicy: SkillInvocationPolicy }
+      {
+        readonly release: SkillRelease;
+        readonly activationScope: "project" | "user";
+        readonly invocationPolicy: SkillInvocationPolicy;
+      }
     >();
     for (const effective of resolveEffectiveUserSkillPolicies(registry, snapshot)) {
       if (!effective.active) continue;
       releases.set(skillReleaseKey(effective.release), {
         release: effective.release,
+        activationScope: "user",
         invocationPolicy: effective.invocationPolicy,
       });
     }
@@ -149,12 +160,72 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
           for (const reference of lock.lock.skills) {
             const release = resolveRelease(reference, "project", diagnostics);
             if (release) {
-              releases.set(skillReleaseKey(release), {
-                release,
-                invocationPolicy: release.defaultInvocationPolicy,
-              });
+              const key = skillReleaseKey(release);
+              if (!releases.has(key)) {
+                releases.set(key, {
+                  release,
+                  activationScope: "project",
+                  invocationPolicy: release.defaultInvocationPolicy,
+                });
+              }
             }
           }
+        }
+      }
+
+      const projectCatalog: ProjectSkillCatalog = yield* Effect.tryPromise(() =>
+        loadProjectSkillCatalog(requestedProjectRoot),
+      ).pipe(
+        Effect.orElseSucceed(
+          () =>
+            ({
+              rootPath: requestedProjectRoot,
+              releases: [],
+              diagnostics: [
+                {
+                  code: "invalid-project" as const,
+                  path: ".scient/skills",
+                  message: "Project skills could not be inspected.",
+                },
+              ],
+            }) satisfies ProjectSkillCatalog,
+        ),
+      );
+      projectRoot = projectCatalog.rootPath;
+      for (const diagnostic of projectCatalog.diagnostics) {
+        // Ordinary T3 projects are valid workspaces but have no Scient identity
+        // and therefore no project-skill namespace. That expected state is
+        // silent during turns; management surfaces may still explain it.
+        if (diagnostic.code === "invalid-project") continue;
+        diagnostics.push({
+          code: "project-skill-invalid",
+          message: `${diagnostic.path}: ${diagnostic.message}`,
+        });
+      }
+      if (projectCatalog.projectId) {
+        const preferences = new Map(
+          snapshot.projectSkills
+            .filter((preference) => preference.projectId === projectCatalog.projectId)
+            .map((preference) => [preference.name, preference] as const),
+        );
+        const reservedNames = new Set(
+          registry.catalog.releases.map((release) => release.name.toLowerCase()),
+        );
+        for (const release of projectCatalog.releases) {
+          if (reservedNames.has(release.name.toLowerCase())) {
+            diagnostics.push({
+              code: "project-skill-collision",
+              message: `Project skill '${release.name}' conflicts with a Scient-managed skill and was withheld. Rename the project skill.`,
+            });
+            continue;
+          }
+          const preference = preferences.get(release.name);
+          if (preference?.active === false) continue;
+          releases.set(skillReleaseKey(release), {
+            release,
+            activationScope: "project",
+            invocationPolicy: preference?.invocationPolicy ?? "automatic",
+          });
         }
       }
     }
@@ -163,7 +234,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       return {
         delivery: "none" as const,
         ...(projectRoot ? { projectRoot } : {}),
-        releaseKeys: new Set<string>(),
+        releases: new Map<string, SkillRelease>(),
         skills: [],
         diagnostics,
       };
@@ -176,7 +247,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       return {
         delivery: "unsupported" as const,
         ...(projectRoot ? { projectRoot } : {}),
-        releaseKeys: new Set<string>(),
+        releases: new Map<string, SkillRelease>(),
         skills: [],
         diagnostics,
       };
@@ -187,6 +258,8 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         id: activation.release.id,
         name: activation.release.name,
         description: activation.release.description,
+        origin: activation.release.origin,
+        activationScope: activation.activationScope,
         invocationPolicy: activation.invocationPolicy,
       }))
       .sort(
@@ -211,7 +284,7 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
       return {
         delivery: "none" as const,
         ...(projectRoot ? { projectRoot } : {}),
-        releaseKeys: new Set<string>(),
+        releases: new Map<string, SkillRelease>(),
         skills: [],
         diagnostics,
       };
@@ -219,7 +292,9 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
     return {
       delivery: "mcp" as const,
       ...(projectRoot ? { projectRoot } : {}),
-      releaseKeys: new Set(skills.map((skill) => skill.releaseKey)),
+      releases: new Map(
+        skills.map((skill) => [skill.releaseKey, releases.get(skill.releaseKey)!.release]),
+      ),
       skills,
       diagnostics,
     };

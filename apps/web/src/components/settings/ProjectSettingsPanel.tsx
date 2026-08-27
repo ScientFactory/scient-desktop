@@ -114,6 +114,7 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import { ProjectSkillsSettings } from "../../scient/skills/ProjectSkillsSettings";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -921,6 +922,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 </SelectPopup>
               </Select>
             }
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Skills">
+          <ProjectSkillsSettings
+            environmentId={selectedCheckout.environmentId}
+            projectId={selectedCheckout.id}
           />
         </SettingsSection>
 
