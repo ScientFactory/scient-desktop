@@ -4,6 +4,7 @@ import { FileText, LoaderCircle } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AssetUrlState } from "../../assets/assetUrls";
+import { Button } from "../../components/ui/button";
 import { workspacePdfSource } from "../pdf/pdfSource";
 import { readScientSourceAttachmentPreview } from "./client";
 
@@ -106,6 +107,9 @@ export function SourcePdfPreview(props: {
               <FileText className="size-6" aria-hidden="true" />
               <h2>Unable to open PDF</h2>
               <p>Scient could not create an authorized preview for this file.</p>
+              <Button size="xs" variant="outline" onClick={refresh}>
+                Try again
+              </Button>
             </>
           ) : (
             <>

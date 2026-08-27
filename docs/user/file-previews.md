@@ -12,6 +12,12 @@ Right-click a file tab to copy either its project-relative path or its full path
 For a remote project, the full path belongs to the connected environment rather
 than the computer displaying Scient.
 
+Workspace and chat-linked host-file previews follow changes made on disk. The
+compact reload action in the file header remains available for an immediate
+retry or manual refresh. If automatic updates pause, that action is highlighted
+and its tooltip explains that reloading will retry them. A failed read keeps the
+last available preview visible while reporting the problem.
+
 - Markdown files open as rendered documents. Use the source/preview control in
   the file header to switch modes; Scient remembers that preference. A link to
   a specific Markdown line opens source so the requested line can be shown.

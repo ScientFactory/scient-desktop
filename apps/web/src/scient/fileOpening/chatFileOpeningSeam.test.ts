@@ -48,7 +48,7 @@ describe("universal chat-file opening seam", () => {
       '() => import("../scient/fileOpening/EnvironmentFilePreview")',
     );
     expect(chatViewSource.match(/<EnvironmentFilePreview/gu)).toHaveLength(1);
-    expect(environmentPreviewSource).toContain("environmentFilePreparation({");
+    expect(environmentPreviewSource).toContain("useEnvironmentFileRefresh({");
     expect(environmentPreviewSource).toContain("fileLinkWorkspaceRoot={null}");
     expect(environmentPreviewSource).not.toContain("projects.writeFile");
   });

@@ -35,8 +35,14 @@ export function ScientArtifactPreview(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <div className="surface-subheader gap-1 px-2">
-        <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground">
+      <div
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
+        <span
+          className="min-w-0 flex-1 truncate px-1 text-start text-xs text-muted-foreground"
+          dir="auto"
+        >
           {props.artifact.fileName}
         </span>
         <Tooltip>
@@ -46,13 +52,13 @@ export function ScientArtifactPreview(props: {
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => setRefreshToken((value) => value + 1)}
-                aria-label="Refresh figure"
+                aria-label="Reload figure"
               />
             }
           >
             <RefreshCw />
           </TooltipTrigger>
-          <TooltipPopup>Refresh figure</TooltipPopup>
+          <TooltipPopup>Reload figure</TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger

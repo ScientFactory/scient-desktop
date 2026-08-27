@@ -913,6 +913,7 @@ export default function FilePreviewPanel({
   const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
   const {
+    automaticRefreshUnavailable,
     cancelReloadNotice,
     file,
     handleSaveConfirmed,
@@ -1121,7 +1122,11 @@ export default function FilePreviewPanel({
               <TooltipPopup>Open file in preview browser</TooltipPopup>
             </Tooltip>
           ) : null}
-          <ScientFileReloadButton isPending={file.isPending} onReload={requestManualReload} />
+          <ScientFileReloadButton
+            automaticRefreshUnavailable={automaticRefreshUnavailable}
+            isPending={file.isPending}
+            onReload={requestManualReload}
+          />
           <Tooltip>
             <TooltipTrigger
               render={
