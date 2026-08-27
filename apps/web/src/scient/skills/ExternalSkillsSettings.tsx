@@ -67,7 +67,7 @@ export function ExternalSkillsSettings() {
           />
         ) : (
           <div className="px-3 sm:px-4">
-            <div className="flex items-center overflow-x-auto py-1">
+            <div className="flex items-center overflow-x-auto py-1 [&::-webkit-scrollbar]:h-[3px]">
               {groups.map(({ provider, skills }, index) => {
                 const label = providerLabel(provider.driver, provider.displayName);
                 const isOpen = expandedInstanceId === provider.instanceId;
