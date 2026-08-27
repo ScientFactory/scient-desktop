@@ -43,14 +43,17 @@ describe("Scient skill management", () => {
         expect(initial.skills.map((skill) => skill.name)).toEqual([
           "workspace-readiness-review",
           "improve-workspace-readiness",
+          "scient-skill-authoring",
         ]);
         expect(initial.skills.map((skill) => skill.category)).toEqual([
           "Workspace readiness",
           "Workspace readiness",
+          "Skill creation",
         ]);
         expect(new Set(initial.skills.map((skill) => skill.categoryDescription))).toEqual(
           new Set([
             "Review and improve a workspace so people and agents can understand it and work safely.",
+            "Create and improve reusable guidance for Scient agents.",
           ]),
         );
         expect(initial.skills.every((skill) => skill.defaultActive)).toBe(true);
@@ -58,9 +61,7 @@ describe("Scient skill management", () => {
         expect(initial.supportedProviders).not.toContain("antigravity");
         expect(initial.supportedProviders).not.toContain("cursor");
 
-        const selected = initial.skills.find(
-          (skill) => skill.name === "workspace-readiness-review",
-        )!;
+        const selected = initial.skills.find((skill) => skill.name === "scient-skill-authoring")!;
         const updated = yield* management.setUserActivation({
           releaseKey: selected.releaseKey,
           active: false,

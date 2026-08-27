@@ -1,6 +1,6 @@
 # Scient skills core
 
-Status: phase-one personal skill management implemented with two built-in
+Status: phase-one personal skill management implemented with three built-in
 skills. Add-on installation remains a later phase.
 
 ## Purpose
@@ -116,8 +116,9 @@ event.
 
 The initial built-in shipping policy is:
 
-- `workspace-readiness-review`: active, with automatic selection; and
-- `improve-workspace-readiness`: active, with explicit `$name` selection.
+- `workspace-readiness-review`: active, with automatic selection;
+- `improve-workspace-readiness`: active, with explicit `$name` selection; and
+- `scient-skill-authoring`: active, with automatic selection.
 
 Changing these catalog defaults affects only skills without an explicit user
 preference. Enabling or disabling a skill always creates a durable preference,

@@ -211,6 +211,7 @@ describe("Scient skill session planning", () => {
       );
       expect(initial.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
         ["improve-workspace-readiness", "explicit"],
+        ["scient-skill-authoring", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -232,7 +233,10 @@ describe("Scient skill session planning", () => {
         { provider: ProviderDriverKind.make("codex") },
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
-      expect(disabled.skills.map((skill) => skill.name)).toEqual(["improve-workspace-readiness"]);
+      expect(disabled.skills.map((skill) => skill.name)).toEqual([
+        "improve-workspace-readiness",
+        "scient-skill-authoring",
+      ]);
     }),
   );
 

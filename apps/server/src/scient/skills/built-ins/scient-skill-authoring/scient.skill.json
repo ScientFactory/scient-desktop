@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.skill-authoring",
+  "version": "0.1.0",
+  "category": "Skill creation",
+  "categoryDescription": "Create and improve reusable guidance for Scient agents.",
+  "displayOrder": 30,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
