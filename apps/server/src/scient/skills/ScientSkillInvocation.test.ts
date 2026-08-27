@@ -31,10 +31,12 @@ describe("turn-local Scient skill routing", () => {
       "Please use $improve-workspace-readiness after the review.",
       skills,
     );
-    expect(result.input).toContain("Automatic Scient skills available for this turn");
-    expect(result.input).toContain(automatic.releaseKey);
-    expect(result.input).toContain("The user explicitly selected");
-    expect(result.input).toContain(explicit.releaseKey);
+    expect(result.input).toContain("Scient skills available for this turn");
+    expect(result.input).toContain(`{"name":"${automatic.name}"}`);
+    expect(result.input).toContain("selected by the user");
+    expect(result.input).toContain(`{"name":"${explicit.name}"}`);
+    expect(result.input).not.toContain(automatic.releaseKey);
+    expect(result.input).not.toContain(explicit.releaseKey);
     expect(result.input).toContain("grant no additional tools or permissions");
     expect(result.skillScope).toEqual({
       releaseKeys: new Set([automatic.releaseKey, explicit.releaseKey]),
@@ -59,8 +61,10 @@ describe("turn-local Scient skill routing", () => {
       "Use $scient-skill-authoring to improve this candidate.",
       [authoring],
     );
-    expect(result.input).toContain("The user explicitly selected");
-    expect(result.input).toContain(authoring.releaseKey);
+    expect(result.input).toContain("selected by the user");
+    expect(result.input).toContain(`{"name":"${authoring.name}"}`);
+    expect(result.input).not.toContain(authoring.releaseKey);
+    expect(result.input?.match(new RegExp(authoring.name, "gu"))).toHaveLength(3);
     expect(result.skillScope).toEqual({
       releaseKeys: new Set([authoring.releaseKey]),
       skills: [authoring],

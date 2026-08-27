@@ -108,7 +108,7 @@ describe("Scient skills MCP handlers", () => {
       expect(listed.skills).toHaveLength(1);
       expect(listed.skills[0]).toMatchObject({ releaseKey, id: release.id });
 
-      const loaded = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
+      const loaded = yield* provideContext(loadScientSkillForInvocation({ name: release.name }), {
         catalog,
         invocation,
       });
@@ -119,7 +119,7 @@ describe("Scient skills MCP handlers", () => {
 
       const resource = yield* provideContext(
         readScientSkillResourceForInvocation({
-          releaseKey,
+          name: release.name,
           path: "references/rubric.md",
         }),
         { catalog, invocation },
@@ -138,14 +138,20 @@ describe("Scient skills MCP handlers", () => {
       const releaseKey = skillReleaseKey(catalog.releases[0]!);
       const emptyScope = makeInvocation(new Set());
 
-      const unavailable = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
-        invocation: emptyScope,
-      }).pipe(Effect.flip);
+      const unavailable = yield* provideContext(
+        loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),
+        {
+          catalog,
+          invocation: emptyScope,
+        },
+      ).pipe(Effect.flip);
       expect(unavailable.code).toBe("not-found");
 
       const traversal = yield* provideContext(
-        readScientSkillResourceForInvocation({ releaseKey, path: "../SKILL.md" }),
+        readScientSkillResourceForInvocation({
+          name: catalog.releases[0]!.name,
+          path: "../SKILL.md",
+        }),
         { catalog, invocation: makeInvocation(new Set([releaseKey])) },
       ).pipe(Effect.flip);
       expect(traversal.code).toBe("resource-unavailable");
@@ -155,6 +161,21 @@ describe("Scient skills MCP handlers", () => {
         invocation: makeInvocation(new Set([releaseKey]), new Set()),
       }).pipe(Effect.flip);
       expect(noCapability.code).toBe("capability-unavailable");
+
+      const invocation = makeInvocation(new Set([releaseKey]));
+      const descriptor = invocation.skillScope!.skills[0]!;
+      const ambiguous = McpInvocationContext.McpInvocationContext.of({
+        ...invocation,
+        skillScope: {
+          releaseKeys: new Set([releaseKey, `${releaseKey}-other`]),
+          skills: [descriptor, { ...descriptor, releaseKey: `${releaseKey}-other` }],
+        },
+      });
+      const nameConflict = yield* provideContext(
+        loadScientSkillForInvocation({ name: descriptor.name }),
+        { catalog, invocation: ambiguous },
+      ).pipe(Effect.flip);
+      expect(nameConflict.code).toBe("ambiguous-name");
     }),
   );
 
@@ -168,16 +189,22 @@ describe("Scient skills MCP handlers", () => {
         "explicit",
       );
 
-      const loaded = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
-        invocation: selectedInvocation,
-      });
+      const loaded = yield* provideContext(
+        loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),
+        {
+          catalog,
+          invocation: selectedInvocation,
+        },
+      );
       expect(loaded.skill.invocationPolicy).toBe("explicit");
 
-      const hidden = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
-        invocation: makeInvocation(new Set()),
-      }).pipe(Effect.flip);
+      const hidden = yield* provideContext(
+        loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),
+        {
+          catalog,
+          invocation: makeInvocation(new Set()),
+        },
+      ).pipe(Effect.flip);
       expect(hidden.code).toBe("not-found");
     }),
   );

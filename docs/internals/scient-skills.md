@@ -85,9 +85,14 @@ Supported providers keep the authenticated skill transport available with an
 empty initial scope. Immediately before a turn, the server atomically replaces
 that scope with active automatic skills plus active explicit skills selected
 as `$name`. Unselected explicit and inactive skills are absent from both the
-agent-facing list and the MCP allowlist. Every handler checks the capability
-and exact turn allowlist. Loading returns instructions and resource metadata;
-resources remain separate and are read on demand.
+agent-facing list and the MCP allowlist. The agent-facing index uses the
+canonical Agent Skills name and never asks the model to reconstruct internal
+versions or digests. Load and resource calls resolve that name only within the
+current scope, then the server loads the exact release key already bound there.
+Conflicting active names are withheld rather than resolved ambiguously. Every
+handler checks the capability and exact turn allowlist. Loading returns
+instructions and resource metadata; resources remain separate and are read on
+demand.
 
 Codex, Claude, Droid, Grok, and OpenCode currently support the full Phase 1
 delivery path. Their stable private awareness explains the routing rule; a
@@ -169,7 +174,7 @@ Automated coverage must continue to prove:
 3. exact-lock trust invalidation after any lock-byte change;
 4. no discovery of provider-native skill directories;
 5. truthful unsupported delivery for Antigravity and Cursor;
-6. exact turn-scope copying and handler authorization;
+6. exact turn-scope copying, unique model-facing names, and handler authorization;
 7. empty initial transport plus next-turn scope replacement without provider
    restart;
 8. product-owned built-in defaults plus durable active and inactive personal

@@ -1191,7 +1191,7 @@ describe("deriveWorkLogEntries", () => {
       server: "t3-code",
       tool: "scient_skill_load",
       arguments: {
-        releaseKey: `scient.workspace-readiness-review@0.1.0#sha256:${"a".repeat(64)}`,
+        name: "workspace-readiness-review",
       },
       status: "completed",
     };
@@ -1211,6 +1211,31 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.label).toBe("Used Workspace Readiness Review");
     expect(entry?.toolTitle).toBe("Used Workspace Readiness Review");
     expect(entry?.toolData).toEqual(item);
+  });
+
+  it("does not claim a failed Scient skill load was used", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "scient_skill_load",
+      arguments: { name: "scient-skill-authoring" },
+      status: "failed",
+    };
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "scient-skill-failed",
+        kind: "tool.completed",
+        summary: "t3-code · scient_skill_load",
+        payload: {
+          itemType: "mcp_tool_call",
+          title: "Load a Scient skill",
+          data: { item },
+        },
+      }),
+    ]);
+
+    expect(entry?.label).toBe("Couldn't load Scient Skill Authoring");
+    expect(entry?.toolTitle).toBe("Couldn't load Scient Skill Authoring");
   });
 
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
