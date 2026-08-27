@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   ProjectWriteFileError,
   type EnvironmentId,
@@ -35,7 +35,12 @@ function useWorkspaceFileChanges(
           input: { cwd, relativePath },
         });
   const result = useAtomValue(atom);
-  return Option.getOrNull(AsyncResult.value(result));
+  const refresh = useAtomRefresh(atom);
+  return {
+    change: Option.getOrNull(AsyncResult.value(result)),
+    refresh,
+    unavailable: relativePath !== null && result._tag === "Failure",
+  };
 }
 
 export interface FileSaveResolution {
@@ -70,7 +75,7 @@ export function useWorkspaceFileRefresh(input: {
     input.relativePath,
     input.loadAsText,
   );
-  const fileChange = useWorkspaceFileChanges(input.environmentId, input.cwd, input.relativePath);
+  const fileChanges = useWorkspaceFileChanges(input.environmentId, input.cwd, input.relativePath);
   const [reloadNotice, setReloadNotice] = useState<FileReloadNotice | null>(null);
   const [saveResolution, setSaveResolution] = useState<FileSaveResolution | null>(null);
   const [viewerRefreshKey, setViewerRefreshKey] = useState(0);
@@ -92,15 +97,15 @@ export function useWorkspaceFileRefresh(input: {
   }, [refreshAuthoritativeFile]);
 
   useEffect(() => {
-    if (fileChange === null || lastObservedChangeRef.current === fileChange) {
+    if (fileChanges.change === null || lastObservedChangeRef.current === fileChanges.change) {
       return;
     }
-    lastObservedChangeRef.current = fileChange;
+    lastObservedChangeRef.current = fileChanges.change;
     // Read once when the watcher becomes ready as well as after changes. This
     // closes the query-to-watcher race, bypasses a still-fresh cached read on
     // remount, and realigns the viewer after subscription reconnects.
     refreshViewer();
-  }, [fileChange, refreshViewer]);
+  }, [fileChanges.change, refreshViewer]);
 
   useEffect(() => {
     const relativePath = input.relativePath;
@@ -171,6 +176,7 @@ export function useWorkspaceFileRefresh(input: {
 
   const requestManualReload = useCallback(() => {
     if (input.relativePath === null) return;
+    fileChanges.refresh();
     if (input.sourcePending && file.data !== null) {
       setReloadNotice({
         kind: "manual-reload",
@@ -186,6 +192,7 @@ export function useWorkspaceFileRefresh(input: {
   }, [
     file.authoritativeData,
     file.data,
+    fileChanges.refresh,
     input.cwd,
     input.environmentId,
     input.relativePath,
@@ -234,6 +241,7 @@ export function useWorkspaceFileRefresh(input: {
   }, []);
 
   return {
+    automaticRefreshUnavailable: fileChanges.unavailable,
     cancelReloadNotice,
     file,
     handleSaveConfirmed,

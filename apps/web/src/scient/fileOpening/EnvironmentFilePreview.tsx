@@ -1,20 +1,18 @@
 "use client";
 
-import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  EnvironmentFilePath,
   type EditorId,
   type EnvironmentFilePrepareResult,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { FileQuestion, Globe2, LoaderCircle, Music2, RefreshCw } from "lucide-react";
+import { AlertTriangle, FileQuestion, Globe2, LoaderCircle, Music2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -32,16 +30,16 @@ import { environmentPdfSource } from "~/scient/pdf/pdfSource";
 import { scientificSourceLanguageOverride } from "~/scient/presentation/sourceLanguage";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { formatEnvironmentQueryError } from "~/state/query";
 import { assetEnvironment } from "~/state/assets";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import type { ScientRightPanelSurface } from "../rightPanel/surfaces";
-import { environmentFilePreparation } from "./environmentFileState";
+import { ScientFileReloadButton } from "../fileSurfaces/ScientFileFreshnessControls";
 import {
   environmentFileAssetResource,
   openEnvironmentFileInPreview,
 } from "./openEnvironmentFileInPreview";
+import { useEnvironmentFileRefresh } from "./useEnvironmentFileRefresh";
 import {
   decodeEnvironmentTextPreview,
   ENVIRONMENT_TEXT_PREVIEW_BYTE_LIMIT,
@@ -449,25 +447,15 @@ export default function EnvironmentFilePreview(props: {
   readonly surface: EnvironmentFileSurface;
   readonly threadRef: ScopedThreadRef;
 }) {
-  const prepareAtom = environmentFilePreparation({
+  const freshness = useEnvironmentFileRefresh({
     environmentId: props.environmentId,
-    input: { path: EnvironmentFilePath.make(props.surface.path) },
+    path: props.surface.path,
   });
-  const preparation = useAtomValue(prepareAtom);
-  const refreshPreparation = useAtomRefresh(prepareAtom);
-  const [refreshToken, setRefreshToken] = useState(0);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
-  const file = preparation._tag === "Success" ? preparation.value : null;
-  const error =
-    preparation._tag === "Failure" ? formatEnvironmentQueryError(preparation.cause) : null;
-
-  const refresh = useCallback(() => {
-    refreshPreparation();
-    setRefreshToken((value) => value + 1);
-  }, [refreshPreparation]);
+  const file = freshness.file;
 
   const openHtml = useCallback(() => {
     if (!file || !httpBaseUrl) return;
@@ -503,9 +491,15 @@ export default function EnvironmentFilePreview(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="surface-subheader gap-1 px-2" data-surface-subheader>
+      <div
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
         <ScientTooltip content={file?.canonicalPath ?? props.surface.path}>
-          <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground">
+          <span
+            className="min-w-0 flex-1 truncate px-1 text-start text-xs text-muted-foreground"
+            dir="auto"
+          >
             {file?.fileName ?? props.surface.path.replaceAll("\\", "/").split("/").at(-1)}
           </span>
         </ScientTooltip>
@@ -536,25 +530,36 @@ export default function EnvironmentFilePreview(props: {
             <TooltipPopup>Open in Browser</TooltipPopup>
           </Tooltip>
         ) : null}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button variant="ghost" size="icon-xs" onClick={refresh} aria-label="Refresh file" />
-            }
-          >
-            <RefreshCw />
-          </TooltipTrigger>
-          <TooltipPopup>Refresh file</TooltipPopup>
-        </Tooltip>
+        <ScientFileReloadButton
+          automaticRefreshUnavailable={freshness.automaticRefreshUnavailable}
+          isPending={freshness.isPending}
+          label="Reload file"
+          onReload={freshness.refresh}
+          size="icon-xs"
+        />
       </div>
-      {error ? (
-        <CenteredFailure message={error} onRetry={refresh} />
+      {freshness.error && file ? (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] text-destructive"
+          role="alert"
+        >
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            The latest version could not be loaded. Showing the last available copy.
+          </span>
+          <Button size="xs" variant="outline" onClick={freshness.refresh}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      {freshness.error && !file ? (
+        <CenteredFailure message={freshness.error} onRetry={freshness.refresh} />
       ) : file ? (
         <EnvironmentFileBody
           environmentId={props.environmentId}
           file={file}
           line={props.surface.line}
-          refreshToken={refreshToken}
+          refreshToken={freshness.refreshToken}
           threadRef={props.threadRef}
         />
       ) : (

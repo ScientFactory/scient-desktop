@@ -27,7 +27,7 @@ import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-import { environmentFileChanges } from "./environmentFileChanges";
+import { environmentFileChanges } from "../fileOpening/environmentFileChanges";
 import { isTrackedDocumentUrl } from "./htmlPdfNavigationGuard";
 import { trackedHtmlAssetResource } from "./htmlPdfSource";
 import { useHtmlPdfSourceStore } from "./htmlPdfSourceStore";

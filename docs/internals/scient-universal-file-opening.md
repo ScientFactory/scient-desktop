@@ -50,10 +50,15 @@ valid prefix if the range ends within a multibyte character.
 
 The thread-scoped surface persists only the requested absolute path and an
 optional line; the thread supplies environment authority. It never persists an
-expiring URL. Refresh reruns inspection and renews transport. Direct PDFs use
-environment plus normalized canonical path as logical identity, so URL renewal
-and thread changes preserve reader state while identical paths in different
-environments remain isolated.
+expiring URL. One shared exact-file subscription per environment and canonical
+path invalidates every mounted consumer; watcher readiness closes the
+inspection-to-subscription race, and later changes rerun inspection and renew
+transport. Until inspection succeeds, the requested absolute path is watched so
+creation of a previously missing file can recover the preview. Manual reload
+remains an explicit recovery path and restarts the subscription. Direct PDFs
+use environment plus normalized canonical path as logical identity, so URL
+renewal and thread changes preserve reader state while identical paths in
+different environments remain isolated.
 
 ## File transport and HTML documents
 
@@ -104,10 +109,13 @@ inherited T3 files:
    full path copying through the shared handler.
 
 The inherited editor/save lifecycle, Browser manager, and attachment/image paths
-are unchanged. Static seam tests guard the file-opening boundary, while focused
-component tests pin the additive breadcrumb and clipboard behavior. If T3 later
-provides an extensible file-presentation registry, Scient should adapt these
-owned presenters to it and retire the host seams.
+are unchanged. The workspace viewer consumes the same native watcher stream
+through one Scient-owned hook, preserving optimistic edits and revision-conflict
+handling while exposing watcher failure and restart at its existing reload
+control. Static seam tests guard the file-opening boundary, while focused
+component tests pin the additive breadcrumb, freshness, and clipboard behavior.
+If T3 later provides an extensible file-presentation registry, Scient should
+adapt these owned presenters to it and retire the host seams.
 
 The breadcrumb picker is shared by browser and desktop file previews and uses
 the existing ignore-aware `projects.listEntries` cache. File-tab copy actions use
