@@ -141,8 +141,8 @@ has a `Shadow home path`.
 
 Open Settings and look at the provider row.
 
-Scient shows the authenticated email for providers that report one. Emails are blurred by default;
-click the blurred email to reveal it.
+Scient shows the authenticated email for providers that report one. The email is visible initially
+so accounts can be distinguished; select it to hide or show it.
 
 Use display names and accent colors to make accounts easy to tell apart in the model picker.
 
@@ -179,13 +179,10 @@ If two Codex providers show the same account or the same unexpected model list:
 2. Refresh provider status.
 3. Confirm the second provider has `Shadow home path` set.
 4. Confirm the shadow directory has its own `auth.json`.
-5. If you copied `~/.codex` into the shadow directory, remove everything except `auth.json`.
-
-Example cleanup:
-
-```bash
-find ~/.codex_p -mindepth 1 ! -name auth.json -exec rm -rf {} +
-```
+5. If you copied `~/.codex` into the shadow directory, first confirm that this really is the
+   secondary shadow home and make a backup. Then move its non-`auth.json` entries out of that
+   directory. Never clean the primary `CODEX_HOME`, and keep the backup until the secondary account
+   has been verified in Scient.
 
 ## When To Use A Separate CODEX_HOME
 
