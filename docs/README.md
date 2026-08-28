@@ -5,6 +5,15 @@ Some internal documents retain inherited T3 terminology where it describes the
 host platform or historical ancestry; that terminology is not product identity
 or release authority.
 
+The logical roles are Help, Capabilities, Architecture, Development,
+Operations, Upstream, and Records. They map to the real compatibility paths
+below: `docs/user/` is the authored Help source for public Scient Docs;
+`docs/internals/` currently contains several maintainer roles;
+`docs/operations/` contains runbooks; `UPSTREAM.md` owns T3 divergence and
+routes to dated receipts; and package READMEs stay beside the package they
+explain. Update the existing owner before creating a new file. The roles do not
+require a cosmetic folder migration.
+
 ## Using Scient Desktop
 
 - [Getting started](./user/getting-started.md)
