@@ -13,6 +13,15 @@ All candidate changes use short-lived branches and draft pull requests. T3
 upstream merges use dedicated branches and must remain separate from Scient
 product work; see [UPSTREAM.md](UPSTREAM.md).
 
+For documentation, start at [docs/README.md](docs/README.md). Update existing
+owners before adding a file: released behavior and user workflows belong in
+`docs/user/`, current implementation or architecture and contributor guidance
+currently live under `docs/internals/`, runbooks live under `docs/operations/`,
+and upstream divergence lives in `UPSTREAM.md`. Keep temporary plans, scratch,
+transcripts, and handoffs out of the repository. In the pull request, state one
+of `Documentation impact: None — reason`, `Updated — paths`, or `Dependent PR —
+repository and link`.
+
 ## Read This First
 
 We are not actively accepting contributions right now.
