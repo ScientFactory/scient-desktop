@@ -1,10 +1,17 @@
-# Draft PR descriptions for Scient fork modernization
+# Scient fork modernization PR drafts
 
-These descriptions are prepared for review. They must not be merged or
-published without separate authorization. The two changes are stacked: the
-persistence phase builds on the boundary phase, which builds on the merged
-reliable-fork foundation (`origin/main`). Final PR numbers are intentionally
-not predicted.
+> Status: historical delivery record. The boundary phase became
+> [PR #19](https://github.com/ScientFactory/scient-desktop/pull/19) and the
+> persistence phase became
+> [PR #20](https://github.com/ScientFactory/scient-desktop/pull/20); both merged
+> on 2026-08-08. Current behavior and maintenance authority live in
+> [Scient conversation fork: design, provenance, and T3 divergence](./scient-fork-divergence.md).
+
+These descriptions preserve the review framing prepared before the final PR
+numbers and verification evidence existed. Do not use their future-tense
+verification placeholders as current instructions or as evidence that a check
+ran. The merged PRs own delivery history, and the fork-divergence record owns
+current behavior and seams.
 
 ## Stack phase A: Server-owned fork boundary resolution
 
