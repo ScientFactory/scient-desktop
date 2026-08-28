@@ -1,74 +1,102 @@
-# Running Scient in the Background
+# Run a Scient server in the background
 
-On Linux and macOS, Scient can run as a background service for your user, so it is ready without
-keeping a terminal open.
+This is an advanced deployment for a machine that should host a Scient
+environment without keeping a terminal open. The ordinary local workflow uses
+the server bundled with Scient desktop and does not need this setup.
 
-## Manage the Service
+Background services are supported for a user account on Linux and macOS.
+Windows background-service installation is not currently supported.
 
-Install it with the latest Scient release:
+## Requirements and package authority
 
-```sh
-npx t3@latest service install
-```
+Use the server archive from the exact
+[ScientFactory/scient-desktop release](https://github.com/ScientFactory/scient-desktop/releases)
+you want to run. Each release publishes
+`scient-server-<version>.tgz` from the same source as its desktop artifacts.
+The target machine also needs a Node.js version accepted by that archive.
 
-Check whether it is installed:
+Scient does not publish T3's npm package. Never substitute `t3@latest` for the
+release URL below. In these commands, the final `t3` is the server archive's
+retained compatibility executable name, not a request for a T3 package.
 
-```sh
-npx t3@latest service status
-```
-
-Update or repair it:
-
-```sh
-npx t3@latest service update
-```
-
-Stop it and remove it from startup:
+Set the exact Scient release once in the current shell, replacing the quoted
+placeholder, then install:
 
 ```sh
-npx t3@latest service uninstall
+SCIENT_SERVER_VERSION="<version>"
+SCIENT_SERVER_PACKAGE="https://github.com/ScientFactory/scient-desktop/releases/download/v${SCIENT_SERVER_VERSION}/scient-server-${SCIENT_SERVER_VERSION}.tgz"
+
+npx --yes \
+  --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 \
+  --package="$SCIENT_SERVER_PACKAGE" \
+  t3 service install
 ```
 
-Updating restarts Scient briefly. Let active agent work and terminal commands finish first.
-If a remote update is already in progress, wait for it to finish before retrying a local update.
+With those variables still set in the shell, use the same package and replace
+only the final service action to inspect, repair, or remove the service:
 
-The service runs a small stable launcher. Exact Scient versions are installed separately, so a
-failed remote candidate can return to the previous version without rewriting the service
-definition. The launcher snapshots the database before a remote candidate starts, so database
-updates roll back with the server version. An older launcher may require one local
-`service update` before this is available.
+```sh
+# Show the installed service, selected runtime, and log path.
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service status
 
-## Platform Support
+# Install the exact runtime and current launcher, then restart the service.
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service update
 
-**Linux** uses a systemd user unit at `~/.config/systemd/user/scient.service`. The service starts
-when the machine boots and keeps running after you log out (lingering is enabled during install).
+# Stop the service and remove it from automatic startup.
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service uninstall
+```
 
-**macOS** uses a launch agent at
-`~/Library/LaunchAgents/com.scientfactory.scient.service.plist`. It
-starts when you log in, not when the Mac boots, and it stops when you log out; macOS has no
-equivalent of Linux lingering for user agents. For a Mac that should stay reachable unattended,
-turn on automatic login (System Settings → Users & Groups; unavailable while FileVault is on) and
-keep the Mac from sleeping.
+Let active agent work and terminal commands finish before an install, update,
+or uninstall. If a remote update is already running, wait for its terminal
+outcome before starting a local service operation.
 
-A few more macOS notes:
+## Reliability model
 
-- Installing over SSH needs someone logged in at the Mac's screen to start the agent right away.
-  Without that, the install command reports an error at the final start step, but the agent is
-  fully installed and starts at the next login.
-- macOS may show privacy prompts for protected folders such as Desktop, Documents, or Downloads,
-  attributed to a bare `node` process, or deny access without a prompt. If agent work fails to
-  read those folders, grant Full Disk Access to the node binary listed in the launch agent's
-  `ProgramArguments`.
-- The agent appears under System Settings → General → Login Items. If it was switched off there,
-  or disabled with `launchctl disable`, macOS will not start it at login until you switch it back
-  on.
+The service manager starts a small stable launcher. Exact Scient server
+versions are installed in separate runtime directories. During a remote update,
+the launcher:
 
-**Windows** is not supported yet.
+1. installs and preflights the exact target archive;
+2. stops the old child only after accepting the trial;
+3. snapshots the SQLite database and side files;
+4. starts the target and waits for its migrations and long-running services to
+   become ready; and
+5. commits the target or restores the previous runtime and database snapshot.
 
-## Using It with T3 Connect
+The installed service definition therefore does not point at an ephemeral
+`npx` cache. A target that requires a newer launcher protocol is blocked before
+it can alter the database; run the exact local `service update` command once to
+upgrade that launcher.
 
-T3 Connect may offer to install the service during setup so the host stays reachable in the
-background. This is only an onboarding shortcut: the service and T3 Connect are managed separately.
+## Platform behavior
 
-Signing out of T3 Connect does not remove the service. Use `t3 service uninstall` when you no longer
-want Scient to start in the background.
+### Linux
+
+Scient uses a systemd user unit at
+`~/.config/systemd/user/scient.service`. Installation enables user lingering
+so the service can remain active without an interactive login.
+
+### macOS
+
+Scient uses the launch agent
+`~/Library/LaunchAgents/com.scientfactory.scient.service.plist`. It starts when
+the user logs in and stops when that login session ends. Installing over SSH
+cannot immediately start the agent when no graphical user is logged in; the
+command may report that final start failure even though the agent will start at
+the next login.
+
+macOS can attribute protected-folder permission prompts to the Node executable
+recorded in the launch agent. If the server cannot access Desktop, Documents,
+or Downloads, review that executable in **System Settings → Privacy &
+Security**. Do not grant broader filesystem access unless the hosted projects
+require it.
+
+## Connection and removal boundaries
+
+Installing a service does not publish it to the internet, create a Scient cloud
+account, or authorize another client. Configure the intended SSH, direct, or
+private-network access separately; see [Remote environments](./remote-access.md).
+
+Revoking a client credential or disconnecting a remote environment does not
+uninstall the service. Conversely, uninstalling the service does not delete its
+project files or silently erase the server state directory.

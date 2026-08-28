@@ -1,10 +1,12 @@
 # Scient analysis runtime foundation
 
-Status: Current implemented foundation. This is an implementation record, not
-a release-availability or full cross-platform parity claim. A real installed
-MATLAB R2026a passed the focused local verification and hidden PNG/FIG capture
-acceptance on the recorded Apple Silicon host; other releases and platforms
-remain governed by their own verification evidence.
+Status: Released AnalysisRun foundation, present in Scient Desktop v0.6.7.
+This is not a full cross-platform parity claim. A real installed MATLAB R2026a
+passed the focused local verification and hidden PNG/FIG capture acceptance on
+the recorded Apple Silicon host; other releases and platforms remain governed
+by their own verification evidence. The stateful `ComputeSession` foundation
+in draft PR #129 is a separate in-flight architecture and must not be described
+as part of this released AnalysisRun surface.
 
 ## Decision
 

@@ -23,6 +23,11 @@ the whole answer preserves a fenced `mermaid` block, so it remains readable in
 clients that do not have the rich renderer. Rendering and image export happen
 locally; Scient does not send diagram source to a rendering service.
 
+Mermaid runs in strict mode and Scient inserts only the sanitized SVG. Source
+callbacks are not activated, and no CDN, remote asset loader, or custom icon
+pack is registered. A diagram is limited to 50,000 source characters and 500
+edges so one message cannot monopolize the conversation renderer.
+
 An inline diagram is not automatically saved as a project file. Ask the agent
 to create a real `.mmd`, SVG, or other project artifact when you need something
 durable and editable outside the conversation.

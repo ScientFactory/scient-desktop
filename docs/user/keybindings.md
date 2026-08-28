@@ -3,10 +3,17 @@
 Edit keybindings from **Settings** → **Keybindings**. That page lists every command, its current
 shortcut, whether it is a default or your own, and warns about conflicts.
 
-The same configuration lives in `~/.t3/userdata/keybindings.json` on the machine running the
-server, if you prefer editing it directly. T3 Code writes the built-in defaults into that file on
-first run, and adds any new defaults on later startups unless a rule of yours already claims the
-command or the shortcut.
+Use **Open keybindings.json** on the settings page when you prefer to edit the
+file directly; that always opens the authoritative file for the selected
+environment. A production desktop environment normally stores it at
+`~/.scient-next/userdata/keybindings.json`. A separately launched compatible
+server may use another configured base directory, including the inherited
+`~/.t3/userdata/` default. These path names are compatibility values, not a
+different product or a reason to copy configuration between environments.
+
+Scient writes the built-in defaults into the environment's file on first run
+and adds new defaults on later startups unless one of your rules already claims
+the command or shortcut.
 
 The file is a JSON array of rules.
 

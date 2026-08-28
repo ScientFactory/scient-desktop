@@ -81,8 +81,9 @@ and share with OpenAI employees.
 ## Approve access to other apps
 
 When a Codex tool needs access to an app such as Safari, Scient shows the app name and asks for
-approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
-app. Some tools also offer approval for the current session or permanent approval.
+approval. You can approve, decline, or cancel the request from the desktop app or a connected web
+client. Some tools also offer approval for the current session or permanent approval. Scient does
+not currently publish a mobile client.
 
 ## I Want Work And Personal Codex Accounts
 

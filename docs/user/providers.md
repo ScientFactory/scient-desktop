@@ -35,8 +35,8 @@ modify it. When **Use Scient-managed** is available, choosing it installs and ve
 for default provider instances while leaving the system installation untouched. Removing that private
 copy returns eligible instances to the healthy system runtime.
 
-Runtime controls always apply to the machine running the Scient server. A remote browser or mobile
-client cannot install or remove software on its own device through these controls.
+Runtime controls always apply to the machine running the Scient server. A remote browser controls
+that environment; it does not install or remove provider software on the device displaying the UI.
 
 ## What each action changes
 

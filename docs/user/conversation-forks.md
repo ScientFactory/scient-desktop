@@ -18,7 +18,15 @@ without rewinding its files. Turn it on to create an isolated worktree at the
 selected checkpoint. The switch is unavailable when the project is not a Git
 repository or the fork point has no saved checkpoint.
 
+Scient opens the destination only after its transcript, attachments, and
+requested workspace are durably ready. A temporary provisioning failure is
+safe to retry and can recover after a restart. If the requested checkpoint or
+another required input is permanently unavailable, Scient reports the failure
+instead of exposing a half-created conversation.
+
 Forking from a completed response keeps the conversation through that response.
 Forking from a sent user message keeps the earlier completed conversation and
 places the selected message and its images in the new conversation's composer
-as an unsent draft.
+as an unsent draft. The first message in any fork starts a fresh provider
+session and supplies the retained conversation as bounded context, so an older
+fork point does not accidentally include later provider history.

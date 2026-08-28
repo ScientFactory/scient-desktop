@@ -15,7 +15,8 @@ text before Scient inserts or sends it.
    send. `Esc` cancels and `Enter` inserts.
 
 Audio and the initial transcript are processed by the bundled local whisper.cpp
-runtime. Audio is never sent to Scient, T3, or an AI provider.
+runtime. Audio remains on the local computer and is never sent to Scient or an
+AI provider.
 
 **Correct transcripts with an LLM** in **Settings → Voice** is off by default.
 When it remains off, the transcript stays local. When you turn it on, Scient

@@ -13,7 +13,7 @@ snapshots them but does not rewrite them or grant them extra tools or permission
 
 ## Customize a project icon
 
-T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
+Scient selects a project icon automatically. It checks the inherited `t3.json` compatibility file, common favicon and app icon
 paths, and icon links in project HTML files.
 
 To choose a different icon:
@@ -23,7 +23,7 @@ To choose a different icon:
 3. Under **Appearance**, select **Choose a project file**.
 4. Search for an image file and select it.
 
-T3 Code supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected path applies to
+Scient supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected path applies to
 each checkout in the project group and appears on your connected clients.
 
 To use automatic detection again, select **Automatic**.

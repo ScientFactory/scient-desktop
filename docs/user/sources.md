@@ -178,6 +178,25 @@ If a Zotero item has several PDF attachments, this first version reports the
 total and identifies the single PDF it will copy. Additional PDFs remain
 unchanged in Zotero and are not silently represented as imported.
 
+## Work with agents
+
+Provider agents can use bounded project-scoped Sources tools to list and read
+records, maintain source notes, update metadata with revision checks, attach or
+detach a project PDF, remove a source, and propose a new source. This access is
+enabled by default together with agent Browser access and can be withheld in
+**Settings → Integrations** without changing your own Sources or Browser access.
+
+An agent-proposed source is visibly marked for review. Approve it to make it an
+ordinary accepted source or reject it to remove the pending proposal. Agent
+tools use the same canonical `.scient/sources/` records and revision rules as
+the user interface; they do not receive arbitrary host paths, write to Zotero,
+or create a parallel agent-owned bibliography.
+
+The thread's permission mode and provider tool-authorization flow remain the
+action boundary. Enabling Sources tools does not pre-approve every proposed
+write, and a successful tool call does not turn uncertain metadata into
+verified evidence.
+
 ## Current scope
 
 This slice supports selected-reference, collection, and whole-library local
