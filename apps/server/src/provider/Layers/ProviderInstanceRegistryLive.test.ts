@@ -44,6 +44,8 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
@@ -52,6 +54,7 @@ import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -69,6 +72,13 @@ const TestHttpClientLive = Layer.succeed(
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
   ),
+);
+
+const TestPtyAdapterLive = Layer.succeed(
+  PtyAdapter.PtyAdapter,
+  PtyAdapter.PtyAdapter.of({
+    spawn: () => Effect.die("PTY must not start in provider instance registry tests"),
+  }),
 );
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -166,6 +176,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(ModelManifest.layerTest),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -341,7 +352,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
+    Layer.provideMerge(TestPtyAdapterLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(ModelManifest.layerTest),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -402,7 +415,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
         drivers: [CodexDriver, ClaudeDriver, CursorDriver, DroidDriver, GrokDriver, OpenCodeDriver],
         configMap,
       });

@@ -137,6 +137,21 @@ At the integration boundary:
 The surrounding T3 provider host remains authoritative for provider instances, enablement, adapters,
 sessions, models, external maintenance, and turn execution.
 
+## Model manifest
+
+The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
+lists the current (non-legacy) model slugs per driver kind. The `ModelManifest` service
+(`apps/server/src/provider/ModelManifest.ts`) refreshes that policy from the same file on Scient's
+`main` branch, so changing a model's classification is a reviewed Scient commit rather than an app
+release. Preference order is remote fetch, then the on-disk copy of the last successful fetch in
+the state directory, then the bundled copy.
+
+Refreshes are TTL-gated, run concurrently with provider probes, respect the
+`enableProviderUpdateChecks` setting, and never fail a provider check. Codex and Claude currently
+apply the classification to every snapshot; driver kinds absent from the manifest have no legacy
+classification. Keep the remote source Scient-owned: pointing it at upstream would let an unrelated
+repository change Scient's model policy outside Scient's review and release boundary.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
