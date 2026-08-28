@@ -307,8 +307,14 @@ describe("ServerSettings worktree defaults", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
 
-  it("withholds agent browser access for legacy configs", () => {
-    expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(false);
+  it("enables agent browser and Sources access for legacy configs", () => {
+    expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(true);
+  });
+
+  it("preserves an explicit agent browser access opt-out", () => {
+    expect(decodeServerSettings({ enableAgentBrowserAccess: false }).enableAgentBrowserAccess).toBe(
+      false,
+    );
   });
 
   it("accepts start-from-origin updates", () => {

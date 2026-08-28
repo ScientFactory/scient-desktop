@@ -29,9 +29,10 @@ export function RedactedSensitiveText(props: {
   readonly ariaLabel: string;
   readonly revealTooltip: string;
   readonly hideTooltip: string;
+  readonly defaultRevealed?: boolean;
   readonly className?: string;
 }) {
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealed] = useState(props.defaultRevealed ?? false);
   const value = props.value?.trim();
   const redacted = useMemo(() => (value ? redactedPlaceholder(value) : ""), [value]);
 

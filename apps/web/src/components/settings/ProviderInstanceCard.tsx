@@ -173,6 +173,7 @@ function ProviderAuthEmail(props: {
         ariaLabel="Toggle account email visibility"
         revealTooltip="Click to reveal email"
         hideTooltip="Click to hide email"
+        defaultRevealed
       />
     </span>
   );
@@ -445,7 +446,7 @@ export function ProviderInstanceCard({
   isUpdating = false,
   onManageConnection,
 }: ProviderInstanceCardProps) {
-  const [activeTab, setActiveTab] = useState<"models" | "configuration">("configuration");
+  const [activeTab, setActiveTab] = useState<"models" | "configuration">("models");
   const enabled = resolveProviderInstanceEnabled(instance);
   // A locally disabled provider stays neutral even if its last server status
   // is stale. Enabled providers use the server status when one is available.
