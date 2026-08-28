@@ -152,8 +152,8 @@ Binary path: claude
 CLAUDE_CONFIG_DIR path: ~/.claude_personal_home
 ```
 
-Use the email shown in Settings to confirm each provider is using the intended account. Emails are
-blurred by default; click the blurred email to reveal it.
+Use the email shown in Settings to confirm each provider is using the intended account. The email is
+visible initially so accounts can be distinguished; select it to hide or show it.
 
 ## Can I Switch Claude Accounts In An Existing Thread?
 

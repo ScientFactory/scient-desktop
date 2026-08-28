@@ -137,6 +137,16 @@ At the integration boundary:
 The surrounding T3 provider host remains authoritative for provider instances, enablement, adapters,
 sessions, models, external maintenance, and turn execution.
 
+### Settings presentation seam
+
+The provider editor's initial presentation is a small Scient-owned policy over that host state.
+Shipped drivers open on **Models** when the tab exists; unknown/custom drivers stay on their only
+**Configuration** tab. Provider-reported authenticated email is shown initially so multiple account
+instances can be distinguished, while the same reusable sensitive-text component remains redacted
+by default for other uses and lets the user hide or reveal the email. These defaults live in
+`apps/web/src/components/settings/ProviderInstanceCard.tsx` and are guarded by
+`ProviderInstanceCard.tabs.test.tsx` and `RedactedSensitiveText.test.tsx`.
+
 ## Model manifest
 
 The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which

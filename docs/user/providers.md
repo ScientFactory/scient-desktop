@@ -17,6 +17,11 @@ available step without requiring you to leave the conversation:
 Scient verifies the provider again after installation or sign-in. It reports Ready only when the
 runtime, account configuration, and available models are usable together.
 
+In **Settings > Providers**, a shipped provider opens on **Models** when that tab is available; use
+**Configuration** for paths, environment variables, and advanced instance settings. An
+authenticated email reported by a provider is shown initially so you can distinguish accounts;
+select it to hide or show it. Other sensitive configuration values remain redacted by default.
+
 ## Existing and Scient-managed installations
 
 Scient distinguishes three local runtime sources:

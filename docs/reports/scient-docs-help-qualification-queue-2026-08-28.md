@@ -12,8 +12,8 @@ Lifecycle: Temporary migration evidence; retire after durable publication metada
 
 This queue is temporary migration evidence. Current Help remains owned by the
 individual pages under `docs/user/`; released behavior remains owned by the
-implementation and release evidence. A row marked `Pilot candidate` or
-`Review` is not a public promise.
+implementation and release evidence. A row marked `Pilot verified` is eligible
+only for the labelled exact-source preview; `Review` is not a public promise.
 
 Retire this queue after the publishing pilot establishes durable page metadata,
 an exact-source publication manifest, and a normal review path for the complete
@@ -26,8 +26,9 @@ platform-specific claims require their own applicable evidence.
 
 ## Qualification vocabulary
 
-- **Pilot candidate:** in one of the three accepted vertical pilots; verify and
-  correct it before preview publication.
+- **Pilot verified:** reviewed against the exact candidate's implementation,
+  current capability owners, and focused tests; eligible for the labelled
+  exact-source preview manifest.
 - **Priority review:** outside a pilot but important to the first useful public
   corpus.
 - **Review:** potentially publishable after factual, release, surface, and link
@@ -43,18 +44,18 @@ called current; candidate previews use an exact labelled PR head.
 
 | Help source                          | Qualification   | Applicable surface                             | Factual verification and required action                                                                                                                                  |
 | ------------------------------------ | --------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs/user/getting-started.md`       | Pilot candidate | Desktop                                        | Pilot 1. Verify the exact released first-run/onboarding route, optional steps, and project handoff.                                                                       |
-| `docs/user/projects.md`              | Pilot candidate | Desktop; local and remote distinctions         | Pilot 1. Verify initialization, open-without-setup, Git/worktree behavior, permissions, recovery, and current terminology.                                                |
-| `docs/user/file-previews.md`         | Pilot candidate | Desktop app; environment-owned files           | Pilot 2. Reconcile the refreshed current behavior from PR #188, file freshness, direct/open paths, limitations, and remote authority.                                     |
-| `docs/user/pdf-reader.md`            | Pilot candidate | Desktop app                                    | Pilot 2. Verify search, outline, save-copy, range behavior, limits, and generated-PDF handoff against the released source.                                                |
-| `docs/user/latex.md`                 | Pilot candidate | Desktop app; supported local/remote toolchains | Pilot 2. Reconcile PR #188, managed/system toolchains, diagnostics, build artifacts, SyncTeX, platform limits, and recovery.                                              |
-| `docs/user/providers.md`             | Pilot candidate | Desktop app; server-authoritative environment  | Pilot 3 family entry. Verify lifecycle dimensions, defaults from PR #190, remote behavior, provider differences, and troubleshooting links.                               |
-| `docs/user/providers-codex.md`       | Pilot candidate | Supported Codex targets                        | Pilot 3. Verify runtime selection, authentication proof, managed/system behavior, account data, and current limitations.                                                  |
-| `docs/user/providers-claude.md`      | Pilot candidate | Supported Claude targets                       | Pilot 3. Verify official login paths, managed runtime, revocation recovery, account data, and unsupported targets.                                                        |
-| `docs/user/providers-antigravity.md` | Pilot candidate | Supported Antigravity targets                  | Pilot 3. Verify Google/code flow, runtime policy, model/readiness states, cancellation, and unsupported targets.                                                          |
-| `docs/user/providers-grok.md`        | Pilot candidate | Qualified Grok targets                         | Pilot 3. Preserve Early Access/qualification boundaries and verify browser/device-code, cancellation, runtime, and model states.                                          |
-| `docs/user/providers-droid.md`       | Pilot candidate | Qualified Droid targets                        | Pilot 3. Verify Factory/Droid naming, device pairing, managed runtime, recovery, and current platform evidence.                                                           |
-| `docs/user/providers-cursor.md`      | Pilot candidate | Qualified Cursor targets                       | Pilot 3. Verify assisted browser login, external/managed runtime behavior, account display, recovery, and current exclusions.                                             |
+| `docs/user/getting-started.md`       | Pilot verified  | Desktop                                        | Pilot 1. Verified the route, skippable journey, optional local preferences, Settings replay, provider reuse, and Add Project handoff.                                     |
+| `docs/user/projects.md`              | Pilot verified  | Desktop; local and remote distinctions         | Pilot 1. Verified local entry helpers, bounded initialization, open-without-setup, preservation, recovery, and retry boundaries; source-provider flows remain inherited.  |
+| `docs/user/file-previews.md`         | Pilot verified  | Desktop app; environment-owned files           | Pilot 2. Reconciled PR #188 behavior and verified environment authority, bounded preview, exact-path refresh, retained last success, direct-file types, and limits.       |
+| `docs/user/pdf-reader.md`            | Pilot verified  | Desktop app                                    | Pilot 2. Verified reader routing, persisted state, search/navigation, save-copy, errors, scanned-document limits, and generated-document identity handoff.                |
+| `docs/user/latex.md`                 | Pilot verified  | Desktop app; supported local/remote toolchains | Pilot 2. Reconciled PR #188 and verified toolchain selection, managed TinyTeX, build diagnostics/evidence, PDF freshness, SyncTeX navigation, and platform limits.        |
+| `docs/user/providers.md`             | Pilot verified  | Desktop app; server-authoritative environment  | Pilot 3. Verified lifecycle dimensions, PR #190 Models/email defaults, remote/read-only behavior, provider links, OpenCode boundary, and troubleshooting.                 |
+| `docs/user/providers-codex.md`       | Pilot verified  | Supported Codex targets                        | Pilot 3. Verified runtime selection, official authentication handoff, managed/system boundaries, multi-account homes, continuation compatibility, and limitations.        |
+| `docs/user/providers-claude.md`      | Pilot verified  | Supported Claude targets                       | Pilot 3. Verified official account paths, managed runtime, revocation recovery, config-directory isolation, skills routes, account presentation, and advanced bounds.     |
+| `docs/user/providers-antigravity.md` | Pilot verified  | Supported Antigravity targets                  | Pilot 3. Verified Google-owned auth, managed runtime, dynamic models, native process/session behavior, permissions, cancellation, and unsupported operations.             |
+| `docs/user/providers-grok.md`        | Pilot verified  | Qualified Grok targets                         | Pilot 3. Preserved Early Access scope and verified browser/device-code auth, API-key distinction, cancellation, managed runtime replacement, and recovery.                |
+| `docs/user/providers-droid.md`       | Pilot verified  | Qualified Droid targets                        | Pilot 3. Verified Factory/Droid naming, account-mode authority, managed/system runtime boundaries, model/effort discovery, autonomy mapping, and ACP limitations.         |
+| `docs/user/providers-cursor.md`      | Pilot verified  | Qualified Cursor targets                       | Pilot 3. Verified assisted browser auth, account probe, external/managed runtime behavior, removal/sign-out separation, recovery, and configuration-owned auth limits.    |
 | `docs/user/voice-dictation.md`       | Priority review | Desktop only                                   | Privacy correction is in Phase 0. Verify default-off provider text correction, local audio, model download, fallback, platform requirements, and released model set.      |
 | `docs/user/install.md`               | Hold            | Desktop installers by OS                       | Title and inherited product wording still say T3 Code. Reconcile current Scient releases, supported OS/architecture, signatures, state migration, and first-run behavior. |
 | `docs/user/updating.md`              | Hold            | Desktop/server version pairing                 | Title still says T3 Code. Reconcile Scient update authority, disabled/enabled updater paths, server compatibility, rollback, and release channels.                        |
