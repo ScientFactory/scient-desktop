@@ -25,7 +25,7 @@ require a cosmetic folder migration.
 - [Forking conversations](./user/conversation-forks.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
-- [Mobile appearance](./user/mobile-appearance.md)
+- [Mobile appearance (not publicly released)](./user/mobile-appearance.md)
 - [Remote access](./user/remote-access.md)
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
@@ -41,7 +41,7 @@ require a cosmetic folder migration.
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
 - [Voice dictation](./user/voice-dictation.md)
-- [Background service (Linux)](./user/background-service.md)
+- [Background service (Linux and macOS)](./user/background-service.md)
 - [Providers and assisted setup](./user/providers.md)
   - [Codex](./user/providers-codex.md)
   - [Claude](./user/providers-claude.md)
@@ -50,7 +50,8 @@ require a cosmetic folder migration.
   - [Droid](./user/providers-droid.md)
   - [Cursor](./user/providers-cursor.md)
 
-Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
+Inherited mobile source, not a current Scient release:
+[apps/mobile/README.md](../apps/mobile/README.md)
 
 ---
 

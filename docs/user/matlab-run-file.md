@@ -1,12 +1,10 @@
 # Run a MATLAB file
 
-Status: candidate behavior under review; not yet a released Scient capability.
-
 Scient can open and edit a project-owned `.m` file even when MATLAB is not installed. When a
 user-installed MATLAB is available on the same environment as the Scient server, the file viewer
 adds a compact **Run file** panel.
 
-## Use the candidate
+## Run a file
 
 1. Open an initialized Scient project and select a text `.m` file.
 2. Wait for any pending save to finish. Scient runs the exact saved revision, not an unsaved or
@@ -59,7 +57,14 @@ reported separately, so a successful MATLAB calculation is not mislabeled as fai
 capture is not mistaken for “this run produced no figures.” Saving a result is deliberate: hidden
 run data remains derived local state until the user promotes it into ordinary project files.
 
-This first candidate runs a complete `.m` file in noninteractive batch mode. Selection/section
+This released `AnalysisRun` workflow runs a complete `.m` file in noninteractive batch mode. It is
+separate from the draft stateful `ComputeSession` and Python/Jupyter work: neither foundation should
+be presented as the other or required to use this MATLAB panel. Selection/section
 execution, variables, optional SVG/PDF/interactive figure exports, `.mlx` and `.mat` viewers,
 debugging, MATLAB tests, notebooks, agent/MCP initiation, remote runtimes, and automatic retention
 policies remain future work.
+
+The implementation includes discovery adapters for macOS, Windows, and Linux, but release evidence
+is platform-specific. The recorded installed-runtime acceptance covers Apple Silicon with MATLAB
+R2026a; other operating systems, MATLAB releases, WSL, environment modules, and remote runtimes must
+not be called qualified without their own acceptance evidence.

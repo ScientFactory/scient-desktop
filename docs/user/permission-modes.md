@@ -48,4 +48,6 @@ threads do the same: **Supervised** starts Grok in ask mode even if your Grok CL
 set to always-approve, and **Full access** starts Grok with always-approve. The labels above
 describe what you get; the exact per-provider translation is internal and may change.
 
-Mobile offers the same four modes with the same labels and descriptions.
+The mode contract is shared with retained mobile client foundations, but Scient
+does not currently publish a mobile app. Do not use source-level mobile parity
+as evidence of released mobile behavior.
