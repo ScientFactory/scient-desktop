@@ -1,13 +1,15 @@
 # Provider Lifecycle Unification Proposal
 
-> Status: historical implementation proposal. Phases 1–5 have landed on the draft integration branch;
-> Phase 6 qualification and final integration review remain open. Current accepted behavior is
-> documented in [Provider lifecycle architecture](./provider-lifecycle.md), with evidence and open
-> questions in the [capability audit](./provider-lifecycle-capability-audit.md).
+> Status: superseded historical implementation proposal. Phases 1–6 and the final integration
+> decision landed on `main` through [PR #150](https://github.com/ScientFactory/scient-desktop/pull/150)
+> on 2026-08-25. Current accepted behavior is documented in
+> [Provider lifecycle architecture](./provider-lifecycle.md), with provider and platform evidence or
+> remaining qualification questions in the
+> [capability audit](./provider-lifecycle-capability-audit.md).
 >
-> Preserve this document as the rationale and delivery record. Do not use it as a second source of
-> current behavior. Mark it superseded after the final Phase 6 qualification pass and PR #150's
-> integration decision are recorded.
+> Preserve this document as the rationale and delivery record. Do not use its future-tense phase text
+> as a second source of current behavior or as evidence that every provider/target passed packaged-app
+> qualification.
 
 ## Executive summary
 
@@ -981,10 +983,10 @@ focused on behavior and rationale rather than file-by-file narration. Link to pr
 documentation for installation/account instructions instead of duplicating it internally.
 
 The canonical lifecycle document now carries the accepted architecture, and the companion audit
-carries evidence status, provider-specific rationale, and open qualification questions. After Phase
-6 and the final qualification pass, recheck both against the integrated implementation, mark this
-proposal superseded, and link the landed implementation pull requests. Preserve this proposal as
-historical design context rather than maintaining it as a second source of current truth.
+carries evidence status, provider-specific rationale, and open qualification questions. PR #150
+completed the integration decision and this proposal is superseded. Preserve it as historical design
+and delivery context rather than maintaining it as a second source of current truth; update the
+canonical architecture or evidence audit when current behavior or qualification changes.
 
 ## User-experience target
 
