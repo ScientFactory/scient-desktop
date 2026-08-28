@@ -80,6 +80,16 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)
 
+### Dated forensic records
+
+These reports preserve investigation evidence and evolution history. They are
+not substitutes for current implementation, `UPSTREAM.md`, or maintained help
+and capability owners.
+
+- [Scient-specific capability catalog](./reports/scient-specific-capabilities.md)
+- [Scient PR and evolution ledger](./reports/scient-pr-and-evolution-ledger.md)
+- [Scient/T3 divergence, integration, provenance, and retirements](./reports/scient-t3-divergence-integration-and-retirements.md)
+
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
