@@ -111,6 +111,10 @@ and capability owners.
 - [Scient PR and evolution ledger](./reports/scient-pr-and-evolution-ledger.md)
 - [Scient/T3 divergence, integration, provenance, and retirements](./reports/scient-t3-divergence-integration-and-retirements.md)
 
+### Temporary documentation migration records
+
+- [Scient Docs Help qualification queue — 2026-08-28](./reports/scient-docs-help-qualification-queue-2026-08-28.md)
+
 ### Historical delivery and migration records
 
 These records preserve completed plans, review wording, or migration evidence.
