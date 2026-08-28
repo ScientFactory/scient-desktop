@@ -1,13 +1,13 @@
 # Contributing
 
-## Scient candidate boundary
+## Scient repository boundary
 
-This repository is currently a private ScientFactory migration candidate. The
-D4 scope and verification rules in [AGENTS.md](AGENTS.md) govern contributions
-before the inherited T3 guidance below. Do not propose scientific features,
-legacy-data migration, cloud/mobile enablement, signing, release, or public
-distribution until the parent Scient migration plan explicitly opens the
-corresponding gate.
+This public repository is the active source for released Scient Desktop. The
+product, safety, release, and verification rules in [AGENTS.md](AGENTS.md)
+govern contributions before the inherited T3 guidance below. Public visibility
+does not make every product direction or release operation open: scientific
+features, legacy-data migration, cloud/mobile enablement, signing, releases,
+and distribution still require their owning product or operational decision.
 
 All candidate changes use short-lived branches and draft pull requests. T3
 upstream merges use dedicated branches and must remain separate from Scient
