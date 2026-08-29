@@ -164,6 +164,12 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(scient.entries).toEqual([
           { name: "skills", relativePath: ".scient/skills", kind: "directory", readOnly: false },
           {
+            name: "sources",
+            relativePath: ".scient/sources",
+            kind: "directory",
+            readOnly: true,
+          },
+          {
             name: "project.json",
             relativePath: ".scient/project.json",
             kind: "file",
@@ -173,14 +179,66 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("exposes exact internals only in the deliberate internal view", () =>
+    it.effect("shows durable Scient data while hiding technical workspace internals", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "scient-workspace-directory-internals-" });
         yield* writeTextFile(cwd, ".git/config", "[core]\n");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js", "module.exports = {};\n");
         yield* writeTextFile(cwd, ".scient/sources/records/source.json", "{}\n");
+        yield* writeTextFile(cwd, ".scient/sources/files/sha256/ab/paper.pdf", "paper\n");
+        yield* writeTextFile(cwd, ".scient/sources/history/source/1.json", "{}\n");
+        yield* writeTextFile(cwd, ".scient/sources/receipts/receipt.json", "{}\n");
+        yield* writeTextFile(cwd, ".scient/sources/operations/import.json", "{}\n");
+        yield* writeTextFile(cwd, ".scient/sources/staging/import/paper.pdf", "staged\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const managedRoot = yield* workspaceEntries.listDirectory({
+          cwd,
+          relativeDirectory: "",
+          view: "ordinary",
+        });
+        expect(managedRoot.entries.some((entry) => entry.relativePath === ".scient")).toBe(true);
+        expect(managedRoot.entries.some((entry) => entry.relativePath === ".git")).toBe(false);
+        expect(managedRoot.entries.some((entry) => entry.relativePath === "node_modules")).toBe(
+          false,
+        );
+
+        const managedScient = yield* workspaceEntries.listDirectory({
+          cwd,
+          relativeDirectory: ".scient",
+          view: "ordinary",
+        });
+        expect(managedScient.entries).toContainEqual({
+          name: "sources",
+          relativePath: ".scient/sources",
+          kind: "directory",
+          readOnly: true,
+        });
+
+        const managedSources = yield* workspaceEntries.listDirectory({
+          cwd,
+          relativeDirectory: ".scient/sources",
+          view: "ordinary",
+        });
+        expect(managedSources.entries.map((entry) => entry.name)).toEqual([
+          "files",
+          "history",
+          "receipts",
+          "records",
+        ]);
+
+        const managedRuntimeError = yield* workspaceEntries
+          .listDirectory({
+            cwd,
+            relativeDirectory: ".scient/sources/operations",
+            view: "ordinary",
+          })
+          .pipe(Effect.flip);
+        expect(managedRuntimeError).toMatchObject({
+          _tag: "WorkspaceDirectoryError",
+          failure: "path_not_visible",
+        });
+
         const root = yield* workspaceEntries.listDirectory({
           cwd,
           relativeDirectory: "",
@@ -210,6 +268,20 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           kind: "directory",
           readOnly: true,
         });
+
+        const allSources = yield* workspaceEntries.listDirectory({
+          cwd,
+          relativeDirectory: ".scient/sources",
+          view: "with-internals",
+        });
+        expect(allSources.entries.map((entry) => entry.name)).toEqual([
+          "files",
+          "history",
+          "operations",
+          "receipts",
+          "records",
+          "staging",
+        ]);
       }),
     );
 

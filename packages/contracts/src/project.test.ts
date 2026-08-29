@@ -75,6 +75,18 @@ describe("project directory contracts", () => {
     ).toEqual({ cwd: "/workspace", relativeDirectory: "", view: "ordinary" });
 
     expect(
+      decodeListDirectoryInput({
+        cwd: "/workspace",
+        relativeDirectory: ".scient/sources",
+        view: "with-internals",
+      }),
+    ).toEqual({
+      cwd: "/workspace",
+      relativeDirectory: ".scient/sources",
+      view: "with-internals",
+    });
+
+    expect(
       decodeListDirectoryResult({
         entries: [
           {

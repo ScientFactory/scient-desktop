@@ -2,8 +2,12 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { EnvironmentId, ProjectDirectoryEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree } from "@pierre/trees/react";
+import type {
+  EnvironmentId,
+  ProjectDirectoryEntry,
+  ProjectDirectoryView,
+} from "@t3tools/contracts";
+import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { MoreHorizontal, RotateCw } from "lucide-react";
@@ -11,7 +15,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -64,7 +76,11 @@ const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
 };
 
 const FILE_SEARCH_LIMIT = 200;
-const INTERNAL_VIEW_BY_WORKSPACE = new Map<string, boolean>();
+const DIRECTORY_VIEW_BY_WORKSPACE = new Map<string, ProjectDirectoryView>();
+const FILE_VISIBILITY_OPTIONS = [
+  { value: "ordinary", label: "Project files" },
+  { value: "with-internals", label: "All workspace internals" },
+] as const satisfies ReadonlyArray<{ value: ProjectDirectoryView; label: string }>;
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -88,8 +104,8 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
 }
 
 function WorkspaceFilesMenu(props: {
-  showInternals: boolean;
-  onShowInternalsChange: (showInternals: boolean) => void;
+  view: ProjectDirectoryView;
+  onViewChange: (view: ProjectDirectoryView) => void;
 }) {
   return (
     <Menu>
@@ -107,13 +123,24 @@ function WorkspaceFilesMenu(props: {
         </TooltipTrigger>
         <TooltipPopup>Files menu</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="end" sideOffset={6} className="min-w-52">
-        <MenuCheckboxItem
-          checked={props.showInternals}
-          onCheckedChange={props.onShowInternalsChange}
-        >
-          Show workspace internals
-        </MenuCheckboxItem>
+      <MenuPopup align="end" sideOffset={6} className="min-w-56">
+        <MenuGroup>
+          <MenuGroupLabel>File visibility</MenuGroupLabel>
+          <MenuRadioGroup
+            value={props.view}
+            onValueChange={(value) => props.onViewChange(value as ProjectDirectoryView)}
+          >
+            {FILE_VISIBILITY_OPTIONS.map((option) => (
+              <MenuRadioItem
+                key={option.value}
+                value={option.value}
+                className="data-highlighted:bg-primary/8 data-highlighted:text-foreground"
+              >
+                {option.label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
@@ -129,7 +156,7 @@ function FileSearchField(props: {
   return (
     <InputGroup
       variant="ghost"
-      className="h-7 min-w-0 flex-1 has-[input:focus-visible,textarea:focus-visible]:border-transparent has-[input:focus-visible,textarea:focus-visible]:ring-2 has-[input:focus-visible,textarea:focus-visible]:ring-inset has-[input:focus-visible,textarea:focus-visible]:ring-ring"
+      className="h-7 min-w-0 flex-1 has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input:focus-visible,textarea:focus-visible]:ring-0"
     >
       <InputGroupInput
         type="search"
@@ -147,53 +174,6 @@ function FileSearchField(props: {
         }}
       />
     </InputGroup>
-  );
-}
-
-function FileSearchResults(props: {
-  entries: readonly { readonly path: string }[];
-  error: string | null;
-  isPending: boolean;
-  onOpenFile: (relativePath: string) => void;
-  query: string;
-  truncated: boolean;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col" aria-busy={props.isPending}>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1" aria-label="Indexed file results">
-        {props.error ? (
-          <div className="px-3 py-2 text-xs leading-relaxed text-destructive">{props.error}</div>
-        ) : props.entries.length > 0 ? (
-          props.entries.map((entry) => (
-            <Tooltip key={entry.path}>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    className="block w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => props.onOpenFile(entry.path)}
-                  >
-                    {entry.path}
-                  </button>
-                }
-              />
-              <TooltipPopup side="right">{entry.path}</TooltipPopup>
-            </Tooltip>
-          ))
-        ) : props.isPending ? (
-          <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
-        ) : (
-          <div className="px-3 py-2 text-xs text-muted-foreground">
-            No indexed files match “{props.query}”.
-          </div>
-        )}
-      </div>
-      <div className="shrink-0 border-t border-border/50 px-3 py-1.5 text-[11px] leading-4 text-muted-foreground">
-        {props.truncated
-          ? `Showing the first ${FILE_SEARCH_LIMIT} indexed results. Ignored files may not appear.`
-          : "Indexed results only; ignored files may not appear."}
-      </div>
-    </div>
   );
 }
 
@@ -216,19 +196,24 @@ export default function FileBrowserPanel({
   const [treeSnapshot, setTreeSnapshot] =
     useState<LazyWorkspaceTreeSnapshot>(INITIAL_TREE_SNAPSHOT);
   const workspaceSessionKey = JSON.stringify([environmentId, cwd]);
-  const [showInternals, setShowInternals] = useState(
-    () => INTERNAL_VIEW_BY_WORKSPACE.get(workspaceSessionKey) ?? false,
+  const [directoryView, setDirectoryView] = useState<ProjectDirectoryView>(
+    () => DIRECTORY_VIEW_BY_WORKSPACE.get(workspaceSessionKey) ?? "ordinary",
   );
-  const showInternalsRef = useRef(showInternals);
-  showInternalsRef.current = showInternals;
+  const directoryViewRef = useRef(directoryView);
+  directoryViewRef.current = directoryView;
   const [searchValue, setSearchValue] = useState("");
+  const [primedSearchKey, setPrimedSearchKey] = useState<string | null>(null);
   const normalizedSearchValue = searchValue.trim();
   const isSearching = normalizedSearchValue.length > 0;
-  const fileSearch = useProjectPathSearch(
-    { environmentId, cwd, query: searchValue, kind: "file" },
+  const pathSearch = useProjectPathSearch(
+    { environmentId, cwd, query: searchValue },
     FILE_SEARCH_LIMIT,
   );
-  const hasCurrentSearch = fileSearch.searchedQuery === normalizedSearchValue;
+  const hasCurrentSearch = pathSearch.searchedQuery === normalizedSearchValue;
+  const searchResultKey =
+    hasCurrentSearch && !pathSearch.isPending
+      ? JSON.stringify([directoryView, normalizedSearchValue, pathSearch.entries])
+      : null;
   const entryKinds = useMemo(
     () =>
       new Map(
@@ -354,6 +339,7 @@ export default function FileBrowserPanel({
     // composer; rearranging files inside the tree stays off.
     dragAndDrop: { canDrop: () => false },
     density: "compact",
+    fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: false,
     initialExpansion: "closed",
     icons: T3_PIERRE_ICONS,
@@ -385,8 +371,9 @@ export default function FileBrowserPanel({
     search: false,
     unsafeCSS: TREE_UNSAFE_CSS,
   });
+  const treeSearch = useFileTreeSearch(model);
   const loadDirectory = useCallback(
-    async (relativeDirectory: string, view: "ordinary" | "with-internals") => {
+    async (relativeDirectory: string, view: ProjectDirectoryView) => {
       const result = await runListDirectory({
         environmentId,
         input: { cwd, relativeDirectory, view },
@@ -402,7 +389,7 @@ export default function FileBrowserPanel({
     const controller = new LazyWorkspaceTreeController({
       model,
       loadDirectory,
-      initialView: showInternalsRef.current ? "with-internals" : "ordinary",
+      initialView: directoryViewRef.current,
       onSnapshot: (snapshot) => {
         treeEntriesRef.current = snapshot.entries;
         setTreeSnapshot(snapshot);
@@ -417,24 +404,52 @@ export default function FileBrowserPanel({
   }, [loadDirectory, model]);
 
   useEffect(() => {
-    void treeControllerRef.current?.setView(showInternals ? "with-internals" : "ordinary");
-  }, [showInternals]);
+    void treeControllerRef.current?.setView(directoryView);
+  }, [directoryView]);
+
+  useEffect(() => {
+    if (!isSearching || searchResultKey === null) return;
+    if (pathSearch.entries.length === 0) {
+      setPrimedSearchKey(searchResultKey);
+      return;
+    }
+
+    const controller = treeControllerRef.current;
+    if (!controller) return;
+    let cancelled = false;
+    void controller.primePaths(pathSearch.entries.map((entry) => entry.path)).finally(() => {
+      if (cancelled || treeControllerRef.current !== controller) return;
+      setPrimedSearchKey(searchResultKey);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSearching, pathSearch.entries, searchResultKey]);
 
   const handleSearchValueChange = (value: string) => {
+    if (!isSearching && value.trim().length > 0) {
+      // Starting a search must not look like an external file selection.
+      // Keep the file that was already open as this search session's anchor.
+      searchSelectionPathRef.current = selectedPath;
+    }
     if (value.trim().length === 0) {
       if (searchSelectionPathRef.current === selectedPath) handledRevealRef.current = null;
       searchSelectionPathRef.current = null;
+      model.closeSearch();
+    } else {
+      model.setSearch(value);
     }
     setSearchValue(value);
   };
   const handleSearchClose = () => {
     if (searchSelectionPathRef.current === selectedPath) handledRevealRef.current = null;
     searchSelectionPathRef.current = null;
+    model.closeSearch();
     setSearchValue("");
   };
   const handleRefresh = () => {
     void treeControllerRef.current?.refresh();
-    if (isSearching) fileSearch.refresh();
+    if (isSearching) pathSearch.refresh();
     onRefreshSelectedFile?.();
   };
 
@@ -445,10 +460,18 @@ export default function FileBrowserPanel({
     }
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
     if (isSearching) {
-      if (searchSelectionPathRef.current === selectedPath) {
+      const selectedInTree = model
+        .getSelectedPaths()
+        .some((path) => path.replace(/\/$/, "") === selectedPath);
+      if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
+        treeSelectionPathRef.current = null;
+        searchSelectionPathRef.current = selectedPath;
+        handledRevealRef.current = revealRequest;
+      } else if (searchSelectionPathRef.current === selectedPath) {
         handledRevealRef.current = revealRequest;
       } else {
         searchSelectionPathRef.current = null;
+        model.closeSearch();
         setSearchValue("");
       }
       return;
@@ -521,6 +544,17 @@ export default function FileBrowserPanel({
     };
   }, [dragMention]);
 
+  const isSearchPending =
+    isSearching &&
+    (!hasCurrentSearch || pathSearch.isPending || searchResultKey !== primedSearchKey);
+  const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
+  const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;
+  const searchEmptyMessage = isSearchPending
+    ? "Searching…"
+    : currentSearchError
+      ? "Couldn’t search unopened folders."
+      : `No files or folders match “${normalizedSearchValue}”.`;
+
   return (
     <div
       ref={panelRef}
@@ -528,11 +562,11 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
         data-surface-subheader
       >
         <RefreshFilesButton
-          isPending={treeSnapshot.isPending || (isSearching && fileSearch.isPending)}
+          isPending={treeSnapshot.isPending || isSearchPending}
           onRefresh={handleRefresh}
         />
         <FileSearchField
@@ -543,37 +577,31 @@ export default function FileBrowserPanel({
           onClose={handleSearchClose}
         />
         <WorkspaceFilesMenu
-          showInternals={showInternals}
-          onShowInternalsChange={(nextShowInternals) => {
-            if (nextShowInternals) {
-              INTERNAL_VIEW_BY_WORKSPACE.set(workspaceSessionKey, true);
+          view={directoryView}
+          onViewChange={(nextView) => {
+            if (nextView === "ordinary") {
+              DIRECTORY_VIEW_BY_WORKSPACE.delete(workspaceSessionKey);
             } else {
-              INTERNAL_VIEW_BY_WORKSPACE.delete(workspaceSessionKey);
+              DIRECTORY_VIEW_BY_WORKSPACE.set(workspaceSessionKey, nextView);
             }
-            setShowInternals(nextShowInternals);
+            setDirectoryView(nextView);
           }}
         />
       </div>
       <div className="sr-only" aria-live="polite">
-        {treeSnapshot.isPending
-          ? "Loading workspace files."
-          : treeSnapshot.failures.length > 0
-            ? "Some workspace files could not be loaded."
-            : "Workspace files loaded."}
+        {isSearching
+          ? isSearchPending
+            ? "Searching workspace files."
+            : currentSearchError
+              ? "Some workspace files could not be searched."
+              : `${treeSearch.matchingPaths.length} matching workspace paths.`
+          : treeSnapshot.isPending
+            ? "Loading workspace files."
+            : treeSnapshot.failures.length > 0
+              ? "Some workspace files could not be loaded."
+              : "Workspace files loaded."}
       </div>
-      {isSearching ? (
-        <FileSearchResults
-          entries={hasCurrentSearch ? fileSearch.entries : []}
-          error={hasCurrentSearch ? fileSearch.error : null}
-          isPending={fileSearch.isPending}
-          query={hasCurrentSearch ? fileSearch.searchedQuery : normalizedSearchValue}
-          truncated={hasCurrentSearch && fileSearch.truncated}
-          onOpenFile={(relativePath) => {
-            searchSelectionPathRef.current = relativePath;
-            onOpenFile(relativePath);
-          }}
-        />
-      ) : treeSnapshot.rootError && treeSnapshot.entries.size === 0 ? (
+      {treeSnapshot.rootError && treeSnapshot.entries.size === 0 ? (
         <div className="flex flex-col items-start gap-2 p-4 text-xs leading-relaxed text-destructive">
           <span>{treeSnapshot.rootError}</span>
           <Button
@@ -587,7 +615,10 @@ export default function FileBrowserPanel({
           </Button>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          aria-busy={treeSnapshot.isPending || isSearchPending}
+        >
           {treeSnapshot.failures[0] ? (
             <button
               type="button"
@@ -603,15 +634,33 @@ export default function FileBrowserPanel({
           ) : treeSnapshot.entries.size === 0 && treeSnapshot.isPending ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">Loading files…</div>
           ) : null}
-          <FileTree
-            model={model}
-            aria-label={`${projectName} files`}
-            className="min-h-0 flex-1 overflow-hidden"
-            style={{
-              colorScheme: resolvedTheme,
-              ["--trees-fg-override" as string]: "var(--contrast-foreground)",
-            }}
-          />
+          <div className="relative flex min-h-0 flex-1">
+            <FileTree
+              model={model}
+              aria-label={`${projectName} files`}
+              className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
+              style={{
+                colorScheme: resolvedTheme,
+                ["--trees-fg-override" as string]: "var(--contrast-foreground)",
+              }}
+            />
+            {hideTreeForSearch ? (
+              <div className="absolute inset-x-0 top-0 px-3 py-2 text-xs text-muted-foreground">
+                {searchEmptyMessage}
+              </div>
+            ) : null}
+          </div>
+          {isSearching ? (
+            <div className="shrink-0 border-t border-border/50 px-3 py-1.5 text-[11px] leading-4 text-muted-foreground">
+              {isSearchPending
+                ? "Searching unopened folders…"
+                : currentSearchError
+                  ? "Couldn’t search unopened folders. Loaded folders are still filtered."
+                  : hasCurrentSearch && pathSearch.truncated
+                    ? `First ${FILE_SEARCH_LIMIT} indexed matches loaded; ignored paths may not appear.`
+                    : "Unopened folders use indexed search; ignored paths may not appear."}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

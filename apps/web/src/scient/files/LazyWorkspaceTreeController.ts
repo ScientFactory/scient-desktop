@@ -150,6 +150,40 @@ export class LazyWorkspaceTreeController {
     return this.#entries.has(relativePath);
   }
 
+  /**
+   * Adds indexed paths to the existing tree by loading only their ancestor
+   * directories. Unlike ensurePath, this does not change normal expansion;
+   * the tree's temporary search projection decides what to reveal.
+   */
+  async primePaths(relativePaths: readonly string[]): Promise<void> {
+    if (!(await this.load(""))) return;
+
+    const ancestorsByDepth = new Map<number, Set<string>>();
+    for (const relativePath of relativePaths) {
+      const segments = relativePath.split("/").filter(Boolean);
+      let ancestor = "";
+      for (const [index, segment] of segments.slice(0, -1).entries()) {
+        ancestor = ancestor ? `${ancestor}/${segment}` : segment;
+        const depth = index + 1;
+        const ancestors = ancestorsByDepth.get(depth) ?? new Set<string>();
+        ancestors.add(ancestor);
+        ancestorsByDepth.set(depth, ancestors);
+      }
+    }
+
+    for (const depth of [...ancestorsByDepth.keys()].sort((left, right) => left - right)) {
+      const ancestors = ancestorsByDepth.get(depth);
+      if (!ancestors) continue;
+      await Promise.all(
+        [...ancestors].map((ancestor) =>
+          this.#entries.get(ancestor)?.kind === "directory"
+            ? this.load(ancestor)
+            : Promise.resolve(false),
+        ),
+      );
+    }
+  }
+
   load(relativeDirectory: string, force = false): Promise<boolean> {
     if (this.#destroyed) return Promise.resolve(false);
     const current = this.#branches.get(relativeDirectory);

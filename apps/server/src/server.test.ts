@@ -5443,6 +5443,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.writeFileString(path.join(workspaceDir, ".git", "config"), "[core]\n");
       yield* fs.makeDirectory(path.join(workspaceDir, ".scient"), { recursive: true });
       yield* fs.writeFileString(path.join(workspaceDir, ".scient", "project.json"), "{}\n");
+      yield* fs.makeDirectory(path.join(workspaceDir, ".scient", "sources", "records"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, ".scient", "sources", "records", "source.json"),
+        "{}\n",
+      );
       yield* fs.symlink(
         path.join(workspaceDir, ".scient", "project.json"),
         path.join(workspaceDir, "managed-alias.json"),
@@ -5458,6 +5465,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             directory: client[WS_METHODS.projectsListDirectory]({
               cwd: workspaceDir,
               relativeDirectory: "",
+              view: "ordinary",
+            }),
+            scient: client[WS_METHODS.projectsListDirectory]({
+              cwd: workspaceDir,
+              relativeDirectory: ".scient",
               view: "ordinary",
             }),
             internals: client[WS_METHODS.projectsListDirectory]({
@@ -5485,6 +5497,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isTrue(response.directory.complete);
       assert.isTrue(response.directory.entries.some((entry) => entry.relativePath === ".env"));
       assert.isFalse(response.directory.entries.some((entry) => entry.relativePath === ".git"));
+      assert.isTrue(
+        response.scient.entries.some(
+          (entry) => entry.relativePath === ".scient/sources" && entry.readOnly,
+        ),
+      );
       assert.isTrue(response.internals.entries.some((entry) => entry.relativePath === ".git"));
       assert.deepEqual(response.file, {
         relativePath: "src/index.ts",

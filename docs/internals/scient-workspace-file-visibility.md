@@ -18,11 +18,12 @@ Scient will treat Files as a truthful, user-facing view of project material, not
 The ordinary Files view will:
 
 1. show useful project files and directories, including dotfiles and Git-ignored material;
-2. hide only exact, conservatively classified machinery such as version-control internals, dependency stores, disposable caches, and transient Scient state;
-3. default unknown in-workspace paths to visible;
-4. enumerate one directory at a time instead of loading a recursive project index;
-5. keep managed or tool-owned internals read-only in generic Files; and
-6. offer a quiet, session-scoped `Show workspace internals` action for deliberate raw inspection.
+2. keep useful durable Scient-managed project data deliberately inspectable;
+3. hide only exact, conservatively classified machinery such as version-control internals, dependency stores, disposable caches, and transient Scient state;
+4. default unknown in-workspace paths to visible;
+5. enumerate one directory at a time instead of loading a recursive project index;
+6. keep managed or tool-owned material read-only in generic Files; and
+7. offer a quiet, session-scoped choice between project files and technical workspace internals.
 
 Tree visibility is a presentation decision. It does not grant or revoke provider filesystem authority, preload file contents into model context, decide content-search eligibility, or make a file safe to send to an external service.
 
@@ -53,7 +54,7 @@ Measurements taken on the Scient checkout on 2026-08-27 support that diagnosis:
 | Direct warm root-directory read, median |        under 0.1 ms |
 | `node_modules` in the measured checkout | about 231,000 files |
 
-These are diagnostic observations, not universal performance targets. They must be refreshed before implementation.
+These were diagnostic inputs to this candidate, not universal performance targets. Future performance work must refresh them against representative workspaces.
 
 ## First principles
 
@@ -71,7 +72,7 @@ A name that merely resembles an internal path is not internal. For example, `.gi
 
 ### Useful managed data remains accessible
 
-A Scient subsystem may provide the clearest primary surface for an object, but durable project data must not become opaque. Generic Files may keep raw managed storage out of the ordinary view while deliberate internal inspection provides a read-only fallback.
+A Scient subsystem may provide the clearest primary surface for an object, but useful durable project data must not become opaque. Generic Files keeps that data visible and read-only when direct edits could bypass the owning subsystem's validation. Transient operations, staging, indexes, caches, and transactions remain technical internals.
 
 This ADR does not require Files to become a second Sources, Skills, or Settings editor. Valid mutation remains with the owning subsystem.
 
@@ -126,7 +127,11 @@ The ordinary view includes:
 
 `generated` is not a visibility class. A generated artifact can be a first-class deliverable.
 
-### Internal-only material
+Durable source records, stored source files, receipts, and history below
+`.scient/sources` are ordinary-visible and read-only in Files. Sources remains
+their mutation owner and primary task-oriented surface.
+
+### Technical-internal material
 
 The initial exact policy keeps these classes out of ordinary Files:
 
@@ -144,32 +149,44 @@ This list must remain small and fixture-tested. A subsystem that wants another p
 
 `.scient` is a visible managed container whose children are classified independently and lazily.
 
-| Path class                                                                | Ordinary Files                                  | With internals | Generic Files mutation |
-| ------------------------------------------------------------------------- | ----------------------------------------------- | -------------- | ---------------------- |
-| `.scient/project.json`                                                    | Visible, managed                                | Visible        | Read-only              |
-| `.scient/skills.lock.json`                                                | Visible, managed                                | Visible        | Read-only              |
-| Future user-authored project skill sources                                | Visible once their storage contract is accepted | Visible        | Editable               |
-| `.scient/sources/records`, `history`, `receipts`, and stored source files | Hidden; Sources is primary                      | Visible        | Read-only              |
-| `.scient/sources/operations` and `staging`                                | Hidden                                          | Visible        | Read-only              |
-| Exact subsystem caches, indexes, locks, migrations, and temporary files   | Hidden                                          | Visible        | Read-only              |
+| Path class                                                              | Project files    | All workspace internals | Generic Files mutation |
+| ----------------------------------------------------------------------- | ---------------- | ----------------------- | ---------------------- |
+| `.scient/project.json`                                                  | Visible, managed | Visible                 | Read-only              |
+| `.scient/skills.lock.json`                                              | Visible, managed | Visible                 | Read-only              |
+| User-authored project skills below `.scient/skills`                     | Visible          | Visible                 | Editable               |
+| `.scient/sources` and its durable records, history, receipts, and files | Visible, managed | Visible                 | Read-only              |
+| `.scient/sources/operations` and `staging`                              | Hidden           | Visible                 | Read-only              |
+| Exact subsystem caches, indexes, locks, migrations, and temporary files | Hidden           | Visible                 | Read-only              |
+
+Every new top-level namespace below `.scient` must declare its visibility and
+mutation owner, update this table and the pure policy fixtures, and link to its
+owning architecture. The fail-open rule protects user discoverability when an
+unknown path exists; it is not permission for a managed subsystem to skip that
+governance.
 
 `PROJECT.md` and `AGENTS.md` are ordinary root project documents, not `.scient` internals.
 
-Sources remains the primary surface for logical source details, PDFs, notes, export, editing, and removal. Internal inspection ensures that authoritative records, durable evidence, and stored bytes remain reachable without making raw hashed paths the ordinary user experience. Richer Sources provenance and history presentation is deferred to [issue #201](https://github.com/ScientFactory/scient-desktop/issues/201).
+Sources remains the primary surface for logical source details, PDFs, notes, export, editing, and removal. Ordinary read-only visibility ensures that authoritative records, durable evidence, and stored bytes remain reachable without making raw hashed paths the primary user experience. Richer Sources provenance and history presentation is deferred to [issue #201](https://github.com/ScientFactory/scient-desktop/issues/201).
 
 ### Deliberate internal inspection
 
-The Files overflow menu includes one checkable action: `Show workspace internals`.
+The Files overflow menu includes one radio selection:
 
-- It is off by default.
-- It applies only to the current workspace and app session.
-- It does not affect useful dotfiles or ignored project files, which are already ordinary.
-- Enabling it re-enumerates the root and loaded branches; unopened directories remain unloaded.
-- Managed and tool-owned internal entries open read-only in generic Files.
-- It does not add internal paths to filename search, content search, composer suggestions, telemetry, or model context.
-- Disabling it removes internal rows without claiming to revoke native or agent access.
+1. **Project files** is the default ordinary view.
+2. **All workspace internals** additionally exposes technical machinery.
 
-It is deliberately not called `Show hidden files`: hidden-name conventions do not define ordinary visibility.
+The selection applies only to the current workspace and app session. Changing
+it re-enumerates the root and loaded branches while unopened directories remain
+unloaded. Managed data and technical internals open read-only in generic Files.
+
+The selection does not affect useful dotfiles or ignored project files, which
+are already ordinary. It does not add managed or internal paths to filename
+search, content search, composer suggestions, telemetry, or model context.
+Returning to a narrower view removes those rows without claiming to revoke
+native or agent access.
+
+The choices deliberately avoid the phrase `hidden files`: hidden-name
+conventions do not define ordinary visibility.
 
 ## Minimal architecture
 
@@ -214,6 +231,20 @@ The names are illustrative. The lasting contract is behavioral:
 - never silently truncate.
 
 Pagination mechanics are selected only after refreshed measurements of unusually large single directories. A revision-bound cursor protocol is not required unless evidence shows that a simpler continuation cannot remain truthful and reliable.
+
+### Workspace-root authority boundary
+
+The directory contract accepts a client-supplied `cwd`. The service canonicalizes
+that root and confines every requested descendant beneath it, but it does not
+prove that the supplied root belongs to the project currently selected in the
+client. That inherited boundary is acceptable for the trusted manual Files UI;
+it is not an agent authorization contract.
+
+Providers and model-facing tools must never pass a model-supplied `cwd` into
+this service. They must resolve a server-owned thread or project context, obtain
+a verified `WorkspaceBinding`, and pass its canonical root internally. A future
+server-owned project-context resolver for manual operations that do not begin
+from a thread belongs to the Agent Tools foundation, not this visibility slice.
 
 The existing flat `projects.listEntries` contract remains during migration so mobile and other consumers are not forced into the desktop change.
 
@@ -270,7 +301,8 @@ The exact file placement may follow current repository structure. The important 
 - Useful dotfiles and ignored project material appear without a preference change.
 - `.git`, dependency stores, disposable caches, and exact Scient internals stay out of ordinary Files.
 - Unknown in-root entries remain visible.
-- `Show workspace internals` exposes internal paths lazily and read-only.
+- Durable Scient source data is ordinary-visible lazily and read-only.
+- The internal view exposes technical machinery lazily and read-only.
 - Durable `.scient` documents and raw managed evidence remain deliberately inspectable.
 - Generic Files cannot write managed or tool-owned internals.
 - Exact previews retain all current filesystem safeguards.
@@ -330,15 +362,20 @@ Implementation sequencing and future investigations are tracked in [GitHub issue
 - richer managed-data provenance and inspection UX;
 - branch freshness, remote scale, and large-directory pagination;
 - mobile migration; and
-- policy governance for future `.scient` subsystems.
+- policy governance for future `.scient` subsystems; and
+- server-owned project-context resolution for future Agent Tools consumers.
 
 Those items are deliberately not prerequisites for the minimal lazy browsing foundation. Each must establish evidence and the smallest adequate design before implementation.
 
-## Implementation readiness
+## Delivery readiness
 
-Implementation must begin from a clean branch based on current `main`, with the relevant contracts and server/client seams revalidated. The first executable slice should turn the visibility and mutation examples above into table-driven policy tests before adding UI behavior.
+This candidate implements the bounded slice from a branch based on current
+`main`, with table-driven policy tests and focused contract, server, and client
+validation. Merge readiness still requires manual desktop acceptance and the
+repository's normal CI gate.
 
-No additional product-policy decision is required to begin that bounded slice. Parameters such as response budgets and continuation mechanics must come from refreshed measurements rather than speculative infrastructure.
+Future parameters such as response budgets and continuation mechanics must come
+from refreshed measurements rather than speculative infrastructure.
 
 ## References
 

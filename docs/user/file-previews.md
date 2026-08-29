@@ -13,14 +13,21 @@ visible whether it is Git-tracked, ignored, or named with a leading dot.
 Low-level machinery such as version-control data, dependency stores, temporary
 caches, and private Scient runtime state stays out of the ordinary view.
 
-To inspect that machinery deliberately, open the Files menu and enable **Show
-workspace internals**. The choice lasts for the current workspace session.
-Managed and tool-owned files—including raw Scient source records—open read-only
-in Files; use their owning Scient surface when you need to change them.
+The Files menu offers two visibility levels:
 
-Filename search currently uses the existing project index. Its results are
-labeled as indexed results because ignored files may not appear there even
-when they are available through folder browsing.
+- **Project files** is the default. It includes durable managed source files,
+  records, receipts, and history below `.scient/sources`.
+- **All workspace internals** also shows technical machinery such as
+  version-control data, dependency stores, caches, source operations, and
+  staging.
+
+The choice lasts for the current workspace session. Managed and tool-owned
+files open read-only in Files; use their owning Scient surface when you need to
+change them.
+
+Filename search filters the existing tree. Scient uses the project index to
+discover matches in unopened folders and loads only their ancestor folders.
+Ignored paths that have not been browsed may not appear in search.
 
 What appears in Files does not change what an agent can access and does not add
 file contents to a conversation. Those boundaries are enforced separately when

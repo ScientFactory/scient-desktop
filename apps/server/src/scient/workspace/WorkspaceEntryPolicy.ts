@@ -1,5 +1,9 @@
+import type { ProjectDirectoryView } from "@t3tools/contracts";
+
+export type WorkspaceEntryVisibility = "ordinary" | "internal";
+
 export interface WorkspaceEntryDisposition {
-  readonly visibility: "ordinary" | "internal";
+  readonly visibility: WorkspaceEntryVisibility;
   readonly mutation: "files" | "owner";
   readonly reasonCode: string;
 }
@@ -74,7 +78,22 @@ export function workspaceEntryDisposition(relativePath: string): WorkspaceEntryD
   }
 
   if (segments[1] === "sources") {
-    return internal("scient.sources-store");
+    if (segments.length === 2) {
+      return ordinary("scient.sources-container", "owner");
+    }
+    const sourceArea = segments[2];
+    if (
+      sourceArea === "files" ||
+      sourceArea === "records" ||
+      sourceArea === "history" ||
+      sourceArea === "receipts"
+    ) {
+      return ordinary("scient.sources-durable-data", "owner");
+    }
+    if (sourceArea === "operations" || sourceArea === "staging") {
+      return internal("scient.sources-runtime");
+    }
+    return internal("scient.sources-managed");
   }
 
   const scientPath = segments.join("/");
@@ -92,4 +111,16 @@ export function workspaceEntryDisposition(relativePath: string): WorkspaceEntryD
   }
 
   return ordinary("scient.unknown-project-material");
+}
+
+export function workspaceEntryVisibleInView(
+  visibility: WorkspaceEntryVisibility,
+  view: ProjectDirectoryView,
+): boolean {
+  switch (view) {
+    case "ordinary":
+      return visibility === "ordinary";
+    case "with-internals":
+      return true;
+  }
 }

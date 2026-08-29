@@ -27,7 +27,10 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
-import { workspaceEntryDisposition } from "../scient/workspace/WorkspaceEntryPolicy.ts";
+import {
+  workspaceEntryDisposition,
+  workspaceEntryVisibleInView,
+} from "../scient/workspace/WorkspaceEntryPolicy.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -113,7 +116,7 @@ export class WorkspaceDirectoryError extends Schema.TaggedErrorClass<WorkspaceDi
       case "path_not_directory":
         return `Workspace path '${this.relativeDirectory}' in '${this.cwd}' is not a directory.`;
       case "path_not_visible":
-        return `Workspace directory '${this.relativeDirectory}' is not available in the ordinary view.`;
+        return `Workspace directory '${this.relativeDirectory}' is not available in the selected Files view.`;
       case "resolved_path_outside_root":
         return `Workspace directory '${this.relativeDirectory}' resolves outside '${this.cwd}'.`;
       default:
@@ -364,7 +367,7 @@ export const make = Effect.gen(function* () {
           });
 
     const requestedDisposition = workspaceEntryDisposition(target.relativePath);
-    if (input.view === "ordinary" && requestedDisposition.visibility === "internal") {
+    if (!workspaceEntryVisibleInView(requestedDisposition.visibility, input.view)) {
       return yield* new WorkspaceDirectoryError({
         cwd: normalizedCwd,
         relativeDirectory: target.relativePath,
@@ -437,7 +440,7 @@ export const make = Effect.gen(function* () {
     }
     const canonicalDirectory = relativeRealDirectory.replaceAll("\\", "/");
     const canonicalDisposition = workspaceEntryDisposition(canonicalDirectory);
-    if (input.view === "ordinary" && canonicalDisposition.visibility === "internal") {
+    if (!workspaceEntryVisibleInView(canonicalDisposition.visibility, input.view)) {
       return yield* new WorkspaceDirectoryError({
         cwd: normalizedCwd,
         relativeDirectory: target.relativePath,
@@ -479,9 +482,8 @@ export const make = Effect.gen(function* () {
       const disposition = workspaceEntryDisposition(relativePath);
       const canonicalChildDisposition = workspaceEntryDisposition(canonicalRelativePath);
       if (
-        input.view === "ordinary" &&
-        (disposition.visibility === "internal" ||
-          canonicalChildDisposition.visibility === "internal")
+        !workspaceEntryVisibleInView(disposition.visibility, input.view) ||
+        !workspaceEntryVisibleInView(canonicalChildDisposition.visibility, input.view)
       ) {
         continue;
       }

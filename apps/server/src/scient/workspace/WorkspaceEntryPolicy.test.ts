@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type WorkspaceEntryDisposition,
   workspaceEntryDisposition,
+  workspaceEntryVisibleInView,
 } from "./WorkspaceEntryPolicy.ts";
 
 const ordinaryFiles = (reasonCode: string): WorkspaceEntryDisposition => ({
@@ -50,8 +51,14 @@ describe("workspaceEntryDisposition", () => {
     [".scient-next/userdata/state.sqlite", internalOwner("scient.runtime-state")],
     [".scient/project-init.json", internalOwner("scient.project-transaction")],
     [".scient/init-transaction.json", internalOwner("scient.project-transaction")],
-    [".scient/sources/records/source.json", internalOwner("scient.sources-store")],
-    [".scient/sources/files/sha256/ab/paper.pdf", internalOwner("scient.sources-store")],
+    [".scient/sources", ordinaryOwner("scient.sources-container")],
+    [".scient/sources/records/source.json", ordinaryOwner("scient.sources-durable-data")],
+    [".scient/sources/files/sha256/ab/paper.pdf", ordinaryOwner("scient.sources-durable-data")],
+    [".scient/sources/history/source/1.json", ordinaryOwner("scient.sources-durable-data")],
+    [".scient/sources/receipts/receipt.json", ordinaryOwner("scient.sources-durable-data")],
+    [".scient/sources/operations/import.json", internalOwner("scient.sources-runtime")],
+    [".scient/sources/staging/source.pdf", internalOwner("scient.sources-runtime")],
+    [".scient/sources/future/index.json", internalOwner("scient.sources-managed")],
   ] satisfies ReadonlyArray<readonly [string, WorkspaceEntryDisposition]>)(
     "classifies %s without broad name heuristics",
     (relativePath, expected) => {
@@ -75,5 +82,16 @@ describe("workspaceEntryDisposition", () => {
     expect(workspaceEntryDisposition(".scient/future-subsystem/evidence.json")).toEqual(
       ordinaryFiles("scient.unknown-project-material"),
     );
+  });
+});
+
+describe("workspaceEntryVisibleInView", () => {
+  it.each([
+    ["ordinary", "ordinary", true],
+    ["ordinary", "with-internals", true],
+    ["internal", "ordinary", false],
+    ["internal", "with-internals", true],
+  ] as const)("shows %s entries in %s: %s", (visibility, view, expected) => {
+    expect(workspaceEntryVisibleInView(visibility, view)).toBe(expected);
   });
 });

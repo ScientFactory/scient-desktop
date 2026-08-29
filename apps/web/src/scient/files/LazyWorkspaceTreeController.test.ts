@@ -41,6 +41,7 @@ function makeController(
 ) {
   const model = new FileTree({
     paths: [],
+    fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: false,
     initialExpansion: "closed",
   });
@@ -146,6 +147,93 @@ describe("LazyWorkspaceTreeController", () => {
     harness.destroy();
   });
 
+  it("primes indexed paths without changing normal expansion", async () => {
+    const loadDirectory = vi.fn(
+      async (relativeDirectory: string): Promise<ProjectListDirectoryResult> => {
+        switch (relativeDirectory) {
+          case "":
+            return complete(directory("src"), directory("docs"));
+          case "src":
+            return complete(directory("src/components"));
+          case "src/components":
+            return complete(file("src/components/Composer.tsx"));
+          default:
+            return complete(file("docs/guide.md"));
+        }
+      },
+    );
+    const harness = makeController(loadDirectory);
+
+    await harness.controller.start();
+    await harness.controller.primePaths([
+      "src/components/Composer.tsx",
+      "docs/guide.md",
+      "src/components",
+    ]);
+
+    expect(loadDirectory.mock.calls.map(([relativeDirectory]) => relativeDirectory)).toEqual([
+      "",
+      "src",
+      "docs",
+      "src/components",
+    ]);
+    expect(harness.model.getItem("src/components/Composer.tsx")).not.toBeNull();
+    expect(harness.model.getItem("docs/guide.md")).not.toBeNull();
+    for (const path of ["src", "src/components", "docs"]) {
+      const item = harness.model.getItem(path);
+      if (!item || !("isExpanded" in item)) throw new Error(`Expected ${path} directory`);
+      expect(item.isExpanded()).toBe(false);
+    }
+    harness.model.setSearch("components");
+    expect(harness.model.getSearchMatchingPaths()).toEqual([
+      "src/components/",
+      "src/components/Composer.tsx",
+    ]);
+    harness.model.closeSearch();
+    harness.destroy();
+  });
+
+  it("filters primed paths in the same model and restores expansion and selection", async () => {
+    const loadDirectory = vi.fn(
+      async (relativeDirectory: string): Promise<ProjectListDirectoryResult> => {
+        switch (relativeDirectory) {
+          case "":
+            return complete(directory("src"), directory("docs"), file("README.md"));
+          case "src":
+            return complete(directory("src/components"));
+          case "src/components":
+            return complete(file("src/components/Composer.tsx"));
+          default:
+            return complete(file("docs/notes.md"));
+        }
+      },
+    );
+    const harness = makeController(loadDirectory);
+
+    await harness.controller.start();
+    const src = harness.model.getItem("src");
+    const docs = harness.model.getItem("docs");
+    if (!src || !("isExpanded" in src)) throw new Error("Expected src directory");
+    if (!docs || !("isExpanded" in docs)) throw new Error("Expected docs directory");
+    docs.expand();
+    await harness.controller.load("docs");
+    harness.model.getItem("docs/notes.md")?.select();
+
+    harness.model.setSearch("Composer");
+    await harness.controller.primePaths(["src/components/Composer.tsx"]);
+
+    expect(harness.model.getSearchMatchingPaths()).toEqual(["src/components/Composer.tsx"]);
+    expect(src.isExpanded()).toBe(true);
+    expect(docs.isExpanded()).toBe(false);
+
+    harness.model.closeSearch();
+
+    expect(src.isExpanded()).toBe(false);
+    expect(docs.isExpanded()).toBe(true);
+    expect(harness.model.getSelectedPaths()).toEqual(["docs/notes.md"]);
+    harness.destroy();
+  });
+
   it("ignores stale responses after the internal view changes", async () => {
     const pending = new Map<ProjectDirectoryView, (result: ProjectListDirectoryResult) => void>();
     const loadDirectory = vi.fn(
@@ -163,6 +251,55 @@ describe("LazyWorkspaceTreeController", () => {
 
     expect(harness.model.getItem(".git")).not.toBeNull();
     expect(harness.model.getItem("ordinary.txt")).toBeNull();
+    harness.destroy();
+  });
+
+  it("keeps durable sources visible while switching workspace internals", async () => {
+    const loadDirectory = vi.fn(
+      async (
+        relativeDirectory: string,
+        view: ProjectDirectoryView,
+      ): Promise<ProjectListDirectoryResult> => {
+        if (relativeDirectory === ".scient") {
+          return complete(directory(".scient/skills"), directory(".scient/sources", true));
+        }
+        switch (view) {
+          case "ordinary":
+            return complete(file("project.txt"), directory(".scient", true));
+          case "with-internals":
+            return complete(
+              file("project.txt"),
+              directory(".scient", true),
+              directory(".git", true),
+            );
+        }
+      },
+    );
+    const harness = makeController(loadDirectory);
+
+    await harness.controller.start();
+    expect(harness.model.getItem("project.txt")).not.toBeNull();
+    expect(harness.model.getItem(".scient")).not.toBeNull();
+    await harness.controller.load(".scient");
+    expect(harness.model.getItem(".scient/skills")).not.toBeNull();
+    expect(harness.model.getItem(".scient/sources")).not.toBeNull();
+
+    await harness.controller.setView("with-internals");
+    expect(harness.model.getItem(".scient/sources")).not.toBeNull();
+    expect(harness.model.getItem(".git")).not.toBeNull();
+
+    await harness.controller.setView("ordinary");
+    expect(harness.model.getItem(".scient/skills")).not.toBeNull();
+    expect(harness.model.getItem(".scient/sources")).not.toBeNull();
+    expect(harness.model.getItem(".git")).toBeNull();
+    expect(loadDirectory.mock.calls.map(([, view]) => view)).toEqual([
+      "ordinary",
+      "ordinary",
+      "with-internals",
+      "with-internals",
+      "ordinary",
+      "ordinary",
+    ]);
     harness.destroy();
   });
 
