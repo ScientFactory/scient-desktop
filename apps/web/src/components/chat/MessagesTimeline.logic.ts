@@ -781,24 +781,6 @@ export function deriveMessagesTimelineRows(input: {
     entry.turnId === unsettledTurnId;
   const isVisibleActiveToolEntry = (entry: WorkLogEntry) =>
     workLogEntryIsToolLike(entry) && workEntryIsVisibleInGroup(entry, true);
-  const activeEntries = input.isWorking
-    ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
-    : [];
-  const activeTurnHasVisibleContent = activeEntries.some((entry) => {
-    if (entry.kind === "message") {
-      return entry.message.role === "assistant" && (entry.message.text?.trim().length ?? 0) > 0;
-    }
-    if (entry.kind === "work") {
-      return (
-        entry.entry.agentSpawn === undefined &&
-        workLogEntryIsToolLike(entry.entry) &&
-        entry.entry.toolLifecycleStatus === "inProgress"
-      );
-    }
-    if (entry.kind === "proposed-plan" || entry.kind === "turn-plan") return true;
-    return false;
-  });
-
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
   for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
     const entry = input.timelineEntries[index]!;
@@ -841,7 +823,7 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
-      showThinking: activeWorkRow === null && !activeTurnHasVisibleContent,
+      showThinking: activeWorkRow === null,
     });
   };
   const appendActiveWorkRows = () => {
@@ -865,7 +847,7 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (input.isWorking && index === activeTurnHeaderIndex) {
+    if (input.isWorking && activeWorkRow !== null && index === activeTurnHeaderIndex) {
       appendWorkingRow();
     }
 
@@ -1121,7 +1103,10 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
+  if (
+    input.isWorking &&
+    (activeWorkRow === null || activeTurnHeaderIndex === input.timelineEntries.length)
+  ) {
     appendWorkingRow();
   }
 
