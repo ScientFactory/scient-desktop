@@ -2,6 +2,8 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { Plugin, PluginKey, type EditorState, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 
+import { markdownTextMatches } from "../searchText";
+
 export interface ScientMarkdownSearchMatch {
   readonly from: number;
   readonly to: number;
@@ -30,30 +32,6 @@ export const scientMarkdownSearchPluginKey = new PluginKey<ScientMarkdownSearchS
   "scientMarkdownSearch",
 );
 
-function isWordCharacter(value: string | undefined): boolean {
-  return value !== undefined && /[\p{L}\p{N}_]/u.test(value);
-}
-
-function textMatches(
-  text: string,
-  query: string,
-  caseSensitive: boolean,
-  wholeWord: boolean,
-): ReadonlyArray<{ readonly from: number; readonly to: number }> {
-  if (query.length === 0) return [];
-  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const expression = new RegExp(escapedQuery, caseSensitive ? "gu" : "giu");
-  const matches: Array<{ readonly from: number; readonly to: number }> = [];
-  for (const match of text.matchAll(expression)) {
-    const from = match.index;
-    const to = from + match[0].length;
-    if (!wholeWord || (!isWordCharacter(text[from - 1]) && !isWordCharacter(text[to]))) {
-      matches.push({ from, to });
-    }
-  }
-  return matches;
-}
-
 function documentMatches(
   doc: ProseMirrorNode,
   query: string,
@@ -64,7 +42,7 @@ function documentMatches(
   doc.descendants((node, position) => {
     if (!node.inlineContent) return;
     const text = node.textBetween(0, node.content.size, "\uFFFC", "\uFFFC");
-    for (const match of textMatches(text, query, caseSensitive, wholeWord)) {
+    for (const match of markdownTextMatches(text, query, caseSensitive, wholeWord)) {
       matches.push({ from: position + 1 + match.from, to: position + 1 + match.to });
     }
     return false;

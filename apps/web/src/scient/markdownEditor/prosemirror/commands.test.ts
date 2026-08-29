@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { Transaction } from "prosemirror-state";
 import { TextSelection } from "prosemirror-state";
+import { CellSelection } from "prosemirror-tables";
 
 import { createScientMarkdownProjection, serializeScientMarkdownProjection } from "./projection";
 import { listKindAt, runScientMarkdownCommand, type ScientMarkdownCommand } from "./commands";
@@ -128,5 +129,174 @@ describe("Scient Markdown commands", () => {
     expect(session.state.doc.firstChild?.type.name).toBe("heading");
     expect(session.state.doc.firstChild?.attrs.level).toBe(6);
     expect(session.session.draftSource).toBe("###### Deep  heading.\n");
+  });
+});
+
+/** Every control in the editing dock must land a real document change. */
+describe("Scient Markdown dock command coverage", () => {
+  const freshSession = (source = "") =>
+    new ScientProseMirrorSession({ source, revision: "sha256:b" });
+
+  it("applies inline marks to the selection", () => {
+    const cases: ReadonlyArray<readonly [ScientMarkdownCommand, string]> = [
+      ["bold", "Some **text** here.\n"],
+      ["italic", "Some *text* here.\n"],
+      ["strike", "Some ~~text~~ here.\n"],
+      ["inline-code", "Some `text` here.\n"],
+    ];
+    for (const [command, expected] of cases) {
+      const session = freshSession("Some text here.\n");
+      select(session, 6, 10);
+      runUserCommand(session, command);
+      expect(session.session.draftSource).toBe(expected);
+    }
+  });
+
+  it("inserts block elements at the caret", () => {
+    const cases: ReadonlyArray<readonly [ScientMarkdownCommand, string]> = [
+      ["horizontal-rule", "---"],
+      ["image", "!["],
+      ["wiki-link", "[[Untitled]]"],
+      ["display-math", "$$"],
+      ["code-block", "```"],
+    ];
+    for (const [command, marker] of cases) {
+      const session = freshSession();
+      select(session, 1);
+      runUserCommand(session, command);
+      expect(session.session.draftSource).toContain(marker);
+    }
+  });
+
+  it("inserts a three-by-three table", () => {
+    const session = freshSession();
+    select(session, 1);
+    runUserCommand(session, "table");
+    const table = session.state.doc.firstChild;
+    expect(table?.type.name).toBe("table");
+    expect(table?.childCount).toBe(3);
+    expect(table?.firstChild?.childCount).toBe(3);
+    expect(session.session.draftSource).toContain("| --- | --- | --- |");
+  });
+
+  it("toggles an ordered list on and off", () => {
+    const session = freshSession("Item.\n");
+    select(session, 1);
+    runUserCommand(session, "ordered-list");
+    expect(session.session.draftSource).toBe("1. Item.\n");
+    expect(listKindAt(session.state)).toBe("ordered");
+
+    runUserCommand(session, "ordered-list");
+    expect(session.session.draftSource).toBe("Item.\n");
+    expect(listKindAt(session.state)).toBeNull();
+  });
+
+  function tableSession(): { readonly session: ScientProseMirrorSession } {
+    const session = freshSession();
+    select(session, 1);
+    runUserCommand(session, "table");
+    let cellPosition = -1;
+    session.state.doc.descendants((node, position) => {
+      if (node.type.name === "table_cell" && cellPosition < 0) cellPosition = position;
+      return node.type.name !== "table_cell";
+    });
+    select(session, cellPosition + 2);
+    return { session };
+  }
+
+  it("edits table alignment, structure, and headers", () => {
+    const { session } = tableSession();
+
+    runUserCommand(session, "align-column-left");
+    expect(session.session.draftSource).toContain(":---");
+    runUserCommand(session, "align-column-center");
+    expect(session.session.draftSource).toContain(":---:");
+    runUserCommand(session, "align-column-right");
+    expect(session.session.draftSource).toContain("---:");
+    runUserCommand(session, "align-column-default");
+    expect(session.session.draftSource).not.toContain(":");
+
+    const table = () => session.state.doc.firstChild;
+    runUserCommand(session, "add-row-after");
+    expect(table()?.childCount).toBe(4);
+    runUserCommand(session, "add-row-before");
+    expect(table()?.childCount).toBe(5);
+    runUserCommand(session, "delete-row");
+    expect(table()?.childCount).toBe(4);
+
+    runUserCommand(session, "add-column-after");
+    expect(table()?.firstChild?.childCount).toBe(4);
+    runUserCommand(session, "add-column-before");
+    expect(table()?.firstChild?.childCount).toBe(5);
+    runUserCommand(session, "delete-column");
+    expect(table()?.firstChild?.childCount).toBe(4);
+
+    const cellAtSelection = () => {
+      const { $from } = session.state.selection;
+      for (let depth = $from.depth; depth > 0; depth -= 1) {
+        const node = $from.node(depth);
+        if (node.type.name === "table_cell" || node.type.name === "table_header") {
+          return { node, position: $from.before(depth) };
+        }
+      }
+      return null;
+    };
+    const selectedCell = cellAtSelection();
+    expect(selectedCell?.node.type.name).toBe("table_cell");
+    runUserCommand(session, "toggle-header-cell");
+    expect(session.state.doc.nodeAt(selectedCell?.position ?? -1)?.type.name).toBe("table_header");
+
+    runUserCommand(session, "delete-table");
+    expect(session.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(session.session.draftSource).not.toContain("|");
+  });
+
+  it("merges and splits selected cells", () => {
+    const { session } = tableSession();
+    const headerPositions: number[] = [];
+    session.state.doc.descendants((node, position) => {
+      if (node.type.name === "table_header") headerPositions.push(position);
+      return node.type.name === "table" || node.type.name === "table_row";
+    });
+    const anchor = headerPositions[0];
+    const head = headerPositions[1];
+    expect(anchor).toBeDefined();
+    expect(head).toBeDefined();
+    if (anchor === undefined || head === undefined) return;
+
+    session.applyTransaction(
+      session.state.tr.setSelection(CellSelection.create(session.state.doc, anchor, head)),
+      "user",
+    );
+    runUserCommand(session, "merge-cells");
+    const headerRow = () => session.state.doc.firstChild?.firstChild;
+    expect(headerRow()?.childCount).toBe(2);
+    expect(headerRow()?.firstChild?.attrs.colspan).toBe(2);
+
+    runUserCommand(session, "split-cell");
+    expect(headerRow()?.childCount).toBe(3);
+    expect(headerRow()?.firstChild?.attrs.colspan).toBe(1);
+  });
+
+  it("undoes and redoes the last edit", () => {
+    const session = freshSession("Some text.\n");
+    select(session, 1, 5);
+    runUserCommand(session, "bold");
+    expect(session.session.draftSource).toBe("**Some** text.\n");
+
+    runUserCommand(session, "undo");
+    expect(session.session.draftSource).toBe("Some text.\n");
+    runUserCommand(session, "redo");
+    expect(session.session.draftSource).toBe("**Some** text.\n");
+  });
+
+  it("converts a paragraph to a quote and back", () => {
+    const session = freshSession("Quoted words.\n");
+    select(session, 1);
+    runUserCommand(session, "blockquote");
+    expect(session.session.draftSource).toBe("> Quoted words.\n");
+
+    runUserCommand(session, "blockquote");
+    expect(session.session.draftSource).toBe("Quoted words.\n");
   });
 });

@@ -16,6 +16,16 @@ import {
   type MarkdownSaveIntent,
 } from "@scientfactory/scient-markdown";
 
+import type { ScientFindBarState } from "../ui/ScientFindBar";
+
+import {
+  clearCm6Find,
+  configureCm6Find,
+  navigateCm6Find,
+  scientCm6FindField,
+  scientCm6FindState,
+  type ScientCm6FindConfig,
+} from "./find";
 import { markdownEditingKeymap } from "./keymap";
 import { livePreview } from "./livePreview";
 import { revealFreezeExtension } from "./reveal";
@@ -44,6 +54,10 @@ export class ScientCm6EditorView {
   private readonly options: ScientCm6EditorViewOptions;
   private session: MarkdownDocumentSession;
   private cmView: EditorView | null = null;
+  private findOpen = false;
+  private findFocusRequest = 0;
+  private readonly findListeners = new Set<() => void>();
+  private findSnapshotCache: ScientFindBarState | null = null;
 
   constructor(options: ScientCm6EditorViewOptions) {
     this.options = options;
@@ -69,6 +83,86 @@ export class ScientCm6EditorView {
 
   focus(): void {
     this.cmView?.focus();
+  }
+
+  subscribeFind = (listener: () => void): (() => void) => {
+    this.findListeners.add(listener);
+    return () => this.findListeners.delete(listener);
+  };
+
+  getFindSnapshot = (): ScientFindBarState => {
+    if (this.findSnapshotCache === null) {
+      const find = this.cmView ? scientCm6FindState(this.cmView.state) : null;
+      this.findSnapshotCache = {
+        editable: true,
+        findActiveIndex: find?.activeIndex ?? 0,
+        findCaseSensitive: find?.caseSensitive ?? false,
+        findFocusRequest: this.findFocusRequest,
+        findMatchCount: find?.matches.length ?? 0,
+        findOpen: this.findOpen,
+        findQuery: find?.query ?? "",
+        findWholeWord: find?.wholeWord ?? false,
+      };
+    }
+    return this.findSnapshotCache;
+  };
+
+  /** Opens the find bar and focuses its input (Mod-f). */
+  requestFind(): void {
+    this.findOpen = true;
+    this.findFocusRequest += 1;
+    this.notifyFind();
+  }
+
+  setFindOpen(open: boolean): void {
+    if (this.findOpen === open) return;
+    this.findOpen = open;
+    if (!open) this.cmView?.dispatch({ effects: clearCm6Find.of(null) });
+    this.notifyFind();
+  }
+
+  configureFind(input: ScientCm6FindConfig): void {
+    this.cmView?.dispatch({ effects: configureCm6Find.of(input) });
+  }
+
+  navigateFind(direction: -1 | 1): void {
+    const view = this.cmView;
+    if (!view) return;
+    view.dispatch({ effects: navigateCm6Find.of(direction) });
+    const match = scientCm6FindState(view.state).matches[
+      scientCm6FindState(view.state).activeIndex
+    ];
+    if (!match) return;
+    view.dispatch({
+      selection: { anchor: match.from, head: match.to },
+      scrollIntoView: true,
+    });
+  }
+
+  replaceFind(replacement: string, all: boolean): boolean {
+    const view = this.cmView;
+    if (!view) return false;
+    const find = scientCm6FindState(view.state);
+    if (find.matches.length === 0) return false;
+    if (all) {
+      view.dispatch({
+        changes: find.matches.map((match) => ({
+          from: match.from,
+          to: match.to,
+          insert: replacement,
+        })),
+      });
+      return true;
+    }
+    const match = find.matches[find.activeIndex];
+    if (!match) return false;
+    view.dispatch({ changes: { from: match.from, to: match.to, insert: replacement } });
+    return true;
+  }
+
+  private notifyFind(): void {
+    this.findSnapshotCache = null;
+    this.findListeners.forEach((listener) => listener());
   }
 
   confirmSave(intent: MarkdownSaveIntent, revision: string): void {
@@ -111,12 +205,13 @@ export class ScientCm6EditorView {
       doc: this.session.draftSource,
       extensions: [
         history(),
-        markdownEditingKeymap,
+        markdownEditingKeymap({ onFind: () => this.requestFind() }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown({ base: markdownLanguage, extensions: [GFM] }),
         EditorView.lineWrapping,
         livePreviewTheme,
         revealFreezeExtension,
+        scientCm6FindField,
         livePreview({
           placeholder: this.options.placeholder,
           ...(this.options.resolveImageSource
@@ -124,6 +219,13 @@ export class ScientCm6EditorView {
             : {}),
         }),
         EditorView.updateListener.of((update) => {
+          if (
+            update.transactions.some(
+              (transaction) => transaction.docChanged || transaction.effects.length > 0,
+            )
+          ) {
+            this.notifyFind();
+          }
           if (!update.docChanged) return;
           if (update.transactions.some((transaction) => transaction.annotation(ExternalSync))) {
             return;

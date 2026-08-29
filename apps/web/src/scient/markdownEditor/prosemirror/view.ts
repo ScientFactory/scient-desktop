@@ -1,5 +1,6 @@
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { toggleMark } from "prosemirror-commands";
+import { redoDepth, undoDepth } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { Selection, TextSelection, type Transaction } from "prosemirror-state";
 import { EditorView, type DirectEditorProps } from "prosemirror-view";
@@ -67,6 +68,8 @@ export interface ScientMarkdownEditorSnapshot {
   readonly canDuplicateBlock: boolean;
   readonly canMoveBlockDown: boolean;
   readonly canMoveBlockUp: boolean;
+  readonly canRedo: boolean;
+  readonly canUndo: boolean;
   readonly editable: boolean;
   readonly headingLevel: number | null;
   readonly findActiveIndex: number;
@@ -656,6 +659,8 @@ export class ScientMarkdownEditorView {
       canDuplicateBlock: block?.canDuplicate ?? false,
       canMoveBlockDown: block?.canMoveDown ?? false,
       canMoveBlockUp: block?.canMoveUp ?? false,
+      canRedo: redoDepth(state) > 0,
+      canUndo: undoDepth(state) > 0,
       editable: modeIsEditable(this.mode),
       findActiveIndex: find.activeIndex,
       findCaseSensitive: find.caseSensitive,

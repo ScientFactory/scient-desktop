@@ -2,11 +2,9 @@ import { redo, undo } from "@codemirror/commands";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
 import {
-  ALargeSmall,
   ArrowRightLeft,
   Bold,
   ChevronDown,
-  Code2,
   Columns3,
   Image as ImageIcon,
   Italic,
@@ -15,13 +13,13 @@ import {
   ListOrdered,
   ListTodo,
   Minus,
+  Pilcrow,
+  Plus,
   Redo2,
-  Sigma,
   Strikethrough,
-  Table as TableIcon,
   Undo2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   Menu,
@@ -30,7 +28,6 @@ import {
   MenuGroupLabel,
   MenuItem,
   MenuPopup,
-  MenuSeparator,
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -46,6 +43,8 @@ import {
   toggleWrap,
 } from "./commands";
 import { ScientCm6EditorView } from "./view";
+import { ScientFindBar } from "../ui/ScientFindBar";
+import "../scient-markdown-editor.css";
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -84,7 +83,7 @@ function ToolbarIconButton(props: {
 
 function ToolbarMenu(props: {
   readonly label: string;
-  readonly summary?: React.ReactNode;
+  readonly icon: React.ReactNode;
   readonly children: React.ReactNode;
 }) {
   return (
@@ -96,11 +95,11 @@ function ToolbarMenu(props: {
               render={
                 <button
                   type="button"
-                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  className="scient-markdown-command-button inline-flex size-7 items-center justify-center gap-0.5 rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label={props.label}
                 >
-                  {props.summary}
-                  <span className="truncate">{props.label}</span>
+                  {props.icon}
+                  <ChevronDown className="size-2.5 opacity-60" />
                 </button>
               }
             />
@@ -187,6 +186,11 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
       }),
   );
   controllerRef.current = controller;
+  const findSnapshot = useSyncExternalStore(
+    controller.subscribeFind,
+    controller.getFindSnapshot,
+    controller.getFindSnapshot,
+  );
 
   useEffect(() => {
     const element = containerRef.current;
@@ -293,7 +297,7 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
             <Link2 className="size-3.5" />
           </ToolbarIconButton>
           <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-          <ToolbarMenu label="Paragraph">
+          <ToolbarMenu label="Paragraph style" icon={<Pilcrow className="size-3.5" />}>
             {[
               { label: "Paragraph", prefix: "" },
               { label: "Heading 1", prefix: "# " },
@@ -317,24 +321,30 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
               </MenuCheckboxItem>
             ))}
           </ToolbarMenu>
-          <ToolbarMenu label="List" summary={<List className="size-3.5 shrink-0 opacity-70" />}>
+          <ToolbarMenu label="List style" icon={<List className="size-3.5" />}>
             <MenuCheckboxItem
               checked={false}
               onCheckedChange={() => run((view) => toggleLinePrefix(view, "- "))}
             >
-              <List className="mr-2 size-4 text-muted-foreground" />
-              Bullet list
+              <span className="flex items-center gap-2">
+                <List className="size-4 text-muted-foreground" />
+                Bullet list
+              </span>
             </MenuCheckboxItem>
             <MenuCheckboxItem checked={false} onCheckedChange={() => run(toggleNumberedList)}>
-              <ListOrdered className="mr-2 size-4 text-muted-foreground" />
-              Numbered list
+              <span className="flex items-center gap-2">
+                <ListOrdered className="size-4 text-muted-foreground" />
+                Numbered list
+              </span>
             </MenuCheckboxItem>
             <MenuCheckboxItem
               checked={false}
               onCheckedChange={() => run((view) => toggleLinePrefix(view, "- [ ] "))}
             >
-              <ListTodo className="mr-2 size-4 text-muted-foreground" />
-              Task list
+              <span className="flex items-center gap-2">
+                <ListTodo className="size-4 text-muted-foreground" />
+                Task list
+              </span>
             </MenuCheckboxItem>
           </ToolbarMenu>
           <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
@@ -346,11 +356,10 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
                     render={
                       <button
                         type="button"
-                        className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label="Insert Markdown block"
+                        className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Insert block or element"
                       >
-                        <span className="text-sm leading-none">+</span>
-                        <span>Insert</span>
+                        <Plus className="size-3.5" />
                       </button>
                     }
                   />
@@ -435,6 +444,9 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
             </MenuPopup>
           </Menu>
         </div>
+      ) : null}
+      {findSnapshot.findOpen ? (
+        <ScientFindBar controller={controller} snapshot={findSnapshot} />
       ) : null}
       {conflict ? (
         <div
