@@ -1,11 +1,20 @@
-import { ChevronDown, ChevronUp } from "lucide-react";
-import type { ReactNode } from "react";
+import { ChevronDown, ChevronUp, Ellipsis } from "lucide-react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
   MenuPopup,
+  MenuSeparator,
   MenuShortcut,
   MenuTrigger,
 } from "~/components/ui/menu";
@@ -124,6 +133,180 @@ export function MenuRow(props: {
 /** Vertical separator between dock control groups; sized by the stylesheet. */
 export function DockDivider() {
   return <span className="scient-markdown-command-divider shrink-0" />;
+}
+
+/**
+ * One collapsible section of a dock. `bar` renders in the dock row while the
+ * group fits; `overflow` renders inside the unified overflow menu once the
+ * group no longer fits. Lower `priority` collapses sooner; `pinned` groups
+ * never collapse. `estimatedWidth` is only used until the group has been
+ * measured on screen, so bias it low: an over-optimistic estimate is
+ * corrected after one measured paint, while an over-pessimistic one would
+ * keep the group hidden without ever being re-measured.
+ */
+export interface DockGroup {
+  readonly id: string;
+  readonly priority: number;
+  readonly estimatedWidth: number;
+  readonly pinned?: boolean | undefined;
+  readonly bar: ReactNode;
+  readonly overflow?: ReactNode;
+}
+
+export interface DockGroupMeasurement {
+  readonly id: string;
+  readonly priority: number;
+  readonly width: number;
+  readonly pinned?: boolean | undefined;
+}
+
+/**
+ * Pure overflow decision: hides the lowest-priority unpinned groups until
+ * the remaining groups plus the reserved trailing cluster fit the available
+ * width. Being a pure function of measured widths it cannot oscillate; the
+ * same inputs always yield the same hidden set.
+ */
+export function collapseDockGroups(args: {
+  readonly availableWidth: number;
+  readonly reservedWidth: number;
+  readonly groups: readonly DockGroupMeasurement[];
+}): ReadonlySet<string> {
+  const edgeSlack = 6;
+  const collapsible = args.groups
+    .filter((group) => group.pinned !== true)
+    .sort((a, b) => a.priority - b.priority || (a.id < b.id ? -1 : 1));
+  let used = args.groups.reduce((total, group) => total + group.width, args.reservedWidth);
+  const hidden = new Set<string>();
+  for (const group of collapsible) {
+    if (used <= args.availableWidth - edgeSlack) break;
+    hidden.add(group.id);
+    used -= group.width;
+  }
+  return hidden;
+}
+
+function sameStringSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every((value) => b.has(value));
+}
+
+const EMPTY_GROUP_SET: ReadonlySet<string> = new Set();
+
+/**
+ * The dock row with priority-based overflow. While expanded it renders every
+ * group that fits, in array order, and moves the hidden ones (same order)
+ * into the unified "More actions" menu it owns, ahead of any
+ * `overflowItems` the surface always keeps there. Pinned groups (core
+ * formatting) never collapse; if even they exceed the width the dock falls
+ * back to horizontal scrolling. Collapsed, only the right-aligned handle
+ * shows. The bar keeps a fixed height in every state so toggling never
+ * shifts the document.
+ */
+export function DockOverflowRow(props: {
+  readonly label: string;
+  readonly expanded: boolean;
+  readonly onExpandedChange: (expanded: boolean) => void;
+  readonly groups: readonly DockGroup[];
+  /** Items that live in the overflow menu even when nothing is hidden. */
+  readonly overflowItems?: ReactNode;
+}) {
+  const dockRef = useRef<HTMLDivElement>(null);
+  const widthsRef = useRef(new Map<string, number>());
+  const groupsRef = useRef(props.groups);
+  groupsRef.current = props.groups;
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(EMPTY_GROUP_SET);
+
+  const recompute = useCallback(() => {
+    const dock = dockRef.current;
+    // clientWidth is 0 without a layout engine (tests, hidden panes): show all.
+    if (!dock || dock.clientWidth === 0) return;
+    for (const element of dock.querySelectorAll("[data-dock-group]")) {
+      const id = element.getAttribute("data-dock-group");
+      if (id !== null && element instanceof HTMLElement) {
+        widthsRef.current.set(id, element.offsetWidth);
+      }
+    }
+    const reserved = dock.querySelector("[data-dock-reserved]");
+    const style = getComputedStyle(dock);
+    const available =
+      dock.clientWidth -
+      (parseFloat(style.paddingLeft) || 0) -
+      (parseFloat(style.paddingRight) || 0);
+    const next = collapseDockGroups({
+      availableWidth: available,
+      reservedWidth: reserved instanceof HTMLElement ? reserved.offsetWidth : 0,
+      groups: groupsRef.current.map((group) => ({
+        id: group.id,
+        priority: group.priority,
+        pinned: group.pinned,
+        width: widthsRef.current.get(group.id) ?? group.estimatedWidth,
+      })),
+    });
+    setHiddenIds((previous) => (sameStringSet(previous, next) ? previous : next));
+  }, []);
+
+  useLayoutEffect(() => {
+    recompute();
+  });
+
+  useEffect(() => {
+    const dock = dockRef.current;
+    if (!dock || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(recompute);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [recompute]);
+
+  const hidden = props.groups.filter((group) => hiddenIds.has(group.id));
+  const visible = props.groups.filter((group) => !hiddenIds.has(group.id));
+  const showOverflowMenu = props.overflowItems !== undefined || hidden.length > 0;
+
+  return (
+    <div
+      ref={dockRef}
+      role="toolbar"
+      aria-label={props.label}
+      className="scient-markdown-editor-dock flex items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
+    >
+      {!props.expanded ? (
+        <div className="ms-auto flex items-center">
+          <DockCollapseHandle expanded={false} onToggle={() => props.onExpandedChange(true)} />
+        </div>
+      ) : (
+        <>
+          {visible.map((group) => (
+            <span
+              key={group.id}
+              data-dock-group={group.id}
+              className="flex shrink-0 items-center gap-0.5"
+            >
+              {group.bar}
+            </span>
+          ))}
+          <div className="ms-auto flex items-center gap-0.5" data-dock-reserved>
+            {showOverflowMenu ? (
+              <DockMenu
+                label="More actions"
+                icon={<Ellipsis className="size-4" />}
+                chevron={false}
+                align="end"
+                popupClassName="w-56"
+              >
+                {hidden.map((group, index) => (
+                  <Fragment key={group.id}>
+                    {index > 0 ? <MenuSeparator /> : null}
+                    {group.overflow}
+                  </Fragment>
+                ))}
+                {hidden.length > 0 && props.overflowItems !== undefined ? <MenuSeparator /> : null}
+                {props.overflowItems}
+              </DockMenu>
+            ) : null}
+            <DockCollapseHandle expanded onToggle={() => props.onExpandedChange(false)} />
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 /**

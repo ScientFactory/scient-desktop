@@ -62,6 +62,7 @@ import { createPortal } from "react-dom";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
+  MenuGroupLabel,
   MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
@@ -83,11 +84,12 @@ import type { ScientMarkdownBlockAction } from "../prosemirror/blocks";
 import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../prosemirror/view";
 import {
   DockButton,
-  DockCollapseHandle,
   DockDivider,
   DockMenu,
+  DockOverflowRow,
   MenuRow,
   dockButtonClass,
+  type DockGroup,
 } from "./dockChrome";
 import { ScientFindBar } from "./ScientFindBar";
 
@@ -230,6 +232,27 @@ function styleTriggerIcon(snapshot: ScientMarkdownEditorSnapshot): ReactNode {
   }
 }
 
+function StyleMenuItems({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <MenuRadioGroup
+      value={styleMenuValue(snapshot)}
+      onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
+    >
+      {STYLE_ITEMS.map((item) => (
+        <MenuRadioItem key={item.command} value={item.command}>
+          <MenuRow icon={commandIcon(item.command)} label={item.label} />
+        </MenuRadioItem>
+      ))}
+    </MenuRadioGroup>
+  );
+}
+
 function StyleMenu({
   controller,
   snapshot,
@@ -243,16 +266,7 @@ function StyleMenu({
       icon={styleTriggerIcon(snapshot)}
       groupLabel="Style"
     >
-      <MenuRadioGroup
-        value={styleMenuValue(snapshot)}
-        onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
-      >
-        {STYLE_ITEMS.map((item) => (
-          <MenuRadioItem key={item.command} value={item.command}>
-            <MenuRow icon={commandIcon(item.command)} label={item.label} />
-          </MenuRadioItem>
-        ))}
-      </MenuRadioGroup>
+      <StyleMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
   );
 }
@@ -303,6 +317,31 @@ const LIST_ITEMS: ReadonlyArray<{
   { command: "task-list", label: "Task list" },
 ];
 
+function ListsMenuItems({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <MenuRadioGroup
+      value={listMenuValue(snapshot.listKind)}
+      onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
+    >
+      {LIST_ITEMS.map((item) => (
+        <MenuRadioItem key={item.command} value={item.command}>
+          <MenuRow icon={commandIcon(item.command)} label={item.label} />
+        </MenuRadioItem>
+      ))}
+      <MenuSeparator />
+      <MenuRadioItem value="list-none">
+        <MenuRow icon={commandIcon("list-none")} label="No list" />
+      </MenuRadioItem>
+    </MenuRadioGroup>
+  );
+}
+
 function ListsMenu({
   controller,
   snapshot,
@@ -316,20 +355,7 @@ function ListsMenu({
       icon={listTriggerIcon(snapshot.listKind)}
       groupLabel="Lists"
     >
-      <MenuRadioGroup
-        value={listMenuValue(snapshot.listKind)}
-        onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
-      >
-        {LIST_ITEMS.map((item) => (
-          <MenuRadioItem key={item.command} value={item.command}>
-            <MenuRow icon={commandIcon(item.command)} label={item.label} />
-          </MenuRadioItem>
-        ))}
-        <MenuSeparator />
-        <MenuRadioItem value="list-none">
-          <MenuRow icon={commandIcon("list-none")} label="No list" />
-        </MenuRadioItem>
-      </MenuRadioGroup>
+      <ListsMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
   );
 }
@@ -346,14 +372,9 @@ const INSERT_ITEMS: ReadonlyArray<{
   { command: "horizontal-rule", label: "Divider line" },
 ];
 
-function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+function InsertBlockMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   return (
-    <DockMenu
-      label="Insert block or element"
-      icon={<Plus className="size-4" />}
-      groupLabel="Insert"
-      popupClassName="w-52"
-    >
+    <>
       {INSERT_ITEMS.map((item) => (
         <MenuItem key={item.command} onClick={() => controller.execute(item.command)}>
           {commandIcon(item.command)}
@@ -366,6 +387,19 @@ function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEd
         <span>Line break</span>
         <MenuShortcut>⇧↩</MenuShortcut>
       </MenuItem>
+    </>
+  );
+}
+
+function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+  return (
+    <DockMenu
+      label="Insert block or element"
+      icon={<Plus className="size-4" />}
+      groupLabel="Insert"
+      popupClassName="w-52"
+    >
+      <InsertBlockMenuItems controller={controller} />
     </DockMenu>
   );
 }
@@ -401,7 +435,7 @@ function directionTriggerIcon(direction: ScientMarkdownEditorSnapshot["textDirec
   }
 }
 
-function DirectionMenu({
+function DirectionMenuItems({
   controller,
   snapshot,
 }: {
@@ -411,26 +445,39 @@ function DirectionMenu({
   const value =
     snapshot.textDirection === null ? "direction-auto" : `direction-${snapshot.textDirection}`;
   return (
+    <MenuRadioGroup
+      value={value}
+      onValueChange={(next) => controller.execute(next as ScientMarkdownCommand)}
+    >
+      {DIRECTION_ITEMS.map((item) => (
+        <MenuRadioItem key={item.command} value={item.command}>
+          <MenuRow icon={commandIcon(item.command)} label={item.label} />
+        </MenuRadioItem>
+      ))}
+    </MenuRadioGroup>
+  );
+}
+
+function DirectionMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
     <DockMenu
       label={`Text direction: ${directionMenuLabel(snapshot.textDirection)}`}
       icon={directionTriggerIcon(snapshot.textDirection)}
       groupLabel="Text direction"
     >
-      <MenuRadioGroup
-        value={value}
-        onValueChange={(next) => controller.execute(next as ScientMarkdownCommand)}
-      >
-        {DIRECTION_ITEMS.map((item) => (
-          <MenuRadioItem key={item.command} value={item.command}>
-            <MenuRow icon={commandIcon(item.command)} label={item.label} />
-          </MenuRadioItem>
-        ))}
-      </MenuRadioGroup>
+      <DirectionMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
   );
 }
 
-function BlockActionsMenu({
+/** The surface's permanent overflow-menu items: outline, find, block actions. */
+function BlockActionsMenuItems({
   controller,
   snapshot,
 }: {
@@ -442,13 +489,7 @@ function BlockActionsMenu({
   };
 
   return (
-    <DockMenu
-      label="More actions"
-      icon={<Ellipsis className="size-4" />}
-      chevron={false}
-      align="end"
-      popupClassName="w-56"
-    >
+    <>
       {snapshot.outlineItems.length === 0 ? (
         <MenuItem disabled>
           <ListTree />
@@ -515,7 +556,7 @@ function BlockActionsMenu({
           </MenuItem>
         </>
       ) : null}
-    </DockMenu>
+    </>
   );
 }
 
@@ -800,80 +841,160 @@ export function ScientMarkdownControls({
   const slashItems =
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
 
+  // Overflow order: direction goes first, then insert, history (Cmd+Z covers
+  // it), lists, and style. Core inline formatting is pinned and never leaves
+  // the bar; displaced groups surface inside the unified More-actions menu.
+  const dockGroups: readonly DockGroup[] = !snapshot.editable
+    ? []
+    : [
+        {
+          id: "history",
+          priority: 30,
+          estimatedWidth: 70,
+          bar: (
+            <>
+              <CommandButton
+                controller={controller}
+                command="undo"
+                label="Undo (Cmd+Z)"
+                icon={<Undo2 className="size-4" />}
+                disabled={!snapshot.canUndo}
+              />
+              <CommandButton
+                controller={controller}
+                command="redo"
+                label="Redo (Cmd+Shift+Z)"
+                icon={<Redo2 className="size-4" />}
+                disabled={!snapshot.canRedo}
+              />
+              <DockDivider />
+            </>
+          ),
+          overflow: (
+            <>
+              <MenuGroupLabel>History</MenuGroupLabel>
+              <MenuItem disabled={!snapshot.canUndo} onClick={() => controller.execute("undo")}>
+                <Undo2 />
+                <span>Undo</span>
+                <MenuShortcut>⌘Z</MenuShortcut>
+              </MenuItem>
+              <MenuItem disabled={!snapshot.canRedo} onClick={() => controller.execute("redo")}>
+                <Redo2 />
+                <span>Redo</span>
+                <MenuShortcut>⇧⌘Z</MenuShortcut>
+              </MenuItem>
+            </>
+          ),
+        },
+        {
+          id: "format",
+          priority: 100,
+          pinned: true,
+          estimatedWidth: 160,
+          bar: (
+            <>
+              <CommandButton
+                controller={controller}
+                command="bold"
+                label="Bold (Cmd+B)"
+                icon={<Bold className="size-4" strokeWidth={2.5} />}
+                active={active.has("strong")}
+              />
+              <CommandButton
+                controller={controller}
+                command="italic"
+                label="Italic (Cmd+I)"
+                icon={<Italic className="size-4" />}
+                active={active.has("em")}
+              />
+              <CommandButton
+                controller={controller}
+                command="strike"
+                label="Strikethrough (Cmd+Shift+X)"
+                icon={<Strikethrough className="size-4" />}
+                active={active.has("strike")}
+              />
+              <CommandButton
+                controller={controller}
+                command="inline-code"
+                label="Inline Code (Cmd+E)"
+                icon={<Code className="size-4" />}
+                active={active.has("code")}
+              />
+              <LinkEditor controller={controller} active={active.has("link")} />
+              <DockDivider />
+            </>
+          ),
+        },
+        {
+          id: "style",
+          priority: 50,
+          estimatedWidth: 44,
+          bar: <StyleMenu controller={controller} snapshot={snapshot} />,
+          overflow: (
+            <>
+              <MenuGroupLabel>Style</MenuGroupLabel>
+              <StyleMenuItems controller={controller} snapshot={snapshot} />
+            </>
+          ),
+        },
+        {
+          id: "lists",
+          priority: 40,
+          estimatedWidth: 48,
+          bar: (
+            <>
+              <ListsMenu controller={controller} snapshot={snapshot} />
+              <DockDivider />
+            </>
+          ),
+          overflow: (
+            <>
+              <MenuGroupLabel>Lists</MenuGroupLabel>
+              <ListsMenuItems controller={controller} snapshot={snapshot} />
+            </>
+          ),
+        },
+        {
+          id: "insert",
+          priority: 20,
+          estimatedWidth: 48,
+          bar: (
+            <>
+              <InsertBlockMenu controller={controller} />
+              <DockDivider />
+            </>
+          ),
+          overflow: (
+            <>
+              <MenuGroupLabel>Insert</MenuGroupLabel>
+              <InsertBlockMenuItems controller={controller} />
+            </>
+          ),
+        },
+        {
+          id: "direction",
+          priority: 10,
+          estimatedWidth: 44,
+          bar: <DirectionMenu controller={controller} snapshot={snapshot} />,
+          overflow: (
+            <>
+              <MenuGroupLabel>Text direction</MenuGroupLabel>
+              <DirectionMenuItems controller={controller} snapshot={snapshot} />
+            </>
+          ),
+        },
+      ];
+
   return (
     <>
-      <div
-        className="scient-markdown-editor-dock flex items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
-        role="toolbar"
-        aria-label="Document actions"
-      >
-        {!expanded ? (
-          <div className="ms-auto flex items-center">
-            <DockCollapseHandle expanded={false} onToggle={() => onExpandedChange(true)} />
-          </div>
-        ) : null}
-        {expanded && snapshot.editable ? (
-          <>
-            <CommandButton
-              controller={controller}
-              command="undo"
-              label="Undo (Cmd+Z)"
-              icon={<Undo2 className="size-4" />}
-              disabled={!snapshot.canUndo}
-            />
-            <CommandButton
-              controller={controller}
-              command="redo"
-              label="Redo (Cmd+Shift+Z)"
-              icon={<Redo2 className="size-4" />}
-              disabled={!snapshot.canRedo}
-            />
-            <DockDivider />
-            <CommandButton
-              controller={controller}
-              command="bold"
-              label="Bold (Cmd+B)"
-              icon={<Bold className="size-4" strokeWidth={2.5} />}
-              active={active.has("strong")}
-            />
-            <CommandButton
-              controller={controller}
-              command="italic"
-              label="Italic (Cmd+I)"
-              icon={<Italic className="size-4" />}
-              active={active.has("em")}
-            />
-            <CommandButton
-              controller={controller}
-              command="strike"
-              label="Strikethrough (Cmd+Shift+X)"
-              icon={<Strikethrough className="size-4" />}
-              active={active.has("strike")}
-            />
-            <CommandButton
-              controller={controller}
-              command="inline-code"
-              label="Inline Code (Cmd+E)"
-              icon={<Code className="size-4" />}
-              active={active.has("code")}
-            />
-            <LinkEditor controller={controller} active={active.has("link")} />
-            <DockDivider />
-            <StyleMenu controller={controller} snapshot={snapshot} />
-            <ListsMenu controller={controller} snapshot={snapshot} />
-            <DockDivider />
-            <InsertBlockMenu controller={controller} />
-            <DockDivider />
-            <DirectionMenu controller={controller} snapshot={snapshot} />
-          </>
-        ) : null}
-        {expanded ? (
-          <div className="ms-auto flex items-center gap-0.5">
-            <BlockActionsMenu controller={controller} snapshot={snapshot} />
-            <DockCollapseHandle expanded onToggle={() => onExpandedChange(false)} />
-          </div>
-        ) : null}
-      </div>
+      <DockOverflowRow
+        label="Document actions"
+        expanded={expanded}
+        onExpandedChange={onExpandedChange}
+        groups={dockGroups}
+        overflowItems={<BlockActionsMenuItems controller={controller} snapshot={snapshot} />}
+      />
 
       {snapshot.findOpen ? <ScientFindBar controller={controller} snapshot={snapshot} /> : null}
 

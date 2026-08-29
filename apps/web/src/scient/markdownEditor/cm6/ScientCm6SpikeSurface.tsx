@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { MenuItem, MenuSeparator, MenuShortcut } from "~/components/ui/menu";
+import { MenuGroupLabel, MenuItem, MenuSeparator, MenuShortcut } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import {
@@ -48,7 +48,13 @@ import {
   toggleWrap,
 } from "./commands";
 import { ScientCm6EditorView } from "./view";
-import { DockButton, DockCollapseHandle, DockDivider, DockMenu } from "../ui/dockChrome";
+import {
+  DockButton,
+  DockDivider,
+  DockMenu,
+  DockOverflowRow,
+  type DockGroup,
+} from "../ui/dockChrome";
 import { ScientFindBar } from "../ui/ScientFindBar";
 import "../scient-markdown-editor.css";
 
@@ -215,154 +221,253 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
     view.focus();
   };
 
+  const styleItems = (
+    <>
+      {STYLE_ITEMS.map((entry) => (
+        <MenuItem
+          key={entry.label}
+          onClick={() =>
+            run((view) =>
+              entry.prefix === null ? setParagraph(view) : toggleLinePrefix(view, entry.prefix),
+            )
+          }
+        >
+          {entry.icon}
+          <span>{entry.label}</span>
+        </MenuItem>
+      ))}
+    </>
+  );
+  const listItems = (
+    <>
+      <MenuItem onClick={() => run((view) => toggleLinePrefix(view, "- "))}>
+        <List />
+        <span>Bullet list</span>
+      </MenuItem>
+      <MenuItem onClick={() => run(toggleNumberedList)}>
+        <ListOrdered />
+        <span>Numbered list</span>
+      </MenuItem>
+      <MenuItem onClick={() => run((view) => toggleLinePrefix(view, "- [ ] "))}>
+        <ListTodo />
+        <span>Task list</span>
+      </MenuItem>
+    </>
+  );
+  const insertItems = (
+    <>
+      <MenuItem onClick={() => run((view) => insertBlockTemplate(view, TABLE_TEMPLATE))}>
+        <TableIcon />
+        <span>Table (3×3)</span>
+      </MenuItem>
+      <MenuItem onClick={() => run((view) => insertBlockTemplate(view, CODE_BLOCK_TEMPLATE))}>
+        <SquareCode />
+        <span>Code block</span>
+      </MenuItem>
+      <MenuItem onClick={() => run((view) => insertBlockTemplate(view, MATH_BLOCK_TEMPLATE))}>
+        <Sigma />
+        <span>Math equation ($$)</span>
+      </MenuItem>
+      <MenuItem onClick={() => run(insertImageTemplate)}>
+        <ImageIcon />
+        <span>Image</span>
+      </MenuItem>
+      <MenuItem onClick={() => run((view) => insertBlockTemplate(view, "\n---\n"))}>
+        <Minus />
+        <span>Divider line</span>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem onClick={() => run(insertLineBreak)}>
+        <CornerDownLeft />
+        <span>Line break</span>
+        <MenuShortcut>⇧↩</MenuShortcut>
+      </MenuItem>
+    </>
+  );
+  const directionItems = (
+    <>
+      <MenuItem onClick={() => run((view) => toggleDirection(view, null))}>
+        <ArrowRightLeft />
+        <span>Auto</span>
+      </MenuItem>
+      <MenuItem onClick={() => run((view) => toggleDirection(view, "ltr"))}>
+        <PilcrowRight />
+        <span>Left-to-right</span>
+      </MenuItem>
+      <MenuItem onClick={() => run((view) => toggleDirection(view, "rtl"))}>
+        <PilcrowLeft />
+        <span>Right-to-left</span>
+      </MenuItem>
+    </>
+  );
+
+  // Same overflow contract as the ProseMirror dock: direction collapses
+  // first, inline formatting is pinned, hidden groups move into the ⋯ menu.
+  const dockGroups: readonly DockGroup[] = [
+    {
+      id: "history",
+      priority: 30,
+      estimatedWidth: 70,
+      bar: (
+        <>
+          <DockButton
+            label="Undo (Cmd+Z)"
+            icon={<Undo2 className="size-4" />}
+            onClick={() => run(undo)}
+          />
+          <DockButton
+            label="Redo (Cmd+Shift+Z)"
+            icon={<Redo2 className="size-4" />}
+            onClick={() => run(redo)}
+          />
+          <DockDivider />
+        </>
+      ),
+      overflow: (
+        <>
+          <MenuGroupLabel>History</MenuGroupLabel>
+          <MenuItem onClick={() => run(undo)}>
+            <Undo2 />
+            <span>Undo</span>
+            <MenuShortcut>⌘Z</MenuShortcut>
+          </MenuItem>
+          <MenuItem onClick={() => run(redo)}>
+            <Redo2 />
+            <span>Redo</span>
+            <MenuShortcut>⇧⌘Z</MenuShortcut>
+          </MenuItem>
+        </>
+      ),
+    },
+    {
+      id: "format",
+      priority: 100,
+      pinned: true,
+      estimatedWidth: 160,
+      bar: (
+        <>
+          <DockButton
+            label="Bold (Cmd+B)"
+            icon={<Bold className="size-4" strokeWidth={2.5} />}
+            onClick={() => run((view) => toggleWrap(view, "**"))}
+          />
+          <DockButton
+            label="Italic (Cmd+I)"
+            icon={<Italic className="size-4" />}
+            onClick={() => run((view) => toggleWrap(view, "*"))}
+          />
+          <DockButton
+            label="Strikethrough (Cmd+Shift+X)"
+            icon={<Strikethrough className="size-4" />}
+            onClick={() => run((view) => toggleWrap(view, "~~"))}
+          />
+          <DockButton
+            label="Inline Code (Cmd+E)"
+            icon={<Code className="size-4" />}
+            onClick={() => run((view) => toggleWrap(view, "`"))}
+          />
+          <DockButton
+            label="Link (Cmd+K)"
+            icon={<Link2 className="size-4" />}
+            onClick={() => run(insertLink)}
+          />
+          <DockDivider />
+        </>
+      ),
+    },
+    {
+      id: "style",
+      priority: 50,
+      estimatedWidth: 44,
+      bar: (
+        <DockMenu label="Paragraph style" icon={<Type className="size-4" />} groupLabel="Style">
+          {styleItems}
+        </DockMenu>
+      ),
+      overflow: (
+        <>
+          <MenuGroupLabel>Style</MenuGroupLabel>
+          {styleItems}
+        </>
+      ),
+    },
+    {
+      id: "lists",
+      priority: 40,
+      estimatedWidth: 48,
+      bar: (
+        <>
+          <DockMenu label="List style" icon={<List className="size-4" />} groupLabel="Lists">
+            {listItems}
+          </DockMenu>
+          <DockDivider />
+        </>
+      ),
+      overflow: (
+        <>
+          <MenuGroupLabel>Lists</MenuGroupLabel>
+          {listItems}
+        </>
+      ),
+    },
+    {
+      id: "insert",
+      priority: 20,
+      estimatedWidth: 48,
+      bar: (
+        <>
+          <DockMenu
+            label="Insert block or element"
+            icon={<Plus className="size-4" />}
+            groupLabel="Insert"
+            popupClassName="w-52"
+          >
+            {insertItems}
+          </DockMenu>
+          <DockDivider />
+        </>
+      ),
+      overflow: (
+        <>
+          <MenuGroupLabel>Insert</MenuGroupLabel>
+          {insertItems}
+        </>
+      ),
+    },
+    {
+      id: "direction",
+      priority: 10,
+      estimatedWidth: 44,
+      bar: (
+        <DockMenu
+          label="Text direction"
+          icon={<ArrowRightLeft className="size-4" />}
+          groupLabel="Text direction"
+        >
+          {directionItems}
+        </DockMenu>
+      ),
+      overflow: (
+        <>
+          <MenuGroupLabel>Text direction</MenuGroupLabel>
+          {directionItems}
+        </>
+      ),
+    },
+  ];
+
   return (
     <div
       className="scient-cm6-spike flex h-full flex-col"
       aria-label={props.ariaLabel}
       style={{ position: "relative" }}
     >
-      <div
-        aria-label="Markdown editing controls"
-        className="scient-markdown-editor-dock flex items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
-      >
-        {!chromeExpanded ? (
-          <div className="ms-auto flex items-center">
-            <DockCollapseHandle expanded={false} onToggle={() => setChromeExpanded(true)} />
-          </div>
-        ) : null}
-        {chromeExpanded ? (
-          <>
-            <DockButton
-              label="Undo (Cmd+Z)"
-              icon={<Undo2 className="size-4" />}
-              onClick={() => run(undo)}
-            />
-            <DockButton
-              label="Redo (Cmd+Shift+Z)"
-              icon={<Redo2 className="size-4" />}
-              onClick={() => run(redo)}
-            />
-            <DockDivider />
-            <DockButton
-              label="Bold (Cmd+B)"
-              icon={<Bold className="size-4" strokeWidth={2.5} />}
-              onClick={() => run((view) => toggleWrap(view, "**"))}
-            />
-            <DockButton
-              label="Italic (Cmd+I)"
-              icon={<Italic className="size-4" />}
-              onClick={() => run((view) => toggleWrap(view, "*"))}
-            />
-            <DockButton
-              label="Strikethrough (Cmd+Shift+X)"
-              icon={<Strikethrough className="size-4" />}
-              onClick={() => run((view) => toggleWrap(view, "~~"))}
-            />
-            <DockButton
-              label="Inline Code (Cmd+E)"
-              icon={<Code className="size-4" />}
-              onClick={() => run((view) => toggleWrap(view, "`"))}
-            />
-            <DockButton
-              label="Link (Cmd+K)"
-              icon={<Link2 className="size-4" />}
-              onClick={() => run(insertLink)}
-            />
-            <DockDivider />
-            <DockMenu label="Paragraph style" icon={<Type className="size-4" />} groupLabel="Style">
-              {STYLE_ITEMS.map((entry) => (
-                <MenuItem
-                  key={entry.label}
-                  onClick={() =>
-                    run((view) =>
-                      entry.prefix === null
-                        ? setParagraph(view)
-                        : toggleLinePrefix(view, entry.prefix),
-                    )
-                  }
-                >
-                  {entry.icon}
-                  <span>{entry.label}</span>
-                </MenuItem>
-              ))}
-            </DockMenu>
-            <DockMenu label="List style" icon={<List className="size-4" />} groupLabel="Lists">
-              <MenuItem onClick={() => run((view) => toggleLinePrefix(view, "- "))}>
-                <List />
-                <span>Bullet list</span>
-              </MenuItem>
-              <MenuItem onClick={() => run(toggleNumberedList)}>
-                <ListOrdered />
-                <span>Numbered list</span>
-              </MenuItem>
-              <MenuItem onClick={() => run((view) => toggleLinePrefix(view, "- [ ] "))}>
-                <ListTodo />
-                <span>Task list</span>
-              </MenuItem>
-            </DockMenu>
-            <DockDivider />
-            <DockMenu
-              label="Insert block or element"
-              icon={<Plus className="size-4" />}
-              groupLabel="Insert"
-              popupClassName="w-52"
-            >
-              <MenuItem onClick={() => run((view) => insertBlockTemplate(view, TABLE_TEMPLATE))}>
-                <TableIcon />
-                <span>Table (3×3)</span>
-              </MenuItem>
-              <MenuItem
-                onClick={() => run((view) => insertBlockTemplate(view, CODE_BLOCK_TEMPLATE))}
-              >
-                <SquareCode />
-                <span>Code block</span>
-              </MenuItem>
-              <MenuItem
-                onClick={() => run((view) => insertBlockTemplate(view, MATH_BLOCK_TEMPLATE))}
-              >
-                <Sigma />
-                <span>Math equation ($$)</span>
-              </MenuItem>
-              <MenuItem onClick={() => run(insertImageTemplate)}>
-                <ImageIcon />
-                <span>Image</span>
-              </MenuItem>
-              <MenuItem onClick={() => run((view) => insertBlockTemplate(view, "\n---\n"))}>
-                <Minus />
-                <span>Divider line</span>
-              </MenuItem>
-              <MenuSeparator />
-              <MenuItem onClick={() => run(insertLineBreak)}>
-                <CornerDownLeft />
-                <span>Line break</span>
-                <MenuShortcut>⇧↩</MenuShortcut>
-              </MenuItem>
-            </DockMenu>
-            <DockDivider />
-            <DockMenu
-              label="Text direction"
-              icon={<ArrowRightLeft className="size-4" />}
-              groupLabel="Text direction"
-            >
-              <MenuItem onClick={() => run((view) => toggleDirection(view, null))}>
-                <ArrowRightLeft />
-                <span>Auto</span>
-              </MenuItem>
-              <MenuItem onClick={() => run((view) => toggleDirection(view, "ltr"))}>
-                <PilcrowRight />
-                <span>Left-to-right</span>
-              </MenuItem>
-              <MenuItem onClick={() => run((view) => toggleDirection(view, "rtl"))}>
-                <PilcrowLeft />
-                <span>Right-to-left</span>
-              </MenuItem>
-            </DockMenu>
-            <div className="ms-auto flex items-center">
-              <DockCollapseHandle expanded onToggle={() => setChromeExpanded(false)} />
-            </div>
-          </>
-        ) : null}
-      </div>
+      <DockOverflowRow
+        label="Markdown editing controls"
+        expanded={chromeExpanded}
+        onExpandedChange={setChromeExpanded}
+        groups={dockGroups}
+      />
       {findSnapshot.findOpen ? (
         <ScientFindBar controller={controller} snapshot={findSnapshot} />
       ) : null}
