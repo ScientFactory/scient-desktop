@@ -1,14 +1,9 @@
-import {
-  MarkdownSaveQueue,
-  type MarkdownDocumentMode,
-  type MarkdownSaveIntent,
-} from "@scientfactory/scient-markdown";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { MarkdownSaveQueue, type MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import { useEffect, useRef, useState } from "react";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
-import { LazyScientMarkdownSourceDocument } from "./source/ScientMarkdownSourceDocumentLazy";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -16,7 +11,7 @@ const SAVE_DEBOUNCE_MS = 500;
 export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly source: string;
   readonly revision: string;
-  readonly mode: MarkdownDocumentMode;
+  readonly editChrome: boolean;
   readonly ariaLabel: string;
   readonly persist: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
   readonly onPendingChange: (pending: boolean) => void;
@@ -38,11 +33,13 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
     readonly revision: string;
   } | null;
   readonly onSaveResolutionApplied?: () => void;
-  readonly revealLine?: number | null;
-  readonly revealRequestId?: number;
 }
 
-/** Coordinates one rich view, optional source view, and one serial save lane. */
+/**
+ * Coordinates one always-editable rich document and one serial save lane.
+ * The rendered view is the editor: clicking into it edits it. `editChrome`
+ * only shows or hides the editing controls; it never changes the document.
+ */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
   const persistRef = useRef(props.persist);
   const onPendingChangeRef = useRef(props.onPendingChange);
@@ -63,13 +60,6 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   onImageUploadFailureRef.current = props.onImageUploadFailure;
 
   const [draftSource, setDraftSource] = useState(props.source);
-  const [sourceActivated, setSourceActivated] = useState(
-    props.mode === "source" || props.mode === "split",
-  );
-  const [sourceSelectionReveal, setSourceSelectionReveal] = useState<{
-    readonly offset: number;
-    readonly requestId: number;
-  } | null>(null);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
   const [saveQueue] = useState(
     () =>
@@ -89,16 +79,10 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
       new ScientMarkdownEditorView({
         source: props.source,
         revision: props.revision,
-        mode: props.mode,
+        mode: "write",
         ariaLabel: props.ariaLabel,
         ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
         ...(props.onOpenLink ? { onOpenLink: props.onOpenLink } : {}),
-        onSelectionSourceOffsetChange: (offset) =>
-          setSourceSelectionReveal((current) =>
-            current?.offset === offset
-              ? current
-              : { offset, requestId: (current?.requestId ?? 0) + 1 },
-          ),
         ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
         ...(props.uploadImage
           ? {
@@ -116,10 +100,6 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
       }),
   );
   controllerRef.current = controller;
-
-  useEffect(() => {
-    if (props.mode === "source" || props.mode === "split") setSourceActivated(true);
-  }, [props.mode]);
 
   useEffect(() => {
     const result = controller.receiveExternalSource({
@@ -154,10 +134,8 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     [saveQueue],
   );
 
-  const richVisible = props.mode !== "source";
-  const sourceVisible = props.mode === "source" || props.mode === "split";
   return (
-    <div className="scient-markdown-workspace" data-markdown-workspace-mode={props.mode}>
+    <div className="scient-markdown-workspace" data-markdown-workspace-mode="write">
       {props.uploadImage ? (
         <input
           ref={imageInputRef}
@@ -174,50 +152,17 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           }}
         />
       ) : null}
-      <div className="scient-markdown-rich-pane" hidden={!richVisible}>
-        <ScientMarkdownControls controller={controller} />
+      <div className="scient-markdown-rich-pane">
+        {props.editChrome ? <ScientMarkdownControls controller={controller} /> : null}
         <ScientMarkdownDocument
           source={draftSource}
           revision={props.revision}
-          mode={props.mode}
+          mode="write"
           ariaLabel={props.ariaLabel}
           onUserSourceChange={() => undefined}
           controller={controller}
         />
       </div>
-      {sourceActivated ? (
-        <div className="scient-markdown-source-pane" hidden={!sourceVisible}>
-          <Suspense
-            fallback={
-              <div
-                className="scient-markdown-source-loading"
-                aria-label="Loading Markdown source"
-              />
-            }
-          >
-            <LazyScientMarkdownSourceDocument
-              source={draftSource}
-              editable={sourceVisible}
-              ariaLabel={`${props.ariaLabel} source`}
-              onUserSourceChange={(source) => controller.replaceUserSource(source)}
-              onSelectionOffsetChange={(sourceOffset) =>
-                controller.navigateToSourceOffset(sourceOffset)
-              }
-              {...((props.revealLine === null || props.revealLine === undefined) &&
-              sourceSelectionReveal
-                ? {
-                    revealOffset: sourceSelectionReveal.offset,
-                    revealOffsetRequestId: sourceSelectionReveal.requestId,
-                  }
-                : {})}
-              {...(props.revealLine === undefined ? {} : { revealLine: props.revealLine })}
-              {...(props.revealRequestId === undefined
-                ? {}
-                : { revealRequestId: props.revealRequestId })}
-            />
-          </Suspense>
-        </div>
-      ) : null}
     </div>
   );
 }

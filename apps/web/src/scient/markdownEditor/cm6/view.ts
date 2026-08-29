@@ -1,7 +1,7 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
-import { Annotation, Compartment, EditorState } from "@codemirror/state";
+import { Annotation, EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { GFM } from "@lezer/markdown";
 import {
@@ -12,8 +12,6 @@ import {
   receiveExternalMarkdownSource,
   resolveMarkdownConflictWithDisk,
   resolveMarkdownConflictWithLocal,
-  setMarkdownDocumentMode,
-  type MarkdownDocumentMode,
   type MarkdownDocumentSession,
   type MarkdownSaveIntent,
 } from "@scientfactory/scient-markdown";
@@ -28,7 +26,6 @@ const ExternalSync = Annotation.define<boolean>();
 export interface ScientCm6EditorViewOptions {
   readonly source: string;
   readonly revision: string;
-  readonly mode: MarkdownDocumentMode;
   readonly placeholder: string;
   readonly onUserSourceChange: (source: string, intent: MarkdownSaveIntent) => void;
   readonly resolveImageSource?: (authoredSource: string) => Promise<string | null>;
@@ -39,14 +36,12 @@ export type ScientCm6ExternalResult = "adopted" | "same" | "conflict";
 export type ScientCm6ConflictResolution = "disk" | "local";
 
 /**
- * One CM6-backed Markdown document controller. The editor buffer is the file's
- * bytes; Read/Write/Source are the same buffer with the live-preview
- * projection and editability reconfigured, never a different document.
+ * One CM6-backed Markdown document controller. The editor buffer is the
+ * file's bytes and is always editable; the live preview is a decoration
+ * projection over it. The document is the same across render states.
  */
 export class ScientCm6EditorView {
   private readonly options: ScientCm6EditorViewOptions;
-  private readonly previewCompartment = new Compartment();
-  private readonly editableCompartment = new Compartment();
   private session: MarkdownDocumentSession;
   private cmView: EditorView | null = null;
 
@@ -55,7 +50,6 @@ export class ScientCm6EditorView {
     this.session = createMarkdownDocumentSession({
       source: options.source,
       revision: options.revision,
-      mode: options.mode,
     });
   }
 
@@ -71,13 +65,6 @@ export class ScientCm6EditorView {
 
   get sessionState(): MarkdownDocumentSession {
     return this.session;
-  }
-
-  setMode(mode: MarkdownDocumentMode): void {
-    if (this.session.mode === mode) return;
-    this.session = setMarkdownDocumentMode(this.session, mode);
-    this.applyMode();
-    if (mode !== "read") this.focus();
   }
 
   focus(): void {
@@ -125,8 +112,12 @@ export class ScientCm6EditorView {
         EditorView.lineWrapping,
         livePreviewTheme,
         revealFreezeExtension,
-        this.previewCompartment.of(this.previewExtensions()),
-        this.editableCompartment.of(this.editableExtensions()),
+        livePreview({
+          placeholder: this.options.placeholder,
+          ...(this.options.resolveImageSource
+            ? { resolveImageSource: this.options.resolveImageSource }
+            : {}),
+        }),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
           if (update.transactions.some((transaction) => transaction.annotation(ExternalSync))) {
@@ -141,42 +132,10 @@ export class ScientCm6EditorView {
     });
   }
 
-  private previewExtensions(): ExtensionList {
-    if (this.session.mode === "source") return [];
-    return [
-      livePreview({
-        placeholder: this.options.placeholder,
-        ...(this.options.resolveImageSource
-          ? { resolveImageSource: this.options.resolveImageSource }
-          : {}),
-      }),
-    ];
-  }
-
-  private editableExtensions(): ExtensionList {
-    return [
-      EditorState.readOnly.of(this.session.mode === "read"),
-      EditorView.editable.of(this.session.mode !== "read"),
-    ];
-  }
-
-  private applyMode(): void {
-    const view = this.cmView;
-    if (!view) return;
-    view.dispatch({
-      effects: [
-        this.previewCompartment.reconfigure(this.previewExtensions()),
-        this.editableCompartment.reconfigure(this.editableExtensions()),
-      ],
-      annotations: ExternalSync.of(true),
-    });
-  }
-
   private handleUserDocChange(): void {
     const view = this.cmView;
     if (!view) return;
     this.session = applyUserMarkdownSource(this.session, view.state.doc.toString());
-    if (this.session.mode === "read") return;
     const intent = beginMarkdownSave(this.session);
     if (intent) this.options.onUserSourceChange(intent.source, intent);
   }
@@ -214,5 +173,3 @@ export class ScientCm6EditorView {
     return true;
   }
 }
-
-type ExtensionList = Parameters<Compartment["reconfigure"]>[0];

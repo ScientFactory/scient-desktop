@@ -43,32 +43,31 @@ demonstrating that plain text can round-trip through a rich-text component.
 
 ### Document states
 
-The surface has three explicit states while retaining one document session:
+Amended 2026-08-29 after human review of the four-mode control: the explicit Read/Write/Source/
+Split mode set is retired. Two surfaces remain, mirroring the inherited file panel:
 
-- **Read:** rendered, selectable, links open normally, editing disabled.
-- **Write:** the same rendered nodes become editable; caret, selection, block handles, and
-  contextual controls appear. This is the default authoring state.
-- **Source:** a full Markdown source editor for exact syntax work. A synchronized split layout is
-  available when space permits.
+- **Rendered (eye on):** the rich live-preview surface, always editable on click. No state to
+  enter or leave; editing controls appear only while a separate chrome toggle is on.
+- **Raw (eye off):** the inherited read-only file viewer, byte-identical to every other text
+  file's preview. No Markdown-specific mode exists behind it.
 
-An optional focused-Markdown interaction may reveal the source of only the active complex block.
-It is not a replacement for the default in-place rich editor.
-
-Mode changes preserve the scroll anchor, document geometry, direction, table widths, disclosure
-state, last selection, and active find result. They create no document transaction.
+The eye preference is global (stored exactly as `main` stores it) and a line reveal still wins
+over it, since the revealed line only exists in source. There is no split pane and no separate
+Source mode; exact-syntax work happens in the raw viewer or inline. Mode-like UI never creates a
+document transaction, and switching the eye or chrome toggle preserves scroll and selection where
+the surfaces allow.
 
 ### Minimal interaction model
 
-- The file header contains the document name, one read/write control, source/split access, find,
-  overflow actions, and a truthful saved/saving/conflict state.
-- A small selection toolbar provides text format, link, and comment actions only when relevant.
-- A slash menu inserts or transforms blocks and remains fully keyboard operable.
-- Block handles appear on hover or keyboard focus and expose move/duplicate/delete/transform.
-- Table, figure, math, code, citation, and diagram controls appear only when their node is active.
-- Links open with primary click in Read. In Write, primary click selects or edits and
+- The file header keeps `main`'s eye toggle verbatim (same icons, tooltip, storage key, gating)
+  plus exactly one Scient addition: a chrome toggle next to it that shows or hides the editing
+  controls. The controls are off by default and remembered per app, not per file.
+- The editing controls provide text formatting, lists, headings, links, and an overflow home for
+  block insertion and less common actions. Find and replace moves to the editor's native search
+  panel now; a redesigned Scient search surface is a follow-up, not part of this control row.
+- Links open with primary click in Raw. In Rendered, primary click places the caret and
   Command/Ctrl-click opens, preventing accidental navigation.
-- Escape moves outward through nested editors, popovers, node selection, and finally document
-  focus in a predictable order.
+- Escape moves outward through nested editors and popovers in a predictable order.
 
 ### Node behavior
 

@@ -20,7 +20,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import { isCm6SpikeEnabled } from "./cm6/spikeFlag";
 import { uploadMarkdownImage } from "./assets/client";
-import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import {
   markdownWikiTargetForPath,
   resolveMarkdownSiblingPath,
@@ -34,7 +34,8 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly threadRef: ScopedThreadRef;
   readonly contents: string;
   readonly revision: string;
-  readonly mode: MarkdownDocumentMode;
+  /** Shows or hides the editing controls; the document is always editable. */
+  readonly editChrome: boolean;
   readonly onOpenFile: (relativePath: string) => void;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
@@ -48,8 +49,6 @@ export interface ScientMarkdownFileSurfaceProps {
     readonly revision: string;
   } | null;
   readonly onSaveResolutionApplied?: () => void;
-  readonly revealLine?: number | null;
-  readonly revealRequestId?: number;
 }
 
 const LazyScientCm6SpikeSurface = lazy(() =>
@@ -173,7 +172,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         <LazyScientCm6SpikeSurface
           source={props.contents}
           revision={props.revision}
-          mode={props.mode}
+          editChrome={props.editChrome}
           ariaLabel={`${props.relativePath} Markdown document (CM6 spike)`}
           persist={persist}
           onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
@@ -202,7 +201,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     <ScientMarkdownWorkspaceSurface
       source={props.contents}
       revision={props.revision}
-      mode={props.mode}
+      editChrome={props.editChrome}
       ariaLabel={`${props.relativePath} Markdown document`}
       persist={persist}
       onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
@@ -253,8 +252,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       {...(props.onSaveResolutionApplied
         ? { onSaveResolutionApplied: props.onSaveResolutionApplied }
         : {})}
-      {...(props.revealLine === undefined ? {} : { revealLine: props.revealLine })}
-      {...(props.revealRequestId === undefined ? {} : { revealRequestId: props.revealRequestId })}
     />
   );
 }

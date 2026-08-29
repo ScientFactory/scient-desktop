@@ -43,10 +43,15 @@ describe("Scient Markdown file-preview seam", () => {
     }
   });
 
-  it("presents Read, Write, Source, and Split as unambiguous persistent modes", () => {
-    expect(panelSource).toContain('aria-label="Markdown mode"');
-    for (const mode of ["read", "write", "source", "split"]) {
-      expect(panelSource).toContain(`value="${mode}"`);
+  it("keeps one rendered surface that is always editable, toggled only by the eye and chrome switches", () => {
+    expect(panelSource).toContain('"Show markdown source"');
+    expect(panelSource).toContain('"Show rendered markdown"');
+    expect(panelSource).toContain('aria-label="Show Markdown editing controls"');
+    expect(panelSource).toContain("editChrome={markdownEditChromePreferred}");
+    expect(panelSource).toContain("renderMarkdown ?");
+    expect(panelSource).not.toContain('aria-label="Markdown mode"');
+    for (const retired of ['value="write"', 'value="read"', 'value="split"', 'value="source"']) {
+      expect(panelSource).not.toContain(retired);
     }
   });
 

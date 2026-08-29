@@ -4,7 +4,6 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import type { MarkdownDocumentMode } from "@scientfactory/scient-markdown";
 import {
   VirtualizedFile,
   type EditorSelection,
@@ -17,7 +16,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { BookOpen, Code2, Columns2, FolderTree, Globe2, LoaderCircle, PenLine } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe2, LoaderCircle, PenLine } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -44,7 +43,6 @@ import type { LatexFilePresentationRequest } from "~/rightPanelStore";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
-import { ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -130,7 +128,8 @@ interface FilePreviewPanelProps {
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
-const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
+const RENDER_MARKDOWN_STORAGE_KEY = "*********************";
+const MARKDOWN_EDIT_CHROME_STORAGE_KEY = "scient-file-preview-markdown-edit-chrome";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_ACTIVE_RANGE_ATTRIBUTE = "data-scient-active-range";
@@ -1046,18 +1045,27 @@ export default function FilePreviewPanel({
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
   const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
-  // Retain the previous rendered/source preference as the initial mode while
-  // the owned editor keeps Read, Write, Source, and Split in one file session.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
     SCIENT_DEFAULT_RENDER_MARKDOWN,
     Schema.Boolean,
   );
-  const [markdownMode, setMarkdownModeState] = useState<MarkdownDocumentMode>(
-    renderMarkdownPreferred ? "write" : "source",
+  const [markdownEditChromePreferred, setMarkdownEditChromePreferred] = useLocalStorage(
+    MARKDOWN_EDIT_CHROME_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  // A reveal still wins over the preference: the line only exists in the source.
+  const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
+    null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const renderMarkdown =
+    isMarkdown &&
+    renderMarkdownPreferred &&
+    (revealLine === null ||
+      (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
   const markdownSaveStatus: ScientMarkdownSaveStatusKind =
     file.data === null
       ? "loading"
@@ -1070,16 +1078,6 @@ export default function FilePreviewPanel({
             : sourcePending
               ? "saving"
               : "saved";
-  const setMarkdownMode = useCallback(
-    (mode: MarkdownDocumentMode) => {
-      setMarkdownModeState(mode);
-      setRenderMarkdownPreferred(mode !== "source");
-    },
-    [setRenderMarkdownPreferred],
-  );
-  useEffect(() => {
-    if (isMarkdown && revealLine !== null) setMarkdownMode("source");
-  }, [isMarkdown, revealLine, revealRequestId, setMarkdownMode]);
   const canOpenInBrowser =
     relativePath !== null &&
     isPreviewSupportedInRuntime() &&
@@ -1228,87 +1226,54 @@ export default function FilePreviewPanel({
             />
           ) : null}
           {isMarkdown ? <ScientMarkdownSaveStatus status={markdownSaveStatus} /> : null}
-          {isMarkdown && !file.data?.readOnly ? (
-            <ToggleGroup
-              aria-label="Markdown mode"
-              className="h-6 shrink-0 gap-0.5 rounded-md bg-muted/40 p-0.5"
-              size="sm"
-              value={[markdownMode]}
-              onValueChange={(val) => {
-                const next = val[0];
-                if (next === "write" || next === "read" || next === "split" || next === "source") {
-                  setMarkdownMode(next);
+          {isMarkdown && !file.data?.truncated && !file.data?.readOnly ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={markdownEditChromePreferred}
+                    onPressedChange={setMarkdownEditChromePreferred}
+                    aria-label="Show Markdown editing controls"
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <PenLine className="size-3.5" />
+                  </Toggle>
                 }
-              }}
-            >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Toggle
-                      aria-label="Edit Markdown (Rich editor)"
-                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
-                      disabled={file.data?.truncated ?? false}
-                      value="write"
-                      variant="ghost"
-                    >
-                      <PenLine className="size-3" />
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup>Rich Editor (Write)</TooltipPopup>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Toggle
-                      aria-label="Read Markdown (Rendered view)"
-                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
-                      disabled={file.data?.truncated ?? false}
-                      value="read"
-                      variant="ghost"
-                    >
-                      <BookOpen className="size-3" />
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup>Rendered View (Read)</TooltipPopup>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Toggle
-                      aria-label="Split View (Rich & Source)"
-                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
-                      disabled={file.data?.truncated ?? false}
-                      value="split"
-                      variant="ghost"
-                    >
-                      <Columns2 className="size-3" />
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup>Split View (Rich & Source)</TooltipPopup>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Toggle
-                      aria-label="Source Markdown View"
-                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
-                      disabled={file.data?.truncated ?? false}
-                      value="source"
-                      variant="ghost"
-                    >
-                      <Code2 className="size-3" />
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup>Source Markdown</TooltipPopup>
-              </Tooltip>
-            </ToggleGroup>
+              />
+              <TooltipPopup>
+                {markdownEditChromePreferred ? "Hide editing controls" : "Show editing controls"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {isMarkdown ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={renderMarkdown}
+                    onPressedChange={(pressed) => {
+                      setRenderMarkdownPreferred(pressed);
+                      setHandledReveal(
+                        pressed && relativePath !== null
+                          ? { path: relativePath, requestId: revealRequestId }
+                          : null,
+                      );
+                    }}
+                    aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {renderMarkdown ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>
+                {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
           {canOpenInBrowser ? (
             <Tooltip>
@@ -1494,7 +1459,7 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               </Suspense>
-            ) : isMarkdown && !file.data.truncated ? (
+            ) : isMarkdown && !file.data.truncated && renderMarkdown ? (
               <Suspense
                 fallback={
                   <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1510,7 +1475,7 @@ export default function FilePreviewPanel({
                   threadRef={threadRef}
                   contents={file.data.contents}
                   revision={file.data.revision}
-                  mode={markdownMode}
+                  editChrome={markdownEditChromePreferred}
                   onOpenFile={onOpenFile}
                   onPendingChange={handlePendingChange}
                   onSaveFailure={handleSaveFailure}
@@ -1520,8 +1485,6 @@ export default function FilePreviewPanel({
                   saveResolution={
                     saveResolution?.relativePath === relativePath ? saveResolution : null
                   }
-                  revealLine={revealLine}
-                  revealRequestId={revealRequestId}
                 />
               </Suspense>
             ) : file.data.truncated ? (
