@@ -41,6 +41,7 @@ export type ScientMarkdownCommand =
   | "direction-rtl"
   | "display-math"
   | "clear-formatting"
+  | "hard-break"
   | "heading-1"
   | "heading-2"
   | "heading-3"
@@ -295,6 +296,8 @@ function commandFor(command: ScientMarkdownCommand): Command {
       });
     case "clear-formatting":
       return clearMarkdownFormatting();
+    case "hard-break":
+      return insertNode(requiredNodeType("hard_break").create());
     case "direction-auto":
       return setMarkdownTextDirection(null);
     case "direction-ltr":

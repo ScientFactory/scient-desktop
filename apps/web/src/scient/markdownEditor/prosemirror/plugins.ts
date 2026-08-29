@@ -2,6 +2,7 @@ import {
   baseKeymap,
   chainCommands,
   createParagraphNear,
+  exitCode,
   liftEmptyBlock,
   newlineInCode,
   splitBlock,
@@ -59,7 +60,16 @@ function buildInputRules(): ReadonlyArray<InputRule> {
 
 function buildKeyBindings(): Readonly<Record<string, Command>> {
   const listItem = requiredNodeType("list_item");
+  const hardBreak = requiredNodeType("hard_break");
+  // Shift-Enter moves down one line (a Markdown hard break, `\` in the
+  // file); plain Enter moves down one paragraph (a blank line in the file).
+  const insertHardBreak: Command = chainCommands(exitCode, (state, dispatch) => {
+    if (dispatch) dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView());
+    return true;
+  });
   return {
+    "Shift-Enter": insertHardBreak,
+    "Mod-Enter": insertHardBreak,
     "Mod-b": toggleMark(requiredMarkType("strong")),
     "Mod-i": toggleMark(requiredMarkType("em")),
     "Mod-y": redo,

@@ -1,10 +1,12 @@
-import { ChevronDown, ChevronRight, ChevronUp, X } from "lucide-react";
+import { CaseSensitive, ChevronDown, ChevronRight, ChevronUp, WholeWord, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+
+import { DockButton, dockButtonClass } from "./dockChrome";
 
 /** The find-state slice a surface must publish for the shared find bar. */
 export interface ScientFindBarState {
@@ -71,13 +73,13 @@ export function ScientFindBar({
               render={
                 <button
                   type="button"
-                  className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className={dockButtonClass()}
                   aria-label={replaceOpen ? "Hide replace" : "Show replace"}
                   aria-expanded={replaceOpen}
                   onClick={() => setReplaceOpen((open) => !open)}
                 >
                   <ChevronRight
-                    className={cn("size-3.5 transition-transform", replaceOpen && "rotate-90")}
+                    className={cn("size-4 transition-transform", replaceOpen && "rotate-90")}
                   />
                 </button>
               }
@@ -116,99 +118,39 @@ export function ScientFindBar({
           </span>
         </div>
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className={cn(
-                  "inline-flex h-7 items-center rounded-md px-1.5 text-xs font-mono transition-colors hover:bg-accent",
-                  snapshot.findCaseSensitive && "bg-accent font-bold text-foreground",
-                )}
-                aria-label="Match case"
-                aria-pressed={snapshot.findCaseSensitive}
-                onClick={() => configure({ caseSensitive: !snapshot.findCaseSensitive })}
-              >
-                Aa
-              </button>
-            }
-          />
-          <TooltipPopup>Match Case</TooltipPopup>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className={cn(
-                  "inline-flex h-7 items-center rounded-md px-1.5 text-xs font-mono transition-colors hover:bg-accent",
-                  snapshot.findWholeWord && "bg-accent font-bold text-foreground",
-                )}
-                aria-label="Match whole word"
-                aria-pressed={snapshot.findWholeWord}
-                onClick={() => configure({ wholeWord: !snapshot.findWholeWord })}
-              >
-                "W"
-              </button>
-            }
-          />
-          <TooltipPopup>Match Whole Word</TooltipPopup>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 hover:bg-accent disabled:opacity-35"
-                aria-label="Previous match"
-                disabled={snapshot.findMatchCount === 0}
-                onClick={() => controller.navigateFind(-1)}
-              >
-                <ChevronUp className="size-3.5" />
-              </button>
-            }
-          />
-          <TooltipPopup>Previous (Shift+Enter)</TooltipPopup>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 hover:bg-accent disabled:opacity-35"
-                aria-label="Next match"
-                disabled={snapshot.findMatchCount === 0}
-                onClick={() => controller.navigateFind(1)}
-              >
-                <ChevronDown className="size-3.5" />
-              </button>
-            }
-          />
-          <TooltipPopup>Next (Enter)</TooltipPopup>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                aria-label="Close find"
-                onClick={() => controller.setFindOpen(false)}
-              >
-                <X className="size-3.5" />
-              </button>
-            }
-          />
-          <TooltipPopup>Close (Esc)</TooltipPopup>
-        </Tooltip>
+        <DockButton
+          label="Match case"
+          icon={<CaseSensitive className="size-4" />}
+          active={snapshot.findCaseSensitive}
+          onClick={() => configure({ caseSensitive: !snapshot.findCaseSensitive })}
+        />
+        <DockButton
+          label="Match whole word"
+          icon={<WholeWord className="size-4" />}
+          active={snapshot.findWholeWord}
+          onClick={() => configure({ wholeWord: !snapshot.findWholeWord })}
+        />
+        <DockButton
+          label="Previous match (Shift+Enter)"
+          icon={<ChevronUp className="size-4" />}
+          disabled={snapshot.findMatchCount === 0}
+          onClick={() => controller.navigateFind(-1)}
+        />
+        <DockButton
+          label="Next match (Enter)"
+          icon={<ChevronDown className="size-4" />}
+          disabled={snapshot.findMatchCount === 0}
+          onClick={() => controller.navigateFind(1)}
+        />
+        <DockButton
+          label="Close (Esc)"
+          icon={<X className="size-4" />}
+          onClick={() => controller.setFindOpen(false)}
+        />
       </div>
 
       {snapshot.editable && replaceOpen ? (
-        <div className="scient-markdown-find-row flex items-center gap-1 ps-7">
+        <div className="scient-markdown-find-row flex items-center gap-1 ps-8">
           <Input
             aria-label="Replacement text"
             className="h-7 max-w-96 flex-1 text-xs"

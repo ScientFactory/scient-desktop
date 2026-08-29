@@ -13,6 +13,19 @@ export function toggleWrap(view: EditorView, marker: string): boolean {
         range: EditorSelection.range(range.from, range.from + unwrapped.length),
       };
     }
+    // Wrapping selects the inner text, so a repeated toggle sees the markers
+    // just outside the range; strip them instead of nesting another pair.
+    const before = state.sliceDoc(Math.max(0, range.from - marker.length), range.from);
+    const after = state.sliceDoc(range.to, Math.min(state.doc.length, range.to + marker.length));
+    if (before === marker && after === marker) {
+      return {
+        changes: { from: range.from - marker.length, to: range.to + marker.length, insert: text },
+        range: EditorSelection.range(
+          range.from - marker.length,
+          range.from - marker.length + text.length,
+        ),
+      };
+    }
     return {
       changes: { from: range.from, to: range.to, insert: `${marker}${text}${marker}` },
       range: EditorSelection.range(
@@ -112,11 +125,17 @@ export function insertImageTemplate(view: EditorView): boolean {
  */
 export function toggleDirection(view: EditorView, direction: "ltr" | "rtl" | null): boolean {
   const { state } = view;
-  const first = state.doc.lineAt(state.selection.main.from).number;
-  const last = state.doc.lineAt(state.selection.main.to).number;
+  const openTag = /^<div dir="(ltr|rtl|auto)">\s*$/u;
+  let first = state.doc.lineAt(state.selection.main.from).number;
+  let last = state.doc.lineAt(state.selection.main.to).number;
+  // A cursor left on the wrapper tags (after a previous toggle) should act on
+  // the wrapped content, not wrap the tag line itself.
+  if (openTag.test(state.doc.line(first).text) && first < state.doc.lines) first += 1;
+  if (last < first) last = first;
+  if (state.doc.line(last).text.trim() === "</div>" && last > first) last -= 1;
   const lineBefore = first > 1 ? state.doc.line(first - 1) : null;
   const lineAfter = last < state.doc.lines ? state.doc.line(last + 1) : null;
-  const openMatch = lineBefore ? /^<div dir="(ltr|rtl|auto)">\s*$/u.exec(lineBefore.text) : null;
+  const openMatch = lineBefore ? openTag.exec(lineBefore.text) : null;
   const closeMatch = lineBefore && lineAfter && lineAfter.text.trim() === "</div>";
   if (openMatch && closeMatch) {
     view.dispatch({
@@ -138,14 +157,39 @@ export function toggleDirection(view: EditorView, direction: "ltr" | "rtl" | nul
   return true;
 }
 
+/** Reset the selected lines to plain paragraphs by stripping heading and quote markers. */
+export function setParagraph(view: EditorView): boolean {
+  const { state } = view;
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const first = state.doc.lineAt(state.selection.main.from).number;
+  const last = state.doc.lineAt(state.selection.main.to).number;
+  for (let number = first; number <= last; number += 1) {
+    const line = state.doc.line(number);
+    const match = /^(?:#{1,6}\s+|>\s?)+/u.exec(line.text);
+    if (match) changes.push({ from: line.from, to: line.from + match[0].length, insert: "" });
+  }
+  if (changes.length === 0) return false;
+  view.dispatch({ changes: changes.sort((a, b) => b.from - a.from) });
+  return true;
+}
+
+/** Insert a Markdown hard break (`\` + newline): down one line, not one paragraph. */
+export function insertLineBreak(view: EditorView): boolean {
+  const position = stateCursor(view);
+  view.dispatch({
+    changes: { from: position, insert: "\\\n" },
+    selection: { anchor: position + 2 },
+  });
+  return true;
+}
+
 /** Insert a block-level template at the cursor (code fence, math, table, rule). */
 export function insertBlockTemplate(view: EditorView, template: string): boolean {
   const position = stateCursor(view);
+  const newline = template.indexOf("\n");
   view.dispatch({
     changes: { from: position, insert: template },
-    selection: {
-      anchor: position + template.indexOf("\n") < 0 ? template.length : template.indexOf("\n"),
-    },
+    selection: { anchor: newline < 0 ? position + template.length : position + newline + 1 },
   });
   view.focus();
   return true;

@@ -110,6 +110,19 @@ describe("Scient Markdown commands", () => {
     expect(session.session.draftSource).toBe("- [x] one\n- [x] two\n");
   });
 
+  it("inserts a hard break that serializes as a backslash line break", () => {
+    const session = new ScientProseMirrorSession({ source: "alpha beta\n", revision: "sha256:b" });
+    select(session, 7); // between "alpha " and "beta"
+    runUserCommand(session, "hard-break");
+
+    expect(session.session.draftSource).toBe("alpha \\\nbeta\n");
+
+    const reparsed = createScientMarkdownProjection(session.session.draftSource);
+    expect(serializeScientMarkdownProjection(reparsed, reparsed.document)).toBe(
+      session.session.draftSource,
+    );
+  });
+
   it("clears character formatting in the selection", () => {
     const source = "Bold **words** and ~~struck~~ text.\n";
     const session = new ScientProseMirrorSession({ source, revision: "sha256:b" });

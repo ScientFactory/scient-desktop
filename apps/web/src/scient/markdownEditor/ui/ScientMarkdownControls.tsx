@@ -8,9 +8,11 @@ import {
   ArrowUp,
   ArrowUpToLine,
   Bold,
-  ChevronDown,
-  Code2,
+  Brackets,
+  Code,
   Copy,
+  CornerDownLeft,
+  Ellipsis,
   Eraser,
   FileText,
   Heading1,
@@ -26,21 +28,24 @@ import {
   ListOrdered,
   ListTodo,
   ListTree,
+  ListX,
   Merge,
   Minus,
-  MoreHorizontal,
   PanelTop,
-  Pilcrow,
+  PilcrowLeft,
+  PilcrowRight,
   Plus,
-  Quote,
   Redo2,
+  RemoveFormatting,
   Search,
   Sigma,
   Split,
+  SquareCode,
   Strikethrough,
   Table as TableIcon,
   TextQuote,
   Trash2,
+  Type,
   Undo2,
 } from "lucide-react";
 import {
@@ -55,18 +60,14 @@ import {
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
-  Menu,
-  MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
   MenuItem,
-  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuShortcut,
   MenuSub,
   MenuSubPopup,
   MenuSubTrigger,
-  MenuTrigger,
 } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -78,7 +79,61 @@ import {
 } from "../prosemirror/commands";
 import type { ScientMarkdownBlockAction } from "../prosemirror/blocks";
 import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../prosemirror/view";
+import { DockButton, DockDivider, DockMenu, MenuRow, dockButtonClass } from "./dockChrome";
 import { ScientFindBar } from "./ScientFindBar";
+
+/** One icon per command, shared by the dock menus and the slash menu. */
+function commandIcon(command: ScientMarkdownCommand): ReactNode {
+  const className = "size-4 text-muted-foreground";
+  switch (command) {
+    case "paragraph":
+      return <Type className={className} />;
+    case "heading-1":
+      return <Heading1 className={className} />;
+    case "heading-2":
+      return <Heading2 className={className} />;
+    case "heading-3":
+      return <Heading3 className={className} />;
+    case "heading-4":
+      return <Heading4 className={className} />;
+    case "heading-5":
+      return <Heading5 className={className} />;
+    case "heading-6":
+      return <Heading6 className={className} />;
+    case "bullet-list":
+      return <List className={className} />;
+    case "ordered-list":
+      return <ListOrdered className={className} />;
+    case "task-list":
+      return <ListTodo className={className} />;
+    case "list-none":
+      return <ListX className={className} />;
+    case "blockquote":
+      return <TextQuote className={className} />;
+    case "code-block":
+      return <SquareCode className={className} />;
+    case "display-math":
+      return <Sigma className={className} />;
+    case "table":
+      return <TableIcon className={className} />;
+    case "image":
+      return <ImageIcon className={className} />;
+    case "wiki-link":
+      return <Brackets className={className} />;
+    case "horizontal-rule":
+      return <Minus className={className} />;
+    case "hard-break":
+      return <CornerDownLeft className={className} />;
+    case "direction-auto":
+      return <ArrowRightLeft className={className} />;
+    case "direction-ltr":
+      return <PilcrowRight className={className} />;
+    case "direction-rtl":
+      return <PilcrowLeft className={className} />;
+    default:
+      return <FileText className={className} />;
+  }
+}
 
 function CommandButton(props: {
   readonly active?: boolean;
@@ -89,44 +144,28 @@ function CommandButton(props: {
   readonly disabled?: boolean;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className={cn(
-              "scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-35",
-              props.active && "bg-accent text-accent-foreground font-semibold shadow-xs",
-            )}
-            aria-label={props.label}
-            aria-pressed={props.active}
-            disabled={props.disabled}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => props.controller.execute(props.command)}
-          >
-            {props.icon}
-          </button>
-        }
-      />
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
+    <DockButton
+      label={props.label}
+      icon={props.icon}
+      active={props.active}
+      disabled={props.disabled}
+      onClick={() => props.controller.execute(props.command)}
+    />
   );
 }
 
-function DockDivider() {
-  return <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />;
-}
-
-const HEADING_COMMANDS: ReadonlyArray<{
+const STYLE_ITEMS: ReadonlyArray<{
   readonly command: ScientMarkdownCommand;
   readonly label: string;
 }> = [
+  { command: "paragraph", label: "Paragraph" },
   { command: "heading-1", label: "Heading 1" },
   { command: "heading-2", label: "Heading 2" },
   { command: "heading-3", label: "Heading 3" },
   { command: "heading-4", label: "Heading 4" },
   { command: "heading-5", label: "Heading 5" },
   { command: "heading-6", label: "Heading 6" },
+  { command: "blockquote", label: "Quote" },
 ];
 
 function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
@@ -135,12 +174,24 @@ function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
       return snapshot.headingLevel !== null ? `Heading ${snapshot.headingLevel}` : "Heading";
     case "blockquote":
       return "Quote";
-    case "list_item":
-      return "List item";
     case "code_block":
       return "Code block";
     default:
       return "Paragraph";
+  }
+}
+
+function styleMenuValue(snapshot: ScientMarkdownEditorSnapshot): string {
+  switch (snapshot.blockType) {
+    case "heading":
+      return snapshot.headingLevel !== null ? `heading-${snapshot.headingLevel}` : "";
+    case "blockquote":
+      return "blockquote";
+    case "paragraph":
+    case "list_item":
+      return "paragraph";
+    default:
+      return "";
   }
 }
 
@@ -149,24 +200,24 @@ function styleTriggerIcon(snapshot: ScientMarkdownEditorSnapshot): ReactNode {
     case "heading":
       switch (snapshot.headingLevel) {
         case 2:
-          return <Heading2 className="size-3.5" />;
+          return <Heading2 className="size-4" />;
         case 3:
-          return <Heading3 className="size-3.5" />;
+          return <Heading3 className="size-4" />;
         case 4:
-          return <Heading4 className="size-3.5" />;
+          return <Heading4 className="size-4" />;
         case 5:
-          return <Heading5 className="size-3.5" />;
+          return <Heading5 className="size-4" />;
         case 6:
-          return <Heading6 className="size-3.5" />;
+          return <Heading6 className="size-4" />;
         default:
-          return <Heading1 className="size-3.5" />;
+          return <Heading1 className="size-4" />;
       }
     case "blockquote":
-      return <TextQuote className="size-3.5" />;
+      return <TextQuote className="size-4" />;
     case "code_block":
-      return <Code2 className="size-3.5" />;
+      return <SquareCode className="size-4" />;
     default:
-      return <Pilcrow className="size-3.5" />;
+      return <Type className="size-4" />;
   }
 }
 
@@ -177,73 +228,25 @@ function StyleMenu({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
-  const headingChecked = (level: number) =>
-    snapshot.blockType === "heading" && snapshot.headingLevel === level;
-
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className={cn(
-                    "scient-markdown-command-button inline-flex size-7 items-center justify-center gap-0.5 rounded-md text-foreground/80 transition-colors",
-                    snapshot.blockType !== "paragraph" &&
-                      "bg-accent text-accent-foreground font-semibold shadow-xs",
-                  )}
-                  aria-label={`Style: ${styleMenuLabel(snapshot)}`}
-                >
-                  {styleTriggerIcon(snapshot)}
-                  <ChevronDown className="size-2.5 opacity-60" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">Style: {styleMenuLabel(snapshot)}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" className="w-44 p-1">
-        <MenuGroup>
-          <MenuGroupLabel>Style</MenuGroupLabel>
-          <MenuCheckboxItem
-            checked={snapshot.blockType === "paragraph"}
-            onCheckedChange={() => controller.execute("paragraph")}
-          >
-            Paragraph
-          </MenuCheckboxItem>
-          {HEADING_COMMANDS.map((entry) => (
-            <MenuCheckboxItem
-              key={entry.command}
-              checked={headingChecked(Number(entry.command.at(-1)))}
-              onCheckedChange={() => controller.execute(entry.command)}
-            >
-              {entry.label}
-            </MenuCheckboxItem>
-          ))}
-          <MenuCheckboxItem
-            checked={snapshot.blockType === "blockquote"}
-            onCheckedChange={() => controller.execute("blockquote")}
-          >
-            Quote
-          </MenuCheckboxItem>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+    <DockMenu
+      label={`Style: ${styleMenuLabel(snapshot)}`}
+      icon={styleTriggerIcon(snapshot)}
+      active={snapshot.blockType !== "paragraph" && snapshot.blockType !== "list_item"}
+      groupLabel="Style"
+    >
+      <MenuRadioGroup
+        value={styleMenuValue(snapshot)}
+        onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
+      >
+        {STYLE_ITEMS.map((item) => (
+          <MenuRadioItem key={item.command} value={item.command}>
+            <MenuRow icon={commandIcon(item.command)} label={item.label} />
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </DockMenu>
   );
-}
-
-function listIcon(kind: ScientMarkdownEditorSnapshot["listKind"]) {
-  switch (kind) {
-    case "ordered":
-      return <ListOrdered className="size-3.5" />;
-    case "task":
-      return <ListTodo className="size-3.5" />;
-    default:
-      return <List className="size-3.5" />;
-  }
 }
 
 function listMenuLabel(kind: ScientMarkdownEditorSnapshot["listKind"]): string {
@@ -252,10 +255,45 @@ function listMenuLabel(kind: ScientMarkdownEditorSnapshot["listKind"]): string {
       return "Numbered";
     case "task":
       return "Task";
+    case "bullet":
+      return "Bullet";
     default:
-      return "List";
+      return "None";
   }
 }
+
+function listMenuValue(kind: ScientMarkdownEditorSnapshot["listKind"]): ScientMarkdownCommand {
+  switch (kind) {
+    case "ordered":
+      return "ordered-list";
+    case "task":
+      return "task-list";
+    case "bullet":
+      return "bullet-list";
+    default:
+      return "list-none";
+  }
+}
+
+function listTriggerIcon(kind: ScientMarkdownEditorSnapshot["listKind"]): ReactNode {
+  switch (kind) {
+    case "ordered":
+      return <ListOrdered className="size-4" />;
+    case "task":
+      return <ListTodo className="size-4" />;
+    default:
+      return <List className="size-4" />;
+  }
+}
+
+const LIST_ITEMS: ReadonlyArray<{
+  readonly command: ScientMarkdownCommand;
+  readonly label: string;
+}> = [
+  { command: "bullet-list", label: "Bullet list" },
+  { command: "ordered-list", label: "Numbered list" },
+  { command: "task-list", label: "Task list" },
+];
 
 function ListsMenu({
   controller,
@@ -265,132 +303,95 @@ function ListsMenu({
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className={cn(
-                    "scient-markdown-command-button inline-flex size-7 items-center justify-center gap-0.5 rounded-md text-foreground/80 transition-colors",
-                    snapshot.listKind !== null &&
-                      "bg-accent text-accent-foreground font-semibold shadow-xs",
-                  )}
-                  aria-label={`List: ${listMenuLabel(snapshot.listKind)}`}
-                >
-                  {listIcon(snapshot.listKind)}
-                  <ChevronDown className="size-2.5 opacity-60" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">List: {listMenuLabel(snapshot.listKind)}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" className="w-44 p-1">
-        <MenuGroup>
-          <MenuGroupLabel>Lists</MenuGroupLabel>
-          <MenuCheckboxItem
-            checked={snapshot.listKind === "bullet"}
-            onCheckedChange={() => controller.execute("bullet-list")}
-          >
-            <span className="flex items-center gap-2">
-              <List className="size-4 text-muted-foreground" />
-              Bullet list
-            </span>
-          </MenuCheckboxItem>
-          <MenuCheckboxItem
-            checked={snapshot.listKind === "ordered"}
-            onCheckedChange={() => controller.execute("ordered-list")}
-          >
-            <span className="flex items-center gap-2">
-              <ListOrdered className="size-4 text-muted-foreground" />
-              Numbered list
-            </span>
-          </MenuCheckboxItem>
-          <MenuCheckboxItem
-            checked={snapshot.listKind === "task"}
-            onCheckedChange={() => controller.execute("task-list")}
-          >
-            <span className="flex items-center gap-2">
-              <ListTodo className="size-4 text-muted-foreground" />
-              Task list
-            </span>
-          </MenuCheckboxItem>
-          <MenuSeparator />
-          <MenuCheckboxItem
-            checked={false}
-            disabled={snapshot.listKind === null}
-            onCheckedChange={() => controller.execute("list-none")}
-          >
-            No list
-          </MenuCheckboxItem>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+    <DockMenu
+      label={`List: ${listMenuLabel(snapshot.listKind)}`}
+      icon={listTriggerIcon(snapshot.listKind)}
+      active={snapshot.listKind !== null}
+      groupLabel="Lists"
+    >
+      <MenuRadioGroup
+        value={listMenuValue(snapshot.listKind)}
+        onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
+      >
+        {LIST_ITEMS.map((item) => (
+          <MenuRadioItem key={item.command} value={item.command}>
+            <MenuRow icon={commandIcon(item.command)} label={item.label} />
+          </MenuRadioItem>
+        ))}
+        <MenuSeparator />
+        <MenuRadioItem value="list-none">
+          <MenuRow icon={commandIcon("list-none")} label="No list" />
+        </MenuRadioItem>
+      </MenuRadioGroup>
+    </DockMenu>
   );
 }
 
-function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
-  const execute = (command: ScientMarkdownCommand) => {
-    controller.execute(command);
-  };
+const INSERT_ITEMS: ReadonlyArray<{
+  readonly command: ScientMarkdownCommand;
+  readonly label: string;
+}> = [
+  { command: "table", label: "Table (3×3)" },
+  { command: "code-block", label: "Code block" },
+  { command: "display-math", label: "Math equation ($$)" },
+  { command: "image", label: "Image" },
+  { command: "wiki-link", label: "Wiki link ([[note]])" },
+  { command: "horizontal-rule", label: "Divider line" },
+];
 
+function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="Insert Markdown block"
-                >
-                  <Plus className="size-3.5" />
-                  <span>Insert</span>
-                  <ChevronDown className="size-3 opacity-60" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">Insert block or element</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" className="w-52 p-1">
-        <MenuGroup>
-          <MenuGroupLabel>Insert</MenuGroupLabel>
-          <MenuItem onClick={() => execute("table")}>
-            <TableIcon className="size-4 text-muted-foreground" />
-            <span>Table (3×3)</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("code-block")}>
-            <Code2 className="size-4 text-muted-foreground" />
-            <span>Code block</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("display-math")}>
-            <Sigma className="size-4 text-muted-foreground" />
-            <span>Math Equation ($$)</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("image")}>
-            <ImageIcon className="size-4 text-muted-foreground" />
-            <span>Image</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("wiki-link")}>
-            <Link2 className="size-4 text-muted-foreground" />
-            <span>Wiki link ([[note]])</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("horizontal-rule")}>
-            <Minus className="size-4 text-muted-foreground" />
-            <span>Divider line</span>
-          </MenuItem>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+    <DockMenu
+      label="Insert block or element"
+      icon={<Plus className="size-4" />}
+      groupLabel="Insert"
+      popupClassName="w-52"
+    >
+      {INSERT_ITEMS.map((item) => (
+        <MenuItem key={item.command} onClick={() => controller.execute(item.command)}>
+          {commandIcon(item.command)}
+          <span>{item.label}</span>
+        </MenuItem>
+      ))}
+      <MenuSeparator />
+      <MenuItem onClick={() => controller.execute("hard-break")}>
+        {commandIcon("hard-break")}
+        <span>Line break</span>
+        <MenuShortcut>⇧↩</MenuShortcut>
+      </MenuItem>
+    </DockMenu>
   );
+}
+
+const DIRECTION_ITEMS: ReadonlyArray<{
+  readonly command: ScientMarkdownCommand;
+  readonly label: string;
+}> = [
+  { command: "direction-auto", label: "Auto" },
+  { command: "direction-ltr", label: "Left-to-right" },
+  { command: "direction-rtl", label: "Right-to-left" },
+];
+
+function directionMenuLabel(direction: ScientMarkdownEditorSnapshot["textDirection"]): string {
+  switch (direction) {
+    case "ltr":
+      return "Left-to-right";
+    case "rtl":
+      return "Right-to-left";
+    default:
+      return "Auto";
+  }
+}
+
+function directionTriggerIcon(direction: ScientMarkdownEditorSnapshot["textDirection"]): ReactNode {
+  switch (direction) {
+    case "ltr":
+      return <PilcrowRight className="size-4" />;
+    case "rtl":
+      return <PilcrowLeft className="size-4" />;
+    default:
+      return <ArrowRightLeft className="size-4" />;
+  }
 }
 
 function DirectionMenu({
@@ -400,54 +401,26 @@ function DirectionMenu({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const value =
+    snapshot.textDirection === null ? "direction-auto" : `direction-${snapshot.textDirection}`;
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className={cn(
-                    "scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                    snapshot.textDirection !== null &&
-                      "bg-accent text-accent-foreground font-semibold shadow-xs",
-                  )}
-                  aria-label="Text direction"
-                >
-                  <ArrowRightLeft className="size-3.5" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">Text direction</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" className="w-44 p-1">
-        <MenuGroup>
-          <MenuGroupLabel>Text direction</MenuGroupLabel>
-          <MenuCheckboxItem
-            checked={snapshot.textDirection === null}
-            onCheckedChange={() => controller.execute("direction-auto")}
-          >
-            Auto
-          </MenuCheckboxItem>
-          <MenuCheckboxItem
-            checked={snapshot.textDirection === "ltr"}
-            onCheckedChange={() => controller.execute("direction-ltr")}
-          >
-            Left-to-right
-          </MenuCheckboxItem>
-          <MenuCheckboxItem
-            checked={snapshot.textDirection === "rtl"}
-            onCheckedChange={() => controller.execute("direction-rtl")}
-          >
-            Right-to-left
-          </MenuCheckboxItem>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+    <DockMenu
+      label={`Text direction: ${directionMenuLabel(snapshot.textDirection)}`}
+      icon={directionTriggerIcon(snapshot.textDirection)}
+      active={snapshot.textDirection !== null}
+      groupLabel="Text direction"
+    >
+      <MenuRadioGroup
+        value={value}
+        onValueChange={(next) => controller.execute(next as ScientMarkdownCommand)}
+      >
+        {DIRECTION_ITEMS.map((item) => (
+          <MenuRadioItem key={item.command} value={item.command}>
+            <MenuRow icon={commandIcon(item.command)} label={item.label} />
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </DockMenu>
   );
 }
 
@@ -463,91 +436,80 @@ function BlockActionsMenu({
   };
 
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="More document actions"
-                >
-                  <MoreHorizontal className="size-4" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">More actions</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="end" className="w-56 p-1">
-        {snapshot.outlineItems.length === 0 ? (
-          <MenuItem disabled>
-            <ListTree className="size-4 text-muted-foreground" />
+    <DockMenu
+      label="More actions"
+      icon={<Ellipsis className="size-4" />}
+      chevron={false}
+      align="end"
+      popupClassName="w-56"
+    >
+      {snapshot.outlineItems.length === 0 ? (
+        <MenuItem disabled>
+          <ListTree />
+          <span>Document outline</span>
+        </MenuItem>
+      ) : (
+        <MenuSub>
+          <MenuSubTrigger>
+            <ListTree />
             <span>Document outline</span>
+          </MenuSubTrigger>
+          <MenuSubPopup className="w-60 p-1">
+            {snapshot.outlineItems.map((item, index) => (
+              <MenuItem
+                key={`${item.position}-${item.level}-${item.text}`}
+                inset={item.level === 1}
+                className={cn(
+                  item.level === 2 && "ps-5",
+                  item.level >= 3 && "ps-7 text-[13px]",
+                  index === snapshot.outlineActiveIndex && "bg-accent/70 font-medium",
+                )}
+                onClick={() => controller.navigateToOutline(item.position)}
+              >
+                <span className="truncate">{item.text || "Untitled heading"}</span>
+              </MenuItem>
+            ))}
+          </MenuSubPopup>
+        </MenuSub>
+      )}
+      <MenuItem onClick={() => controller.setFindOpen(!snapshot.findOpen)}>
+        <Search />
+        <span>Find & Replace</span>
+        <MenuShortcut>⌘F</MenuShortcut>
+      </MenuItem>
+      {snapshot.editable ? (
+        <>
+          <MenuItem onClick={() => controller.execute("clear-formatting")}>
+            <RemoveFormatting />
+            <span>Clear formatting</span>
           </MenuItem>
-        ) : (
-          <MenuSub>
-            <MenuSubTrigger>
-              <ListTree className="size-4 text-muted-foreground" />
-              <span>Document outline</span>
-            </MenuSubTrigger>
-            <MenuSubPopup className="w-60 p-1">
-              {snapshot.outlineItems.map((item, index) => (
-                <MenuItem
-                  key={`${item.position}-${item.level}-${item.text}`}
-                  inset={item.level === 1}
-                  className={cn(
-                    item.level === 2 && "ps-5",
-                    item.level >= 3 && "ps-7 text-[13px]",
-                    index === snapshot.outlineActiveIndex && "bg-accent/70 font-medium",
-                  )}
-                  onClick={() => controller.navigateToOutline(item.position)}
-                >
-                  <span className="truncate">{item.text || "Untitled heading"}</span>
-                </MenuItem>
-              ))}
-            </MenuSubPopup>
-          </MenuSub>
-        )}
-        <MenuCheckboxItem
-          checked={snapshot.findOpen}
-          onCheckedChange={() => controller.setFindOpen(!snapshot.findOpen)}
-        >
-          <span className="flex w-full items-center gap-2">
-            <Search className="size-4 text-muted-foreground" />
-            Find & Replace
-            <MenuShortcut>⌘F</MenuShortcut>
-          </span>
-        </MenuCheckboxItem>
-        <MenuSeparator />
-        <MenuItem disabled={!snapshot.canMoveBlockUp} onClick={blockAction("move-up")}>
-          <ArrowUp className="size-4 text-muted-foreground" />
-          <span>Move block up</span>
-          <MenuShortcut>⌥↑</MenuShortcut>
-        </MenuItem>
-        <MenuItem disabled={!snapshot.canMoveBlockDown} onClick={blockAction("move-down")}>
-          <ArrowDown className="size-4 text-muted-foreground" />
-          <span>Move block down</span>
-          <MenuShortcut>⌥↓</MenuShortcut>
-        </MenuItem>
-        <MenuItem disabled={!snapshot.canDuplicateBlock} onClick={blockAction("duplicate")}>
-          <Copy className="size-4 text-muted-foreground" />
-          <span>Duplicate block</span>
-          <MenuShortcut>⇧⌥↓</MenuShortcut>
-        </MenuItem>
-        <MenuItem
-          disabled={!snapshot.canDeleteBlock}
-          variant="destructive"
-          onClick={blockAction("delete")}
-        >
-          <Trash2 className="size-4" />
-          <span>Delete block</span>
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+          <MenuSeparator />
+          <MenuItem disabled={!snapshot.canMoveBlockUp} onClick={blockAction("move-up")}>
+            <ArrowUp />
+            <span>Move block up</span>
+            <MenuShortcut>⌥↑</MenuShortcut>
+          </MenuItem>
+          <MenuItem disabled={!snapshot.canMoveBlockDown} onClick={blockAction("move-down")}>
+            <ArrowDown />
+            <span>Move block down</span>
+            <MenuShortcut>⌥↓</MenuShortcut>
+          </MenuItem>
+          <MenuItem disabled={!snapshot.canDuplicateBlock} onClick={blockAction("duplicate")}>
+            <Copy />
+            <span>Duplicate block</span>
+            <MenuShortcut>⇧⌥↓</MenuShortcut>
+          </MenuItem>
+          <MenuItem
+            disabled={!snapshot.canDeleteBlock}
+            variant="destructive"
+            onClick={blockAction("delete")}
+          >
+            <Trash2 />
+            <span>Delete block</span>
+          </MenuItem>
+        </>
+      ) : null}
+    </DockMenu>
   );
 }
 
@@ -591,13 +553,10 @@ function LinkEditor({
               render={
                 <button
                   type="button"
-                  className={cn(
-                    "scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                    active && "bg-accent text-accent-foreground font-semibold shadow-xs",
-                  )}
+                  className={dockButtonClass(active)}
                   aria-label="Add or edit link"
                 >
-                  <Link2 className="size-3.5" />
+                  <Link2 className="size-4" />
                 </button>
               }
             />
@@ -655,92 +614,45 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
   };
 
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="More table actions"
-                >
-                  <MoreHorizontal className="size-3.5" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">More Table Actions</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="end" className="w-48 p-1">
-        <MenuItem onClick={() => execute("add-row-before")}>
-          <ArrowUpToLine className="size-4 text-muted-foreground" />
-          <span>Add row above</span>
-        </MenuItem>
-        <MenuItem onClick={() => execute("add-column-before")}>
-          <ArrowLeftToLine className="size-4 text-muted-foreground" />
-          <span>Add column before</span>
-        </MenuItem>
-        <MenuSeparator />
-        <MenuItem onClick={() => execute("toggle-header-cell")}>
-          <PanelTop className="size-4 text-muted-foreground" />
-          <span>Toggle header cell</span>
-        </MenuItem>
-        <MenuItem onClick={() => execute("merge-cells")}>
-          <Merge className="size-4 text-muted-foreground" />
-          <span>Merge selected cells</span>
-        </MenuItem>
-        <MenuItem onClick={() => execute("split-cell")}>
-          <Split className="size-4 text-muted-foreground" />
-          <span>Split cell</span>
-        </MenuItem>
-        <MenuItem onClick={() => execute("align-column-default")}>
-          <Eraser className="size-4 text-muted-foreground" />
-          <span>Clear column alignment</span>
-        </MenuItem>
-        <MenuSeparator />
-        <MenuItem variant="destructive" onClick={() => execute("delete-table")}>
-          <Trash2 className="size-4" />
-          <span>Delete table</span>
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+    <DockMenu
+      label="More table actions"
+      icon={<Ellipsis className="size-4" />}
+      chevron={false}
+      align="end"
+      popupClassName="w-48"
+    >
+      <MenuItem onClick={() => execute("add-row-before")}>
+        <ArrowUpToLine />
+        <span>Add row above</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("add-column-before")}>
+        <ArrowLeftToLine />
+        <span>Add column before</span>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem onClick={() => execute("toggle-header-cell")}>
+        <PanelTop />
+        <span>Toggle header cell</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("merge-cells")}>
+        <Merge />
+        <span>Merge selected cells</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("split-cell")}>
+        <Split />
+        <span>Split cell</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("align-column-default")}>
+        <Eraser />
+        <span>Clear column alignment</span>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem variant="destructive" onClick={() => execute("delete-table")}>
+        <Trash2 />
+        <span>Delete table</span>
+      </MenuItem>
+    </DockMenu>
   );
-}
-
-function slashIcon(command: ScientMarkdownCommand) {
-  switch (command) {
-    case "heading-1":
-      return <Heading1 className="size-4 text-muted-foreground" />;
-    case "heading-2":
-      return <Heading2 className="size-4 text-muted-foreground" />;
-    case "heading-3":
-      return <Heading3 className="size-4 text-muted-foreground" />;
-    case "bullet-list":
-      return <List className="size-4 text-muted-foreground" />;
-    case "ordered-list":
-      return <ListOrdered className="size-4 text-muted-foreground" />;
-    case "task-list":
-      return <ListTodo className="size-4 text-muted-foreground" />;
-    case "blockquote":
-      return <Quote className="size-4 text-muted-foreground" />;
-    case "code-block":
-      return <Code2 className="size-4 text-muted-foreground" />;
-    case "display-math":
-      return <Sigma className="size-4 text-muted-foreground" />;
-    case "table":
-      return <TableIcon className="size-4 text-muted-foreground" />;
-    case "image":
-      return <ImageIcon className="size-4 text-muted-foreground" />;
-    case "wiki-link":
-      return <Link2 className="size-4 text-muted-foreground" />;
-    case "horizontal-rule":
-      return <Minus className="size-4 text-muted-foreground" />;
-    default:
-      return <FileText className="size-4 text-muted-foreground" />;
-  }
 }
 
 export function ScientMarkdownControls({
@@ -770,14 +682,14 @@ export function ScientMarkdownControls({
               controller={controller}
               command="undo"
               label="Undo (Cmd+Z)"
-              icon={<Undo2 className="size-3.5" />}
+              icon={<Undo2 className="size-4" />}
               disabled={!snapshot.canUndo}
             />
             <CommandButton
               controller={controller}
               command="redo"
               label="Redo (Cmd+Shift+Z)"
-              icon={<Redo2 className="size-3.5" />}
+              icon={<Redo2 className="size-4" />}
               disabled={!snapshot.canRedo}
             />
             <DockDivider />
@@ -785,37 +697,31 @@ export function ScientMarkdownControls({
               controller={controller}
               command="bold"
               label="Bold (Cmd+B)"
-              icon={<Bold className="size-3.5" />}
+              icon={<Bold className="size-4" />}
               active={active.has("strong")}
             />
             <CommandButton
               controller={controller}
               command="italic"
               label="Italic (Cmd+I)"
-              icon={<Italic className="size-3.5" />}
+              icon={<Italic className="size-4" />}
               active={active.has("em")}
             />
             <CommandButton
               controller={controller}
               command="strike"
               label="Strikethrough (Cmd+Shift+X)"
-              icon={<Strikethrough className="size-3.5" />}
+              icon={<Strikethrough className="size-4" />}
               active={active.has("strike")}
             />
             <CommandButton
               controller={controller}
               command="inline-code"
               label="Inline Code (Cmd+E)"
-              icon={<Code2 className="size-3.5" />}
+              icon={<Code className="size-4" />}
               active={active.has("code")}
             />
             <LinkEditor controller={controller} active={active.has("link")} />
-            <CommandButton
-              controller={controller}
-              command="clear-formatting"
-              label="Clear formatting"
-              icon={<Eraser className="size-3.5" />}
-            />
             <DockDivider />
             <StyleMenu controller={controller} snapshot={snapshot} />
             <ListsMenu controller={controller} snapshot={snapshot} />
@@ -842,28 +748,28 @@ export function ScientMarkdownControls({
             controller={controller}
             command="bold"
             label="Bold (Cmd+B)"
-            icon={<Bold className="size-3.5" />}
+            icon={<Bold className="size-4" />}
             active={active.has("strong")}
           />
           <CommandButton
             controller={controller}
             command="italic"
             label="Italic (Cmd+I)"
-            icon={<Italic className="size-3.5" />}
+            icon={<Italic className="size-4" />}
             active={active.has("em")}
           />
           <CommandButton
             controller={controller}
             command="strike"
             label="Strikethrough"
-            icon={<Strikethrough className="size-3.5" />}
+            icon={<Strikethrough className="size-4" />}
             active={active.has("strike")}
           />
           <CommandButton
             controller={controller}
             command="inline-code"
             label="Inline Code"
-            icon={<Code2 className="size-3.5" />}
+            icon={<Code className="size-4" />}
             active={active.has("code")}
           />
           <LinkEditor controller={controller} active={active.has("link")} />
@@ -901,26 +807,26 @@ export function ScientMarkdownControls({
             label="Delete column"
             icon={<span className="text-[11px] font-semibold text-destructive">− Col</span>}
           />
-          <span className="scient-markdown-command-divider mx-1 h-3.5 w-px bg-border/80" />
+          <DockDivider />
           <CommandButton
             controller={controller}
             command="align-column-left"
             label="Align column left"
-            icon={<AlignLeft className="size-3.5" />}
+            icon={<AlignLeft className="size-4" />}
             active={snapshot.tableAlignment === "left"}
           />
           <CommandButton
             controller={controller}
             command="align-column-center"
             label="Align column center"
-            icon={<AlignCenter className="size-3.5" />}
+            icon={<AlignCenter className="size-4" />}
             active={snapshot.tableAlignment === "center"}
           />
           <CommandButton
             controller={controller}
             command="align-column-right"
             label="Align column right"
-            icon={<AlignRight className="size-3.5" />}
+            icon={<AlignRight className="size-4" />}
             active={snapshot.tableAlignment === "right"}
           />
           <TableMoreControl controller={controller} />
@@ -949,7 +855,7 @@ export function ScientMarkdownControls({
               )}
               onClick={() => controller.executeSlashCommand(item.command)}
             >
-              {slashIcon(item.command)}
+              {commandIcon(item.command)}
               <span>{item.label}</span>
             </button>
           ))}

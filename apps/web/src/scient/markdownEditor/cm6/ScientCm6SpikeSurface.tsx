@@ -4,8 +4,14 @@ import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
 import {
   ArrowRightLeft,
   Bold,
-  ChevronDown,
-  Columns3,
+  Code,
+  CornerDownLeft,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
   Image as ImageIcon,
   Italic,
   Link2,
@@ -13,36 +19,36 @@ import {
   ListOrdered,
   ListTodo,
   Minus,
-  Pilcrow,
+  PilcrowLeft,
+  PilcrowRight,
   Plus,
   Redo2,
+  Sigma,
+  SquareCode,
   Strikethrough,
+  Table as TableIcon,
+  TextQuote,
+  Type,
   Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuPopup,
-  MenuTrigger,
-} from "~/components/ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { MenuItem, MenuSeparator, MenuShortcut } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import {
   insertBlockTemplate,
   insertImageTemplate,
+  insertLineBreak,
   insertLink,
+  setParagraph,
   toggleDirection,
   toggleLinePrefix,
   toggleNumberedList,
   toggleWrap,
 } from "./commands";
 import { ScientCm6EditorView } from "./view";
+import { DockButton, DockDivider, DockMenu } from "../ui/dockChrome";
 import { ScientFindBar } from "../ui/ScientFindBar";
 import "../scient-markdown-editor.css";
 
@@ -50,72 +56,29 @@ const SAVE_DEBOUNCE_MS = 600;
 
 const CODE_BLOCK_TEMPLATE = "```\n\n```";
 const MATH_BLOCK_TEMPLATE = "$$\n\n$$";
-const TABLE_TEMPLATE = "| Column | Column |\n| ------ | ------ |\n|        |        |";
+const TABLE_TEMPLATE = [
+  "| Column | Column | Column |",
+  "| ------ | ------ | ------ |",
+  "|        |        |        |",
+  "|        |        |        |",
+].join("\n");
 
 type Cm6View = NonNullable<ScientCm6EditorView["view"]>;
 
-function ToolbarIconButton(props: {
-  readonly label: string;
-  readonly onClick: () => void;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={props.label}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              props.onClick();
-            }}
-          >
-            {props.children}
-          </button>
-        }
-      />
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function ToolbarMenu(props: {
+const STYLE_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly icon: React.ReactNode;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className="scient-markdown-command-button inline-flex size-7 items-center justify-center gap-0.5 rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label={props.label}
-                >
-                  {props.icon}
-                  <ChevronDown className="size-2.5 opacity-60" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">{props.label}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" className="w-44 p-1">
-        <MenuGroup>
-          <MenuGroupLabel>{props.label}</MenuGroupLabel>
-          {props.children}
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
-  );
-}
+  readonly prefix: string | null;
+}> = [
+  { label: "Paragraph", icon: <Type />, prefix: null },
+  { label: "Heading 1", icon: <Heading1 />, prefix: "# " },
+  { label: "Heading 2", icon: <Heading2 />, prefix: "## " },
+  { label: "Heading 3", icon: <Heading3 />, prefix: "### " },
+  { label: "Heading 4", icon: <Heading4 />, prefix: "#### " },
+  { label: "Heading 5", icon: <Heading5 />, prefix: "##### " },
+  { label: "Heading 6", icon: <Heading6 />, prefix: "###### " },
+  { label: "Quote", icon: <TextQuote />, prefix: "> " },
+];
 
 export interface ScientCm6SpikeSurfaceProps {
   readonly source: string;
@@ -262,187 +225,127 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
           aria-label="Markdown editing controls"
           className="flex flex-wrap items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
         >
-          <ToolbarIconButton label="Undo (Cmd+Z)" onClick={() => run(undo)}>
-            <Undo2 className="size-3.5" />
-          </ToolbarIconButton>
-          <ToolbarIconButton label="Redo (Cmd+Shift+Z)" onClick={() => run(redo)}>
-            <Redo2 className="size-3.5" />
-          </ToolbarIconButton>
-          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-          <ToolbarIconButton
+          <DockButton
+            label="Undo (Cmd+Z)"
+            icon={<Undo2 className="size-4" />}
+            onClick={() => run(undo)}
+          />
+          <DockButton
+            label="Redo (Cmd+Shift+Z)"
+            icon={<Redo2 className="size-4" />}
+            onClick={() => run(redo)}
+          />
+          <DockDivider />
+          <DockButton
             label="Bold (Cmd+B)"
+            icon={<Bold className="size-4" />}
             onClick={() => run((view) => toggleWrap(view, "**"))}
-          >
-            <Bold className="size-3.5" />
-          </ToolbarIconButton>
-          <ToolbarIconButton
+          />
+          <DockButton
             label="Italic (Cmd+I)"
+            icon={<Italic className="size-4" />}
             onClick={() => run((view) => toggleWrap(view, "*"))}
-          >
-            <Italic className="size-3.5" />
-          </ToolbarIconButton>
-          <ToolbarIconButton
+          />
+          <DockButton
             label="Strikethrough (Cmd+Shift+X)"
+            icon={<Strikethrough className="size-4" />}
             onClick={() => run((view) => toggleWrap(view, "~~"))}
-          >
-            <Strikethrough className="size-3.5" />
-          </ToolbarIconButton>
-          <ToolbarIconButton
+          />
+          <DockButton
             label="Inline Code (Cmd+E)"
+            icon={<Code className="size-4" />}
             onClick={() => run((view) => toggleWrap(view, "`"))}
-          >
-            <span className="text-[11px] font-semibold">{`</>`}</span>
-          </ToolbarIconButton>
-          <ToolbarIconButton label="Link (Cmd+K)" onClick={() => run(insertLink)}>
-            <Link2 className="size-3.5" />
-          </ToolbarIconButton>
-          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-          <ToolbarMenu label="Paragraph style" icon={<Pilcrow className="size-3.5" />}>
-            {[
-              { label: "Paragraph", prefix: "" },
-              { label: "Heading 1", prefix: "# " },
-              { label: "Heading 2", prefix: "## " },
-              { label: "Heading 3", prefix: "### " },
-              { label: "Heading 4", prefix: "#### " },
-              { label: "Heading 5", prefix: "##### " },
-              { label: "Heading 6", prefix: "###### " },
-              { label: "Quote", prefix: "> " },
-            ].map((entry) => (
-              <MenuCheckboxItem
+          />
+          <DockButton
+            label="Link (Cmd+K)"
+            icon={<Link2 className="size-4" />}
+            onClick={() => run(insertLink)}
+          />
+          <DockDivider />
+          <DockMenu label="Paragraph style" icon={<Type className="size-4" />} groupLabel="Style">
+            {STYLE_ITEMS.map((entry) => (
+              <MenuItem
                 key={entry.label}
-                checked={false}
-                onCheckedChange={() =>
+                onClick={() =>
                   run((view) =>
-                    entry.prefix === "" ? false : toggleLinePrefix(view, entry.prefix),
+                    entry.prefix === null
+                      ? setParagraph(view)
+                      : toggleLinePrefix(view, entry.prefix),
                   )
                 }
               >
-                {entry.label}
-              </MenuCheckboxItem>
+                {entry.icon}
+                <span>{entry.label}</span>
+              </MenuItem>
             ))}
-          </ToolbarMenu>
-          <ToolbarMenu label="List style" icon={<List className="size-3.5" />}>
-            <MenuCheckboxItem
-              checked={false}
-              onCheckedChange={() => run((view) => toggleLinePrefix(view, "- "))}
-            >
-              <span className="flex items-center gap-2">
-                <List className="size-4 text-muted-foreground" />
-                Bullet list
-              </span>
-            </MenuCheckboxItem>
-            <MenuCheckboxItem checked={false} onCheckedChange={() => run(toggleNumberedList)}>
-              <span className="flex items-center gap-2">
-                <ListOrdered className="size-4 text-muted-foreground" />
-                Numbered list
-              </span>
-            </MenuCheckboxItem>
-            <MenuCheckboxItem
-              checked={false}
-              onCheckedChange={() => run((view) => toggleLinePrefix(view, "- [ ] "))}
-            >
-              <span className="flex items-center gap-2">
-                <ListTodo className="size-4 text-muted-foreground" />
-                Task list
-              </span>
-            </MenuCheckboxItem>
-          </ToolbarMenu>
-          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-          <Menu>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <MenuTrigger
-                    render={
-                      <button
-                        type="button"
-                        className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label="Insert block or element"
-                      >
-                        <Plus className="size-3.5" />
-                      </button>
-                    }
-                  />
-                }
-              />
-              <TooltipPopup side="top">Insert block or element</TooltipPopup>
-            </Tooltip>
-            <MenuPopup align="start" className="w-52 p-1">
-              <MenuGroup>
-                <MenuGroupLabel>Insert</MenuGroupLabel>
-                <MenuItem onClick={() => run((view) => insertBlockTemplate(view, TABLE_TEMPLATE))}>
-                  <Columns3 className="size-4 text-muted-foreground" />
-                  <span>Table (2×3)</span>
-                </MenuItem>
-                <MenuItem
-                  onClick={() => run((view) => insertBlockTemplate(view, CODE_BLOCK_TEMPLATE))}
-                >
-                  <span className="size-4 text-center text-[11px] font-semibold text-muted-foreground">
-                    {`</>`}
-                  </span>
-                  <span>Code block</span>
-                </MenuItem>
-                <MenuItem
-                  onClick={() => run((view) => insertBlockTemplate(view, MATH_BLOCK_TEMPLATE))}
-                >
-                  <span className="size-4 text-center text-xs text-muted-foreground">∑</span>
-                  <span>Math Equation ($$)</span>
-                </MenuItem>
-                <MenuItem onClick={() => run(insertImageTemplate)}>
-                  <ImageIcon className="size-4 text-muted-foreground" />
-                  <span>Image</span>
-                </MenuItem>
-                <MenuItem onClick={() => run((view) => insertBlockTemplate(view, "\n---\n"))}>
-                  <Minus className="size-4 text-muted-foreground" />
-                  <span>Divider line</span>
-                </MenuItem>
-              </MenuGroup>
-            </MenuPopup>
-          </Menu>
-          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-          <Menu>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <MenuTrigger
-                    render={
-                      <button
-                        type="button"
-                        className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label="Text direction"
-                      >
-                        <ArrowRightLeft className="size-3.5" />
-                      </button>
-                    }
-                  />
-                }
-              />
-              <TooltipPopup side="top">Text direction</TooltipPopup>
-            </Tooltip>
-            <MenuPopup align="start" className="w-44 p-1">
-              <MenuGroup>
-                <MenuGroupLabel>Text direction</MenuGroupLabel>
-                <MenuCheckboxItem
-                  checked={false}
-                  onCheckedChange={() => run((view) => toggleDirection(view, null))}
-                >
-                  Auto
-                </MenuCheckboxItem>
-                <MenuCheckboxItem
-                  checked={false}
-                  onCheckedChange={() => run((view) => toggleDirection(view, "ltr"))}
-                >
-                  Left-to-right
-                </MenuCheckboxItem>
-                <MenuCheckboxItem
-                  checked={false}
-                  onCheckedChange={() => run((view) => toggleDirection(view, "rtl"))}
-                >
-                  Right-to-left
-                </MenuCheckboxItem>
-              </MenuGroup>
-            </MenuPopup>
-          </Menu>
+          </DockMenu>
+          <DockMenu label="List style" icon={<List className="size-4" />} groupLabel="Lists">
+            <MenuItem onClick={() => run((view) => toggleLinePrefix(view, "- "))}>
+              <List />
+              <span>Bullet list</span>
+            </MenuItem>
+            <MenuItem onClick={() => run(toggleNumberedList)}>
+              <ListOrdered />
+              <span>Numbered list</span>
+            </MenuItem>
+            <MenuItem onClick={() => run((view) => toggleLinePrefix(view, "- [ ] "))}>
+              <ListTodo />
+              <span>Task list</span>
+            </MenuItem>
+          </DockMenu>
+          <DockDivider />
+          <DockMenu
+            label="Insert block or element"
+            icon={<Plus className="size-4" />}
+            groupLabel="Insert"
+            popupClassName="w-52"
+          >
+            <MenuItem onClick={() => run((view) => insertBlockTemplate(view, TABLE_TEMPLATE))}>
+              <TableIcon />
+              <span>Table (3×3)</span>
+            </MenuItem>
+            <MenuItem onClick={() => run((view) => insertBlockTemplate(view, CODE_BLOCK_TEMPLATE))}>
+              <SquareCode />
+              <span>Code block</span>
+            </MenuItem>
+            <MenuItem onClick={() => run((view) => insertBlockTemplate(view, MATH_BLOCK_TEMPLATE))}>
+              <Sigma />
+              <span>Math equation ($$)</span>
+            </MenuItem>
+            <MenuItem onClick={() => run(insertImageTemplate)}>
+              <ImageIcon />
+              <span>Image</span>
+            </MenuItem>
+            <MenuItem onClick={() => run((view) => insertBlockTemplate(view, "\n---\n"))}>
+              <Minus />
+              <span>Divider line</span>
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem onClick={() => run(insertLineBreak)}>
+              <CornerDownLeft />
+              <span>Line break</span>
+              <MenuShortcut>⇧↩</MenuShortcut>
+            </MenuItem>
+          </DockMenu>
+          <DockDivider />
+          <DockMenu
+            label="Text direction"
+            icon={<ArrowRightLeft className="size-4" />}
+            groupLabel="Text direction"
+          >
+            <MenuItem onClick={() => run((view) => toggleDirection(view, null))}>
+              <ArrowRightLeft />
+              <span>Auto</span>
+            </MenuItem>
+            <MenuItem onClick={() => run((view) => toggleDirection(view, "ltr"))}>
+              <PilcrowRight />
+              <span>Left-to-right</span>
+            </MenuItem>
+            <MenuItem onClick={() => run((view) => toggleDirection(view, "rtl"))}>
+              <PilcrowLeft />
+              <span>Right-to-left</span>
+            </MenuItem>
+          </DockMenu>
         </div>
       ) : null}
       {findSnapshot.findOpen ? (
